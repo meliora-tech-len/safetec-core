@@ -1,0 +1,77 @@
+# ========================
+# Python / FastAPI (Backend)
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+.installed.cfg
+lib/
+lib64/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# ========================
+# Node / React / Vite (Frontend)
+# ========================
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Vite
+.vite/
+
+# ========================
+# IDE & Editor
+# ========================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ========================
+# Testing
+# ========================
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ========================
+# Deployment
+# ========================
+*.pem
+*.key
+*.cert
