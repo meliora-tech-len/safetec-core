@@ -21,6 +21,7 @@ app.add_middleware(
         "https://safetec-core-frontend-git-production-larissas-projects-452e33a2.vercel.app",
         "https://safetec-core-frontend-ghdmfdve3-larissas-projects-452e33a2.vercel.app",
         "https://larissa-engelbrecht-safetec-core.vercel.app",
+        "https://safetec-core.vercel.app/"
     ],
     allow_credentials=True,
     allow_methods=["*"],
