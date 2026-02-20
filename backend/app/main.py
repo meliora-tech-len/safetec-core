@@ -18,6 +18,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:5173",
+        "https://safetec-core-frontend-git-production-larissas-projects-452e33a2.vercel.app",
+        "https://safetec-core-frontend-ghdmfdve3-larissas-projects-452e33a2.vercel.app",
         "https://larissa-engelbrecht-safetec-core.vercel.app",
     ],
     allow_credentials=True,
