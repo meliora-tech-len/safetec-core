@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import engine
 from app.models.models import Base
 from app.api.routes import auth, users, entities, clients, invoices, audit
+import re
 
 # Create all tables on startup (dev mode; use Alembic for production)
 Base.metadata.create_all(bind=engine)
@@ -13,16 +14,19 @@ app = FastAPI(
     version="1.0.0",
 )
 
+class RegexCORSMiddleware:
+    pass
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:5173",
-        "https://safetec-core-frontend-git-production-larissas-projects-452e33a2.vercel.app",
-        "https://safetec-core-frontend-ghdmfdve3-larissas-projects-452e33a2.vercel.app",
+        "https://safetec-core.vercel.app",
         "https://larissa-engelbrecht-safetec-core.vercel.app",
-        "https://safetec-core.vercel.app/"
+        "https://safetec-core-frontend-git-production-larissas-projects-452e33a2.vercel.app",
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
