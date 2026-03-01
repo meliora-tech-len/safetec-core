@@ -1,26 +1,32 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getDashboardStats, getEntities } from '../services/api'
+import { getDashboardStats } from '../services/api'
+import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
 import { TrendingUp, AlertCircle, FileText, Clock, Building2, ChevronRight } from 'lucide-react'
 
 export default function DashboardPage() {
+  const { entities, activeEntity, setActiveEntity } = useAuth()
   const [stats, setStats] = useState(null)
-  const [entities, setEntities] = useState([])
-  const [selectedEntity, setSelectedEntity] = useState('')
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
   useEffect(() => {
-    getEntities().then(r => setEntities(r.data)).catch(() => {})
-  }, [])
-
-  useEffect(() => {
     setLoading(true)
-    getDashboardStats(selectedEntity || undefined)
+    getDashboardStats(activeEntity?.id || undefined)
       .then(r => setStats(r.data))
       .finally(() => setLoading(false))
-  }, [selectedEntity])
+  }, [activeEntity])
+
+  const handleEntityChange = (e) => {
+    const val = e.target.value
+    if (!val) {
+      setActiveEntity(null)
+    } else {
+      const ent = entities.find(en => en.id === parseInt(val))
+      setActiveEntity(ent ?? null)
+    }
+  }
 
   return (
     <div style={styles.page}>
@@ -30,7 +36,7 @@ export default function DashboardPage() {
           <h1 style={styles.title}>Dashboard</h1>
           <p style={styles.sub}>Business overview across all entities</p>
         </div>
-        <select value={selectedEntity} onChange={e => setSelectedEntity(e.target.value)} style={{ width: 200 }}>
+        <select value={activeEntity?.id?.toString() || ''} onChange={handleEntityChange} style={{ width: 200 }}>
           <option value="">All Entities</option>
           {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
         </select>
@@ -94,7 +100,7 @@ export default function DashboardPage() {
                   <thead>
                     <tr>
                       <th>Number</th>
-                      <th>Client</th>
+                      <th>Supplier</th>
                       <th>Entity</th>
                       <th>Status</th>
                       <th className="text-right">Amount</th>
@@ -105,7 +111,7 @@ export default function DashboardPage() {
                     {stats.recent_invoices.map(inv => (
                       <tr key={inv.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/invoices/${inv.id}`)}>
                         <td className="font-mono text-accent" style={{ fontSize: 12 }}>{inv.invoice_number}</td>
-                        <td>{inv.client_name || '—'}</td>
+                        <td>{inv.supplier_name || '—'}</td>
                         <td><span style={styles.entityChip}>{inv.entity_code}</span></td>
                         <td><span className={statusBadgeClass(inv.status)}>{inv.status}</span></td>
                         <td className="text-right font-bold">{formatCurrency(inv.total)}</td>

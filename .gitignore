@@ -1,0 +1,35 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+backend/venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+*.egg-info/
+.pytest_cache/
+
+# ── Environment / Secrets ─────────────────────────────────────────────────────
+backend/.env
+frontend/.env
+frontend/.env.local
+frontend/.env.development
+frontend/.env.test
+frontend/.env.production
+
+# ── Local database ────────────────────────────────────────────────────────────
+backend/safetec_core.db
+backend/safetec_core.db-shm
+backend/safetec_core.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# ── Uploaded / generated files ────────────────────────────────────────────────
+backend/static/
+
+# ── Node.js ───────────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

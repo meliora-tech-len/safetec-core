@@ -5,11 +5,14 @@ import { ThemeProvider } from './hooks/useTheme'
 import AppLayout from './components/layout/AppLayout'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
-import ClientsPage from './pages/ClientsPage'
+import SuppliersPage from './pages/SuppliersPage'
 import InvoicesPage from './pages/InvoicesPage'
 import InvoiceFormPage from './pages/InvoiceFormPage'
 import InvoiceDetailPage from './pages/InvoiceDetailPage'
 import AuditPage from './pages/AuditPage'
+import EntitiesPage from './pages/EntitiesPage'
+import UsersPage from './pages/UsersPage'
+import SettingsPage from './pages/SettingsPage'
 import './styles/globals.css'
 
 function PrivateRoute({ children }) {
@@ -36,8 +39,8 @@ export default function App() {
           <Route element={<PrivateRoute><AppLayout /></PrivateRoute>}>
             <Route path="/dashboard" element={<DashboardPage />} />
 
-            {/* Clients */}
-            <Route path="/clients" element={<ClientsPage />} />
+            {/* Suppliers */}
+            <Route path="/suppliers" element={<SuppliersPage />} />
 
             {/* Invoices */}
             <Route path="/invoices" element={<InvoicesPage docType="invoice" />} />
@@ -53,8 +56,9 @@ export default function App() {
 
             {/* Admin only */}
             <Route path="/audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
-            <Route path="/entities" element={<AdminRoute><EntitiesPlaceholder /></AdminRoute>} />
-            <Route path="/users" element={<AdminRoute><UsersPlaceholder /></AdminRoute>} />
+            <Route path="/entities" element={<AdminRoute><EntitiesPage /></AdminRoute>} />
+            <Route path="/users" element={<AdminRoute><UsersPage /></AdminRoute>} />
+            <Route path="/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -62,27 +66,5 @@ export default function App() {
       </BrowserRouter>
     </AuthProvider>
     </ThemeProvider>
-  )
-}
-
-// Placeholder pages (easily expandable)
-function EntitiesPlaceholder() {
-  return (
-    <div style={{ padding: '28px 32px' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Business Entities</h1>
-      <p style={{ color: 'var(--text-secondary)' }}>Manage your 6 business entities. Entity editing is done via the admin panel or seed script.</p>
-      <p style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: 13 }}>
-         Manage Multiple Business Entities
-      </p>
-    </div>
-  )
-}
-
-function UsersPlaceholder() {
-  return (
-    <div style={{ padding: '28px 32px' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>User Management</h1>
-      <p style={{ color: 'var(--text-secondary)' }}>Manage user access and permissions.</p>
-    </div>
   )
 }

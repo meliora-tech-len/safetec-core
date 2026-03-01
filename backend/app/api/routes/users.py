@@ -1,22 +1,52 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+
 from app.db.database import get_db
 from app.core.security import get_current_user, require_admin, get_password_hash
-from app.models.models import User, UserEntityAccess
-from app.schemas.schemas import UserCreate, UserUpdate, UserOut
+from app.models.models import User, UserEntityAccess, BusinessEntity
+from app.schemas.schemas import (
+    UserCreate, UserUpdate, UserOut, UserPermissionsUpdate, PasswordReset
+)
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
+
+# ── List ──────────────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=List[UserOut])
 def list_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    return db.query(User).all()
+    users = db.query(User).all()
+    # Enrich entity_access with entity code/name
+    for user in users:
+        for access in user.entity_access:
+            if access.entity:
+                access.entity_code = access.entity.code
+                access.entity_name = access.entity.name
+    return users
 
+
+@router.get("/{user_id}", response_model=UserOut)
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    for access in user.entity_access:
+        if access.entity:
+            access.entity_code = access.entity.code
+            access.entity_name = access.entity.name
+    return user
+
+
+# ── Create ────────────────────────────────────────────────────────────────────
 
 @router.post("/", response_model=UserOut)
 def create_user(
@@ -36,9 +66,17 @@ def create_user(
     db.add(user)
     db.flush()
 
+    # Grant access to specified entities (all modules by default)
+    default_modules = ["clients", "invoices"]
     for entity_id in (payload.entity_ids or []):
-        access = UserEntityAccess(user_id=user.id, entity_id=entity_id)
-        db.add(access)
+        entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+        if entity:
+            access = UserEntityAccess(
+                user_id=user.id,
+                entity_id=entity_id,
+                allowed_modules=default_modules,
+            )
+            db.add(access)
 
     log_action(db, "user.created", user_id=current_user.id, resource_type="user",
                resource_id=user.id, description=f"Created user {user.email}")
@@ -46,6 +84,8 @@ def create_user(
     db.refresh(user)
     return user
 
+
+# ── Update (details) ──────────────────────────────────────────────────────────
 
 @router.put("/{user_id}", response_model=UserOut)
 def update_user(
@@ -61,6 +101,10 @@ def update_user(
     if payload.full_name is not None:
         user.full_name = payload.full_name
     if payload.email is not None:
+        # Check email uniqueness
+        existing = db.query(User).filter(User.email == payload.email, User.id != user_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already in use")
         user.email = payload.email
     if payload.role is not None:
         user.role = payload.role
@@ -69,31 +113,131 @@ def update_user(
     if payload.password:
         user.hashed_password = get_password_hash(payload.password)
 
+    # Update entity access if provided (simple list of entity IDs, default modules)
     if payload.entity_ids is not None:
         db.query(UserEntityAccess).filter(UserEntityAccess.user_id == user_id).delete()
+        default_modules = ["clients", "invoices"]
         for entity_id in payload.entity_ids:
-            db.add(UserEntityAccess(user_id=user_id, entity_id=entity_id))
+            entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+            if entity:
+                access = UserEntityAccess(
+                    user_id=user.id,
+                    entity_id=entity_id,
+                    allowed_modules=default_modules,
+                )
+                db.add(access)
 
     log_action(db, "user.updated", user_id=current_user.id, resource_type="user",
-               resource_id=user.id, description=f"Updated user {user.email}")
+               resource_id=user_id, description=f"Updated user {user.email}")
     db.commit()
     db.refresh(user)
     return user
 
 
+# ── Password Reset (admin sets new password) ───────────────────────────────────
+
+@router.post("/{user_id}/reset-password")
+def reset_password(
+    user_id: int,
+    payload: PasswordReset,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    user.hashed_password = get_password_hash(payload.new_password)
+    log_action(db, "user.password_reset", user_id=current_user.id, resource_type="user",
+               resource_id=user_id, description=f"Password reset for {user.email}")
+    db.commit()
+    return {"detail": "Password updated successfully"}
+
+
+# ── Permissions update (entity + module level) ────────────────────────────────
+
+@router.put("/{user_id}/permissions", response_model=UserOut)
+def update_permissions(
+    user_id: int,
+    payload: UserPermissionsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Remove all existing access
+    db.query(UserEntityAccess).filter(UserEntityAccess.user_id == user_id).delete()
+
+    # Re-create with granular permissions
+    for perm in payload.permissions:
+        entity = db.query(BusinessEntity).filter(BusinessEntity.id == perm.entity_id).first()
+        if not entity:
+            continue
+        access = UserEntityAccess(
+            user_id=user_id,
+            entity_id=perm.entity_id,
+            can_create=perm.can_create,
+            can_edit=perm.can_edit,
+            can_delete=perm.can_delete,
+            allowed_modules=perm.allowed_modules,
+        )
+        db.add(access)
+
+    log_action(db, "user.permissions_updated", user_id=current_user.id, resource_type="user",
+               resource_id=user_id, description=f"Updated permissions for {user.email}")
+    db.commit()
+    db.refresh(user)
+
+    # Enrich for response
+    for access in user.entity_access:
+        if access.entity:
+            access.entity_code = access.entity.code
+            access.entity_name = access.entity.name
+    return user
+
+
+# ── Deactivate ────────────────────────────────────────────────────────────────
+
 @router.delete("/{user_id}")
-def delete_user(
+def deactivate_user(
     user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
     if user_id == current_user.id:
-        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+        raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    db.delete(user)
-    log_action(db, "user.deleted", user_id=current_user.id, resource_type="user",
-               resource_id=user_id, description=f"Deleted user {user.email}")
+
+    user.is_active = False
+    log_action(db, "user.deactivated", user_id=current_user.id, resource_type="user",
+               resource_id=user_id, description=f"Deactivated user {user.email}")
     db.commit()
-    return {"detail": "User deleted"}
+    return {"detail": f"User '{user.email}' deactivated"}
+
+
+# ── Reactivate ────────────────────────────────────────────────────────────────
+
+@router.post("/{user_id}/reactivate", response_model=UserOut)
+def reactivate_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.is_active = True
+    log_action(db, "user.reactivated", user_id=current_user.id, resource_type="user",
+               resource_id=user_id, description=f"Reactivated user {user.email}")
+    db.commit()
+    db.refresh(user)
+    return user

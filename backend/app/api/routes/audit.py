@@ -34,4 +34,4 @@ def list_audit_logs(
     if resource_id:
         query = query.filter(AuditLog.resource_id == resource_id)
 
-    return query.order_by(AuditLog.timestamp.desc()).offset(skip).limit(limit).all()
+    return query.order_by(AuditLog.created_at.desc()).offset(skip).limit(limit).all()

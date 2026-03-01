@@ -1,60 +1,63 @@
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.units import mm
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
-from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+"""
+PDF Generator — safetec_core
+Matches the Safetec letterhead style:
+  - Logo + company name/reg/VAT left
+  - Contact details right with vertical divider
+  - TAX INVOICE TO block with Inv No / Date right
+  - Dark header bar for line items
+  - Subtotal / VAT / Total bottom right
+  - No status printed
+  - Non-VAT lines excluded from VAT calculation
+"""
+
 import io
-from decimal import Decimal
+import httpx
+from pathlib import Path
+from urllib.parse import urlparse
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
+
+# Resolve backend root so we can read local logos directly from disk
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]  # backend/app/services/ → backend/
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+from reportlab.platypus import (
+    SimpleDocTemplate, Table, TableStyle, Paragraph,
+    Spacer, HRFlowable, Image as RLImage
+)
 
 
-# ── Theme palettes ─────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_palette(theme: str = "dark"):
-    if theme == "light":
-        return {
-            "header_bg":   colors.HexColor("#1e3a5f"),
-            "header_text": colors.white,
-            "header_sub":  colors.HexColor("#a0b4c8"),
-            "accent":      colors.HexColor("#2563eb"),
-            "row_alt":     colors.HexColor("#f3f4f6"),
-            "row_base":    colors.white,
-            "meta_bg":     colors.HexColor("#f9fafb"),
-            "bill_bg":     colors.HexColor("#f0f4ff"),
-            "bank_bg":     colors.HexColor("#f9fafb"),
-            "total_bg":    colors.HexColor("#1e3a5f"),
-            "total_text":  colors.white,
-            "grid_color":  colors.HexColor("#e5e7eb"),
-            "text_dark":   colors.HexColor("#111827"),
-            "text_muted":  colors.HexColor("#6b7280"),
-            "footer_text": colors.HexColor("#9ca3af"),
-            "line_color":  colors.HexColor("#e5e7eb"),
-        }
-    else:  # dark
-        return {
-            "header_bg":   colors.HexColor("#1a1a2e"),
-            "header_text": colors.white,
-            "header_sub":  colors.HexColor("#aaaaaa"),
-            "accent":      colors.HexColor("#4f8ef7"),
-            "row_alt":     colors.HexColor("#f5f5f5"),
-            "row_base":    colors.white,
-            "meta_bg":     colors.HexColor("#f5f5f5"),
-            "bill_bg":     colors.HexColor("#f0f4ff"),
-            "bank_bg":     colors.HexColor("#f5f5f5"),
-            "total_bg":    colors.HexColor("#1a1a2e"),
-            "total_text":  colors.white,
-            "grid_color":  colors.HexColor("#e0e0e0"),
-            "text_dark":   colors.HexColor("#1a1a2e"),
-            "text_muted":  colors.HexColor("#555555"),
-            "footer_text": colors.HexColor("#aaaaaa"),
-            "line_color":  colors.HexColor("#e0e0e0"),
-        }
+def _hex_to_color(hex_str: str) -> colors.Color:
+    """Convert #RRGGBB to ReportLab Color."""
+    hex_str = hex_str.strip().lstrip("#")
+    if len(hex_str) == 3:
+        hex_str = "".join(c * 2 for c in hex_str)
+    r = int(hex_str[0:2], 16) / 255
+    g = int(hex_str[2:4], 16) / 255
+    b = int(hex_str[4:6], 16) / 255
+    return colors.Color(r, g, b)
+
+
+def _darken(color: colors.Color, factor: float = 0.8) -> colors.Color:
+    return colors.Color(
+        color.red * factor,
+        color.green * factor,
+        color.blue * factor,
+    )
 
 
 def format_currency(amount) -> str:
     try:
-        return f"R {Decimal(str(amount)):,.2f}"
+        val = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        # South African format: space as thousands separator
+        parts = f"{abs(val):,.2f}".replace(",", " ")
+        return f"R {parts}" if val >= 0 else f"-R {parts}"
     except Exception:
         return "R 0.00"
 
@@ -64,204 +67,400 @@ def format_date(dt) -> str:
         return "—"
     if isinstance(dt, str):
         return dt
-    return dt.strftime("%d %B %Y")
+    return dt.strftime("%d.%m.%Y")
 
 
-def generate_invoice_pdf(invoice, entity, client, theme: str = "dark") -> bytes:
-    p = _get_palette(theme)
+def _load_logo(logo_url: str | None, logo_path: str | None = None) -> bytes | None:
+    """
+    Load logo bytes, adapting to the storage backend in use:
+      - logo_path (legacy local path)  → read directly from disk
+      - logo_url starting with localhost/127.0.0.1 → local dev, read from disk
+      - logo_url with HTTPS (Supabase / CDN)       → fetch over HTTP
+    Returns None on any failure so the PDF still generates without a logo.
+    """
+    # 1. Legacy local file path
+    if logo_path:
+        try:
+            p = Path(logo_path)
+            if p.is_file():
+                return p.read_bytes()
+        except Exception:
+            pass
+
+    if not logo_url:
+        return None
+
+    # 2. Local dev URL — avoid a self-HTTP round-trip and read from disk directly
+    parsed = urlparse(logo_url)
+    if parsed.hostname in ("localhost", "127.0.0.1"):
+        local_path = _BACKEND_ROOT / parsed.path.lstrip("/")
+        try:
+            if local_path.is_file():
+                return local_path.read_bytes()
+        except Exception:
+            pass
+        return None
+
+    # 3. Remote URL (Supabase or other CDN)
+    try:
+        resp = httpx.get(logo_url, timeout=5.0)
+        if resp.status_code == 200:
+            return resp.content
+    except Exception:
+        pass
+    return None
+
+
+def _compute_totals(invoice, line_items):
+    """
+    Compute subtotal, vat_amount, total respecting per-line is_vat_exempt.
+    If invoice.is_vat_exempt is True, no VAT on any line.
+    """
+    subtotal = Decimal("0")
+    vat_base = Decimal("0")
+    vat_rate = Decimal(str(invoice.vat_rate)) if invoice.vat_rate else Decimal("0.15")
+
+    for item in line_items:
+        amount = Decimal(str(item.amount))
+        subtotal += amount
+        # Apply VAT if: invoice not fully exempt AND this line not exempt
+        line_exempt = invoice.is_vat_exempt or getattr(item, "is_vat_exempt", False)
+        if not line_exempt:
+            vat_base += amount
+
+    vat_amount = (vat_base * vat_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    total = subtotal + vat_amount
+    return subtotal, vat_amount, total, vat_rate
+
+
+# ── Main generator ────────────────────────────────────────────────────────────
+
+def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> bytes:
+    """
+    Generate a professional PDF matching the Safetec letterhead style.
+    theme: "light" (default, for printing) | "dark"
+    Entity's primary_color is used as the accent/header color.
+    """
+    # ── Colors ────────────────────────────────────────────────────────────────
+    entity_color_hex = getattr(entity, "primary_color", None) or "#1a1a2e"
+    accent = _hex_to_color(entity_color_hex)
+    accent_dark = _darken(accent, 0.85)
+    accent_text = colors.white
+
+    black = colors.HexColor("#111111")
+    gray_dark = colors.HexColor("#333333")
+    gray_mid = colors.HexColor("#666666")
+    gray_light = colors.HexColor("#f5f5f5")
+    white = colors.white
+    divider = colors.HexColor("#cccccc")
+
+    # ── Document ──────────────────────────────────────────────────────────────
     buffer = io.BytesIO()
-
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        rightMargin=20*mm,
-        leftMargin=20*mm,
-        topMargin=15*mm,
-        bottomMargin=20*mm,
+        rightMargin=18*mm,
+        leftMargin=18*mm,
+        topMargin=14*mm,
+        bottomMargin=16*mm,
     )
-
     story = []
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    title_style = ParagraphStyle("title", fontSize=22, textColor=p["header_text"], fontName="Helvetica-Bold", leading=28)
-    entity_right = ParagraphStyle("er", fontSize=9, textColor=p["header_text"], fontName="Helvetica", alignment=TA_RIGHT)
+    # ── Styles ────────────────────────────────────────────────────────────────
+    def st(name, **kw):
+        defaults = dict(fontName="Helvetica", fontSize=9, textColor=black, leading=12)
+        defaults.update(kw)
+        return ParagraphStyle(name, **defaults)
 
-    doc_type = invoice.document_type.upper() if hasattr(invoice.document_type, 'upper') else str(invoice.document_type).upper()
-    if '.' in doc_type:
-        doc_type = doc_type.split('.')[-1]
+    s_company_name = st("co_name", fontSize=10, fontName="Helvetica-Bold", textColor=black, leading=14)
+    s_company_sub = st("co_sub", fontSize=7.5, textColor=gray_mid, leading=10)
+    s_contact_label = st("ct_lbl", fontSize=8, textColor=gray_mid, leading=11)
+    s_contact_val = st("ct_val", fontSize=8, textColor=gray_dark, leading=11)
+    s_section_label = st("sec_lbl", fontSize=8, fontName="Helvetica-Bold", textColor=black,
+                         spaceBefore=1, spaceAfter=1)
+    s_client_name = st("cl_name", fontSize=11, fontName="Helvetica-Bold", textColor=black, leading=15)
+    s_client_detail = st("cl_det", fontSize=9, textColor=gray_dark, leading=12)
+    s_inv_label = st("inv_lbl", fontSize=8, textColor=gray_mid, alignment=TA_RIGHT, leading=11)
+    s_inv_value = st("inv_val", fontSize=9, fontName="Helvetica-Bold", textColor=black,
+                     alignment=TA_RIGHT, leading=12)
+    s_col_header = st("col_hdr", fontSize=9, fontName="Helvetica-Bold", textColor=accent_text,
+                      alignment=TA_CENTER, leading=12)
+    s_col_hdr_r = st("col_hdr_r", fontSize=9, fontName="Helvetica-Bold", textColor=accent_text,
+                     alignment=TA_RIGHT, leading=12)
+    s_line_desc = st("ln_desc", fontSize=9, textColor=gray_dark, leading=12)
+    s_line_num = st("ln_num", fontSize=9, textColor=gray_dark, alignment=TA_RIGHT, leading=12)
+    s_total_label = st("tot_lbl", fontSize=9, textColor=gray_dark, alignment=TA_RIGHT, leading=12)
+    s_total_value = st("tot_val", fontSize=9, fontName="Helvetica-Bold", textColor=black,
+                       alignment=TA_RIGHT, leading=12)
+    s_grand_label = st("gr_lbl", fontSize=11, fontName="Helvetica-Bold", textColor=accent_text,
+                       alignment=TA_RIGHT, leading=14)
+    s_grand_value = st("gr_val", fontSize=11, fontName="Helvetica-Bold", textColor=accent_text,
+                       alignment=TA_RIGHT, leading=14)
+    s_bank_title = st("bk_title", fontSize=8, fontName="Helvetica-Bold", textColor=gray_dark, leading=11)
+    s_bank_detail = st("bk_det", fontSize=8, textColor=gray_mid, leading=11)
+    s_footer = st("footer", fontSize=7, textColor=gray_mid, alignment=TA_CENTER, leading=9)
+    s_exempt_tag = st("exempt", fontSize=7, textColor=gray_mid, leading=9)
 
-    header_data = [[
-        Paragraph(doc_type, title_style),
-        Paragraph(
-            f"<b>{entity.name}</b><br/>"
-            + (f"{entity.address}<br/>" if entity.address else "")
-            + (f"VAT: {entity.vat_number}" if entity.vat_number else ""),
-            entity_right
-        )
-    ]]
-    header_table = Table(header_data, colWidths=[90*mm, 80*mm])
+    # ── Logo ──────────────────────────────────────────────────────────────────
+    logo_img = None
+    logo_url = getattr(entity, "logo_url", None)
+    logo_path = getattr(entity, "logo_path", None)
+    if logo_url or logo_path:
+        logo_bytes = _load_logo(logo_url, logo_path)
+        if logo_bytes:
+            try:
+                logo_img = RLImage(io.BytesIO(logo_bytes), width=38*mm, height=22*mm, kind="proportional")
+            except Exception:
+                logo_img = None
+
+    # ── Pre-compute totals (needed for Total Due in inv details block) ────────
+    sorted_items = sorted(invoice.line_items, key=lambda x: x.sort_order)
+    subtotal, vat_amount, total, vat_rate_dec = _compute_totals(invoice, sorted_items)
+
+    # ── Header — Logo left | All entity info right ────────────────────────────
+    company_name = entity.trading_name or entity.name
+
+    # Right column: name, reg, VAT, then contact details
+    right_col = []
+    right_col.append(Paragraph(company_name, s_company_name))
+    if entity.registration_number:
+        right_col.append(Paragraph(f"Reg {entity.registration_number}", s_company_sub))
+    if entity.vat_number:
+        right_col.append(Paragraph(f"VAT No: {entity.vat_number}", s_company_sub))
+    if entity.phone or entity.email or entity.address:
+        right_col.append(Spacer(1, 2*mm))
+    if entity.phone:
+        right_col.append(Paragraph(f"☎  {entity.phone}", s_contact_val))
+    if entity.email:
+        right_col.append(Paragraph(f"✉  {entity.email}", s_contact_val))
+    if entity.address:
+        addr_lines = [l.strip() for l in entity.address.replace(",", "\n").split("\n") if l.strip()]
+        if addr_lines:
+            right_col.append(Paragraph(f"⌂  {addr_lines[0]}", s_contact_val))
+            for line in addr_lines[1:]:
+                right_col.append(Paragraph(f"    {line}", s_contact_val))
+
+    # Left column: logo only
+    left_col = [logo_img] if logo_img else []
+
+    header_table = Table(
+        [[left_col, right_col]],
+        colWidths=[44*mm, 130*mm],
+        hAlign="LEFT",
+    )
     header_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), p["header_bg"]),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 12),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
-        ("LEFTPADDING", (0, 0), (0, -1), 8),
-        ("RIGHTPADDING", (-1, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("LINEBEFORE", (1, 0), (1, -1), 1.5, accent),
+        ("LEFTPADDING", (1, 0), (1, -1), 8),
     ]))
     story.append(header_table)
-    story.append(Spacer(1, 6*mm))
+    story.append(Spacer(1, 3*mm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=divider))
+    story.append(Spacer(1, 4*mm))
 
-    # ── Invoice Meta ──────────────────────────────────────────────────────────
-    meta_label = ParagraphStyle("ml", fontSize=8, textColor=p["text_muted"], fontName="Helvetica")
-    meta_value = ParagraphStyle("mv", fontSize=10, textColor=p["text_dark"], fontName="Helvetica-Bold")
+    # ── Document type title ───────────────────────────────────────────────────
+    doc_type = str(invoice.document_type).upper().split(".")[-1]
+    if doc_type == "INVOICE":
+        doc_title = "TAX INVOICE TO"
+    elif doc_type == "QUOTE":
+        doc_title = "QUOTATION TO"
+    else:
+        doc_title = f"{doc_type} TO"
 
-    status_str = str(invoice.status).upper().split('.')[-1]
-    meta_data = [
-        [Paragraph("INVOICE NO.", meta_label), Paragraph("DATE ISSUED", meta_label),
-         Paragraph("DUE DATE", meta_label), Paragraph("STATUS", meta_label)],
-        [Paragraph(invoice.invoice_number, meta_value), Paragraph(format_date(invoice.issue_date), meta_value),
-         Paragraph(format_date(invoice.due_date), meta_value), Paragraph(status_str, meta_value)],
+    if invoice.is_vat_exempt:
+        doc_title = "INVOICE TO"  # Non-VAT invoices shouldn't say TAX INVOICE
+
+    # ── Bill To + Inv details ─────────────────────────────────────────────────
+    supplier_name = supplier.name if supplier else "—"
+    bill_lines = [Paragraph(doc_title, s_section_label), Paragraph(supplier_name, s_client_name)]
+
+    if supplier:
+        if supplier.address:
+            for addr_line in supplier.address.split("\n"):
+                if addr_line.strip():
+                    bill_lines.append(Paragraph(addr_line.strip(), s_client_detail))
+        if supplier.city:
+            postal = f"{supplier.city}, {supplier.postal_code}" if supplier.postal_code else supplier.city
+            bill_lines.append(Paragraph(postal, s_client_detail))
+        if supplier.vat_number:
+            bill_lines.append(Paragraph(f"VAT NO:  {supplier.vat_number}", s_client_detail))
+
+    inv_details = [
+        [Paragraph("Inv No", s_inv_label), Paragraph(invoice.invoice_number, s_inv_value)],
+        [Paragraph("Date", s_inv_label), Paragraph(format_date(invoice.issue_date), s_inv_value)],
     ]
-    meta_table = Table(meta_data, colWidths=[42.5*mm, 42.5*mm, 42.5*mm, 42.5*mm])
-    meta_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), p["meta_bg"]),
-        ("GRID", (0, 0), (-1, -1), 0.5, p["grid_color"]),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+    if invoice.due_date:
+        inv_details.append([
+            Paragraph("Due Date", s_inv_label),
+            Paragraph(format_date(invoice.due_date), s_inv_value),
+        ])
+    inv_details.append([
+        Paragraph("Total Due", s_inv_label),
+        Paragraph(format_currency(total), s_inv_value),
+    ])
+
+    inv_meta_table = Table(inv_details, colWidths=[22*mm, 32*mm])
+    inv_meta_table.setStyle(TableStyle([
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
     ]))
-    story.append(meta_table)
-    story.append(Spacer(1, 6*mm))
 
-    # ── Bill To ───────────────────────────────────────────────────────────────
-    bill_style = ParagraphStyle("bs", fontSize=8, textColor=p["text_muted"], fontName="Helvetica")
-    bill_value = ParagraphStyle("bv", fontSize=10, textColor=p["text_dark"], fontName="Helvetica-Bold")
-    bill_detail = ParagraphStyle("bd", fontSize=9, textColor=p["text_dark"], fontName="Helvetica")
-
-    client_name = client.name if client else "—"
-    bill_content = [
-        Paragraph("BILL TO", bill_style),
-        Paragraph(client_name, bill_value),
-    ]
-    for val in [client.address if client else None, client.email if client else None, client.phone if client else None]:
-        if val:
-            bill_content.append(Paragraph(val, bill_detail))
-
-    bill_table = Table([[bill_content, []]], colWidths=[85*mm, 85*mm])
-    bill_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, 0), p["bill_bg"]),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("LEFTPADDING", (0, 0), (0, -1), 10),
-        ("BOX", (0, 0), (0, 0), 0.5, p["grid_color"]),
+    bill_section = Table(
+        [[bill_lines, inv_meta_table]],
+        colWidths=[108*mm, 66*mm],
+    )
+    bill_section.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
     ]))
-    story.append(bill_table)
-    story.append(Spacer(1, 6*mm))
+    story.append(bill_section)
+    story.append(Spacer(1, 5*mm))
 
     # ── Line Items ────────────────────────────────────────────────────────────
-    li_header = ParagraphStyle("lih", fontSize=9, textColor=p["header_text"], fontName="Helvetica-Bold")
-    li_cell = ParagraphStyle("lic", fontSize=9, textColor=p["text_dark"], fontName="Helvetica")
-    li_cell_r = ParagraphStyle("licr", fontSize=9, textColor=p["text_dark"], fontName="Helvetica", alignment=TA_RIGHT)
+    col_desc_w = 95*mm
+    col_qty_w = 18*mm
+    col_rate_w = 30*mm
+    col_total_w = 31*mm
 
+    # Header row
     line_rows = [[
-        Paragraph("DESCRIPTION", li_header),
-        Paragraph("QTY", ParagraphStyle("qh", fontSize=9, textColor=p["header_text"], fontName="Helvetica-Bold", alignment=TA_RIGHT)),
-        Paragraph("UNIT PRICE", ParagraphStyle("uh", fontSize=9, textColor=p["header_text"], fontName="Helvetica-Bold", alignment=TA_RIGHT)),
-        Paragraph("AMOUNT", ParagraphStyle("ah", fontSize=9, textColor=p["header_text"], fontName="Helvetica-Bold", alignment=TA_RIGHT)),
+        Paragraph("DESCRIPTION", s_col_header),
+        Paragraph("QTY", s_col_hdr_r),
+        Paragraph("RATE", s_col_hdr_r),
+        Paragraph("TOTAL", s_col_hdr_r),
     ]]
 
-    sorted_items = sorted(invoice.line_items, key=lambda x: x.sort_order)
     for item in sorted_items:
+        desc = item.description or ""
+        # Add "(No VAT)" tag on line if partially exempt
+        is_line_exempt = getattr(item, "is_vat_exempt", False)
+        if is_line_exempt and not invoice.is_vat_exempt:
+            desc_para = [
+                Paragraph(desc, s_line_desc),
+                Paragraph("No VAT", s_exempt_tag),
+            ]
+        else:
+            desc_para = Paragraph(desc, s_line_desc)
+
+        qty = Decimal(str(item.quantity))
+        qty_str = f"{qty:.2f}" if qty != qty.to_integral_value() else f"{int(qty)}"
         line_rows.append([
-            Paragraph(item.description or "", li_cell),
-            Paragraph(f"{Decimal(str(item.quantity)):.2f}", li_cell_r),
-            Paragraph(format_currency(item.unit_price), li_cell_r),
-            Paragraph(format_currency(item.amount), li_cell_r),
+            desc_para,
+            Paragraph(qty_str, s_line_num),
+            Paragraph(format_currency(item.unit_price), s_line_num),
+            Paragraph(format_currency(item.amount), s_line_num),
         ])
 
-    while len(line_rows) < 7:
+    # Pad to minimum rows
+    min_rows = 8
+    while len(line_rows) < min_rows + 1:
         line_rows.append(["", "", "", ""])
 
-    items_table = Table(line_rows, colWidths=[90*mm, 20*mm, 35*mm, 25*mm])
-    item_styles = [
-        ("BACKGROUND", (0, 0), (-1, 0), p["header_bg"]),
-        ("GRID", (0, 0), (-1, -1), 0.3, p["grid_color"]),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    items_table = Table(
+        line_rows,
+        colWidths=[col_desc_w, col_qty_w, col_rate_w, col_total_w],
+    )
+    row_styles = [
+        # Header
+        ("BACKGROUND", (0, 0), (-1, 0), accent),
+        ("TOPPADDING", (0, 0), (-1, 0), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
+        # All cells
+        ("TOPPADDING", (0, 1), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        # Grid lines (light)
+        ("LINEBELOW", (0, 0), (-1, -1), 0.3, divider),
+        # Alternate row shading
     ]
     for i in range(1, len(line_rows)):
         if i % 2 == 0:
-            item_styles.append(("BACKGROUND", (0, i), (-1, i), p["row_alt"]))
-    items_table.setStyle(TableStyle(item_styles))
+            row_styles.append(("BACKGROUND", (0, i), (-1, i), gray_light))
+
+    items_table.setStyle(TableStyle(row_styles))
     story.append(items_table)
     story.append(Spacer(1, 4*mm))
 
-    # ── Totals ────────────────────────────────────────────────────────────────
-    total_label = ParagraphStyle("tl", fontSize=9, textColor=p["text_dark"], fontName="Helvetica", alignment=TA_RIGHT)
-    total_value = ParagraphStyle("tv", fontSize=9, textColor=p["text_dark"], fontName="Helvetica-Bold", alignment=TA_RIGHT)
-    grand_label = ParagraphStyle("gl", fontSize=11, textColor=p["total_text"], fontName="Helvetica-Bold", alignment=TA_RIGHT)
-    grand_value = ParagraphStyle("gv", fontSize=11, textColor=p["total_text"], fontName="Helvetica-Bold", alignment=TA_RIGHT)
+    # ── Totals + Banking Details (side by side) ───────────────────────────────
+    vat_pct = int(vat_rate_dec * 100)
 
-    vat_pct = int(Decimal(str(invoice.vat_rate)) * 100)
-    totals_data = [
-        ["", Paragraph("Subtotal", total_label), Paragraph(format_currency(invoice.subtotal), total_value)],
-        ["", Paragraph(f"VAT ({vat_pct}%)", total_label), Paragraph(format_currency(invoice.vat_amount), total_value)],
-        ["", Paragraph("TOTAL DUE", grand_label), Paragraph(format_currency(invoice.total), grand_value)],
+    if invoice.is_vat_exempt:
+        vat_label = "VAT (Exempt)"
+        vat_display = "—"
+    else:
+        vat_label = f"VAT ({vat_pct}%)"
+        vat_display = format_currency(vat_amount)
+
+    # Left: banking details
+    bank_content = []
+    if entity.bank_account_number:
+        bank_content.append(Paragraph("Banking Details", s_bank_title))
+        bank_content.append(Spacer(1, 2*mm))
+        if entity.bank_name:
+            bank_content.append(Paragraph(f"Bank:  {entity.bank_name}", s_bank_detail))
+        if entity.bank_branch:
+            bank_content.append(Paragraph(f"Branch:  {entity.bank_branch}", s_bank_detail))
+        if entity.bank_branch_code:
+            bank_content.append(Paragraph(f"Branch Code:  {entity.bank_branch_code}", s_bank_detail))
+        bank_content.append(Paragraph(f"Account No:  {entity.bank_account_number}", s_bank_detail))
+        if entity.bank_reference:
+            bank_content.append(Paragraph(f"Reference:  {entity.bank_reference}", s_bank_detail))
+
+    # Right: subtotal / VAT / grand total as a nested table
+    totals_label_w = 30*mm
+    totals_value_w = 36*mm
+
+    totals_right_data = [
+        [Paragraph("Sub Total", s_total_label), Paragraph(format_currency(subtotal), s_total_value)],
+        [Paragraph(vat_label, s_total_label),   Paragraph(vat_display, s_total_value)],
+        [Paragraph("Total", s_grand_label),     Paragraph(format_currency(total), s_grand_value)],
     ]
-    totals_table = Table(totals_data, colWidths=[95*mm, 50*mm, 25*mm])
-    totals_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 2), (-1, 2), p["total_bg"]),
-        ("LINEABOVE", (1, 0), (-1, 0), 0.5, p["grid_color"]),
-        ("LINEABOVE", (1, 2), (-1, 2), 1, p["total_bg"]),
+    totals_right = Table(totals_right_data, colWidths=[totals_label_w, totals_value_w])
+    totals_right.setStyle(TableStyle([
+        ("BACKGROUND", (0, 2), (-1, 2), accent),
         ("TOPPADDING", (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.5, divider),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
-    story.append(totals_table)
-    story.append(Spacer(1, 8*mm))
 
-    # ── Banking Details ───────────────────────────────────────────────────────
-    bank_title = ParagraphStyle("bt", fontSize=9, textColor=p["text_dark"], fontName="Helvetica-Bold")
-    bank_detail = ParagraphStyle("bd2", fontSize=8, textColor=p["text_dark"], fontName="Helvetica")
-
-    if entity.bank_account_number:
-        bank_content = [Paragraph("Banking Details", bank_title), Spacer(1, 2*mm)]
-        bank_content.append(Paragraph(f"{entity.name}", bank_detail))
-        bank_content.append(Paragraph(f"Bank: {entity.bank_name or ''} | Branch: {entity.bank_branch or ''}", bank_detail))
-        bank_content.append(Paragraph(f"Account: {entity.bank_account_number}", bank_detail))
-        if entity.bank_branch_code:
-            bank_content.append(Paragraph(f"Branch Code: {entity.bank_branch_code}", bank_detail))
-        if entity.bank_reference:
-            bank_content.append(Paragraph(f"Reference: {entity.bank_reference}", bank_detail))
-
-        bank_table = Table([[bank_content]], colWidths=[170*mm])
-        bank_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), p["bank_bg"]),
-            ("BOX", (0, 0), (-1, -1), 0.5, p["grid_color"]),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ]))
-        story.append(bank_table)
-
-    if invoice.notes:
-        story.append(Spacer(1, 4*mm))
-        story.append(Paragraph("Notes:", ParagraphStyle("nt", fontSize=9, fontName="Helvetica-Bold", textColor=p["text_dark"])))
-        story.append(Paragraph(invoice.notes, ParagraphStyle("nd", fontSize=8, fontName="Helvetica", textColor=p["text_dark"])))
+    # Combined bottom row: banking (left 108mm) + totals (right 66mm)
+    bottom_table = Table(
+        [[bank_content, totals_right]],
+        colWidths=[108*mm, 66*mm],
+    )
+    bottom_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(bottom_table)
+    story.append(Spacer(1, 6*mm))
 
     # ── Footer ────────────────────────────────────────────────────────────────
-    story.append(Spacer(1, 8*mm))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=p["line_color"]))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=divider))
     story.append(Spacer(1, 2*mm))
-    story.append(Paragraph(
-        f"Generated by safetec_core | {entity.name} | {format_date(datetime.now())}",
-        ParagraphStyle("footer", fontSize=7, textColor=p["footer_text"], fontName="Helvetica", alignment=TA_CENTER)
-    ))
+    footer_text = f"{entity.name}"
+    if entity.vat_number:
+        footer_text += f"  |  VAT: {entity.vat_number}"
+    footer_text += f"  |  Generated {format_date(datetime.now())}"
+    story.append(Paragraph(footer_text, s_footer))
 
     doc.build(story)
     buffer.seek(0)
     return buffer.read()
-

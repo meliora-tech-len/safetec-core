@@ -8,6 +8,8 @@
   --accent:     #4f8ef7;
   --accent-hover: #3a7ae8;
   --accent-dim: rgba(79, 142, 247, 0.15);
+  --accent-subtle: rgba(79, 142, 247, 0.1);
+  --bg-sidebar: #111120;
   --success:    #22c55e;
   --warning:    #f59e0b;
   --danger:     #ef4444;
@@ -31,6 +33,8 @@
   --accent:     #2563eb;
   --accent-hover: #1d4ed8;
   --accent-dim: rgba(37, 99, 235, 0.1);
+  --accent-subtle: rgba(37, 99, 235, 0.08);
+  --bg-sidebar: #f1f3f8;
   --success:    #16a34a;
   --warning:    #d97706;
   --danger:     #dc2626;

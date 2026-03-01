@@ -46,7 +46,7 @@ export default function AuditPage() {
         <select value={filterResource} onChange={e => setFilterResource(e.target.value)} style={{ width: 160 }}>
           <option value="">All Resources</option>
           <option value="invoice">Invoices</option>
-          <option value="client">Clients</option>
+          <option value="client">Suppliers</option>
           <option value="user">Users</option>
           <option value="entity">Entities</option>
         </select>
@@ -71,7 +71,7 @@ export default function AuditPage() {
               <tr><td colSpan={6}><div className="empty-state"><Shield size={32} /><p>No audit logs</p></div></td></tr>
             ) : logs.map(log => (
               <tr key={log.id}>
-                <td className="font-mono text-muted" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{formatDateTime(log.timestamp)}</td>
+                <td className="font-mono text-muted" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{formatDateTime(log.created_at)}</td>
                 <td style={{ fontSize: 12 }}>{log.user?.full_name || `#${log.user_id}` || 'System'}</td>
                 <td>
                   <span style={{ fontSize: 11, fontWeight: 700, color: actionColor(log.action), fontFamily: 'monospace' }}>

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
@@ -25,11 +25,6 @@ class DocumentType(str, Enum):
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-    user: "UserOut"
-
 class TokenData(BaseModel):
     user_id: Optional[int] = None
 
@@ -51,7 +46,9 @@ class EntityBase(BaseModel):
     bank_branch_code: Optional[str] = None
     bank_reference: Optional[str] = None
     invoice_prefix: Optional[str] = None
+    quote_prefix: Optional[str] = "QT"
     vat_rate: Optional[Decimal] = Decimal("0.15")
+    primary_color: Optional[str] = "#2563eb"
 
 class EntityCreate(EntityBase):
     pass
@@ -69,18 +66,52 @@ class EntityUpdate(BaseModel):
     bank_account_number: Optional[str] = None
     bank_branch_code: Optional[str] = None
     bank_reference: Optional[str] = None
+    invoice_prefix: Optional[str] = None
+    invoice_counter: Optional[int] = None
+    quote_prefix: Optional[str] = None
+    quote_counter: Optional[int] = None
     vat_rate: Optional[Decimal] = None
+    primary_color: Optional[str] = None
+    is_active: Optional[bool] = None
 
 class EntityOut(EntityBase):
     id: int
     invoice_counter: int
     quote_counter: int
+    quote_prefix: Optional[str] = "QT"
     is_active: bool
     created_at: datetime
     logo_path: Optional[str] = None
+    logo_url: Optional[str] = None
+    primary_color: Optional[str] = "#2563eb"
 
     class Config:
         from_attributes = True
+
+
+# ── App Settings ──────────────────────────────────────────────────────────────
+
+class AppSettingOut(BaseModel):
+    id: int
+    key: str
+    value: str
+    label: Optional[str] = None
+    category: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class AppSettingUpdate(BaseModel):
+    value: str
+    label: Optional[str] = None
+    category: Optional[str] = None
+
+class AppSettingCreate(BaseModel):
+    key: str
+    value: str
+    label: Optional[str] = None
+    category: Optional[str] = "system"
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
@@ -92,9 +123,17 @@ class UserEntityAccessOut(BaseModel):
     can_create: bool
     can_edit: bool
     can_delete: bool
+    allowed_modules: Optional[List[str]] = []
 
     class Config:
         from_attributes = True
+
+class EntityPermissionUpdate(BaseModel):
+    entity_id: int
+    can_create: bool = True
+    can_edit: bool = True
+    can_delete: bool = False
+    allowed_modules: List[str] = []
 
 class UserBase(BaseModel):
     email: str
@@ -113,6 +152,12 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     entity_ids: Optional[List[int]] = None
 
+class UserPermissionsUpdate(BaseModel):
+    permissions: List[EntityPermissionUpdate]
+
+class PasswordReset(BaseModel):
+    new_password: str
+
 class UserOut(UserBase):
     id: int
     is_active: bool
@@ -124,9 +169,20 @@ class UserOut(UserBase):
         from_attributes = True
 
 
-# ── Clients ───────────────────────────────────────────────────────────────────
+# ── Token — defined AFTER UserOut so the reference resolves ──────────────────
 
-class ClientBase(BaseModel):
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserOut
+
+    class Config:
+        from_attributes = True
+
+
+# ── Suppliers ─────────────────────────────────────────────────────────────────
+
+class SupplierBase(BaseModel):
     entity_id: int
     name: str
     trading_name: Optional[str] = None
@@ -140,10 +196,10 @@ class ClientBase(BaseModel):
     postal_code: Optional[str] = None
     notes: Optional[str] = None
 
-class ClientCreate(ClientBase):
+class SupplierCreate(SupplierBase):
     pass
 
-class ClientUpdate(BaseModel):
+class SupplierUpdate(BaseModel):
     name: Optional[str] = None
     trading_name: Optional[str] = None
     registration_number: Optional[str] = None
@@ -157,7 +213,7 @@ class ClientUpdate(BaseModel):
     notes: Optional[str] = None
     is_active: Optional[bool] = None
 
-class ClientOut(ClientBase):
+class SupplierOut(SupplierBase):
     id: int
     is_active: bool
     created_at: datetime
@@ -166,7 +222,7 @@ class ClientOut(ClientBase):
     class Config:
         from_attributes = True
 
-class ClientSummary(BaseModel):
+class SupplierSummary(BaseModel):
     id: int
     name: str
     trading_name: Optional[str] = None
@@ -181,9 +237,11 @@ class ClientSummary(BaseModel):
 # ── Invoice Line Items ────────────────────────────────────────────────────────
 
 class LineItemBase(BaseModel):
-    description: str
+    description: Optional[str] = None
     quantity: Decimal = Decimal("1")
     unit_price: Decimal = Decimal("0")
+    amount: Optional[Decimal] = Decimal("0")
+    is_vat_exempt: bool = False
     sort_order: int = 0
 
 class LineItemCreate(LineItemBase):
@@ -201,11 +259,14 @@ class LineItemOut(LineItemBase):
 
 class InvoiceBase(BaseModel):
     entity_id: int
-    client_id: int
+    supplier_id: int
     document_type: DocumentType = DocumentType.invoice
+    invoice_number: Optional[str] = None
     status: InvoiceStatus = InvoiceStatus.draft
+    is_vat_exempt: bool = False
     issue_date: Optional[datetime] = None
     due_date: Optional[datetime] = None
+    vat_rate: Optional[Decimal] = None
     notes: Optional[str] = None
     terms: Optional[str] = None
 
@@ -213,11 +274,14 @@ class InvoiceCreate(InvoiceBase):
     line_items: List[LineItemCreate] = []
 
 class InvoiceUpdate(BaseModel):
-    client_id: Optional[int] = None
+    supplier_id: Optional[int] = None
     status: Optional[InvoiceStatus] = None
+    invoice_number: Optional[str] = None
+    is_vat_exempt: Optional[bool] = None
     issue_date: Optional[datetime] = None
     due_date: Optional[datetime] = None
     paid_date: Optional[datetime] = None
+    vat_rate: Optional[Decimal] = None
     notes: Optional[str] = None
     terms: Optional[str] = None
     line_items: Optional[List[LineItemCreate]] = None
@@ -226,14 +290,14 @@ class InvoiceOut(InvoiceBase):
     id: int
     invoice_number: str
     subtotal: Decimal
+    vat_rate: Decimal
     vat_amount: Decimal
     total: Decimal
-    vat_rate: Decimal
     paid_date: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     line_items: List[LineItemOut] = []
-    client: Optional[ClientSummary] = None
+    supplier: Optional[SupplierSummary] = None
     entity: Optional[EntityOut] = None
 
     class Config:
@@ -244,7 +308,7 @@ class InvoiceSummary(BaseModel):
     invoice_number: str
     document_type: DocumentType
     status: InvoiceStatus
-    client_name: Optional[str] = None
+    supplier_name: Optional[str] = None
     entity_code: Optional[str] = None
     total: Decimal
     issue_date: Optional[datetime] = None
@@ -252,6 +316,11 @@ class InvoiceSummary(BaseModel):
 
     class Config:
         from_attributes = True
+
+class NextNumberOut(BaseModel):
+    next_number: str
+    prefix: str
+    counter: int
 
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────
@@ -265,7 +334,7 @@ class AuditLogOut(BaseModel):
     resource_id: Optional[int] = None
     description: Optional[str] = None
     ip_address: Optional[str] = None
-    timestamp: datetime
+    created_at: Optional[datetime] = None
     user: Optional[UserOut] = None
 
     class Config:
@@ -275,14 +344,15 @@ class AuditLogOut(BaseModel):
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 class DashboardStats(BaseModel):
-    total_invoices: int
-    total_quotes: int
-    outstanding_total: Decimal
-    paid_this_month: Decimal
-    overdue_count: int
-    draft_count: int
+    total_invoices: int = 0
+    total_quotes: int = 0
+    outstanding_total: Decimal = Decimal("0")
+    paid_this_month: Decimal = Decimal("0")
+    overdue_count: int = 0
+    draft_count: int = 0
     recent_invoices: List[InvoiceSummary] = []
     entity_breakdown: List[dict] = []
 
 
+# ── Rebuild forward references ────────────────────────────────────────────────
 Token.model_rebuild()

@@ -22,7 +22,6 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   const [invoice, setInvoice] = useState(null)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
-  const [pdfMenuOpen, setPdfMenuOpen] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -58,7 +57,6 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   }
 
   const handlePdf = async (pdfTheme) => {
-    setPdfMenuOpen(false)
     try { await downloadInvoicePdf(invoice.id, invoice.invoice_number, pdfTheme) }
     catch { toast.error('PDF generation failed') }
   }
@@ -157,10 +155,10 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
           {/* Bill To */}
           <div style={styles.billTo}>
             <div style={styles.metaLabel}>Bill To</div>
-            <div style={{ fontWeight: 700, marginTop: 6 }}>{invoice.client?.name}</div>
-            {invoice.client?.address && <div style={styles.invSub}>{invoice.client.address}</div>}
-            {invoice.client?.email && <div style={styles.invSub}>{invoice.client.email}</div>}
-            {invoice.client?.phone && <div style={styles.invSub}>{invoice.client.phone}</div>}
+            <div style={{ fontWeight: 700, marginTop: 6 }}>{invoice.supplier?.name}</div>
+            {invoice.supplier?.address && <div style={styles.invSub}>{invoice.supplier.address}</div>}
+            {invoice.supplier?.email && <div style={styles.invSub}>{invoice.supplier.email}</div>}
+            {invoice.supplier?.phone && <div style={styles.invSub}>{invoice.supplier.phone}</div>}
           </div>
 
           {/* Line items */}
@@ -195,14 +193,6 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
             </div>
           </div>
 
-          {/* Notes */}
-          {invoice.notes && (
-            <div style={styles.notes}>
-              <div style={styles.metaLabel}>Notes</div>
-              <p style={{ marginTop: 6, fontSize: 13 }}>{invoice.notes}</p>
-            </div>
-          )}
-
           {/* Banking */}
           {invoice.entity?.bank_account_number && (
             <div style={styles.banking}>
@@ -217,15 +207,32 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
           )}
         </div>
 
-        {/* Right sidebar - audit style info */}
-        <div>
+        {/* Right sidebar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
+          {/* Document Info */}
           <div className="card">
             <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>Document Info</div>
+            <div style={styles.infoRow}>
+              <span>Status</span>
+              <span className={statusBadgeClass(invoice.status)}>{invoice.status}</span>
+            </div>
             <div style={styles.infoRow}><span>Created</span><span>{formatDate(invoice.created_at)}</span></div>
             {invoice.updated_at && <div style={styles.infoRow}><span>Modified</span><span>{formatDate(invoice.updated_at)}</span></div>}
             <div style={styles.infoRow}><span>Entity</span><span style={{ fontWeight: 600 }}>{invoice.entity?.code}</span></div>
             <div style={styles.infoRow}><span>VAT Rate</span><span>{Math.round(parseFloat(invoice.vat_rate) * 100)}%</span></div>
-            <div style={styles.infoRow}><span>Currency</span><span>ZAR (R)</span></div>
+            <div style={{ ...styles.infoRow, borderBottom: 'none' }}><span>Currency</span><span>ZAR (R)</span></div>
+          </div>
+
+          {/* Notes — internal only, not printed in PDF */}
+          <div className="card" style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Notes</div>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: 4 }}>not printed</span>
+            </div>
+            {invoice.notes
+              ? <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{invoice.notes}</p>
+              : <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, fontStyle: 'italic' }}>No notes</p>
+            }
           </div>
         </div>
       </div>
@@ -237,7 +244,7 @@ const styles = {
   page: { padding: '20px 28px', flex: 1 },
   topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   actions: { display: 'flex', gap: 8, alignItems: 'center' },
-  grid: { display: 'grid', gridTemplateColumns: '1fr 200px', gap: 20, alignItems: 'flex-start' },
+  grid: { display: 'grid', gridTemplateColumns: '1fr 240px', gap: 20, alignItems: 'stretch' },
   invoiceCard: {
     background: 'var(--bg-card)', border: '1px solid var(--border)',
     borderRadius: 'var(--radius)', padding: 28,
@@ -258,24 +265,10 @@ const styles = {
   totals: { borderTop: '2px solid var(--border)', marginTop: 16, paddingTop: 12 },
   totalRow: { display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13 },
   grandTotal: { borderTop: '1px solid var(--border)', marginTop: 6, paddingTop: 10, fontWeight: 800, fontSize: 16 },
-  notes: { marginTop: 20, padding: '12px 16px', background: 'var(--bg-surface)', borderRadius: 6 },
   banking: { marginTop: 12, padding: '12px 16px', background: 'var(--bg-surface)', borderRadius: 6 },
   infoRow: {
     display: 'flex', justifyContent: 'space-between',
     padding: '7px 0', fontSize: 12, borderBottom: '1px solid var(--border)',
     color: 'var(--text-secondary)',
-  },
-  pdfMenu: {
-    position: 'absolute', top: '100%', right: 0, zIndex: 50,
-    background: 'var(--bg-card)', border: '1px solid var(--border)',
-    borderRadius: 6, boxShadow: 'var(--shadow)',
-    minWidth: 130, overflow: 'hidden', marginTop: 4,
-  },
-  pdfMenuItem: {
-    display: 'block', width: '100%', textAlign: 'left',
-    padding: '9px 14px', fontSize: 13,
-    background: 'none', color: 'var(--text-primary)',
-    borderRadius: 0, cursor: 'pointer',
-    transition: 'background 0.1s',
   },
 }

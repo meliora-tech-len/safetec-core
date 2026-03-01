@@ -41,12 +41,12 @@ export const getEntity = (id) => api.get(`/entities/${id}`)
 export const createEntity = (data) => api.post('/entities/', data)
 export const updateEntity = (id, data) => api.put(`/entities/${id}`, data)
 
-// ── Clients ───────────────────────────────────────────────────────────────────
-export const getClients = (params = {}) => api.get('/clients/', { params })
-export const getClient = (id) => api.get(`/clients/${id}`)
-export const createClient = (data) => api.post('/clients/', data)
-export const updateClient = (id, data) => api.put(`/clients/${id}`, data)
-export const deleteClient = (id) => api.delete(`/clients/${id}`)
+// ── Suppliers ─────────────────────────────────────────────────────────────────
+export const getSuppliers = (params = {}) => api.get('/suppliers/', { params })
+export const getSupplier = (id) => api.get(`/suppliers/${id}`)
+export const createSupplier = (data) => api.post('/suppliers/', data)
+export const updateSupplier = (id, data) => api.put(`/suppliers/${id}`, data)
+export const deleteSupplier = (id) => api.delete(`/suppliers/${id}`)
 
 // ── Invoices ──────────────────────────────────────────────────────────────────
 export const getInvoices = (params = {}) => api.get('/invoices/', { params })
@@ -79,5 +79,23 @@ export const deleteUser = (id) => api.delete(`/users/${id}`)
 
 // ── Audit ─────────────────────────────────────────────────────────────────────
 export const getAuditLogs = (params = {}) => api.get('/audit/', { params })
+
+// ── Entities (additions) ──────────────────────────────────────────────────────
+export const uploadEntityLogo = (id, formData) =>
+  api.post(`/entities/${id}/logo`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+export const archiveEntity = (id) => api.delete(`/entities/${id}`)
+export const restoreEntity = (id) => api.post(`/entities/${id}/restore`)
+export const getNextInvoiceNumber = (entityId, docType = 'invoice') =>
+  api.get(`/entities/${entityId}/next-number`, { params: { doc_type: docType } })
+
+// ── Users (additions) ─────────────────────────────────────────────────────────
+export const updateUserPermissions = (id, data) => api.put(`/users/${id}/permissions`, data)
+export const resetUserPassword = (id, data) => api.post(`/users/${id}/reset-password`, data)
+export const reactivateUser = (id) => api.post(`/users/${id}/reactivate`)
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+export const getSettings = () => api.get('/settings/')
+export const updateSetting = (key, data) => api.put(`/settings/${key}`, data)
+export const createSetting = (data) => api.post('/settings/', data)
 
 export default api

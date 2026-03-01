@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { login as apiLogin, getMe } from "../services/api"
+import { login as apiLogin, getEntities } from "../services/api"
 
 const AuthContext = createContext(null)
 
@@ -7,7 +7,46 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('user')) } catch { return null }
   })
-  const [loading, setLoading] = useState(false)
+  const loading = false
+  const [entities, setEntities] = useState([])
+  const [activeEntity, setActiveEntityState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('activeEntity')) } catch { return null }
+  })
+
+  // Load entities whenever the logged-in user changes
+  useEffect(() => {
+    if (!user) {
+      setEntities([])
+      setActiveEntityState(null)
+      return
+    }
+    getEntities().then(res => {
+      const list = res.data
+      setEntities(list)
+
+      // Restore previously selected entity, or default to first in list
+      let stored = null
+      try { stored = JSON.parse(localStorage.getItem('activeEntity')) } catch {}
+
+      if (stored) {
+        const fresh = list.find(e => e.id === stored.id)
+        if (fresh) {
+          setActiveEntityState(fresh)
+          localStorage.setItem('activeEntity', JSON.stringify(fresh))
+        } else {
+          // Previously selected entity no longer accessible — clear it
+          setActiveEntityState(null)
+          localStorage.removeItem('activeEntity')
+        }
+      }
+      // No stored entity → stay null (All Businesses mode)
+    }).catch(() => {})
+  }, [user])
+
+  const setActiveEntity = (entity) => {
+    setActiveEntityState(entity)
+    localStorage.setItem('activeEntity', JSON.stringify(entity))
+  }
 
   const login = async (email, password) => {
     const res = await apiLogin(email, password)
@@ -21,7 +60,10 @@ export function AuthProvider({ children }) {
   const logout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
+    localStorage.removeItem('activeEntity')
     setUser(null)
+    setActiveEntityState(null)
+    setEntities([])
   }
 
   const isAdmin = user?.role === 'admin'
@@ -31,7 +73,10 @@ export function AuthProvider({ children }) {
     : (user?.entity_access?.map(a => a.entity_id) || [])
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, isAdmin, accessibleEntityIds }}>
+    <AuthContext.Provider value={{
+      user, login, logout, loading, isAdmin,
+      accessibleEntityIds, entities, activeEntity, setActiveEntity,
+    }}>
       {children}
     </AuthContext.Provider>
   )

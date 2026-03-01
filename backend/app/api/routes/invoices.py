@@ -7,7 +7,7 @@ from decimal import Decimal
 from datetime import datetime
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Client
+from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Supplier
 from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, DashboardStats, InvoiceSummary
 from app.services.audit import log_action
 from app.services.invoice_numbering import generate_invoice_number
@@ -37,7 +37,7 @@ def _calculate_totals(line_items_data, vat_rate: Decimal):
 @router.get("/", response_model=List[InvoiceOut])
 def list_invoices(
     entity_id: Optional[int] = Query(None),
-    client_id: Optional[int] = Query(None),
+    supplier_id: Optional[int] = Query(None),
     document_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
@@ -48,7 +48,7 @@ def list_invoices(
 ):
     query = db.query(Invoice).options(
         joinedload(Invoice.line_items),
-        joinedload(Invoice.client),
+        joinedload(Invoice.supplier),
         joinedload(Invoice.entity),
     )
 
@@ -59,16 +59,16 @@ def list_invoices(
     if entity_id:
         _check_entity_access(entity_id, current_user)
         query = query.filter(Invoice.entity_id == entity_id)
-    if client_id:
-        query = query.filter(Invoice.client_id == client_id)
+    if supplier_id:
+        query = query.filter(Invoice.supplier_id == supplier_id)
     if document_type:
         query = query.filter(Invoice.document_type == document_type)
     if status:
         query = query.filter(Invoice.status == status)
     if search:
         s = f"%{search}%"
-        query = query.join(Client, isouter=True).filter(
-            or_(Invoice.invoice_number.ilike(s), Client.name.ilike(s))
+        query = query.join(Supplier, isouter=True).filter(
+            or_(Invoice.invoice_number.ilike(s), Supplier.name.ilike(s))
         )
 
     return query.order_by(Invoice.created_at.desc()).offset(skip).limit(limit).all()
@@ -90,7 +90,7 @@ def dashboard_stats(
     if entity_id:
         base_query = base_query.filter(Invoice.entity_id == entity_id)
 
-    invoices = base_query.options(joinedload(Invoice.client), joinedload(Invoice.entity)).all()
+    invoices = base_query.options(joinedload(Invoice.supplier), joinedload(Invoice.entity)).all()
 
     now = datetime.utcnow()
     outstanding = sum(
@@ -117,7 +117,7 @@ def dashboard_stats(
             invoice_number=inv.invoice_number,
             document_type=inv.document_type,
             status=inv.status,
-            client_name=inv.client.name if inv.client else None,
+            supplier_name=inv.supplier.name if inv.supplier else None,
             entity_code=inv.entity.code if inv.entity else None,
             total=inv.total,
             issue_date=inv.issue_date,
@@ -158,7 +158,7 @@ def get_invoice(
 ):
     invoice = db.query(Invoice).options(
         joinedload(Invoice.line_items),
-        joinedload(Invoice.client),
+        joinedload(Invoice.supplier),
         joinedload(Invoice.entity),
     ).filter(Invoice.id == invoice_id).first()
     if not invoice:
@@ -179,9 +179,9 @@ def create_invoice(
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    client = db.query(Client).filter(Client.id == payload.client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+    supplier = db.query(Supplier).filter(Supplier.id == payload.supplier_id).first()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
 
     invoice_number = generate_invoice_number(db, payload.entity_id, payload.document_type)
 
@@ -189,7 +189,7 @@ def create_invoice(
 
     invoice = Invoice(
         entity_id=payload.entity_id,
-        client_id=payload.client_id,
+        supplier_id=payload.supplier_id,
         document_type=payload.document_type,
         invoice_number=invoice_number,
         status=payload.status,
@@ -201,7 +201,6 @@ def create_invoice(
         vat_amount=vat_amount,
         total=total,
         vat_rate=entity.vat_rate,
-        created_by_id=current_user.id,
     )
     db.add(invoice)
     db.flush()
@@ -226,7 +225,7 @@ def create_invoice(
     db.commit()
     db.refresh(invoice)
     return db.query(Invoice).options(
-        joinedload(Invoice.line_items), joinedload(Invoice.client), joinedload(Invoice.entity)
+        joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
     ).filter(Invoice.id == invoice.id).first()
 
 
@@ -272,7 +271,7 @@ def update_invoice(
                resource_id=invoice_id, description=f"Updated {invoice.invoice_number}")
     db.commit()
     return db.query(Invoice).options(
-        joinedload(Invoice.line_items), joinedload(Invoice.client), joinedload(Invoice.entity)
+        joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
     ).filter(Invoice.id == invoice.id).first()
 
 
@@ -304,13 +303,13 @@ def download_invoice_pdf(
     current_user: User = Depends(get_current_user),
 ):
     invoice = db.query(Invoice).options(
-        joinedload(Invoice.line_items), joinedload(Invoice.client), joinedload(Invoice.entity)
+        joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
     ).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(invoice.entity_id, current_user)
 
-    pdf_bytes = generate_invoice_pdf(invoice, invoice.entity, invoice.client, theme=theme)
+    pdf_bytes = generate_invoice_pdf(invoice, invoice.entity, invoice.supplier, theme=theme)
     filename = f"{invoice.invoice_number}.pdf"
     return Response(
         content=pdf_bytes,

@@ -1,0 +1,322 @@
+import { useState, useEffect } from 'react'
+import { Settings, Save, Plus, Trash2, RefreshCw } from 'lucide-react'
+
+const API = import.meta.env.VITE_API_URL || ''
+
+function api(path, opts = {}) {
+  const token = localStorage.getItem('token')
+  return fetch(`${API}${path}`, {
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...opts.headers },
+    ...opts,
+  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+}
+
+const PROTECTED_ROLES = ['admin', 'standard']
+
+export default function SettingsPage() {
+  const [settings, setSettings] = useState({})
+  const [entities, setEntities] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState({})
+  const [savedOk, setSavedOk] = useState({})
+  const [errors, setErrors] = useState({})
+  // Local editable state
+  const [vatRate, setVatRate] = useState('15')
+  const [roles, setRoles] = useState([])
+  const [newRole, setNewRole] = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const [s, e] = await Promise.all([api('/api/settings/'), api('/api/entities/')])
+      const map = {}
+      s.forEach(item => { map[item.key] = item })
+      setSettings(map)
+      setEntities(e)
+
+      // Parse initial values
+      if (map.vat_rate) setVatRate(String(parseFloat(map.vat_rate.value) * 100))
+      if (map.roles) {
+        try { setRoles(JSON.parse(map.roles.value)) } catch { setRoles(['admin', 'standard']) }
+      }
+    } catch (e) { console.error(e) }
+    finally { setLoading(false) }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const saveSetting = async (key, value, label = null) => {
+    setSaving(p => ({ ...p, [key]: true }))
+    setErrors(p => ({ ...p, [key]: null }))
+    try {
+      await api(`/api/settings/${key}`, {
+        method: 'PUT',
+        body: JSON.stringify({ value: String(value), label }),
+      })
+      setSavedOk(p => ({ ...p, [key]: true }))
+      setTimeout(() => setSavedOk(p => ({ ...p, [key]: false })), 2000)
+    } catch (e) {
+      setErrors(p => ({ ...p, [key]: e.detail || 'Failed to save' }))
+    } finally {
+      setSaving(p => ({ ...p, [key]: false }))
+    }
+  }
+
+  const handleVatSave = () => {
+    const rate = parseFloat(vatRate) / 100
+    if (isNaN(rate) || rate < 0 || rate > 1) {
+      setErrors(p => ({ ...p, vat_rate: 'Enter a value between 0 and 100' }))
+      return
+    }
+    saveSetting('vat_rate', rate.toFixed(4), 'Global VAT Rate')
+  }
+
+  const handleAddRole = () => {
+    const r = newRole.trim().toLowerCase().replace(/\s+/g, '_')
+    if (!r) return
+    if (roles.includes(r)) {
+      setErrors(p => ({ ...p, roles: 'Role already exists' }))
+      return
+    }
+    const updated = [...roles, r]
+    setRoles(updated)
+    setNewRole('')
+    saveSetting('roles', JSON.stringify(updated), 'User Roles')
+  }
+
+  const handleRemoveRole = (role) => {
+    if (PROTECTED_ROLES.includes(role)) return
+    const updated = roles.filter(r => r !== role)
+    setRoles(updated)
+    saveSetting('roles', JSON.stringify(updated), 'User Roles')
+  }
+
+  const saveEntityInvoiceConfig = async (entity) => {
+    setSaving(p => ({ ...p, [`entity_${entity.id}`]: true }))
+    try {
+      await api(`/api/entities/${entity.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          invoice_prefix: entity.invoice_prefix,
+          invoice_counter: entity.invoice_counter,
+          quote_prefix: entity.quote_prefix,
+          quote_counter: entity.quote_counter,
+        }),
+      })
+      setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: true }))
+      setTimeout(() => setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: false })), 2000)
+    } catch (e) {
+      setErrors(p => ({ ...p, [`entity_${entity.id}`]: e.detail || 'Failed to save' }))
+    } finally {
+      setSaving(p => ({ ...p, [`entity_${entity.id}`]: false }))
+    }
+  }
+
+  const [entityConfigs, setEntityConfigs] = useState({})
+
+  useEffect(() => {
+    const cfg = {}
+    entities.forEach(e => {
+      cfg[e.id] = {
+        invoice_prefix: e.invoice_prefix || e.code,
+        invoice_counter: e.invoice_counter || 0,
+        quote_prefix: e.quote_prefix || 'QT',
+        quote_counter: e.quote_counter || 0,
+      }
+    })
+    setEntityConfigs(cfg)
+  }, [entities])
+
+  const updateEntityConfig = (entityId, field, value) => {
+    setEntityConfigs(p => ({ ...p, [entityId]: { ...p[entityId], [field]: value } }))
+  }
+
+  if (loading) {
+    return <div style={{ padding: '28px 32px', color: 'var(--text-muted)' }}>Loading settings...</div>
+  }
+
+  return (
+    <div style={{ padding: '28px 32px', maxWidth: 860 }}>
+      <div style={{ marginBottom: 28 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Settings</h1>
+        <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', fontSize: 13 }}>
+          Global configuration — changes apply across the system
+        </p>
+      </div>
+
+      {/* ── Billing & Tax ────────────────────────────────────────────── */}
+      <Section title="Billing & Tax" subtitle="VAT and invoice financial settings">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <label className="form-label">Global VAT Rate</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <input
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.5"
+                  value={vatRate}
+                  onChange={e => setVatRate(e.target.value)}
+                  style={{ width: 90, paddingRight: 28 }}
+                />
+                <span style={{ position: 'absolute', right: 10, color: 'var(--text-muted)', fontSize: 14 }}>%</span>
+              </div>
+              <SaveButton
+                saving={saving.vat_rate}
+                saved={savedOk.vat_rate}
+                onClick={handleVatSave}
+              />
+            </div>
+            {errors.vat_rate && <div style={errorStyle}>{errors.vat_rate}</div>}
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+              This is the default VAT rate applied to new invoices. Individual entities can override this in their profile.
+              Currently: <strong>{vatRate}%</strong>
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      {/* ── User Roles ──────────────────────────────────────────────── */}
+      <Section title="User Roles" subtitle="Manage the roles available when creating users">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {roles.map(role => (
+              <div key={role} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                borderRadius: 20, padding: '4px 12px', fontSize: 13,
+              }}>
+                <span style={{ fontWeight: PROTECTED_ROLES.includes(role) ? 700 : 500 }}>{role}</span>
+                {PROTECTED_ROLES.includes(role)
+                  ? <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>system</span>
+                  : <button onClick={() => handleRemoveRole(role)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}>
+                    <Trash2 size={12} />
+                  </button>
+                }
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              className="form-input"
+              value={newRole}
+              onChange={e => setNewRole(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddRole()}
+              placeholder="New role name (e.g. accountant)"
+              style={{ maxWidth: 240 }}
+            />
+            <button className="btn-ghost btn-sm" onClick={handleAddRole}>
+              <Plus size={13} /> Add Role
+            </button>
+          </div>
+          {errors.roles && <div style={errorStyle}>{errors.roles}</div>}
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Roles marked "system" cannot be removed. New roles can be assigned to users when creating or editing accounts.
+          </div>
+        </div>
+      </Section>
+
+      {/* ── Invoice Numbering ────────────────────────────────────────── */}
+      <Section title="Invoice Numbering" subtitle="Configure prefix and counter per entity. The app increments automatically but you can edit on individual invoices.">
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg-secondary)' }}>
+                {['Entity', 'Invoice Prefix', 'Invoice Counter', 'Quote Prefix', 'Quote Counter', 'Next Invoice', ''].map(h => (
+                  <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {entities.map(entity => {
+                const cfg = entityConfigs[entity.id] || {}
+                const nextInv = `${cfg.invoice_prefix || entity.code}${String((parseInt(cfg.invoice_counter) || 0) + 1).padStart(5, '0')}`
+                const isSaving = saving[`entity_${entity.id}`]
+                const isSaved = savedOk[`entity_${entity.id}`]
+
+                return (
+                  <tr key={entity.id} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 22, height: 22, borderRadius: 5, background: entity.primary_color || '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800, color: 'white', flexShrink: 0 }}>
+                          {entity.code?.[0]}
+                        </div>
+                        <span style={{ fontWeight: 600 }}>{entity.code}</span>
+                      </div>
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input className="form-input" value={cfg.invoice_prefix ?? ''} onChange={e => updateEntityConfig(entity.id, 'invoice_prefix', e.target.value.toUpperCase())}
+                        style={{ width: 80, fontFamily: 'monospace', padding: '4px 8px', fontSize: 13 }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input className="form-input" type="number" min={0} value={cfg.invoice_counter ?? 0} onChange={e => updateEntityConfig(entity.id, 'invoice_counter', parseInt(e.target.value) || 0)}
+                        style={{ width: 90, padding: '4px 8px', fontSize: 13 }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input className="form-input" value={cfg.quote_prefix ?? ''} onChange={e => updateEntityConfig(entity.id, 'quote_prefix', e.target.value.toUpperCase())}
+                        style={{ width: 70, fontFamily: 'monospace', padding: '4px 8px', fontSize: 13 }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input className="form-input" type="number" min={0} value={cfg.quote_counter ?? 0} onChange={e => updateEntityConfig(entity.id, 'quote_counter', parseInt(e.target.value) || 0)}
+                        style={{ width: 90, padding: '4px 8px', fontSize: 13 }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{nextInv}</span>
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <SaveButton
+                        saving={isSaving}
+                        saved={isSaved}
+                        onClick={() => saveEntityInvoiceConfig({ ...entity, ...cfg })}
+                        compact
+                      />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+
+      {/* ── System ──────────────────────────────────────────────────── */}
+      <Section title="System" subtitle="Technical and operational settings">
+        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+          Additional system settings will appear here as the application grows — email configuration, automated reports, backup settings, and more.
+        </div>
+      </Section>
+    </div>
+  )
+}
+
+function Section({ title, subtitle, children }) {
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ marginBottom: 14 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{title}</h2>
+        {subtitle && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '3px 0 0' }}>{subtitle}</p>}
+      </div>
+      <div className="card" style={{ padding: '20px 22px' }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function SaveButton({ saving, saved, onClick, compact = false }) {
+  return (
+    <button
+      className={saved ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'}
+      onClick={onClick}
+      disabled={saving}
+      style={compact ? { padding: '4px 10px' } : {}}
+    >
+      {saving ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : null}
+      {saved ? <><span style={{ color: 'white' }}>✓ Saved</span></> : saving ? 'Saving...' : <><Save size={13} /> Save</>}
+    </button>
+  )
+}
+
+const errorStyle = { fontSize: 12, color: '#dc2626', marginTop: 6 }

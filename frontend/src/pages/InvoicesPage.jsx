@@ -77,7 +77,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           <thead>
             <tr>
               <th>Number</th>
-              <th>Client</th>
+              <th>Supplier</th>
               <th>Entity</th>
               <th>Issue Date</th>
               <th>Due Date</th>
@@ -96,7 +96,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
             ) : invoices.map(inv => (
               <tr key={inv.id} onClick={() => navigate(`/${isInvoice ? 'invoices' : 'quotes'}/${inv.id}`)} style={{ cursor: 'pointer' }}>
                 <td className="font-mono text-accent" style={{ fontSize: 12 }}>{inv.invoice_number}</td>
-                <td style={{ fontWeight: 500 }}>{inv.client?.name || '—'}</td>
+                <td style={{ fontWeight: 500 }}>{inv.supplier?.name || '—'}</td>
                 <td><span style={styles.chip}>{inv.entity?.code || '—'}</span></td>
                 <td className="text-muted" style={{ fontSize: 12 }}>{formatDate(inv.issue_date)}</td>
                 <td className="text-muted" style={{ fontSize: 12 }}>

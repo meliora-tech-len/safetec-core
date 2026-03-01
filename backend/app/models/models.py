@@ -32,7 +32,7 @@ class BusinessEntity(Base):
     __tablename__ = "business_entities"
 
     id = Column(Integer, primary_key=True, index=True)
-    code = Column(String(20), unique=True, nullable=False)  # OBHI, SFT, TP, BTP, BKMO, KS
+    code = Column(String(20), unique=True, nullable=False)
     name = Column(String(200), nullable=False)
     trading_name = Column(String(200))
     registration_number = Column(String(100))
@@ -40,21 +40,33 @@ class BusinessEntity(Base):
     address = Column(Text)
     phone = Column(String(50))
     email = Column(String(200))
+
+    # Banking
     bank_name = Column(String(100))
     bank_branch = Column(String(100))
     bank_account_number = Column(String(50))
     bank_branch_code = Column(String(20))
     bank_reference = Column(String(200))
-    logo_path = Column(String(500))
-    invoice_prefix = Column(String(10))       # OBHI, SFT, TP, etc.
+
+    # Branding
+    logo_path = Column(String(500))        # legacy / local path
+    logo_url = Column(String(500))         # Supabase Storage public URL
+    primary_color = Column(String(7), default="#2563eb")
+
+    # Invoice config
+    invoice_prefix = Column(String(10))
     invoice_counter = Column(Integer, default=0)
+    quote_prefix = Column(String(10), default="QT")
     quote_counter = Column(Integer, default=0)
+
+    # Tax
     vat_rate = Column(Numeric(5, 4), default=0.15)
+
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    clients = relationship("Client", back_populates="entity")
+    suppliers = relationship("Supplier", back_populates="entity")
     invoices = relationship("Invoice", back_populates="entity")
     user_access = relationship("UserEntityAccess", back_populates="entity")
 
@@ -74,29 +86,51 @@ class User(Base):
     last_login = Column(DateTime(timezone=True))
 
     # Relationships
-    entity_access = relationship("UserEntityAccess", back_populates="user")
+    entity_access = relationship("UserEntityAccess", back_populates="user", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="user")
 
 
 class UserEntityAccess(Base):
-    """Defines which business entities a user can access (RBAC)"""
+    """Defines which business entities a user can access, and which modules within each."""
     __tablename__ = "user_entity_access"
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+
+    # CRUD permissions
     can_create = Column(Boolean, default=True)
     can_edit = Column(Boolean, default=True)
     can_delete = Column(Boolean, default=False)
+
+    # Module-level access: ["clients", "invoices", "suppliers", "fleet", "diesel"]
+    allowed_modules = Column(JSON, default=list)
 
     user = relationship("User", back_populates="entity_access")
     entity = relationship("BusinessEntity", back_populates="user_access")
 
 
-# ── Clients ───────────────────────────────────────────────────────────────────
+# ── App Settings ──────────────────────────────────────────────────────────────
 
-class Client(Base):
-    __tablename__ = "clients"
+class AppSetting(Base):
+    """Global application settings configurable by admin."""
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String(100), unique=True, nullable=False)
+    value = Column(Text, nullable=False)
+    label = Column(String(200))
+    category = Column(String(50), default="system")
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+    updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    updater = relationship("User", foreign_keys=[updated_by])
+
+
+# ── Suppliers ─────────────────────────────────────────────────────────────────
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
 
     id = Column(Integer, primary_key=True, index=True)
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
@@ -115,8 +149,8 @@ class Client(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    entity = relationship("BusinessEntity", back_populates="clients")
-    invoices = relationship("Invoice", back_populates="client")
+    entity = relationship("BusinessEntity", back_populates="suppliers")
+    invoices = relationship("Invoice", back_populates="supplier")
 
 
 # ── Invoices & Line Items ─────────────────────────────────────────────────────
@@ -126,42 +160,45 @@ class Invoice(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
-    client_id = Column(Integer, ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False)
 
     document_type = Column(Enum(DocumentType), default=DocumentType.invoice, nullable=False)
     invoice_number = Column(String(50), unique=True, nullable=False, index=True)
     status = Column(Enum(InvoiceStatus), default=InvoiceStatus.draft, nullable=False)
 
+    # VAT
+    is_vat_exempt = Column(Boolean, default=False)  # whole invoice is non-VAT
+
     issue_date = Column(DateTime(timezone=True), server_default=func.now())
     due_date = Column(DateTime(timezone=True))
     paid_date = Column(DateTime(timezone=True))
 
-    subtotal = Column(Numeric(12, 2), default=0)
-    vat_amount = Column(Numeric(12, 2), default=0)
-    total = Column(Numeric(12, 2), default=0)
+    subtotal = Column(Numeric(15, 2), default=0)
     vat_rate = Column(Numeric(5, 4), default=0.15)
+    vat_amount = Column(Numeric(15, 2), default=0)
+    total = Column(Numeric(15, 2), default=0)
 
     notes = Column(Text)
     terms = Column(Text)
-    created_by_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     entity = relationship("BusinessEntity", back_populates="invoices")
-    client = relationship("Client", back_populates="invoices")
-    line_items = relationship("InvoiceLineItem", back_populates="invoice", cascade="all, delete-orphan")
-    created_by = relationship("User")
+    supplier = relationship("Supplier", back_populates="invoices")
+    line_items = relationship("InvoiceLineItem", back_populates="invoice",
+                              cascade="all, delete-orphan", order_by="InvoiceLineItem.sort_order")
 
 
 class InvoiceLineItem(Base):
     __tablename__ = "invoice_line_items"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, index=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False)
-    description = Column(Text, nullable=False)
-    quantity = Column(Numeric(10, 2), default=1)
-    unit_price = Column(Numeric(12, 2), default=0)
-    amount = Column(Numeric(12, 2), default=0)
+    description = Column(Text)
+    quantity = Column(Numeric(12, 4), default=1)
+    unit_price = Column(Numeric(15, 2), default=0)
+    amount = Column(Numeric(15, 2), default=0)
+    is_vat_exempt = Column(Boolean, default=False)  # line-item level non-VAT override
     sort_order = Column(Integer, default=0)
 
     invoice = relationship("Invoice", back_populates="line_items")
@@ -173,15 +210,15 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    action = Column(String(100), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="SET NULL"), nullable=True)
-    action = Column(String(100), nullable=False)   # e.g. "invoice.created", "client.updated"
-    resource_type = Column(String(50))             # "invoice", "client", "user"
+    resource_type = Column(String(50))
     resource_id = Column(Integer)
     description = Column(Text)
     ip_address = Column(String(50))
-    old_values = Column(JSON)
-    new_values = Column(JSON)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    old_values = Column(JSON, nullable=True)
+    new_values = Column(JSON, nullable=True)
 
     user = relationship("User", back_populates="audit_logs")
