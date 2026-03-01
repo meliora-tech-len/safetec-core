@@ -209,7 +209,7 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
         logo_bytes = _load_logo(logo_url, logo_path)
         if logo_bytes:
             try:
-                logo_img = RLImage(io.BytesIO(logo_bytes), width=38*mm, height=22*mm, kind="proportional")
+                logo_img = RLImage(io.BytesIO(logo_bytes), width=95*mm, height=55*mm, kind="proportional")
             except Exception:
                 logo_img = None
 
@@ -220,7 +220,7 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
     # ── Header — Logo left | All entity info right ────────────────────────────
     company_name = entity.trading_name or entity.name
 
-    # Right column: name, reg, VAT, then contact details
+    # Right column: name, reg, VAT, then contact — left aligned
     right_col = []
     right_col.append(Paragraph(company_name, s_company_name))
     if entity.registration_number:
@@ -230,22 +230,30 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
     if entity.phone or entity.email or entity.address:
         right_col.append(Spacer(1, 2*mm))
     if entity.phone:
-        right_col.append(Paragraph(f"☎  {entity.phone}", s_contact_val))
+        right_col.append(Paragraph(f"Tel:  {entity.phone}", s_contact_val))
     if entity.email:
-        right_col.append(Paragraph(f"✉  {entity.email}", s_contact_val))
+        right_col.append(Paragraph(entity.email, s_contact_val))
     if entity.address:
         addr_lines = [l.strip() for l in entity.address.replace(",", "\n").split("\n") if l.strip()]
-        if addr_lines:
-            right_col.append(Paragraph(f"⌂  {addr_lines[0]}", s_contact_val))
-            for line in addr_lines[1:]:
-                right_col.append(Paragraph(f"    {line}", s_contact_val))
+        for line in addr_lines:
+            right_col.append(Paragraph(line, s_contact_val))
 
-    # Left column: logo only
-    left_col = [logo_img] if logo_img else []
+    # Left column: logo wrapped in a nested table to allow a right nudge via left padding
+    if logo_img:
+        logo_cell = Table([[logo_img]], colWidths=[85*mm])
+        logo_cell.setStyle(TableStyle([
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        left_col = [logo_cell]
+    else:
+        left_col = []
 
     header_table = Table(
         [[left_col, right_col]],
-        colWidths=[44*mm, 130*mm],
+        colWidths=[90*mm, 84*mm],
         hAlign="LEFT",
     )
     header_table.setStyle(TableStyle([
@@ -255,7 +263,7 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
         ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ("LINEBEFORE", (1, 0), (1, -1), 1.5, accent),
-        ("LEFTPADDING", (1, 0), (1, -1), 8),
+        ("LEFTPADDING", (1, 0), (1, -1), 10),
     ]))
     story.append(header_table)
     story.append(Spacer(1, 3*mm))

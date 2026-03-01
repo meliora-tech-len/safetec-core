@@ -26,24 +26,24 @@
 
 /* ── Light theme ───────────────────────────────────────────── */
 [data-theme="light"] {
-  --bg-base:    #f0f2f7;
+  --bg-base:    #ffffff;
   --bg-surface: #ffffff;
   --bg-card:    #ffffff;
-  --bg-hover:   #e8ecf4;
+  --bg-hover:   #f3f4f6;
   --accent:     #2563eb;
   --accent-hover: #1d4ed8;
   --accent-dim: rgba(37, 99, 235, 0.1);
   --accent-subtle: rgba(37, 99, 235, 0.08);
-  --bg-sidebar: #f1f3f8;
+  --bg-sidebar: #f8f9fa;
   --success:    #16a34a;
   --warning:    #d97706;
   --danger:     #dc2626;
   --text-primary:   #111827;
   --text-secondary: #4b5563;
   --text-muted:     #9ca3af;
-  --border:     rgba(0,0,0,0.09);
+  --border:     rgba(0,0,0,0.12);
   --border-accent: rgba(37,99,235,0.3);
-  --shadow:     0 4px 24px rgba(0,0,0,0.08);
+  --shadow:     0 2px 8px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
   --radius:     10px;
   --radius-sm:  6px;
   --font: 'Inter', system-ui, -apple-system, sans-serif;
@@ -310,6 +310,14 @@ hr { border: none; border-top: 1px solid var(--border); }
 }
 [data-theme="light"] thead {
   background: #f3f4f6;
+}
+[data-theme="light"] .card,
+[data-theme="light"] .stat-card {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 4px 12px rgba(0,0,0,0.08);
+  border-color: rgba(0,0,0,0.10);
+}
+[data-theme="light"] .table-wrapper {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 4px 12px rgba(0,0,0,0.08);
 }
 [data-theme="light"] .badge-draft    { background: rgba(0,0,0,0.06); color: #4b5563; }
 [data-theme="light"] .badge-sent     { background: rgba(37,99,235,0.1); color: #2563eb; }

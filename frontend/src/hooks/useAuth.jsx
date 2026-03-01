@@ -24,7 +24,14 @@ export function AuthProvider({ children }) {
       const list = res.data
       setEntities(list)
 
-      // Restore previously selected entity, or default to first in list
+      if (user.role === 'admin') {
+        // Admins always start with "All Entities" view
+        setActiveEntityState(null)
+        localStorage.removeItem('activeEntity')
+        return
+      }
+
+      // Restore previously selected entity for non-admin users
       let stored = null
       try { stored = JSON.parse(localStorage.getItem('activeEntity')) } catch {}
 
