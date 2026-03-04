@@ -67,7 +67,7 @@ def create_user(
     db.flush()
 
     # Grant access to specified entities (all modules by default)
-    default_modules = ["clients", "invoices"]
+    default_modules = ["suppliers", "invoices"]
     for entity_id in (payload.entity_ids or []):
         entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
         if entity:
@@ -116,7 +116,7 @@ def update_user(
     # Update entity access if provided (simple list of entity IDs, default modules)
     if payload.entity_ids is not None:
         db.query(UserEntityAccess).filter(UserEntityAccess.user_id == user_id).delete()
-        default_modules = ["clients", "invoices"]
+        default_modules = ["suppliers", "invoices"]
         for entity_id in payload.entity_ids:
             entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
             if entity:

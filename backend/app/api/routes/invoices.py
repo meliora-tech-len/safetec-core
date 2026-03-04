@@ -24,12 +24,20 @@ def _check_entity_access(entity_id: int, user: User):
         raise HTTPException(status_code=403, detail="Access denied to this entity")
 
 
-def _calculate_totals(line_items_data, vat_rate: Decimal):
+def _calculate_totals(line_items_data, vat_rate: Decimal, is_vat_exempt: bool = False):
     subtotal = sum(
         Decimal(str(item.quantity)) * Decimal(str(item.unit_price))
         for item in line_items_data
     )
-    vat_amount = (subtotal * vat_rate).quantize(Decimal("0.01"))
+    if is_vat_exempt:
+        vat_amount = Decimal("0")
+    else:
+        vat_base = sum(
+            Decimal(str(item.quantity)) * Decimal(str(item.unit_price))
+            for item in line_items_data
+            if not getattr(item, 'is_vat_exempt', False)
+        )
+        vat_amount = (vat_base * vat_rate).quantize(Decimal("0.01"))
     total = subtotal + vat_amount
     return subtotal.quantize(Decimal("0.01")), vat_amount, total.quantize(Decimal("0.01"))
 
@@ -185,7 +193,8 @@ def create_invoice(
 
     invoice_number = generate_invoice_number(db, payload.entity_id, payload.document_type)
 
-    subtotal, vat_amount, total = _calculate_totals(payload.line_items, entity.vat_rate)
+    vat_rate = payload.vat_rate if payload.vat_rate is not None else entity.vat_rate
+    subtotal, vat_amount, total = _calculate_totals(payload.line_items, vat_rate, payload.is_vat_exempt)
 
     invoice = Invoice(
         entity_id=payload.entity_id,
@@ -193,6 +202,7 @@ def create_invoice(
         document_type=payload.document_type,
         invoice_number=invoice_number,
         status=payload.status,
+        is_vat_exempt=payload.is_vat_exempt,
         issue_date=payload.issue_date or datetime.utcnow(),
         due_date=payload.due_date,
         notes=payload.notes,
@@ -200,7 +210,7 @@ def create_invoice(
         subtotal=subtotal,
         vat_amount=vat_amount,
         total=total,
-        vat_rate=entity.vat_rate,
+        vat_rate=vat_rate,
     )
     db.add(invoice)
     db.flush()
@@ -213,6 +223,7 @@ def create_invoice(
             quantity=item_data.quantity,
             unit_price=item_data.unit_price,
             amount=amount,
+            is_vat_exempt=item_data.is_vat_exempt,
             sort_order=item_data.sort_order or i,
         )
         db.add(item)
@@ -259,9 +270,10 @@ def update_invoice(
                 quantity=item_data.quantity,
                 unit_price=item_data.unit_price,
                 amount=amount,
+                is_vat_exempt=item_data.is_vat_exempt,
                 sort_order=item_data.sort_order or i,
             ))
-        subtotal, vat_amount, total = _calculate_totals(payload.line_items, invoice.vat_rate)
+        subtotal, vat_amount, total = _calculate_totals(payload.line_items, invoice.vat_rate, invoice.is_vat_exempt)
         invoice.subtotal = subtotal
         invoice.vat_amount = vat_amount
         invoice.total = total

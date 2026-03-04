@@ -11,8 +11,6 @@ function api(path, opts = {}) {
   }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
 }
 
-const PROTECTED_ROLES = ['admin', 'standard']
-
 export default function SettingsPage() {
   const [settings, setSettings] = useState({})
   const [entities, setEntities] = useState([])
@@ -23,22 +21,21 @@ export default function SettingsPage() {
   // Local editable state
   const [vatRate, setVatRate] = useState('15')
   const [roles, setRoles] = useState([])
-  const [newRole, setNewRole] = useState('')
+  const [newRoleKey, setNewRoleKey] = useState('')
+  const [newRoleDisplay, setNewRoleDisplay] = useState('')
 
   const load = async () => {
     setLoading(true)
     try {
-      const [s, e] = await Promise.all([api('/api/settings/'), api('/api/entities/')])
+      const [s, e, r] = await Promise.all([api('/api/settings/'), api('/api/entities/'), api('/api/roles/')])
       const map = {}
       s.forEach(item => { map[item.key] = item })
       setSettings(map)
       setEntities(e)
+      setRoles(r)
 
       // Parse initial values
       if (map.vat_rate) setVatRate(String(parseFloat(map.vat_rate.value) * 100))
-      if (map.roles) {
-        try { setRoles(JSON.parse(map.roles.value)) } catch { setRoles(['admin', 'standard']) }
-      }
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
@@ -71,24 +68,40 @@ export default function SettingsPage() {
     saveSetting('vat_rate', rate.toFixed(4), 'Global VAT Rate')
   }
 
-  const handleAddRole = () => {
-    const r = newRole.trim().toLowerCase().replace(/\s+/g, '_')
-    if (!r) return
-    if (roles.includes(r)) {
-      setErrors(p => ({ ...p, roles: 'Role already exists' }))
+  const handleAddRole = async () => {
+    const key = newRoleKey.trim().toLowerCase().replace(/\s+/g, '_')
+    const displayName = newRoleDisplay.trim()
+    if (!key || !displayName) {
+      setErrors(p => ({ ...p, roles: 'Both a key and a display name are required' }))
       return
     }
-    const updated = [...roles, r]
-    setRoles(updated)
-    setNewRole('')
-    saveSetting('roles', JSON.stringify(updated), 'User Roles')
+    setSaving(p => ({ ...p, roles: true }))
+    setErrors(p => ({ ...p, roles: null }))
+    try {
+      const created = await api('/api/roles/', {
+        method: 'POST',
+        body: JSON.stringify({ key, display_name: displayName }),
+      })
+      setRoles(prev => [...prev, created])
+      setNewRoleKey('')
+      setNewRoleDisplay('')
+    } catch (e) {
+      setErrors(p => ({ ...p, roles: e.detail || 'Failed to create role' }))
+    } finally {
+      setSaving(p => ({ ...p, roles: false }))
+    }
   }
 
-  const handleRemoveRole = (role) => {
-    if (PROTECTED_ROLES.includes(role)) return
-    const updated = roles.filter(r => r !== role)
-    setRoles(updated)
-    saveSetting('roles', JSON.stringify(updated), 'User Roles')
+  const handleRemoveRole = async (roleKey) => {
+    setSaving(p => ({ ...p, roles: true }))
+    try {
+      await api(`/api/roles/${roleKey}`, { method: 'DELETE' })
+      setRoles(prev => prev.filter(r => r.key !== roleKey))
+    } catch (e) {
+      setErrors(p => ({ ...p, roles: e.detail || 'Failed to delete role' }))
+    } finally {
+      setSaving(p => ({ ...p, roles: false }))
+    }
   }
 
   const saveEntityInvoiceConfig = async (entity) => {
@@ -183,31 +196,41 @@ export default function SettingsPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {roles.map(role => (
-              <div key={role} style={{
+              <div key={role.key} style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 background: 'var(--bg-secondary)', border: '1px solid var(--border)',
                 borderRadius: 20, padding: '4px 12px', fontSize: 13,
               }}>
-                <span style={{ fontWeight: PROTECTED_ROLES.includes(role) ? 700 : 500 }}>{role}</span>
-                {PROTECTED_ROLES.includes(role)
+                <div>
+                  <span style={{ fontWeight: role.is_protected ? 700 : 500 }}>{role.display_name}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 6, fontFamily: 'monospace' }}>{role.key}</span>
+                </div>
+                {role.is_protected
                   ? <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>system</span>
-                  : <button onClick={() => handleRemoveRole(role)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}>
+                  : <button onClick={() => handleRemoveRole(role.key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}>
                     <Trash2 size={12} />
                   </button>
                 }
               </div>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               className="form-input"
-              value={newRole}
-              onChange={e => setNewRole(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAddRole()}
-              placeholder="New role name (e.g. accountant)"
-              style={{ maxWidth: 240 }}
+              value={newRoleDisplay}
+              onChange={e => setNewRoleDisplay(e.target.value)}
+              placeholder="Display name (e.g. Accountant)"
+              style={{ maxWidth: 200 }}
             />
-            <button className="btn-ghost btn-sm" onClick={handleAddRole}>
+            <input
+              className="form-input"
+              value={newRoleKey}
+              onChange={e => setNewRoleKey(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddRole()}
+              placeholder="Key (e.g. accountant)"
+              style={{ maxWidth: 160 }}
+            />
+            <button className="btn-ghost btn-sm" onClick={handleAddRole} disabled={saving.roles}>
               <Plus size={13} /> Add Role
             </button>
           </div>

@@ -13,6 +13,18 @@ class UserRole(str, enum.Enum):
     standard = "standard"
 
 
+# ── Roles ─────────────────────────────────────────────────────────────────────
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String(100), unique=True, nullable=False)
+    display_name = Column(String(200), nullable=False)
+    is_protected = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class InvoiceStatus(str, enum.Enum):
     draft = "draft"
     sent = "sent"
@@ -80,7 +92,7 @@ class User(Base):
     email = Column(String(200), unique=True, nullable=False, index=True)
     full_name = Column(String(200), nullable=False)
     hashed_password = Column(String(500), nullable=False)
-    role = Column(Enum(UserRole), default=UserRole.standard, nullable=False)
+    role = Column(String(100), default="standard", nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True))

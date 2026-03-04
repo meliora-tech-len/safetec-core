@@ -45,8 +45,8 @@ export default function Sidebar() {
   // Apply / clear entity branding colors whenever activeEntity changes
   useEffect(() => {
     const el = document.documentElement
-    if (activeEntity?.primary_color) {
-      const c = activeEntity.primary_color
+    if (activeEntity) {
+      const c = activeEntity.primary_color || '#2563eb'
       const { r, g, b } = hexToRgb(c)
       el.style.setProperty('--accent', c)
       el.style.setProperty('--accent-hover', darkenHex(c, 0.12))

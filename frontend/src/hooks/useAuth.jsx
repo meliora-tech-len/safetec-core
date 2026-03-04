@@ -55,6 +55,22 @@ export function AuthProvider({ children }) {
     localStorage.setItem('activeEntity', JSON.stringify(entity))
   }
 
+  const refreshEntities = async () => {
+    try {
+      const res = await getEntities()
+      const list = res.data
+      setEntities(list)
+      // Keep activeEntity in sync with fresh data
+      if (activeEntity) {
+        const fresh = list.find(e => e.id === activeEntity.id)
+        if (fresh) {
+          setActiveEntityState(fresh)
+          localStorage.setItem('activeEntity', JSON.stringify(fresh))
+        }
+      }
+    } catch {}
+  }
+
   const login = async (email, password) => {
     const res = await apiLogin(email, password)
     const { access_token, user: userData } = res.data
@@ -82,7 +98,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, login, logout, loading, isAdmin,
-      accessibleEntityIds, entities, activeEntity, setActiveEntity,
+      accessibleEntityIds, entities, activeEntity, setActiveEntity, refreshEntities,
     }}>
       {children}
     </AuthContext.Provider>

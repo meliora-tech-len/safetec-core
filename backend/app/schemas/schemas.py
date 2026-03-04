@@ -135,10 +135,22 @@ class EntityPermissionUpdate(BaseModel):
     can_delete: bool = False
     allowed_modules: List[str] = []
 
+class RoleOut(BaseModel):
+    key: str
+    display_name: str
+    is_protected: bool
+
+    class Config:
+        from_attributes = True
+
+class RoleCreate(BaseModel):
+    key: str
+    display_name: str
+
 class UserBase(BaseModel):
     email: str
     full_name: str
-    role: UserRole = UserRole.standard
+    role: str = "standard"
 
 class UserCreate(UserBase):
     password: str
@@ -147,7 +159,7 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     email: Optional[str] = None
-    role: Optional[UserRole] = None
+    role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
     entity_ids: Optional[List[int]] = None

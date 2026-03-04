@@ -25,6 +25,7 @@ const DEFAULT_FORM = { full_name: '', email: '', role: 'standard', is_active: tr
 export default function UsersPage() {
   const [users, setUsers] = useState([])
   const [entities, setEntities] = useState([])
+  const [roles, setRoles] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(null) // null | { mode, user? }
   const [tab, setTab] = useState('Details')
@@ -38,9 +39,10 @@ export default function UsersPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [u, e] = await Promise.all([api('/api/users/'), api('/api/entities/')])
+      const [u, e, r] = await Promise.all([api('/api/users/'), api('/api/entities/'), api('/api/roles/')])
       setUsers(u)
       setEntities(e)
+      setRoles(r)
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
@@ -236,7 +238,9 @@ export default function UsersPage() {
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{user.email}</div>
                   </td>
                   <td style={{ padding: '12px 16px' }}>
-                    <span className={`badge badge-${user.role}`}>{user.role}</span>
+                    <span className={`badge badge-${user.role}`}>
+                      {roles.find(r => r.key === user.role)?.display_name || user.role}
+                    </span>
                   </td>
                   <td style={{ padding: '12px 16px' }}>
                     {user.role === 'admin' ? (
@@ -336,8 +340,9 @@ export default function UsersPage() {
                   <div>
                     <label className="form-label">Role</label>
                     <select className="form-input" value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}>
-                      <option value="standard">Standard</option>
-                      <option value="admin">Admin</option>
+                      {roles.map(r => (
+                        <option key={r.key} value={r.key}>{r.display_name}</option>
+                      ))}
                     </select>
                   </div>
                   <div>

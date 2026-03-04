@@ -2,11 +2,28 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from app.db.database import engine
-from app.models.models import Base
-from app.api.routes import auth, users, entities, suppliers, invoices, audit, settings
+from app.db.database import engine, SessionLocal
+from app.models.models import Base, Role
+from app.api.routes import auth, users, entities, suppliers, invoices, audit, settings, roles
 
 Base.metadata.create_all(bind=engine)
+
+
+def _seed_default_roles():
+    """Ensure default roles exist in the roles table on startup."""
+    db = SessionLocal()
+    try:
+        if db.query(Role).count() == 0:
+            db.add_all([
+                Role(key="admin", display_name="System Administrator", is_protected=True),
+                Role(key="standard", display_name="Admin Assistant", is_protected=True),
+            ])
+            db.commit()
+    finally:
+        db.close()
+
+
+_seed_default_roles()
 
 app = FastAPI(
     title="safetec_core API",
@@ -42,6 +59,7 @@ app.include_router(suppliers.router)
 app.include_router(invoices.router)
 app.include_router(audit.router)
 app.include_router(settings.router)
+app.include_router(roles.router)
 
 
 @app.get("/health")
