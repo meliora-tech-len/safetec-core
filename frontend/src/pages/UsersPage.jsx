@@ -14,7 +14,6 @@ function api(path, opts = {}) {
 const ALL_MODULES = [
   { key: 'suppliers', label: 'Suppliers' },
   { key: 'invoices', label: 'Invoices' },
-  { key: 'suppliers', label: 'Suppliers' },
   { key: 'fleet', label: 'Fleet' },
   { key: 'diesel', label: 'Diesel' },
 ]
