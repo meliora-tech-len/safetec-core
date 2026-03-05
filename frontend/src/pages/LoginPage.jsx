@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import { Lock, Mail, Loader } from 'lucide-react'
@@ -66,6 +66,12 @@ export default function LoginPage() {
             style={{ justifyContent: 'center', height: 42, marginTop: 8 }}>
             {loading ? <><div className="spinner" style={{ width: 16, height: 16 }} /> Signing in...</> : 'Sign In'}
           </button>
+
+          <div style={{ textAlign: 'center', marginTop: 4 }}>
+            <Link to="/forgot-password" style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+              Forgot password?
+            </Link>
+          </div>
         </form>
       </div>
     </div>

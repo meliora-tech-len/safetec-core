@@ -198,6 +198,8 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
                        alignment=TA_RIGHT, leading=14)
     s_bank_title = st("bk_title", fontSize=8, fontName="Helvetica-Bold", textColor=gray_dark, leading=11)
     s_bank_detail = st("bk_det", fontSize=8, textColor=gray_mid, leading=11)
+    s_note_title = st("note_title", fontSize=8, fontName="Helvetica-Bold", textColor=gray_dark, leading=11)
+    s_note_text = st("note_text", fontSize=8, textColor=gray_dark, leading=12)
     s_footer = st("footer", fontSize=7, textColor=gray_mid, alignment=TA_CENTER, leading=9)
     s_exempt_tag = st("exempt", fontSize=7, textColor=gray_mid, leading=9)
 
@@ -209,7 +211,7 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
         logo_bytes = _load_logo(logo_url, logo_path)
         if logo_bytes:
             try:
-                logo_img = RLImage(io.BytesIO(logo_bytes), width=95*mm, height=55*mm, kind="proportional")
+                logo_img = RLImage(io.BytesIO(logo_bytes), width=110*mm, height=45*mm, kind="proportional")
             except Exception:
                 logo_img = None
 
@@ -217,57 +219,55 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
     sorted_items = sorted(invoice.line_items, key=lambda x: x.sort_order)
     subtotal, vat_amount, total, vat_rate_dec = _compute_totals(invoice, sorted_items)
 
-    # ── Header — Logo left | All entity info right ────────────────────────────
+    # ── Header — Business info left | Logo right ──────────────────────────────
     company_name = entity.trading_name or entity.name
 
-    # Right column: name, reg, VAT, then contact — left aligned
-    right_col = []
-    right_col.append(Paragraph(company_name, s_company_name))
+    # Left column: company name, reg, VAT, contact details
+    left_col = []
+    left_col.append(Paragraph(company_name, s_company_name))
     if entity.registration_number:
-        right_col.append(Paragraph(f"Reg {entity.registration_number}", s_company_sub))
+        left_col.append(Paragraph(f"Reg {entity.registration_number}", s_company_sub))
     if entity.vat_number:
-        right_col.append(Paragraph(f"VAT No: {entity.vat_number}", s_company_sub))
+        left_col.append(Paragraph(f"VAT No: {entity.vat_number}", s_company_sub))
     if entity.phone or entity.email or entity.address:
-        right_col.append(Spacer(1, 2*mm))
+        left_col.append(Spacer(1, 2*mm))
     if entity.phone:
-        right_col.append(Paragraph(f"Tel:  {entity.phone}", s_contact_val))
+        left_col.append(Paragraph(f"Tel:  {entity.phone}", s_contact_val))
     if entity.email:
-        right_col.append(Paragraph(entity.email, s_contact_val))
+        left_col.append(Paragraph(entity.email, s_contact_val))
     if entity.address:
         addr_lines = [l.strip() for l in entity.address.replace(",", "\n").split("\n") if l.strip()]
         for line in addr_lines:
-            right_col.append(Paragraph(line, s_contact_val))
+            left_col.append(Paragraph(line, s_contact_val))
 
-    # Left column: logo wrapped in a nested table to allow a right nudge via left padding
+    # Right column: logo (larger, right-aligned)
     if logo_img:
-        logo_cell = Table([[logo_img]], colWidths=[85*mm])
+        logo_cell = Table([[logo_img]], colWidths=[100*mm])
         logo_cell.setStyle(TableStyle([
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
             ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
         ]))
-        left_col = [logo_cell]
+        right_col = [logo_cell]
     else:
-        left_col = []
+        right_col = []
 
     header_table = Table(
         [[left_col, right_col]],
-        colWidths=[90*mm, 84*mm],
+        colWidths=[74*mm, 100*mm],
         hAlign="LEFT",
     )
     header_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("LINEBEFORE", (1, 0), (1, -1), 1.5, accent),
-        ("LEFTPADDING", (1, 0), (1, -1), 10),
     ]))
     story.append(header_table)
-    story.append(Spacer(1, 3*mm))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=divider))
+    story.append(HRFlowable(width="100%", thickness=1, color=accent))
     story.append(Spacer(1, 4*mm))
 
     # ── Document type title ───────────────────────────────────────────────────
@@ -459,6 +459,14 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
     ]))
     story.append(bottom_table)
     story.append(Spacer(1, 6*mm))
+
+    # ── Notes (printed only if print_note is True) ────────────────────────────
+    if getattr(invoice, "print_note", False) and invoice.notes:
+        story.append(Spacer(1, 2*mm))
+        story.append(Paragraph("Notes", s_note_title))
+        story.append(Spacer(1, 1*mm))
+        story.append(Paragraph(invoice.notes.replace("\n", "<br/>"), s_note_text))
+        story.append(Spacer(1, 4*mm))
 
     # ── Footer ────────────────────────────────────────────────────────────────
     story.append(HRFlowable(width="100%", thickness=0.5, color=divider))

@@ -44,6 +44,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
   const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10))
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
+  const [printNote, setPrintNote] = useState(false)
   const [isVatExempt, setIsVatExempt] = useState(false) // whole invoice non-VAT
   const [vatRate, setVatRate] = useState(0.15)
   const [lines, setLines] = useState([emptyLine()])
@@ -68,6 +69,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           setIssueDate(inv.issue_date?.slice(0, 10) || new Date().toISOString().slice(0, 10))
           setDueDate(inv.due_date?.slice(0, 10) || '')
           setNotes(inv.notes || '')
+          setPrintNote(inv.print_note || false)
           setIsVatExempt(inv.is_vat_exempt || false)
           setVatRate(parseFloat(inv.vat_rate) || 0.15)
           setLines(inv.line_items.map(li => ({
@@ -164,6 +166,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
         due_date: dueDate ? new Date(dueDate).toISOString() : null,
         vat_rate: vatRate,
         notes: notes || null,
+        print_note: printNote,
         status: statusOverride || 'draft',
         line_items: lines
           .filter(l => l.description || parseFloat(l.amount))
@@ -413,6 +416,15 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
               onChange={e => setNotes(e.target.value)}
               style={{ marginTop: 12, resize: 'vertical' }}
             />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)' }}>
+              <input
+                type="checkbox"
+                checked={printNote}
+                onChange={e => setPrintNote(e.target.checked)}
+                style={{ width: 14, height: 14 }}
+              />
+              Include note in printed PDF
+            </label>
           </div>
 
           {/* Actions */}

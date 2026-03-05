@@ -34,6 +34,8 @@ export const login = (email, password) => {
   return api.post('/auth/login', form, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })
 }
 export const getMe = () => api.get('/auth/me')
+export const forgotPassword = (email) => api.post('/auth/forgot-password', { email })
+export const resetPassword = (token, new_password) => api.post('/auth/reset-password', { token, new_password })
 
 // ── Entities ──────────────────────────────────────────────────────────────────
 export const getEntities = () => api.get('/entities/')

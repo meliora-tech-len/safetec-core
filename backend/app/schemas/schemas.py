@@ -280,6 +280,7 @@ class InvoiceBase(BaseModel):
     due_date: Optional[datetime] = None
     vat_rate: Optional[Decimal] = None
     notes: Optional[str] = None
+    print_note: bool = False
     terms: Optional[str] = None
 
 class InvoiceCreate(InvoiceBase):
@@ -295,6 +296,7 @@ class InvoiceUpdate(BaseModel):
     paid_date: Optional[datetime] = None
     vat_rate: Optional[Decimal] = None
     notes: Optional[str] = None
+    print_note: Optional[bool] = None
     terms: Optional[str] = None
     line_items: Optional[List[LineItemCreate]] = None
 

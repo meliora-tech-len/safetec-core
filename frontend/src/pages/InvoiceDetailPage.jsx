@@ -4,7 +4,7 @@ import { getInvoice, updateInvoice, deleteInvoice, downloadInvoicePdf } from '..
 import { useTheme } from '../hooks/useTheme'
 import { formatCurrency, formatDate, statusBadgeClass, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail } from 'lucide-react'
 
 const STATUS_FLOW = {
   draft: ['sent', 'cancelled'],
@@ -61,6 +61,15 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
     catch { toast.error('PDF generation failed') }
   }
 
+  const handleEmail = () => {
+    const to = invoice.supplier?.email || ''
+    const subject = encodeURIComponent(`${invoice.document_type === 'invoice' ? 'Invoice' : 'Quote'} ${invoice.invoice_number}`)
+    const body = encodeURIComponent(
+      `Dear ${invoice.supplier?.name || 'Client'},\n\nPlease find attached ${invoice.document_type === 'invoice' ? 'invoice' : 'quote'} ${invoice.invoice_number}.\n\nKind regards`
+    )
+    window.location.href = `mailto:${to}?subject=${subject}&body=${body}`
+  }
+
   if (loading) return <div className="loading-center"><div className="spinner" /></div>
   if (!invoice) return null
 
@@ -99,6 +108,9 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
               </div> 
             )}*/}
           </div>
+          <button className="btn-ghost btn-sm" onClick={handleEmail}>
+            <Mail size={13} /> Email
+          </button>
           {invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
             <button className="btn-ghost btn-sm" onClick={() => navigate(`/${isInvoice ? 'invoices' : 'quotes'}/${id}/edit`)}>
               <Edit2 size={13} /> Edit
@@ -223,11 +235,18 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
             <div style={{ ...styles.infoRow, borderBottom: 'none' }}><span>Currency</span><span>ZAR (R)</span></div>
           </div>
 
-          {/* Notes — internal only, not printed in PDF */}
+          {/* Notes */}
           <div className="card" style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
               <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Notes</div>
-              <span style={{ fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: 4 }}>not printed</span>
+              <span style={{
+                fontSize: 10,
+                color: invoice.print_note ? 'var(--accent)' : 'var(--text-muted)',
+                background: invoice.print_note ? 'rgba(var(--accent-rgb),0.1)' : 'var(--bg-secondary)',
+                padding: '2px 6px', borderRadius: 4,
+              }}>
+                {invoice.print_note ? 'printed on PDF' : 'not printed'}
+              </span>
             </div>
             {invoice.notes
               ? <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{invoice.notes}</p>

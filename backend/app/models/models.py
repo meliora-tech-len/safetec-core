@@ -96,6 +96,8 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True))
+    password_reset_token = Column(String(100))
+    password_reset_expires = Column(DateTime(timezone=True))
 
     # Relationships
     entity_access = relationship("UserEntityAccess", back_populates="user", cascade="all, delete-orphan")
@@ -191,6 +193,7 @@ class Invoice(Base):
     total = Column(Numeric(15, 2), default=0)
 
     notes = Column(Text)
+    print_note = Column(Boolean, default=False)
     terms = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
