@@ -194,7 +194,7 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
             <div className="form-row">
               <div className="form-group">
                 <label>Company / Supplier Name *</label>
-                <input value={form.name} onChange={e => set('name', e.target.value)} required placeholder="e.g. ABC Mining (Pty) Ltd" />
+                <input value={form.name} onChange={e => set('name', e.target.value)} required placeholder="Registered company name" />
               </div>
               <div className="form-group">
                 <label>Trading Name</label>

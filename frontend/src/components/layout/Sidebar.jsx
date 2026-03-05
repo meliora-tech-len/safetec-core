@@ -1,10 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useTheme } from '../../hooks/useTheme'
 import {
   LayoutDashboard, Users, Building2, FileText,
-  LogOut, Shield, Sun, Moon, Settings
+  LogOut, Shield, Sun, Moon, Settings, ChevronDown
 } from 'lucide-react'
 
 function hexToRgb(hex) {
@@ -36,11 +36,26 @@ const ADMIN_NAV = [
 ]
 
 export default function Sidebar() {
-  const { user, logout, isAdmin, activeEntity } = useAuth()
+  const { user, logout, isAdmin, activeEntity, entities, setActiveEntity } = useAuth()
   const { isDark, toggle } = useTheme()
   const navigate = useNavigate()
+  const [entityMenuOpen, setEntityMenuOpen] = useState(false)
+  const entityMenuRef = useRef(null)
 
   const handleLogout = () => { logout(); navigate('/login') }
+
+  // Close entity dropdown when clicking outside
+  useEffect(() => {
+    if (!entityMenuOpen) return
+    const handler = (e) => {
+      if (entityMenuRef.current && !entityMenuRef.current.contains(e.target))
+        setEntityMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [entityMenuOpen])
+
+  const canSwitchEntity = !isAdmin && entities.length > 1
 
   // Apply / clear entity branding colors whenever activeEntity changes
   useEffect(() => {
@@ -84,7 +99,7 @@ export default function Sidebar() {
   return (
     <aside style={styles.sidebar}>
       {/* Logo / Entity */}
-      <div style={styles.logo}>
+      <div style={{ ...styles.logo, position: 'relative' }} ref={entityMenuRef}>
         <div style={{
           ...styles.logoIcon,
           background: activeEntity?.primary_color || 'var(--accent)',
@@ -95,12 +110,45 @@ export default function Sidebar() {
             : <span style={{ color: 'white', fontWeight: 800, fontSize: 15 }}>{logoLetter}</span>
           }
         </div>
-        <div>
+        <div
+          style={{ flex: 1, minWidth: 0, cursor: canSwitchEntity ? 'pointer' : 'default' }}
+          onClick={() => canSwitchEntity && setEntityMenuOpen(o => !o)}
+        >
           <div style={styles.logoText}>safetec_core</div>
-          <div style={styles.logoSub}>
-            {activeEntity ? activeEntity.code : 'Business Management'}
+          <div style={{ ...styles.logoSub, display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {activeEntity ? activeEntity.code : 'Business Management'}
+            </span>
+            {canSwitchEntity && <ChevronDown size={10} />}
           </div>
         </div>
+
+        {/* Entity switcher dropdown */}
+        {entityMenuOpen && (
+          <div style={styles.entityDropdown}>
+            {entities.map(e => (
+              <button
+                key={e.id}
+                style={{
+                  ...styles.entityDropdownItem,
+                  background: activeEntity?.id === e.id ? 'var(--accent-subtle)' : 'transparent',
+                  color: activeEntity?.id === e.id ? 'var(--accent)' : 'var(--text-primary)',
+                  fontWeight: activeEntity?.id === e.id ? 600 : 400,
+                }}
+                onClick={() => { setActiveEntity(e); setEntityMenuOpen(false) }}
+              >
+                <span style={{
+                  width: 22, height: 22, borderRadius: 5, background: e.primary_color || 'var(--accent)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 10, fontWeight: 800, color: 'white', flexShrink: 0,
+                }}>
+                  {e.code?.[0]}
+                </span>
+                <span style={{ fontSize: 12 }}>{e.code} — {e.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <nav style={styles.nav}>
@@ -199,4 +247,15 @@ const styles = {
   userName: { fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   userRole: { fontSize: 10, color: 'var(--text-muted)' },
   logoutBtn: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'flex', borderRadius: 6 },
+  entityDropdown: {
+    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
+    background: 'var(--bg-card)', border: '1px solid var(--border)',
+    borderRadius: 8, boxShadow: 'var(--shadow)', padding: 4,
+    display: 'flex', flexDirection: 'column', gap: 2,
+  },
+  entityDropdownItem: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '6px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
+    textAlign: 'left', width: '100%',
+  },
 }

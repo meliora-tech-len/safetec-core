@@ -13,12 +13,18 @@ from app.core.security import get_password_hash
 Base.metadata.create_all(bind=engine)
 
 
+_GQEBERHA_ADDRESS = "16 Lower Valley Road\nSouth End\nGqeberha\nEastern Cape\n6001"
+_GQEBERHA_PHONE   = "041 008 5009"
+
 ENTITIES = [
     {
         "code": "BTP",
         "name": "Border Tradepost (Pty) Ltd",
         "trading_name": "Border Tradepost",
         "invoice_prefix": "BTP",
+        "email": "admin@btpo.co.za",
+        "phone": _GQEBERHA_PHONE,
+        "address": _GQEBERHA_ADDRESS,
         "bank_name": "Standard Bank",
         "bank_branch": "Walmer",
         "vat_rate": 0.15,
@@ -30,6 +36,9 @@ ENTITIES = [
         "name": "OBHI (Pty) Ltd",
         "trading_name": "OBHI",
         "invoice_prefix": "OBHI",
+        "email": "admin@obhi.co.za",
+        "phone": _GQEBERHA_PHONE,
+        "address": _GQEBERHA_ADDRESS,
         "bank_name": "Standard Bank",
         "bank_branch": "051001",
         "bank_account_number": "33 335 32 69",
@@ -44,6 +53,9 @@ ENTITIES = [
         "name": "Safetec (Pty) Ltd",
         "trading_name": "Safetec",
         "invoice_prefix": "SFT",
+        "email": "admin@safetec.co.za",
+        "phone": _GQEBERHA_PHONE,
+        "address": _GQEBERHA_ADDRESS,
         "bank_name": "Standard Bank",
         "bank_branch": "Walmer",
         "bank_account_number": "080096832",
@@ -56,6 +68,9 @@ ENTITIES = [
         "name": "Thembis People (Pty) Ltd",
         "trading_name": "Thembis People",
         "invoice_prefix": "TP",
+        "email": "admin@thembis.co.za",
+        "phone": _GQEBERHA_PHONE,
+        "address": _GQEBERHA_ADDRESS,
         "bank_name": "Standard Bank",
         "bank_branch": "Walmer",
         "bank_account_number": "061446211",
@@ -68,6 +83,9 @@ ENTITIES = [
         "name": "Bokamosho (Pty) Ltd",
         "trading_name": "Bokamosho",
         "invoice_prefix": "BKMO",
+        "email": "admin@bokamosho.co.za",
+        "phone": "068 884 7098",
+        "address": "2400 Industrial Road\nOlifantshoek\nNorthern Cape\n8450",
         "bank_name": "Standard Bank",
         "vat_rate": 0.15,
         "vat_number": "4567890123",

@@ -262,38 +262,38 @@ export default function EntitiesPage() {
                   </div>
                   <div>
                     <label className="form-label">Legal Name *</label>
-                    <input className="form-input" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Safetec (Pty) Ltd" />
+                    <input className="form-input" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Legal registered name" />
                   </div>
                 </div>
                 <div className="form-row">
                   <div>
                     <label className="form-label">Trading Name</label>
-                    <input className="form-input" value={form.trading_name} onChange={e => setForm(p => ({ ...p, trading_name: e.target.value }))} placeholder="Safetec t/a Super Civils" />
+                    <input className="form-input" value={form.trading_name} onChange={e => setForm(p => ({ ...p, trading_name: e.target.value }))} placeholder="If different from legal name" />
                   </div>
                   <div>
                     <label className="form-label">Registration Number</label>
-                    <input className="form-input" value={form.registration_number} onChange={e => setForm(p => ({ ...p, registration_number: e.target.value }))} placeholder="2015/343480/07" />
+                    <input className="form-input" value={form.registration_number} onChange={e => setForm(p => ({ ...p, registration_number: e.target.value }))} placeholder="YYYY/NNNNNN/NN" />
                   </div>
                 </div>
                 <div className="form-row">
                   <div>
                     <label className="form-label">VAT Number</label>
-                    <input className="form-input" value={form.vat_number} onChange={e => setForm(p => ({ ...p, vat_number: e.target.value }))} placeholder="4940274261" />
+                    <input className="form-input" value={form.vat_number} onChange={e => setForm(p => ({ ...p, vat_number: e.target.value }))} placeholder="10-digit VAT number" />
                   </div>
                   <div>
                     <label className="form-label">Email</label>
-                    <input className="form-input" type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} placeholder="admin@safetec.co.za" />
+                    <input className="form-input" type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} placeholder="Business email address" />
                   </div>
                 </div>
                 <div className="form-row">
                   <div>
                     <label className="form-label">Phone</label>
-                    <input className="form-input" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} placeholder="041 008 5009" />
+                    <input className="form-input" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} placeholder="Business phone number" />
                   </div>
                 </div>
                 <div>
                   <label className="form-label">Address</label>
-                  <textarea className="form-input" rows={3} value={form.address} onChange={e => setForm(p => ({ ...p, address: e.target.value }))} placeholder="3 Kemsley Street, Richmond Hill&#10;Port Elizabeth, 6001" />
+                  <textarea className="form-input" rows={3} value={form.address} onChange={e => setForm(p => ({ ...p, address: e.target.value }))} placeholder="Street address, city, postal code" />
                 </div>
               </div>
             )}
@@ -304,21 +304,21 @@ export default function EntitiesPage() {
                 <div className="form-row">
                   <div>
                     <label className="form-label">Bank Name</label>
-                    <input className="form-input" value={form.bank_name} onChange={e => setForm(p => ({ ...p, bank_name: e.target.value }))} placeholder="FNB" />
+                    <input className="form-input" value={form.bank_name} onChange={e => setForm(p => ({ ...p, bank_name: e.target.value }))} placeholder="e.g. Standard Bank" />
                   </div>
                   <div>
                     <label className="form-label">Branch Name</label>
-                    <input className="form-input" value={form.bank_branch} onChange={e => setForm(p => ({ ...p, bank_branch: e.target.value }))} placeholder="Greenacres" />
+                    <input className="form-input" value={form.bank_branch} onChange={e => setForm(p => ({ ...p, bank_branch: e.target.value }))} placeholder="Branch name or description" />
                   </div>
                 </div>
                 <div className="form-row">
                   <div>
                     <label className="form-label">Account Number</label>
-                    <input className="form-input" value={form.bank_account_number} onChange={e => setForm(p => ({ ...p, bank_account_number: e.target.value }))} placeholder="62812345678" />
+                    <input className="form-input" value={form.bank_account_number} onChange={e => setForm(p => ({ ...p, bank_account_number: e.target.value }))} placeholder="Bank account number" />
                   </div>
                   <div>
                     <label className="form-label">Branch Code</label>
-                    <input className="form-input" value={form.bank_branch_code} onChange={e => setForm(p => ({ ...p, bank_branch_code: e.target.value }))} placeholder="250655" />
+                    <input className="form-input" value={form.bank_branch_code} onChange={e => setForm(p => ({ ...p, bank_branch_code: e.target.value }))} placeholder="6-digit branch code" />
                   </div>
                 </div>
                 <div>

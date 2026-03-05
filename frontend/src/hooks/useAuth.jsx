@@ -40,13 +40,18 @@ export function AuthProvider({ children }) {
         if (fresh) {
           setActiveEntityState(fresh)
           localStorage.setItem('activeEntity', JSON.stringify(fresh))
-        } else {
-          // Previously selected entity no longer accessible — clear it
-          setActiveEntityState(null)
-          localStorage.removeItem('activeEntity')
+          return
         }
+        // Previously selected entity no longer accessible — fall through to auto-select
+        localStorage.removeItem('activeEntity')
       }
-      // No stored entity → stay null (All Businesses mode)
+
+      // No stored entity — auto-select the first accessible entity so branding
+      // and module nav are active immediately without any manual selection step
+      if (list.length > 0) {
+        setActiveEntityState(list[0])
+        localStorage.setItem('activeEntity', JSON.stringify(list[0]))
+      }
     }).catch(() => {})
   }, [user])
 
