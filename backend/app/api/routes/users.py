@@ -79,7 +79,7 @@ def create_user(
             db.add(access)
 
     log_action(db, "user.created", user_id=current_user.id, resource_type="user",
-               resource_id=user.id, description=f"Created user {user.email}")
+               resource_id=user.id, description=f"Created user {user.full_name} ({user.email}) with role '{user.role}'")
     db.commit()
     db.refresh(user)
     return user
@@ -128,7 +128,7 @@ def update_user(
                 db.add(access)
 
     log_action(db, "user.updated", user_id=current_user.id, resource_type="user",
-               resource_id=user_id, description=f"Updated user {user.email}")
+               resource_id=user_id, description=f"Updated user {user.full_name} ({user.email})")
     db.commit()
     db.refresh(user)
     return user
@@ -152,7 +152,7 @@ def reset_password(
 
     user.hashed_password = get_password_hash(payload.new_password)
     log_action(db, "user.password_reset", user_id=current_user.id, resource_type="user",
-               resource_id=user_id, description=f"Password reset for {user.email}")
+               resource_id=user_id, description=f"Password reset for {user.full_name} ({user.email})")
     db.commit()
     return {"detail": "Password updated successfully"}
 
@@ -189,7 +189,7 @@ def update_permissions(
         db.add(access)
 
     log_action(db, "user.permissions_updated", user_id=current_user.id, resource_type="user",
-               resource_id=user_id, description=f"Updated permissions for {user.email}")
+               resource_id=user_id, description=f"Updated permissions for {user.full_name} ({user.email})")
     db.commit()
     db.refresh(user)
 
@@ -218,7 +218,7 @@ def deactivate_user(
 
     user.is_active = False
     log_action(db, "user.deactivated", user_id=current_user.id, resource_type="user",
-               resource_id=user_id, description=f"Deactivated user {user.email}")
+               resource_id=user_id, description=f"Deactivated user {user.full_name} ({user.email})")
     db.commit()
     return {"detail": f"User '{user.email}' deactivated"}
 
@@ -237,7 +237,7 @@ def reactivate_user(
 
     user.is_active = True
     log_action(db, "user.reactivated", user_id=current_user.id, resource_type="user",
-               resource_id=user_id, description=f"Reactivated user {user.email}")
+               resource_id=user_id, description=f"Reactivated user {user.full_name} ({user.email})")
     db.commit()
     db.refresh(user)
     return user

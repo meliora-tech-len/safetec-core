@@ -8,6 +8,8 @@ import smtplib
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -81,3 +83,64 @@ def send_password_reset_email(to: str, full_name: str, reset_url: str) -> None:
     """
 
     send_email(to, subject, body_html, body_text)
+
+
+def send_invoice_email(
+    to: str,
+    invoice_number: str,
+    document_type: str,
+    supplier_name: str,
+    pdf_bytes: bytes,
+) -> None:
+    """Send an invoice/quote email with the PDF attached."""
+    doc_label = "Invoice" if document_type == "invoice" else "Quote"
+    subject = f"{doc_label} {invoice_number}"
+
+    body_text = (
+        f"Dear {supplier_name},\n\n"
+        f"Please find attached {doc_label.lower()} {invoice_number}.\n\n"
+        "Kind regards"
+    )
+
+    body_html = f"""
+    <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+      <p style="color:#555">Dear {supplier_name},</p>
+      <p style="color:#555">Please find attached <strong>{doc_label} {invoice_number}</strong>.</p>
+      <p style="color:#555">Kind regards</p>
+    </div>
+    """
+
+    if not _smtp_configured():
+        logger.warning("SMTP not configured — cannot send invoice email")
+        return
+
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"] = settings.SMTP_FROM or settings.SMTP_USER
+    msg["To"] = to
+
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(body_text, "plain"))
+    alt.attach(MIMEText(body_html, "html"))
+    msg.attach(alt)
+
+    attachment = MIMEBase("application", "pdf")
+    attachment.set_payload(pdf_bytes)
+    encoders.encode_base64(attachment)
+    attachment.add_header("Content-Disposition", f'attachment; filename="{invoice_number}.pdf"')
+    msg.attach(attachment)
+
+    try:
+        if settings.SMTP_TLS:
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                server.sendmail(msg["From"], [to], msg.as_string())
+        else:
+            with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                server.sendmail(msg["From"], [to], msg.as_string())
+    except Exception as e:
+        logger.error(f"Failed to send invoice email to {to}: {e}")
+        raise

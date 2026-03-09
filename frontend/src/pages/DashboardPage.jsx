@@ -6,7 +6,7 @@ import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
 import { TrendingUp, AlertCircle, FileText, Clock, Building2, ChevronRight } from 'lucide-react'
 
 export default function DashboardPage() {
-  const { entities, activeEntity, setActiveEntity } = useAuth()
+  const { entities, activeEntity, setActiveEntity, isAdmin } = useAuth()
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
@@ -37,7 +37,7 @@ export default function DashboardPage() {
           <p style={styles.sub}>Business overview across all entities</p>
         </div>
         <select value={activeEntity?.id?.toString() || ''} onChange={handleEntityChange} style={{ width: 200 }}>
-          <option value="">All Entities</option>
+          {isAdmin && <option value="">All Entities</option>}
           {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
         </select>
       </div>

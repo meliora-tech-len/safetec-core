@@ -12,6 +12,7 @@ from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, Dashbo
 from app.services.audit import log_action
 from app.services.invoice_numbering import generate_invoice_number
 from app.services.pdf_generator import generate_invoice_pdf
+from app.services.email import send_invoice_email
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
@@ -228,10 +229,12 @@ def create_invoice(
         )
         db.add(item)
 
+    doc_label = "Invoice" if payload.document_type == "invoice" else "Quote"
     log_action(
         db, f"{payload.document_type}.created", user_id=current_user.id,
         entity_id=payload.entity_id, resource_type="invoice",
-        resource_id=invoice.id, description=f"Created {payload.document_type} {invoice_number}",
+        resource_id=invoice.id,
+        description=f"{doc_label} {invoice_number} created for {supplier.name} — R {total:,.2f}",
     )
     db.commit()
     db.refresh(invoice)
@@ -255,6 +258,7 @@ def update_invoice(
     if invoice.status == "paid" and payload.status != "cancelled":
         raise HTTPException(status_code=400, detail="Cannot edit a paid invoice")
 
+    old_status = invoice.status
     update_data = payload.model_dump(exclude={"line_items"}, exclude_none=True)
     for field, value in update_data.items():
         setattr(invoice, field, value)
@@ -278,9 +282,13 @@ def update_invoice(
         invoice.vat_amount = vat_amount
         invoice.total = total
 
+    inv_supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
+    inv_supplier_name = inv_supplier.name if inv_supplier else "Unknown"
+    status_note = f" — status changed to '{invoice.status}'" if payload.status and payload.status != old_status else ""
     log_action(db, "invoice.updated", user_id=current_user.id,
                entity_id=invoice.entity_id, resource_type="invoice",
-               resource_id=invoice_id, description=f"Updated {invoice.invoice_number}")
+               resource_id=invoice_id,
+               description=f"Updated {invoice.invoice_number} for {inv_supplier_name}{status_note}")
     db.commit()
     return db.query(Invoice).options(
         joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
@@ -300,9 +308,12 @@ def delete_invoice(
     if invoice.status == "paid":
         raise HTTPException(status_code=400, detail="Cannot delete a paid invoice")
     invoice.status = "cancelled"
+    cancelled_supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
+    cancelled_supplier_name = cancelled_supplier.name if cancelled_supplier else "Unknown"
     log_action(db, "invoice.cancelled", user_id=current_user.id,
                entity_id=invoice.entity_id, resource_type="invoice",
-               resource_id=invoice_id, description=f"Cancelled {invoice.invoice_number}")
+               resource_id=invoice_id,
+               description=f"Cancelled {invoice.invoice_number} for {cancelled_supplier_name}")
     db.commit()
     return {"detail": "Invoice cancelled"}
 
@@ -328,3 +339,37 @@ def download_invoice_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/{invoice_id}/send-email", status_code=200)
+def send_invoice_email_endpoint(
+    invoice_id: int,
+    theme: str = Query("dark", pattern="^(dark|light)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    invoice = db.query(Invoice).options(
+        joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
+    ).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(invoice.entity_id, current_user)
+
+    if not invoice.supplier or not invoice.supplier.email:
+        raise HTTPException(status_code=422, detail="Supplier has no email address")
+
+    pdf_bytes = generate_invoice_pdf(invoice, invoice.entity, invoice.supplier, theme=theme)
+    send_invoice_email(
+        to=invoice.supplier.email,
+        invoice_number=invoice.invoice_number,
+        document_type=invoice.document_type,
+        supplier_name=invoice.supplier.name,
+        pdf_bytes=pdf_bytes,
+    )
+    doc_label = "Invoice" if invoice.document_type == "invoice" else "Quote"
+    log_action(db, "invoice.emailed", user_id=current_user.id,
+               entity_id=invoice.entity_id, resource_type="invoice",
+               resource_id=invoice_id,
+               description=f"{doc_label} {invoice.invoice_number} emailed to {invoice.supplier.name} ({invoice.supplier.email})")
+    db.commit()
+    return {"detail": "Email sent"}

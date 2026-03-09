@@ -58,6 +58,9 @@ export const updateInvoice = (id, data) => api.put(`/invoices/${id}`, data)
 export const deleteInvoice = (id) => api.delete(`/invoices/${id}`)
 export const getDashboardStats = (entity_id) =>
   api.get('/invoices/dashboard', { params: entity_id ? { entity_id } : {} })
+export const sendInvoiceEmail = (id, theme = 'dark') =>
+  api.post(`/invoices/${id}/send-email`, null, { params: { theme } })
+
 export const downloadInvoicePdf = async (id, invoiceNumber, theme = 'dark') => {
   const res = await api.get(`/invoices/${id}/pdf`, {
     params: { theme },

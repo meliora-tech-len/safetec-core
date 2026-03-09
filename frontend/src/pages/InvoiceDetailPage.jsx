@@ -8,8 +8,8 @@ import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail } fr
 
 const STATUS_FLOW = {
   draft: ['sent', 'cancelled'],
-  sent: ['paid', 'overdue', 'cancelled'],
-  overdue: ['paid', 'cancelled'],
+  sent: ['overdue', 'cancelled'],
+  overdue: ['cancelled'],
   paid: [],
   cancelled: [],
 }
@@ -22,6 +22,9 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   const [invoice, setInvoice] = useState(null)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
+  const [showPayModal, setShowPayModal] = useState(false)
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10))
+  const [payRef, setPayRef] = useState('')
 
   const load = () => {
     setLoading(true)
@@ -33,10 +36,27 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   const handleStatusChange = async (newStatus) => {
     setUpdating(true)
     try {
-      const patch = { status: newStatus }
-      if (newStatus === 'paid') patch.paid_date = new Date().toISOString()
-      await updateInvoice(id, patch)
+      await updateInvoice(id, { status: newStatus })
       toast.success(`Status updated to ${newStatus}`)
+      load()
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  const handleRecordPayment = async () => {
+    setUpdating(true)
+    try {
+      await updateInvoice(id, {
+        status: 'paid',
+        paid_date: new Date(payDate).toISOString(),
+        payment_reference: payRef || null,
+      })
+      toast.success('Payment recorded')
+      setShowPayModal(false)
+      setPayRef('')
       load()
     } catch (err) {
       toast.error(errorMessage(err))
@@ -61,12 +81,16 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
     catch { toast.error('PDF generation failed') }
   }
 
-  const handleEmail = () => {
-    const to = invoice.supplier?.email || ''
-    const subject = encodeURIComponent(`${invoice.document_type === 'invoice' ? 'Invoice' : 'Quote'} ${invoice.invoice_number}`)
+  const handleEmail = async () => {
+    try { await downloadInvoicePdf(invoice.id, invoice.invoice_number, theme) }
+    catch { toast.error('PDF generation failed'); return }
+
+    const docLabel = invoice.document_type === 'invoice' ? 'Invoice' : 'Quote'
+    const subject = encodeURIComponent(`${docLabel} ${invoice.invoice_number}`)
     const body = encodeURIComponent(
-      `Dear ${invoice.supplier?.name || 'Client'},\n\nPlease find attached ${invoice.document_type === 'invoice' ? 'invoice' : 'quote'} ${invoice.invoice_number}.\n\nKind regards`
+      `Dear ${invoice.supplier?.name || 'Client'},\n\nPlease find attached ${docLabel.toLowerCase()} ${invoice.invoice_number}.\n\nKind regards`
     )
+    const to = invoice.supplier?.email || ''
     window.location.href = `mailto:${to}?subject=${subject}&body=${body}`
   }
 
@@ -74,6 +98,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   if (!invoice) return null
 
   const nextStatuses = STATUS_FLOW[invoice.status] || []
+  const canRecordPayment = invoice.status === 'sent' || invoice.status === 'overdue'
 
   return (
     <div style={styles.page}>
@@ -93,20 +118,6 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
              onClick={() => handlePdf(theme)}>
               <ChevronDown size={12} />
             </button>
-           {/* <button className="btn-ghost btn-sm" style={{ borderRadius: '0 6px 6px 0', padding: '5px 7px' }}
-              onClick={() => setPdfMenuOpen(o => !o)}>
-              <ChevronDown size={12} />
-            </button>
-            {pdfMenuOpen && (
-              <div style={styles.pdfMenu}>
-                <button style={styles.pdfMenuItem} onClick={() => handlePdf('dark')}>
-                  🌙 Dark PDF
-                </button>
-                <button style={styles.pdfMenuItem} onClick={() => handlePdf('light')}>
-                  ☀️ Light PDF
-                </button>
-              </div> 
-            )}*/}
           </div>
           <button className="btn-ghost btn-sm" onClick={handleEmail}>
             <Mail size={13} /> Email
@@ -116,10 +127,14 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
               <Edit2 size={13} /> Edit
             </button>
           )}
+          {canRecordPayment && (
+            <button className="btn-primary btn-sm" onClick={() => setShowPayModal(true)} disabled={updating}>
+              <CheckCircle size={13} /> Record Payment
+            </button>
+          )}
           {nextStatuses.map(s => (
-            <button key={s} className={s === 'paid' ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'}
+            <button key={s} className="btn-ghost btn-sm"
               onClick={() => handleStatusChange(s)} disabled={updating}>
-              {s === 'paid' ? <CheckCircle size={13} /> : null}
               Mark as {s}
             </button>
           ))}
@@ -232,6 +247,9 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
             {invoice.updated_at && <div style={styles.infoRow}><span>Modified</span><span>{formatDate(invoice.updated_at)}</span></div>}
             <div style={styles.infoRow}><span>Entity</span><span style={{ fontWeight: 600 }}>{invoice.entity?.code}</span></div>
             <div style={styles.infoRow}><span>VAT Rate</span><span>{Math.round(parseFloat(invoice.vat_rate) * 100)}%</span></div>
+            {invoice.payment_reference && (
+              <div style={styles.infoRow}><span>Payment Ref</span><span style={{ fontWeight: 600, fontFamily: 'monospace', fontSize: 11 }}>{invoice.payment_reference}</span></div>
+            )}
             <div style={{ ...styles.infoRow, borderBottom: 'none' }}><span>Currency</span><span>ZAR (R)</span></div>
           </div>
 
@@ -255,6 +273,51 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
           </div>
         </div>
       </div>
+
+      {/* Record Payment Modal */}
+      {showPayModal && (
+        <div style={styles.modalOverlay} onClick={() => setShowPayModal(false)}>
+          <div style={styles.modal} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Record Payment</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{invoice.invoice_number}</span>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={styles.field}>
+                <label style={styles.fieldLabel}>Payment Date</label>
+                <input
+                  type="date"
+                  value={payDate}
+                  onChange={e => setPayDate(e.target.value)}
+                  style={styles.input}
+                />
+              </div>
+              <div style={styles.field}>
+                <label style={styles.fieldLabel}>Payment Reference <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
+                <input
+                  type="text"
+                  placeholder="e.g. EFT123, Cheque #456"
+                  value={payRef}
+                  onChange={e => setPayRef(e.target.value)}
+                  style={styles.input}
+                />
+              </div>
+              <div style={{ background: 'var(--bg-surface)', borderRadius: 6, padding: '10px 14px', marginTop: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Amount Paid</span>
+                  <span style={{ fontWeight: 800, color: 'var(--success)' }}>{formatCurrency(invoice.total)}</span>
+                </div>
+              </div>
+            </div>
+            <div style={styles.modalFooter}>
+              <button className="btn-ghost btn-sm" onClick={() => setShowPayModal(false)}>Cancel</button>
+              <button className="btn-primary btn-sm" onClick={handleRecordPayment} disabled={updating || !payDate}>
+                <CheckCircle size={13} /> Confirm Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -289,5 +352,30 @@ const styles = {
     display: 'flex', justifyContent: 'space-between',
     padding: '7px 0', fontSize: 12, borderBottom: '1px solid var(--border)',
     color: 'var(--text-secondary)',
+  },
+  // Modal
+  modalOverlay: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+  },
+  modal: {
+    background: 'var(--bg-card)', border: '1px solid var(--border)',
+    borderRadius: 10, width: 380, boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+  },
+  modalHeader: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '16px 20px', borderBottom: '1px solid var(--border)',
+  },
+  modalBody: { padding: '20px' },
+  modalFooter: {
+    display: 'flex', justifyContent: 'flex-end', gap: 8,
+    padding: '12px 20px', borderTop: '1px solid var(--border)',
+  },
+  field: { marginBottom: 14 },
+  fieldLabel: { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 },
+  input: {
+    width: '100%', padding: '8px 10px', borderRadius: 6,
+    border: '1px solid var(--border)', background: 'var(--bg-surface)',
+    color: 'var(--text-primary)', fontSize: 13, boxSizing: 'border-box',
   },
 }

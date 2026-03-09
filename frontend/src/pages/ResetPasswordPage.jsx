@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { resetPassword } from '../services/api'
-import { Lock, ArrowLeft, CheckCircle } from 'lucide-react'
+import { Lock, Eye, EyeOff, ArrowLeft, CheckCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export default function ResetPasswordPage() {
@@ -11,8 +11,13 @@ export default function ResetPasswordPage() {
 
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [showPass, setShowPass] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+
+  const passwordsMatch = confirm.length > 0 && password === confirm
+  const passwordsMismatch = confirm.length > 0 && password !== confirm
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -80,13 +85,16 @@ export default function ResetPasswordPage() {
               <div style={styles.inputWrap}>
                 <Lock size={15} style={styles.inputIcon} />
                 <input
-                  type="password"
+                  type={showPass ? 'text' : 'password'}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="Min. 8 characters"
                   required autoFocus minLength={8}
-                  style={{ paddingLeft: 36 }}
+                  style={{ paddingLeft: 36, paddingRight: 36 }}
                 />
+                <button type="button" onClick={() => setShowPass(v => !v)} style={styles.eyeBtn}>
+                  {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
               </div>
             </div>
 
@@ -95,14 +103,23 @@ export default function ResetPasswordPage() {
               <div style={styles.inputWrap}>
                 <Lock size={15} style={styles.inputIcon} />
                 <input
-                  type="password"
+                  type={showConfirm ? 'text' : 'password'}
                   value={confirm}
                   onChange={e => setConfirm(e.target.value)}
                   placeholder="Repeat new password"
                   required
-                  style={{ paddingLeft: 36 }}
+                  style={{ paddingLeft: 36, paddingRight: 36 }}
                 />
+                <button type="button" onClick={() => setShowConfirm(v => !v)} style={styles.eyeBtn}>
+                  {showConfirm ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
               </div>
+              {passwordsMatch && (
+                <p style={{ fontSize: 12, color: 'var(--success)', marginTop: 4 }}>✓ Passwords match</p>
+              )}
+              {passwordsMismatch && (
+                <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4 }}>Passwords do not match</p>
+              )}
             </div>
 
             <button type="submit" className="btn-primary w-full" disabled={loading}
@@ -155,6 +172,12 @@ const styles = {
     position: 'absolute', left: 10, top: '50%',
     transform: 'translateY(-50%)', color: 'var(--text-muted)',
     pointerEvents: 'none',
+  },
+  eyeBtn: {
+    position: 'absolute', right: 8, top: '50%',
+    transform: 'translateY(-50%)', background: 'none', border: 'none',
+    cursor: 'pointer', color: 'var(--text-muted)', padding: 2,
+    display: 'flex', alignItems: 'center',
   },
   successBox: {
     background: 'var(--bg-surface)',

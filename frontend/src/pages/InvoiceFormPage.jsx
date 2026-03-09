@@ -323,7 +323,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                       style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
                       value={line.quantity}
                       onChange={e => updateLine(idx, 'quantity', e.target.value)}
-                      min="0" step="any"
+                      min="1" step="1"
                     />
                     <input
                       className="form-input"

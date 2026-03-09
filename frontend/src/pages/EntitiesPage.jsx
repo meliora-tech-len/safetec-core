@@ -3,6 +3,7 @@ import {
   Building2, Plus, Edit2, Archive, RotateCcw, Upload,
   ChevronDown, ChevronRight, X, Check, Palette
 } from 'lucide-react'
+import { useAuth } from '../hooks/useAuth'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -32,6 +33,7 @@ const PRESET_COLORS = [
 ]
 
 export default function EntitiesPage() {
+  const { refreshEntities } = useAuth()
   const [entities, setEntities] = useState([])
   const [loading, setLoading] = useState(true)
   const [showArchived, setShowArchived] = useState(false)
@@ -144,6 +146,7 @@ export default function EntitiesPage() {
       }
 
       await load()
+      await refreshEntities()
       setModal(null)
     } catch (e) {
       setError(e.detail || 'Failed to save entity')

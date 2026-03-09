@@ -1,4 +1,5 @@
 import secrets
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
@@ -11,6 +12,8 @@ from app.models.models import User
 from app.schemas.schemas import Token, UserOut
 from app.services.audit import log_action
 from app.services.email import send_password_reset_email
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -74,7 +77,11 @@ def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
     db.commit()
 
     reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
-    send_password_reset_email(to=user.email, full_name=user.full_name, reset_url=reset_url)
+    try:
+        send_password_reset_email(to=user.email, full_name=user.full_name, reset_url=reset_url)
+    except Exception as e:
+        logger.error(f"Failed to send reset email to {user.email}: {e}")
+        logger.info(f"Password reset URL for {user.email}: {reset_url}")
 
 
 @router.post("/reset-password", status_code=204)
