@@ -5,7 +5,7 @@ from typing import List, Optional
 from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import User, Supplier
-from app.schemas.schemas import SupplierCreate, SupplierUpdate, SupplierOut
+from app.schemas.schemas import SupplierCreate, SupplierBulkCreate, SupplierUpdate, SupplierOut
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/api/suppliers", tags=["suppliers"])
@@ -87,6 +87,36 @@ def create_supplier(
     db.commit()
     db.refresh(supplier)
     return supplier
+
+
+@router.post("/bulk", response_model=List[SupplierOut])
+def create_supplier_bulk(
+    payload: SupplierBulkCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create the same supplier across multiple entities at once."""
+    if not payload.entity_ids:
+        raise HTTPException(status_code=400, detail="At least one entity must be selected")
+    for eid in payload.entity_ids:
+        _check_entity_access(eid, current_user)
+
+    fields = payload.model_dump(exclude={"entity_ids"})
+    created = []
+    for eid in payload.entity_ids:
+        supplier = Supplier(entity_id=eid, **fields)
+        db.add(supplier)
+        log_action(
+            db, "supplier.created", user_id=current_user.id,
+            entity_id=eid, resource_type="supplier",
+            description=f"Created supplier {supplier.name}",
+        )
+        created.append(supplier)
+
+    db.commit()
+    for s in created:
+        db.refresh(s)
+    return created
 
 
 @router.put("/{supplier_id}", response_model=SupplierOut)

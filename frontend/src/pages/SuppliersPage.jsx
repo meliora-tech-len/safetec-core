@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getSuppliers, getEntities, createSupplier, updateSupplier, deleteSupplier } from '../services/api'
+import { getSuppliers, getEntities, createSupplierBulk, updateSupplier, deleteSupplier } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, User, X, Building2 } from 'lucide-react'
@@ -30,8 +30,9 @@ export default function SuppliersPage() {
   const handleSave = async (formData) => {
     try {
       if (modal.mode === 'create') {
-        await createSupplier(formData)
-        toast.success('Supplier created')
+        await createSupplierBulk(formData)
+        const count = formData.entity_ids.length
+        toast.success(`Supplier created for ${count} entit${count === 1 ? 'y' : 'ies'}`)
       } else {
         await updateSupplier(modal.supplier.id, formData)
         toast.success('Supplier updated')
@@ -149,8 +150,125 @@ export default function SuppliersPage() {
   )
 }
 
+function MultiEntitySelect({ entities, selected, onChange }) {
+  const [open, setOpen] = useState(false)
+
+  const toggle = (id) => {
+    onChange(
+      selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]
+    )
+  }
+
+  const label =
+    selected.length === 0
+      ? 'Select entities…'
+      : selected.length === entities.length
+      ? 'All entities selected'
+      : entities
+          .filter(e => selected.includes(e.id))
+          .map(e => e.name)
+          .join(', ')
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 12px',
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border)',
+          borderRadius: 6,
+          color: selected.length === 0 ? 'var(--text-muted)' : 'var(--text-primary)',
+          fontSize: 13,
+          cursor: 'pointer',
+          textAlign: 'left',
+          gap: 8,
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {label}
+        </span>
+        <span style={{ flexShrink: 0, opacity: 0.5, fontSize: 10 }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {selected.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+          {entities.filter(e => selected.includes(e.id)).map(e => (
+            <span key={e.id} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              background: 'var(--accent-dim)', color: 'var(--accent)',
+              fontSize: 11, fontWeight: 600, padding: '2px 8px 2px 10px',
+              borderRadius: 999,
+            }}>
+              {e.name}
+              <button
+                type="button"
+                onClick={() => toggle(e.id)}
+                style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: 13 }}
+              >×</button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {open && (
+        <>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 10 }}
+            onClick={() => setOpen(false)}
+          />
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, right: 0,
+            zIndex: 20, marginTop: 4,
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+            overflow: 'hidden',
+          }}>
+            {entities.map(e => {
+              const checked = selected.includes(e.id)
+              return (
+                <div
+                  key={e.id}
+                  onClick={() => toggle(e.id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '9px 14px', cursor: 'pointer', fontSize: 13,
+                    background: checked ? 'var(--accent-dim)' : 'transparent',
+                    color: checked ? 'var(--accent)' : 'var(--text-primary)',
+                  }}
+                  onMouseEnter={e2 => { if (!checked) e2.currentTarget.style.background = 'var(--bg-hover)' }}
+                  onMouseLeave={e2 => { if (!checked) e2.currentTarget.style.background = 'transparent' }}
+                >
+                  <span style={{
+                    width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                    border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
+                    background: checked ? 'var(--accent)' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 10, color: '#fff',
+                  }}>
+                    {checked && '✓'}
+                  </span>
+                  {e.name}
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
   const [form, setForm] = useState({
+    entity_ids: entities.map(e => e.id),
     entity_id: supplier?.entity_id || (entities[0]?.id || ''),
     name: supplier?.name || '',
     trading_name: supplier?.trading_name || '',
@@ -171,7 +289,13 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setSaving(true)
-    await onSave({ ...form, entity_id: parseInt(form.entity_id) })
+    if (mode === 'create') {
+      const { entity_id, entity_ids, ...fields } = form
+      await onSave({ entity_ids, ...fields })
+    } else {
+      const { entity_id, entity_ids, ...fields } = form
+      await onSave({ ...fields, entity_id: parseInt(entity_id) })
+    }
     setSaving(false)
   }
 
@@ -185,11 +309,18 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
             <div className="form-group">
-              <label>Business Entity *</label>
-              <select value={form.entity_id} onChange={e => set('entity_id', e.target.value)} required>
-                <option value="">Select entity...</option>
-                {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-              </select>
+              <label>Business Entities *</label>
+              {mode === 'create' ? (
+                <MultiEntitySelect
+                  entities={entities}
+                  selected={form.entity_ids}
+                  onChange={ids => set('entity_ids', ids)}
+                />
+              ) : (
+                <select value={form.entity_id} onChange={e => set('entity_id', e.target.value)} required>
+                  {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+              )}
             </div>
             <div className="form-row">
               <div className="form-group">

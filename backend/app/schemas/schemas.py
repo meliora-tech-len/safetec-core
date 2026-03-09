@@ -211,6 +211,20 @@ class SupplierBase(BaseModel):
 class SupplierCreate(SupplierBase):
     pass
 
+class SupplierBulkCreate(BaseModel):
+    entity_ids: List[int]
+    name: str
+    trading_name: Optional[str] = None
+    registration_number: Optional[str] = None
+    vat_number: Optional[str] = None
+    contact_person: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    postal_code: Optional[str] = None
+    notes: Optional[str] = None
+
 class SupplierUpdate(BaseModel):
     name: Optional[str] = None
     trading_name: Optional[str] = None

@@ -165,10 +165,25 @@ def seed():
                         vat_number=business.vat_number,
                         email=business.email,
                         phone=business.phone,
+                        address=business.address,
                         notes=f"Inter-company supplier (Entity: {business.code})",
                     )
                     db.add(supplier)
                     print(f"  Added {business.code} as supplier to {entity.code}")
+                else:
+                    # Sync contact details from the entity definition
+                    changed = False
+                    if not existing_supplier.address and business.address:
+                        existing_supplier.address = business.address
+                        changed = True
+                    if not existing_supplier.email and business.email:
+                        existing_supplier.email = business.email
+                        changed = True
+                    if not existing_supplier.phone and business.phone:
+                        existing_supplier.phone = business.phone
+                        changed = True
+                    if changed:
+                        print(f"  Updated contact details for {business.code} in {entity.code}")
 
         db.commit()
 
