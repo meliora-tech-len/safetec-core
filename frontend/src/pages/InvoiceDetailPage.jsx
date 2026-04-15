@@ -19,6 +19,8 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   const navigate = useNavigate()
   const { theme } = useTheme()
   const isInvoice = docType === 'invoice'
+  const isPO      = docType === 'purchase_order'
+  const docPath   = isInvoice ? 'invoices' : isPO ? 'purchase-orders' : 'quotes'
   const [invoice, setInvoice] = useState(null)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
@@ -123,7 +125,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
             <Mail size={13} /> Email
           </button>
           {invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
-            <button className="btn-ghost btn-sm" onClick={() => navigate(`/${isInvoice ? 'invoices' : 'quotes'}/${id}/edit`)}>
+            <button className="btn-ghost btn-sm" onClick={() => navigate(`/${docPath}/${id}/edit`)}>
               <Edit2 size={13} /> Edit
             </button>
           )}

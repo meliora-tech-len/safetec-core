@@ -95,7 +95,7 @@ def get_entity(
 @router.get("/{entity_id}/next-number", response_model=NextNumberOut)
 def next_invoice_number(
     entity_id: int,
-    doc_type: str = Query("invoice", pattern="^(invoice|quote)$"),
+    doc_type: str = Query("invoice", pattern="^(invoice|quote|purchase_order)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -103,6 +103,9 @@ def next_invoice_number(
 
     if doc_type == "invoice":
         prefix = entity.invoice_prefix or entity.code or "INV"
+        counter = (entity.invoice_counter or 0) + 1
+    elif doc_type == "purchase_order":
+        prefix = "PO"
         counter = (entity.invoice_counter or 0) + 1
     else:
         prefix = entity.quote_prefix or "QT"

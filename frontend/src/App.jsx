@@ -15,6 +15,13 @@ import AuditPage from './pages/AuditPage'
 import EntitiesPage from './pages/EntitiesPage'
 import UsersPage from './pages/UsersPage'
 import SettingsPage from './pages/SettingsPage'
+import FleetPage from './pages/FleetPage'
+import ClientsPage from './pages/ClientsPage'
+import DriversPage from './pages/DriversPage'
+import DriverDetailPage from './pages/DriverDetailPage'
+import PayrollSettingsPage from './pages/PayrollSettingsPage'
+import TruckLoadsPage from './pages/TruckLoadsPage'
+import MinesSettingsPage from './pages/MinesSettingsPage'
 import './styles/globals.css'
 
 function PrivateRoute({ children }) {
@@ -46,23 +53,44 @@ export default function App() {
             {/* Suppliers */}
             <Route path="/suppliers" element={<SuppliersPage />} />
 
+            {/* Fleet */}
+            <Route path="/fleet" element={<FleetPage />} />
+
+            {/* Clients */}
+            <Route path="/clients" element={<ClientsPage />} />
+
+            {/* Drivers */}
+            <Route path="/drivers" element={<DriversPage />} />
+            <Route path="/drivers/:driverId" element={<DriverDetailPage />} />
+
+            {/* Quotes */}
+            <Route path="/quotes" element={<InvoicesPage docType="quote" />} />
+            <Route path="/quotes/new" element={<InvoiceFormPage docType="quote" />} />
+            <Route path="/quotes/:id" element={<InvoiceDetailPage docType="quote" />} />
+            <Route path="/quotes/:id/edit" element={<InvoiceFormPage docType="quote" />} />
+
             {/* Invoices */}
             <Route path="/invoices" element={<InvoicesPage docType="invoice" />} />
             <Route path="/invoices/new" element={<InvoiceFormPage docType="invoice" />} />
             <Route path="/invoices/:id" element={<InvoiceDetailPage docType="invoice" />} />
             <Route path="/invoices/:id/edit" element={<InvoiceFormPage docType="invoice" />} />
 
-            {/* Quotes 
-            <Route path="/quotes" element={<InvoicesPage docType="quote" />} />
-            <Route path="/quotes/new" element={<InvoiceFormPage docType="quote" />} />
-            <Route path="/quotes/:id" element={<InvoiceDetailPage docType="quote" />} />
-            <Route path="/quotes/:id/edit" element={<InvoiceFormPage docType="quote" />} />*/}
+            {/* Purchase Orders */}
+            <Route path="/purchase-orders" element={<InvoicesPage docType="purchase_order" />} />
+            <Route path="/purchase-orders/new" element={<InvoiceFormPage docType="purchase_order" />} />
+            <Route path="/purchase-orders/:id" element={<InvoiceDetailPage docType="purchase_order" />} />
+            <Route path="/purchase-orders/:id/edit" element={<InvoiceFormPage docType="purchase_order" />} />
 
             {/* Admin only */}
             <Route path="/audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
             <Route path="/entities" element={<AdminRoute><EntitiesPage /></AdminRoute>} />
             <Route path="/users" element={<AdminRoute><UsersPage /></AdminRoute>} />
             <Route path="/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
+            <Route path="/settings/payroll" element={<AdminRoute><PayrollSettingsPage /></AdminRoute>} />
+            <Route path="/settings/mines" element={<AdminRoute><MinesSettingsPage /></AdminRoute>} />
+
+            {/* Truck Loads */}
+            <Route path="/truck-loads" element={<PrivateRoute><TruckLoadsPage /></PrivateRoute>} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

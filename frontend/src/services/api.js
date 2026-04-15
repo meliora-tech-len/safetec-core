@@ -104,4 +104,27 @@ export const getSettings = () => api.get('/settings/')
 export const updateSetting = (key, data) => api.put(`/settings/${key}`, data)
 export const createSetting = (data) => api.post('/settings/', data)
 
+// ── Mines ─────────────────────────────────────────────────────────────────────
+export const getMines = (params = {}) => api.get('/mines', { params })
+export const getMine = (id) => api.get(`/mines/${id}`)
+export const createMine = (data) => api.post('/mines', data)
+export const updateMine = (id, data) => api.put(`/mines/${id}`, data)
+export const deleteMine = (id) => api.delete(`/mines/${id}`)
+export const getMineRates = (mineId, params = {}) => api.get(`/mines/${mineId}/rates`, { params })
+export const addMineRate = (mineId, data) => api.post(`/mines/${mineId}/rates`, data)
+
+// ── Truck Loads ───────────────────────────────────────────────────────────────
+export const getTruckLoads = (params = {}) => api.get('/truck-loads', { params })
+export const getTruckLoadSummary = (params = {}) => api.get('/truck-loads/summary', { params })
+export const createTruckLoad = (data) => api.post('/truck-loads', data)
+export const bulkCreateTruckLoads = (data) => api.post('/truck-loads/bulk', data)
+export const updateTruckLoad = (id, data) => api.put(`/truck-loads/${id}`, data)
+export const deleteTruckLoad = (id) => api.delete(`/truck-loads/${id}`)
+
+// ── Driver Salary Configs ─────────────────────────────────────────────────────
+export const getDriverSalaryConfigs = (params = {}) => api.get('/driver-salary-configs', { params })
+export const createDriverSalaryConfig = (data) => api.post('/driver-salary-configs', data)
+export const updateDriverSalaryConfig = (id, data) => api.put(`/driver-salary-configs/${id}`, data)
+export const deleteDriverSalaryConfig = (id) => api.delete(`/driver-salary-configs/${id}`)
+
 export default api

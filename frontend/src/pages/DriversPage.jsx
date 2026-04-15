@@ -1,0 +1,397 @@
+import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Users, Plus, Search, X } from 'lucide-react'
+import { useAuth } from '../hooks/useAuth'
+import toast from 'react-hot-toast'
+import ExportButton from '../components/ExportButton'
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+function useApi() {
+  const h = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` })
+  const get  = (p)    => fetch(`${API}${p}`, { headers: h() }).then(r => r.ok ? r.json() : Promise.reject(r))
+  const post = (p, b) => fetch(`${API}${p}`, { method: 'POST', headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+  const put  = (p, b) => fetch(`${API}${p}`, { method: 'PUT',  headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+  return { get, post, put }
+}
+
+const TYPE_BADGE = {
+  permanent: { label: 'Permanent', cls: 'badge-paid' },
+  casual:    { label: 'Casual',    cls: 'badge-quote' },
+}
+
+const formatCurrency = (n) =>
+  `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+// ── Stat cards ────────────────────────────────────────────────────────────────
+function StatCards({ stats }) {
+  if (!stats) return null
+  const cards = [
+    { label: 'Total Drivers',      value: stats.total_drivers,         colour: 'var(--accent)' },
+    { label: 'Permanent',          value: stats.permanent,             colour: 'var(--text-secondary)' },
+    { label: 'Casual',             value: stats.casual,                colour: 'var(--warning)' },
+    { label: 'Active',             value: stats.active,                colour: 'var(--success)' },
+  ]
+  return (
+    <div className="grid-4" style={{ marginBottom: 24 }}>
+      {cards.map(c => (
+        <div key={c.label} className="stat-card">
+          <div className="stat-card-label">{c.label}</div>
+          <div className="stat-card-value" style={{ color: c.colour, fontSize: 26 }}>{c.value}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Add / Edit modal ──────────────────────────────────────────────────────────
+const BLANK = {
+  entity_id: '', truck_id: '', employee_number: '',
+  first_name: '', last_name: '', driver_type: 'casual',
+  id_number: '', tax_number: '', bank_name: '', bank_account_number: '', notes: '',
+}
+
+function DriverModal({ driver, entities, trucks, onSave, onClose }) {
+  const isEdit = !!driver?.id
+  const api = useApi()
+  const [form, setForm] = useState(() => driver ? {
+    entity_id:          driver.entity_id,
+    truck_id:           driver.truck_id || '',
+    employee_number:    driver.employee_number || '',
+    first_name:         driver.first_name,
+    last_name:          driver.last_name,
+    driver_type:        driver.driver_type,
+    id_number:          driver.id_number || '',
+    tax_number:         driver.tax_number || '',
+    bank_name:          driver.bank_name || '',
+    bank_account_number:driver.bank_account_number || '',
+    notes:              driver.notes || '',
+  } : { ...BLANK })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  // trucks scoped to selected entity
+  const entityTrucks = trucks.filter(t => String(t.entity_id) === String(form.entity_id))
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!form.entity_id) { toast.error('Select an entity'); return }
+    if (!form.first_name.trim() || !form.last_name.trim()) { toast.error('Name is required'); return }
+    setSaving(true)
+    try {
+      const payload = {
+        ...form,
+        entity_id: Number(form.entity_id),
+        truck_id: form.truck_id ? Number(form.truck_id) : null,
+      }
+      if (isEdit) {
+        await api.put(`/api/drivers/${driver.id}`, payload)
+        toast.success('Driver updated')
+      } else {
+        await api.post('/api/drivers', payload)
+        toast.success('Driver added')
+      }
+      onSave()
+    } catch (err) {
+      toast.error(err?.detail || 'Failed to save driver')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal modal-lg">
+        <div className="modal-header">
+          <h2>{isEdit ? 'Edit Driver' : 'Add Driver'}</h2>
+          <button className="btn-icon btn-ghost" onClick={onClose}><X size={16} /></button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="modal-body">
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>Entity *</label>
+                <select value={form.entity_id} onChange={e => setForm(f => ({ ...f, entity_id: e.target.value, truck_id: '' }))} disabled={isEdit} required>
+                  <option value="">Select entity…</option>
+                  {entities.map(en => <option key={en.id} value={en.id}>{en.name} ({en.code})</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Driver Type *</label>
+                <select value={form.driver_type} onChange={e => set('driver_type', e.target.value)}>
+                  <option value="casual">Casual</option>
+                  <option value="permanent">Permanent</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>First Name *</label>
+                <input value={form.first_name} onChange={e => set('first_name', e.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label>Last Name *</label>
+                <input value={form.last_name} onChange={e => set('last_name', e.target.value)} required />
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>Employee Number</label>
+                <input value={form.employee_number} onChange={e => set('employee_number', e.target.value)} placeholder="e.g. THEM002" style={{ fontFamily: 'monospace' }} />
+              </div>
+              <div className="form-group">
+                <label>Assigned Truck</label>
+                <select value={form.truck_id} onChange={e => set('truck_id', e.target.value)}>
+                  <option value="">None</option>
+                  {entityTrucks.map(t => <option key={t.id} value={t.id}>{t.registration} — {t.make} {t.model || ''}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>ID Number</label>
+                <input value={form.id_number} onChange={e => set('id_number', e.target.value)} style={{ fontFamily: 'monospace' }} />
+              </div>
+              <div className="form-group">
+                <label>Tax Number</label>
+                <input value={form.tax_number} onChange={e => set('tax_number', e.target.value)} style={{ fontFamily: 'monospace' }} />
+              </div>
+            </div>
+
+            <div>
+              <div style={sectionLabel}>Banking</div>
+              <div style={{ padding: 12, background: 'var(--bg-base)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Bank Name</label>
+                    <input value={form.bank_name} onChange={e => set('bank_name', e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label>Account Number</label>
+                    <input value={form.bank_account_number} onChange={e => set('bank_account_number', e.target.value)} style={{ fontFamily: 'monospace' }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Notes</label>
+              <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} />
+            </div>
+
+          </div>
+          <div className="modal-footer">
+            <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn-primary" disabled={saving}>
+              {saving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : isEdit ? 'Save Changes' : 'Add Driver'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+const sectionLabel = { fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-secondary)', marginBottom: 8 }
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+export default function DriversPage() {
+  const { activeEntity, isAdmin } = useAuth()
+  const api = useApi()
+  const navigate = useNavigate()
+
+  const [drivers, setDrivers]   = useState([])
+  const [stats, setStats]       = useState(null)
+  const [entities, setEntities] = useState([])
+  const [trucks, setTrucks]     = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [search, setSearch]     = useState('')
+  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
+  const [filterType, setFilterType]     = useState('')
+  const [showInactive, setShowInactive] = useState(false)
+  const [modal, setModal]       = useState(null)
+
+  // Sync with sidebar entity switcher
+  useEffect(() => {
+    setFilterEntity(activeEntity?.id?.toString() || '')
+  }, [activeEntity])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (filterEntity) params.set('entity_id', filterEntity)
+      if (filterType)   params.set('driver_type', filterType)
+      if (search)       params.set('search', search)
+      if (showInactive) params.set('is_active', 'false')
+      // when showing inactive, don't filter by is_active at all — pass nothing to get all
+      const isActiveParam = showInactive ? '' : 'true'
+      if (isActiveParam) params.set('is_active', isActiveParam)
+
+      const [driverData, statsData] = await Promise.all([
+        api.get(`/api/drivers?${params}`),
+        api.get(`/api/drivers/stats${filterEntity ? `?entity_id=${filterEntity}` : ''}`),
+      ])
+      setDrivers(driverData)
+      setStats(statsData)
+    } catch {
+      toast.error('Failed to load drivers')
+    } finally {
+      setLoading(false)
+    }
+  }, [filterEntity, filterType, search, showInactive])
+
+  useEffect(() => {
+    Promise.all([
+      api.get('/api/entities/'),
+      api.get('/api/fleet/trucks?limit=500'),
+    ]).then(([e, t]) => { setEntities(e); setTrucks(t) }).catch(() => {})
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
+
+  return (
+    <div style={{ padding: '28px 32px', flex: 1 }}>
+      <div className="page-header">
+        <div>
+          <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Users size={22} style={{ color: 'var(--accent)' }} />
+            Driver Management
+          </div>
+          <div className="page-subtitle">Permanent and casual drivers across all entities</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ExportButton
+            title="Drivers Report"
+            filename="drivers"
+            data={drivers}
+            columns={[
+              { header: 'Employee #',   key: 'employee_number' },
+              { header: 'First Name',   key: 'first_name' },
+              { header: 'Last Name',    key: 'last_name' },
+              { header: 'Type',         key: 'driver_type' },
+              { header: 'Entity',       value: r => entityCode(r.entity_id) },
+              { header: 'Truck',        key: 'truck_registration' },
+              { header: 'Loads (month)',    key: 'load_count_this_month' },
+              { header: 'Payments (month)', value: r => parseFloat(r.total_payments_this_month || 0).toFixed(2) },
+              { header: 'Status',       value: r => r.is_active ? 'Active' : 'Inactive' },
+            ]}
+          />
+          <button className="btn-primary" onClick={() => setModal({ mode: 'create' })}>
+            <Plus size={15} /> Add Driver
+          </button>
+        </div>
+      </div>
+
+      <StatCards stats={stats} />
+
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="search-bar" style={{ flex: '1 1 200px', minWidth: 180 }}>
+          <Search size={14} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or employee #…" />
+          {search && <button className="btn-icon" onClick={() => setSearch('')} style={{ padding: 0, background: 'none' }}><X size={13} /></button>}
+        </div>
+        {isAdmin && (
+          <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 'auto', minWidth: 160 }}>
+            <option value="">All entities</option>
+            {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        )}
+        <select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ width: 'auto', minWidth: 140 }}>
+          <option value="">All types</option>
+          <option value="permanent">Permanent</option>
+          <option value="casual">Casual</option>
+        </select>
+        <button
+          className="btn-ghost btn-sm"
+          style={{ color: showInactive ? 'var(--accent)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}
+          onClick={() => setShowInactive(v => !v)}
+        >
+          {showInactive ? 'Active only' : 'Show inactive'}
+        </button>
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div className="loading-center"><div className="spinner" /></div>
+      ) : drivers.length === 0 ? (
+        <div className="empty-state">
+          <Users size={40} />
+          <p>No drivers found{search ? ` for "${search}"` : ''}</p>
+          {!search && <button className="btn-primary" onClick={() => setModal({ mode: 'create' })}><Plus size={14} /> Add first driver</button>}
+        </div>
+      ) : (
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Employee #</th>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Entity</th>
+                <th>Truck</th>
+                <th className="text-right">Loads (month)</th>
+                <th className="text-right">Payments (month)</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {drivers.map(d => (
+                <tr key={d.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/drivers/${d.id}`)}>
+                  <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>
+                    {d.employee_number || '—'}
+                  </td>
+                  <td style={{ fontWeight: 600 }}>{d.first_name} {d.last_name}</td>
+                  <td>
+                    <span className={`badge ${TYPE_BADGE[d.driver_type]?.cls || 'badge-draft'}`}>
+                      {TYPE_BADGE[d.driver_type]?.label || d.driver_type}
+                    </span>
+                  </td>
+                  <td>
+                    <span style={chipStyle}>{entityCode(d.entity_id)}</span>
+                  </td>
+                  <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{d.truck_registration || '—'}</td>
+                  <td className="text-right" style={{ fontWeight: 600 }}>{d.load_count_this_month}</td>
+                  <td className="text-right" style={{ fontSize: 12 }}>{formatCurrency(d.total_payments_this_month)}</td>
+                  <td>
+                    <span className={`badge ${d.is_active ? 'badge-paid' : 'badge-cancelled'}`}>
+                      {d.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td onClick={e => e.stopPropagation()}>
+                    <button className="btn-icon btn-ghost btn-sm" onClick={() => setModal({ mode: 'edit', driver: d })}>
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <DriverModal
+          driver={modal.driver || null}
+          entities={entities}
+          trucks={trucks}
+          onSave={() => { setModal(null); load() }}
+          onClose={() => setModal(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+const chipStyle = {
+  background: 'var(--accent-dim)', color: 'var(--accent)',
+  fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, letterSpacing: 0.5,
+}

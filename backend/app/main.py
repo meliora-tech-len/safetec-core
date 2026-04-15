@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.db.database import engine, SessionLocal
 from app.models.models import Base, Role
-from app.api.routes import auth, users, entities, suppliers, invoices, audit, settings, roles
+from app.api.routes import auth, users, entities, suppliers, invoices, audit, settings, roles, fleet, drivers, payroll_settings, payroll_mine_groups, mines, truck_loads, driver_salary_configs
 
 Base.metadata.create_all(bind=engine)
 
@@ -29,6 +29,7 @@ app = FastAPI(
     title="safetec_core API",
     description="Centralized Business Management System",
     version="1.1.0",
+    redirect_slashes=False,
 )
 
 app.add_middleware(
@@ -60,6 +61,13 @@ app.include_router(invoices.router)
 app.include_router(audit.router)
 app.include_router(settings.router)
 app.include_router(roles.router)
+app.include_router(fleet.router)
+app.include_router(drivers.router)
+app.include_router(payroll_settings.router)
+app.include_router(payroll_mine_groups.router)
+app.include_router(mines.router)
+app.include_router(truck_loads.router)
+app.include_router(driver_salary_configs.router)
 
 
 @app.get("/health")

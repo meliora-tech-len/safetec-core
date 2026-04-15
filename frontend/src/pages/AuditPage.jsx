@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { getAuditLogs, getEntities } from '../services/api'
 import { formatDateTime } from '../utils/helpers'
 import { Shield, RefreshCw, Search } from 'lucide-react'
+import ExportButton from '../components/ExportButton'
+import { useAuth } from '../hooks/useAuth'
 
 const ACTION_LABELS = {
   // Auth
@@ -88,10 +90,11 @@ const RESOURCE_TYPES = [
 ]
 
 export default function AuditPage() {
+  const { activeEntity, isAdmin } = useAuth()
   const [logs, setLogs] = useState([])
   const [entities, setEntities] = useState([])
   const [loading, setLoading] = useState(true)
-  const [filterEntity, setFilterEntity] = useState('')
+  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [filterResource, setFilterResource] = useState('')
   const [filterAction, setFilterAction] = useState('')
   const [search, setSearch] = useState('')
@@ -106,6 +109,7 @@ export default function AuditPage() {
     getAuditLogs(params).then(r => setLogs(r.data)).finally(() => setLoading(false))
   }
 
+  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
   useEffect(() => { load() }, [filterEntity, filterResource])
 
@@ -132,7 +136,22 @@ export default function AuditPage() {
           <h1 className="page-title">Audit Log</h1>
           <p className="page-subtitle">Complete activity trail — who changed what and when</p>
         </div>
-        <button className="btn-ghost btn-sm" onClick={load}><RefreshCw size={13} /> Refresh</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ExportButton
+            title="Audit Log Report"
+            filename="audit-log"
+            data={filtered}
+            columns={[
+              { header: 'Timestamp',   value: r => formatDateTime(r.created_at) },
+              { header: 'User',        value: r => r.user?.full_name || 'System' },
+              { header: 'Action',      key: 'action' },
+              { header: 'Entity',      value: r => r.entity_id ? (entityMap[r.entity_id] || `#${r.entity_id}`) : '' },
+              { header: 'Description', key: 'description' },
+              { header: 'IP Address',  key: 'ip_address' },
+            ]}
+          />
+          <button className="btn-ghost btn-sm" onClick={load}><RefreshCw size={13} /> Refresh</button>
+        </div>
       </div>
 
       <div style={styles.filters}>
@@ -145,10 +164,12 @@ export default function AuditPage() {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
-        <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
-          <option value="">All Entities</option>
-          {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
+        {isAdmin && (
+          <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
+            <option value="">All Entities</option>
+            {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        )}
         <select value={filterAction} onChange={e => setFilterAction(e.target.value)} style={{ width: 180 }}>
           {ACTION_GROUPS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
         </select>

@@ -30,6 +30,9 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
   const { user, activeEntity } = useAuth()
   const isEdit = !!id
   const isInvoice = docType === 'invoice'
+  const isPO      = docType === 'purchase_order'
+  const docLabel  = isInvoice ? 'Invoice' : isPO ? 'Purchase Order' : 'Quote'
+  const docPath   = isInvoice ? 'invoices' : isPO ? 'purchase-orders' : 'quotes'
 
   const [entities, setEntities] = useState([])
   const [suppliers, setSuppliers] = useState([])
@@ -185,7 +188,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
       } else {
         await api('/api/invoices/', { method: 'POST', body: JSON.stringify(payload) })
       }
-      navigate(`/${isInvoice ? 'invoices' : 'quotes'}`)
+      navigate(`/${docPath}`)
     } catch (e) {
       setError(e.detail || 'Failed to save invoice')
     } finally {
@@ -206,7 +209,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           <ArrowLeft size={14} /> Back
         </button>
         <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>
-          {isEdit ? `Edit ${isInvoice ? 'Invoice' : 'Quote'}` : `New ${isInvoice ? 'Invoice' : 'Quote'}`}
+          {isEdit ? `Edit ${docLabel}` : `New ${docLabel}`}
         </h1>
         <div style={{ width: 60 }} />
       </div>
@@ -244,7 +247,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             <div className="form-row" style={{ marginTop: 12 }}>
               <div>
                 <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {isInvoice ? 'Invoice Number' : 'Quote Number'} *
+                  {docLabel} Number *
                   <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)', background: 'var(--bg-secondary)', padding: '1px 6px', borderRadius: 10 }}>
                     editable
                   </span>
@@ -431,7 +434,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <button className="btn-primary" onClick={() => handleSave('sent')} disabled={saving}
               style={{ justifyContent: 'center', height: 42 }}>
-              {saving ? 'Saving...' : <><Save size={14} /> {isInvoice ? 'Save & Mark Sent' : 'Save Quote'}</>}
+              {saving ? 'Saving...' : <><Save size={14} /> {isInvoice ? 'Save & Mark Sent' : `Save ${docLabel}`}</>}
             </button>
             <button className="btn-ghost btn-sm" onClick={() => handleSave('draft')} disabled={saving}>
               Save as Draft

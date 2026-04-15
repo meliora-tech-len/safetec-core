@@ -3,15 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import { getInvoices, getEntities, downloadInvoicePdf } from '../services/api'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
 import { Plus, Search, X, FileText, Download, EyeOff } from 'lucide-react'
+import ExportButton from '../components/ExportButton'
 import { useTheme } from '../hooks/useTheme'
 import toast from 'react-hot-toast'
+import { useAuth } from '../hooks/useAuth'
 
 export default function InvoicesPage({ docType = 'invoice' }) {
+  const { activeEntity, isAdmin } = useAuth()
   const [allInvoices, setAllInvoices] = useState([])
   const [entities, setEntities] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filterEntity, setFilterEntity] = useState('')
+  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [filterStatus, setFilterStatus] = useState('')
   const [showCancelled, setShowCancelled] = useState(false)
   const navigate = useNavigate()
@@ -25,6 +28,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
     getInvoices(params).then(r => setAllInvoices(r.data)).finally(() => setLoading(false))
   }, [docType, filterEntity, search])
 
+  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { load() }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
@@ -56,7 +60,9 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   }
 
   const isInvoice = docType === 'invoice'
-  const title = isInvoice ? 'Invoices' : 'Quotes'
+  const isPO      = docType === 'purchase_order'
+  const title     = isInvoice ? 'Invoices' : isPO ? 'Purchase Orders' : 'Quotes'
+  const docPath   = isInvoice ? 'invoices' : isPO ? 'purchase-orders' : 'quotes'
 
   return (
     <div style={styles.page}>
@@ -65,9 +71,27 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           <h1 className="page-title">{title}</h1>
           <p className="page-subtitle">{displayedInvoices.length} {title.toLowerCase()}</p>
         </div>
-        <button className="btn-primary" onClick={() => navigate(`/${isInvoice ? 'invoices' : 'quotes'}/new`)}>
-          <Plus size={15} /> New {isInvoice ? 'Invoice' : 'Quote'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ExportButton
+            title={`${title} Report`}
+            filename={isInvoice ? 'invoices' : 'quotes'}
+            data={displayedInvoices}
+            columns={[
+              { header: 'Number',      key: 'invoice_number' },
+              { header: 'Supplier',    value: r => r.supplier?.name || '' },
+              { header: 'Entity',      value: r => r.entity?.code || '' },
+              { header: 'Status',      key: 'status' },
+              { header: 'Issue Date',  value: r => formatDate(r.issue_date) },
+              { header: 'Due Date',    value: r => formatDate(r.due_date) },
+              { header: 'Subtotal',    value: r => parseFloat(r.subtotal || 0).toFixed(2) },
+              { header: 'VAT',         value: r => parseFloat(r.vat_amount || 0).toFixed(2) },
+              { header: 'Total',       value: r => parseFloat(r.total || 0).toFixed(2) },
+            ]}
+          />
+          <button className="btn-primary" onClick={() => navigate(`/${docPath}/new`)}>
+            <Plus size={15} /> New {title.slice(0, -1)}
+          </button>
+        </div>
       </div>
 
       {/* Mini Stats Bar */}
@@ -87,10 +111,12 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           <input placeholder={`Search ${title.toLowerCase()}...`} value={search} onChange={e => setSearch(e.target.value)} />
           {search && <button className="btn-icon" onClick={() => setSearch('')}><X size={13} /></button>}
         </div>
-        <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
-          <option value="">All Entities</option>
-          {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
+        {isAdmin && (
+          <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
+            <option value="">All Entities</option>
+            {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        )}
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ width: 140 }}>
           <option value="">All Statuses</option>
           <option value="draft">Draft</option>
@@ -133,7 +159,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
                 <div className="empty-state"><FileText size={32} /><p>No {title.toLowerCase()} found</p></div>
               </td></tr>
             ) : displayedInvoices.map(inv => (
-              <tr key={inv.id} onClick={() => navigate(`/${isInvoice ? 'invoices' : 'quotes'}/${inv.id}`)} style={{ cursor: 'pointer' }}>
+              <tr key={inv.id} onClick={() => navigate(`/${docPath}/${inv.id}`)} style={{ cursor: 'pointer' }}>
                 <td className="font-mono text-accent" style={{ fontSize: 12 }}>{inv.invoice_number}</td>
                 <td style={{ fontWeight: 500 }}>{inv.supplier?.name || '—'}</td>
                 <td><span style={styles.chip}>{inv.entity?.code || '—'}</span></td>

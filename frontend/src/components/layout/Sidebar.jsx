@@ -4,7 +4,8 @@ import { useAuth } from '../../hooks/useAuth'
 import { useTheme } from '../../hooks/useTheme'
 import {
   LayoutDashboard, Users, Building2, FileText,
-  LogOut, Shield, Sun, Moon, Settings, ChevronDown
+  LogOut, Shield, Sun, Moon, Settings, ChevronDown, Truck,
+  FileCheck, FilePlus, ShoppingCart, Package, MapPin
 } from 'lucide-react'
 
 function hexToRgb(hex) {
@@ -23,16 +24,30 @@ function darkenHex(hex, factor) {
 }
 
 const NAV = [
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/suppliers', icon: Users,           label: 'Suppliers', module: 'suppliers' },
-  { to: '/invoices',  icon: FileText,        label: 'Invoices',  module: 'invoices' },
-  { to: '/audit',     icon: Shield,          label: 'Audit Log', adminOnly: true },
+  { to: '/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/suppliers',   icon: Users,           label: 'Suppliers',   module: 'suppliers' },
+  { to: '/clients',     icon: Users,           label: 'Clients',     module: 'clients' },
+  { to: '/fleet',       icon: Truck,           label: 'Fleet',       module: 'fleet' },
+  { to: '/drivers',     icon: Users,           label: 'Drivers',     module: 'fleet' },
+  { to: '/truck-loads', icon: Package,         label: 'Truck Loads', module: 'fleet' },
+  { to: '/audit',       icon: Shield,          label: 'Audit Log',   adminOnly: true },
+]
+
+const DOCUMENTS_NAV = [
+  { to: '/quotes',           icon: FileCheck,    label: 'Quotes',    module: 'invoices' },
+  { to: '/invoices',         icon: FileText,     label: 'Invoices',  module: 'invoices' },
+  { to: '/purchase-orders',  icon: ShoppingCart, label: 'PO\'s',     module: 'invoices' },
 ]
 
 const ADMIN_NAV = [
-  { to: '/entities', icon: Building2, label: 'Entities' },
-  { to: '/users',    icon: Users,     label: 'Users' },
-  { to: '/settings', icon: Settings,  label: 'Settings' },
+  { to: '/entities',         icon: Building2, label: 'Entities' },
+  { to: '/users',            icon: Users,     label: 'Users' },
+  { to: '/settings',         icon: Settings,  label: 'Settings' },
+]
+
+const SETTINGS_NAV = [
+  { to: '/settings/payroll', icon: Settings, label: 'Payroll Rates' },
+  { to: '/settings/mines',   icon: MapPin,   label: 'Mines' },
 ]
 
 export default function Sidebar() {
@@ -88,6 +103,12 @@ export default function Sidebar() {
   const visibleNav = NAV.filter(item => {
     if (item.adminOnly && !isAdmin) return false
     if (!item.module) return true  // no module restriction (dashboard)
+    if (isAdmin) return true
+    if (!entityAccess) return false
+    return (entityAccess.allowed_modules || []).includes(item.module)
+  })
+
+  const visibleDocNav = DOCUMENTS_NAV.filter(item => {
     if (isAdmin) return true
     if (!entityAccess) return false
     return (entityAccess.allowed_modules || []).includes(item.module)
@@ -165,11 +186,43 @@ export default function Sidebar() {
           ))}
         </div>
 
+        {/* Billing nav */}
+        {visibleDocNav.length > 0 && (
+          <div>
+            <div style={styles.navLabel}>Billing</div>
+            {visibleDocNav.map(({ to, icon: Icon, label }) => (
+              <NavLink key={to} to={to} style={({ isActive }) => ({
+                ...styles.navItem,
+                ...(isActive ? styles.navItemActive : {}),
+              })}>
+                <Icon size={16} />
+                <span>{label}</span>
+              </NavLink>
+            ))}
+          </div>
+        )}
+
         {/* Admin nav */}
         {isAdmin && (
           <div>
             <div style={styles.navLabel}>Administration</div>
             {ADMIN_NAV.map(({ to, icon: Icon, label }) => (
+              <NavLink key={to} to={to} end style={({ isActive }) => ({
+                ...styles.navItem,
+                ...(isActive ? styles.navItemActive : {}),
+              })}>
+                <Icon size={16} />
+                <span>{label}</span>
+              </NavLink>
+            ))}
+          </div>
+        )}
+
+        {/* Settings nav */}
+        {isAdmin && (
+          <div>
+            <div style={styles.navLabel}>Settings</div>
+            {SETTINGS_NAV.map(({ to, icon: Icon, label }) => (
               <NavLink key={to} to={to} style={({ isActive }) => ({
                 ...styles.navItem,
                 ...(isActive ? styles.navItemActive : {}),

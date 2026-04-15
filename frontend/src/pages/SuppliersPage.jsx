@@ -3,13 +3,16 @@ import { getSuppliers, getEntities, createSupplierBulk, updateSupplier, deleteSu
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, User, X, Building2 } from 'lucide-react'
+import ExportButton from '../components/ExportButton'
+import { useAuth } from '../hooks/useAuth'
 
 export default function SuppliersPage() {
+  const { activeEntity, isAdmin } = useAuth()
   const [suppliers, setSuppliers] = useState([])
   const [entities, setEntities] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filterEntity, setFilterEntity] = useState('')
+  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [modal, setModal] = useState(null) // null | { mode: 'create'|'edit', supplier?: {} }
 
   const load = useCallback(() => {
@@ -20,6 +23,7 @@ export default function SuppliersPage() {
     getSuppliers(params).then(r => setSuppliers(r.data)).finally(() => setLoading(false))
   }, [filterEntity, search])
 
+  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { load() }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
@@ -65,9 +69,28 @@ export default function SuppliersPage() {
           <h1 className="page-title">Suppliers</h1>
           <p className="page-subtitle">{suppliers.length} supplier{suppliers.length !== 1 ? 's' : ''}</p>
         </div>
-        <button className="btn-primary" onClick={openCreate}>
-          <Plus size={15} /> New Supplier
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ExportButton
+            title="Suppliers Report"
+            filename="suppliers"
+            data={suppliers}
+            columns={[
+              { header: 'Name',                key: 'name' },
+              { header: 'Trading Name',        key: 'trading_name' },
+              { header: 'Contact Person',      key: 'contact_person' },
+              { header: 'Email',               key: 'email' },
+              { header: 'Phone',               key: 'phone' },
+              { header: 'City',                key: 'city' },
+              { header: 'Entity',              value: r => entityCode(r.entity_id) },
+              { header: 'Reg No.',             key: 'registration_number' },
+              { header: 'VAT No.',             key: 'vat_number' },
+              { header: 'Created',             value: r => formatDate(r.created_at) },
+            ]}
+          />
+          <button className="btn-primary" onClick={openCreate}>
+            <Plus size={15} /> New Supplier
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -81,10 +104,12 @@ export default function SuppliersPage() {
           />
           {search && <button className="btn-icon" onClick={() => setSearch('')}><X size={13} /></button>}
         </div>
-        <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
-          <option value="">All Entities</option>
-          {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
+        {isAdmin && (
+          <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
+            <option value="">All Entities</option>
+            {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        )}
       </div>
 
       {/* Table */}
