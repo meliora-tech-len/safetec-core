@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import calendar
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
@@ -11,6 +12,7 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, Driver, DriverType,
     DriverPayCycle, DriverTripLog, DriverAdditionalLoad, DriverFoodPayment,
+    TruckLoad,
 )
 from app.schemas.schemas import (
     DriverCreate, DriverUpdate, DriverOut, DriverSummary, DriverStats,
@@ -63,14 +65,57 @@ def _build_summary(driver: Driver, month_start: date) -> dict:
     }
 
 
-def _cycle_with_calc(cycle: DriverPayCycle, driver: Driver, db: Session) -> dict:
+def _cycle_with_calc(
+    cycle: DriverPayCycle,
+    driver: Driver,
+    db: Session,
+    was_prefilled: bool = False,
+) -> DriverPayCycleOut:
     settings = _get_payroll_settings(db)
-    calc = calculate_pay_cycle(cycle, settings)
-    # Convert Decimal to float for JSON serialisation
+    driver_type = driver.driver_type.value if driver.driver_type else "permanent"
+    calc = calculate_pay_cycle(cycle, settings, driver_type=driver_type)
     calc_serialisable = {k: float(v) if isinstance(v, Decimal) else v for k, v in calc.items()}
     out = DriverPayCycleOut.model_validate(cycle)
     out.calc = calc_serialisable
+    out.was_prefilled = was_prefilled
     return out
+
+
+def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session) -> dict:
+    """
+    Query TruckLoad for the driver's assigned truck in the given month/year.
+    Returns lohatla_base_loads and lohatla_extra_loads derived from the load count.
+    All loads are treated as Lohatla (the only mine group used for payroll).
+    """
+    if not driver.truck_id:
+        return {"lohatla_base_loads": 0, "lohatla_extra_loads": 0, "prefill_count": 0}
+
+    first_day = datetime(year, month, 1, tzinfo=timezone.utc)
+    last_day_num = calendar.monthrange(year, month)[1]
+    last_day = datetime(year, month, last_day_num, 23, 59, 59, tzinfo=timezone.utc)
+
+    load_count = db.query(TruckLoad).filter(
+        TruckLoad.truck_id == driver.truck_id,
+        TruckLoad.load_date >= first_day,
+        TruckLoad.load_date <= last_day,
+    ).count()
+
+    if driver.driver_type == DriverType.casual:
+        # Casual: all loads in the base bucket; extra bucket unused
+        return {
+            "lohatla_base_loads":  load_count,
+            "lohatla_extra_loads": 0,
+            "prefill_count":       load_count,
+        }
+    else:
+        # Permanent: 7-load floor, rest are extra
+        base  = min(7, load_count)
+        extra = max(0, load_count - 7)
+        return {
+            "lohatla_base_loads":  base,
+            "lohatla_extra_loads": extra,
+            "prefill_count":       load_count,
+        }
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -267,19 +312,24 @@ def get_or_create_cycle(
         DriverPayCycle.pay_month == month,
     ).first()
 
+    was_prefilled = False
     if not cycle:
         settings = _get_payroll_settings(db)
+        prefill = _prefill_from_truckloads(driver, year, month, db)
         cycle = DriverPayCycle(
             driver_id=driver_id,
             pay_year=year,
             pay_month=month,
             payroll_settings_id=settings.id,
+            lohatla_base_loads=prefill["lohatla_base_loads"],
+            lohatla_extra_loads=prefill["lohatla_extra_loads"],
         )
         db.add(cycle)
         db.commit()
         db.refresh(cycle)
+        was_prefilled = prefill["prefill_count"] > 0
 
-    return _cycle_with_calc(cycle, driver, db)
+    return _cycle_with_calc(cycle, driver, db, was_prefilled=was_prefilled)
 
 
 @router.put("/{driver_id}/cycles/{year}/{month}", response_model=DriverPayCycleOut)
@@ -321,7 +371,7 @@ def update_cycle(
     return _cycle_with_calc(cycle, driver, db)
 
 
-# ─── Trip log ─────────────────────────────────────────────────────────────────
+# ─── Trip log ──────────────────────────────────────────────────────────────────
 
 def _get_cycle_or_404(driver_id: int, year: int, month: int, db: Session) -> DriverPayCycle:
     cycle = db.query(DriverPayCycle).filter(
@@ -331,6 +381,27 @@ def _get_cycle_or_404(driver_id: int, year: int, month: int, db: Session) -> Dri
     ).first()
     if not cycle:
         raise HTTPException(status_code=404, detail="Pay cycle not found")
+    return cycle
+
+
+def _get_or_create_cycle(driver_id: int, year: int, month: int, db: Session) -> DriverPayCycle:
+    """Return the pay cycle, creating one (with current settings) if it doesn't exist yet."""
+    cycle = db.query(DriverPayCycle).filter(
+        DriverPayCycle.driver_id == driver_id,
+        DriverPayCycle.pay_year == year,
+        DriverPayCycle.pay_month == month,
+    ).first()
+    if not cycle:
+        from app.models.models import PayrollSettings
+        settings = db.query(PayrollSettings).order_by(PayrollSettings.id.desc()).first()
+        cycle = DriverPayCycle(
+            driver_id=driver_id,
+            pay_year=year,
+            pay_month=month,
+            payroll_settings_id=settings.id if settings else None,
+        )
+        db.add(cycle)
+        db.flush()
     return cycle
 
 
@@ -384,7 +455,7 @@ def add_additional_load(
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
     _check_access(driver.entity_id, current_user)
-    cycle = _get_cycle_or_404(driver_id, year, month, db)
+    cycle = _get_or_create_cycle(driver_id, year, month, db)
     entry = DriverAdditionalLoad(pay_cycle_id=cycle.id, **payload.model_dump())
     db.add(entry)
     db.commit()
@@ -444,7 +515,7 @@ def add_food_payment(
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
     _check_access(driver.entity_id, current_user)
-    cycle = _get_cycle_or_404(driver_id, year, month, db)
+    cycle = _get_or_create_cycle(driver_id, year, month, db)
     entry = DriverFoodPayment(pay_cycle_id=cycle.id, **payload.model_dump())
     db.add(entry)
     db.commit()

@@ -27,7 +27,11 @@ export default function SettingsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [s, e, r] = await Promise.all([api('/api/settings/'), api('/api/entities/'), api('/api/roles/')])
+      const [s, e, r] = await Promise.all([
+        api('/api/settings/'),
+        api('/api/entities/'),
+        api('/api/roles/'),
+      ])
       const map = {}
       s.forEach(item => { map[item.key] = item })
       setSettings(map)

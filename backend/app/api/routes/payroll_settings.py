@@ -41,9 +41,10 @@ def update_settings(
 
     # Build a dict merging current values with the payload
     fields = [
-        "hotazel_base_salary", "lohatla_base_salary",
-        "hotazel_incentive_per_load", "lohatla_incentive_per_load",
-        "hotazel_subs_per_load", "lohatla_subs_per_load",
+        "lohatla_base_salary",
+        "lohatla_incentive_per_load",
+        "lohatla_subs_per_load",
+        "lohatla_casual_rate_per_load",
         "assmang_bonus_per_load",
         "nbcrfli_rate", "provident_rate", "wellness_rate", "sick_fund_rate",
         "holiday_fund_rate", "leave_pay_rate", "paye_fixed",
@@ -74,18 +75,13 @@ def lookup_table(
     """Auto-generate gross income reference table for 7-12 loads per mine group."""
     s = _get_current(db)
 
-    def calc_row(group: str, base_loads: int, extra_loads: int) -> dict:
+    def calc_row(base_loads: int, extra_loads: int) -> dict:
         total = base_loads + extra_loads
-        if group == "hotazel":
-            basic   = Decimal(str(s.hotazel_base_salary)) if base_loads > 0 else Decimal(0)
-            subs    = Decimal(str(s.hotazel_subs_per_load)) * total
-            inc     = Decimal(str(s.hotazel_incentive_per_load)) * extra_loads
-        else:
-            basic   = Decimal(str(s.lohatla_base_salary)) if base_loads > 0 else Decimal(0)
-            subs    = Decimal(str(s.lohatla_subs_per_load)) * total
-            inc     = Decimal(str(s.lohatla_incentive_per_load)) * extra_loads
-        bonus   = Decimal(str(s.assmang_bonus_per_load)) * total
-        gross   = basic + subs + inc + bonus
+        basic  = Decimal(str(s.lohatla_base_salary)) if base_loads > 0 else Decimal(0)
+        subs   = Decimal(str(s.lohatla_subs_per_load)) * total
+        inc    = Decimal(str(s.lohatla_incentive_per_load)) * extra_loads
+        bonus  = Decimal(str(s.assmang_bonus_per_load)) * total
+        gross  = basic + subs + inc + bonus
         return {
             "base_loads":  base_loads,
             "extra_loads": extra_loads,
@@ -103,8 +99,7 @@ def lookup_table(
         extra = total_loads - base
         rows.append({
             "total_loads": total_loads,
-            "hotazel": calc_row("hotazel", base, extra),
-            "lohatla": calc_row("lohatla", base, extra),
+            "lohatla": calc_row(base, extra),
         })
 
     return {"rows": rows}

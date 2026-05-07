@@ -121,6 +121,7 @@ const BLANK_TRUCK = {
   licence_number: '',
   licence_expiry: '',
   finance_institution: '',
+  is_subcontractor: false,
   status: 'active',
   notes: '',
   trailers: [
@@ -157,6 +158,7 @@ function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
       licence_number: truck.licence_number || '',
       licence_expiry: truck.licence_expiry ? truck.licence_expiry.slice(0, 10) : '',
       finance_institution: truck.finance_institution || '',
+      is_subcontractor: truck.is_subcontractor || false,
       status: truck.status || 'active',
       notes: truck.notes || '',
       trailers,
@@ -315,6 +317,19 @@ function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
               </div>
             </div>
 
+            {/* Subcontractor flag */}
+            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <input
+                type="checkbox"
+                id="is_subcontractor"
+                checked={form.is_subcontractor}
+                onChange={e => set('is_subcontractor', e.target.checked)}
+              />
+              <label htmlFor="is_subcontractor" style={{ margin: 0, cursor: 'pointer' }}>
+                Subcontractor (Subbie) — this truck belongs to an external party
+              </label>
+            </div>
+
             {/* Licence */}
             <div>
               <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-secondary)', marginBottom: 10 }}>
@@ -429,11 +444,6 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
             {truck.registration}
           </span>
         </td>
-        <td style={{ color: 'var(--text-secondary)' }}>
-          {linkedDriver
-            ? <span>{linkedDriver.first_name} {linkedDriver.last_name}{linkedDriver.employee_number ? <span style={{ fontSize: 11, color: 'var(--text-muted)' }}> #{linkedDriver.employee_number}</span> : ''}</span>
-            : truck.driver_name || '—'}
-        </td>
         <td>
           {truck.licence_expiry ? (
             <span style={{
@@ -459,6 +469,11 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
             {!(truck.trailers?.length) && <span style={{ color: 'var(--text-muted)' }}>—</span>}
           </div>
         </td>
+        <td>
+          {truck.is_subcontractor
+            ? <span className="badge badge-quote" style={{ fontSize: 11 }}>Yes</span>
+            : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
+        </td>
         <td><span className={`badge ${s.badge}`}>{s.label}</span></td>
         <td>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
@@ -479,6 +494,28 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
       {open && (
         <tr style={{ background: 'var(--bg-base)' }}>
           <td colSpan={8} style={{ padding: '12px 16px' }}>
+
+            {/* ── Driver assignment ── */}
+            <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', minWidth: 52 }}>Driver</div>
+              {linkedDriver ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
+                    {linkedDriver.first_name} {linkedDriver.last_name}
+                  </span>
+                  {linkedDriver.employee_number && (
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>#{linkedDriver.employee_number}</span>
+                  )}
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: 'var(--accent-dim)', color: 'var(--accent)', letterSpacing: 0.4 }}>Permanent</span>
+                </div>
+              ) : (
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>No permanent driver assigned</span>
+              )}
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                Casual drivers may also operate this vehicle
+              </span>
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
               {truck.vin && (
                 <div>
@@ -582,7 +619,8 @@ export default function FleetPage() {
   const [loading, setLoading]     = useState(true)
   const [search, setSearch]       = useState('')
   const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
-  const [filterStatus, setFilterStatus] = useState('')
+  const [filterStatus, setFilterStatus]           = useState('')
+  const [filterSubcontractor, setFilterSubcontractor] = useState('false')
   const [modal, setModal]         = useState(null)
   const [selected, setSelected]   = useState(null)
 
@@ -597,6 +635,7 @@ export default function FleetPage() {
       const params = new URLSearchParams()
       if (filterEntity) params.set('entity_id', filterEntity)
       if (filterStatus) params.set('status', filterStatus)
+      if (filterSubcontractor !== '') params.set('is_subcontractor', filterSubcontractor)
       if (search)       params.set('search', search)
 
       const [truckData, statsData] = await Promise.all([
@@ -610,7 +649,7 @@ export default function FleetPage() {
     } finally {
       setLoading(false)
     }
-  }, [filterEntity, filterStatus, search])
+  }, [filterEntity, filterStatus, filterSubcontractor, search])
 
   useEffect(() => { api.get('/api/entities/').then(setEntities).catch(() => {}) }, [])
   useEffect(() => { api.get('/api/drivers?limit=500&is_active=true').then(setAllDrivers).catch(() => {}) }, [])
@@ -693,6 +732,22 @@ export default function FleetPage() {
           <option value="maintenance">Maintenance</option>
           <option value="inactive">Inactive</option>
         </select>
+        <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 3, gap: 2 }}>
+          {[['false', 'Own Fleet'], ['true', 'Subcontractors']].map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => setFilterSubcontractor(f => f === val ? '' : val)}
+              style={{
+                padding: '4px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                background: filterSubcontractor === val ? 'var(--accent)' : 'transparent',
+                color: filterSubcontractor === val ? '#fff' : 'var(--text-muted)',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Table */}
@@ -712,9 +767,9 @@ export default function FleetPage() {
                 <th>#</th>
                 <th>Make / Model</th>
                 <th>Registration</th>
-                <th>Driver</th>
                 <th>Licence Expiry</th>
                 <th>Trailers</th>
+                <th>Subbie</th>
                 <th>Status</th>
                 <th></th>
               </tr>

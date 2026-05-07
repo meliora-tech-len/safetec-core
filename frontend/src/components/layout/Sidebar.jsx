@@ -5,7 +5,7 @@ import { useTheme } from '../../hooks/useTheme'
 import {
   LayoutDashboard, Users, Building2, FileText,
   LogOut, Shield, Sun, Moon, Settings, ChevronDown, Truck,
-  FileCheck, FilePlus, ShoppingCart, Package, MapPin
+  FileCheck, FilePlus, ShoppingCart, Package, MapPin, Fuel, BarChart2, Link2
 } from 'lucide-react'
 
 function hexToRgb(hex) {
@@ -27,9 +27,11 @@ const NAV = [
   { to: '/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/suppliers',   icon: Users,           label: 'Suppliers',   module: 'suppliers' },
   { to: '/clients',     icon: Users,           label: 'Clients',     module: 'clients' },
-  { to: '/fleet',       icon: Truck,           label: 'Fleet',       module: 'fleet' },
-  { to: '/drivers',     icon: Users,           label: 'Drivers',     module: 'fleet' },
-  { to: '/truck-loads', icon: Package,         label: 'Truck Loads', module: 'fleet' },
+  { to: '/fleet',             icon: Truck,   label: 'Fleet',       module: 'fleet', end: true },
+  { to: '/drivers',           icon: Users,   label: 'Drivers',     module: 'fleet' },
+  { to: '/fleet/assignments', icon: Link2,   label: 'Assignments', module: 'fleet' },
+  { to: '/truck-loads',       icon: Package, label: 'Truck Loads', module: 'fleet' },
+  { to: '/diesel',      icon: Fuel,            label: 'Diesel',      module: 'diesel' },
   { to: '/audit',       icon: Shield,          label: 'Audit Log',   adminOnly: true },
 ]
 
@@ -40,14 +42,16 @@ const DOCUMENTS_NAV = [
 ]
 
 const ADMIN_NAV = [
-  { to: '/entities',         icon: Building2, label: 'Entities' },
-  { to: '/users',            icon: Users,     label: 'Users' },
-  { to: '/settings',         icon: Settings,  label: 'Settings' },
+  { to: '/entities',        icon: Building2, label: 'Entities' },
+  { to: '/users',           icon: Users,     label: 'Users' },
+  { to: '/settings',        icon: Settings,  label: 'Settings' },
+  { to: '/reports',         icon: BarChart2, label: 'Reports' },
 ]
 
 const SETTINGS_NAV = [
-  { to: '/settings/payroll', icon: Settings, label: 'Payroll Rates' },
-  { to: '/settings/mines',   icon: MapPin,   label: 'Mines' },
+  { to: '/settings/payroll',       icon: Settings, label: 'Payroll Rates' },
+  { to: '/settings/mines',         icon: MapPin,   label: 'Mines' },
+  { to: '/settings/diesel-rates',  icon: Fuel,     label: 'Diesel Rates' },
 ]
 
 export default function Sidebar() {
@@ -175,8 +179,8 @@ export default function Sidebar() {
       <nav style={styles.nav}>
         {/* Main nav */}
         <div style={styles.navSection}>
-          {visibleNav.map(({ to, icon: Icon, label }) => (
-            <NavLink key={to} to={to} style={({ isActive }) => ({
+          {visibleNav.map(({ to, icon: Icon, label, end }) => (
+            <NavLink key={to} to={to} end={!!end} style={({ isActive }) => ({
               ...styles.navItem,
               ...(isActive ? styles.navItemActive : {}),
             })}>

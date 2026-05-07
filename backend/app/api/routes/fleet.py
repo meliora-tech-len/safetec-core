@@ -4,7 +4,7 @@ from sqlalchemy import or_, func
 from typing import List, Optional
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
 )
@@ -66,7 +66,9 @@ def get_fleet_stats(
 @router.get("/trucks", response_model=List[TruckOut])
 def list_trucks(
     entity_id: Optional[int] = Query(None),
+    extra_context: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    is_subcontractor: Optional[bool] = Query(None),
     search: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(200, le=500),
@@ -78,11 +80,18 @@ def list_trucks(
     q = db.query(Truck)
     if accessible is not None:
         q = q.filter(Truck.entity_id.in_(accessible))
-    if entity_id:
+    if entity_id and extra_context:
+        # Include trucks from this entity OR trucks from any entity with the given contract context.
+        # Used so OBHI's filter also surfaces SFT trucks running on Intsimbi contracts.
+        _check_entity_access(entity_id, current_user)
+        q = q.filter(or_(Truck.entity_id == entity_id, Truck.contract_context == extra_context))
+    elif entity_id:
         _check_entity_access(entity_id, current_user)
         q = q.filter(Truck.entity_id == entity_id)
     if status:
         q = q.filter(Truck.status == status)
+    if is_subcontractor is not None:
+        q = q.filter(Truck.is_subcontractor == is_subcontractor)
     if search:
         term = f"%{search}%"
         q = q.filter(
@@ -218,3 +227,39 @@ def delete_truck(
     db.delete(truck)
     db.commit()
     return {"detail": "Truck deleted"}
+
+
+# ── Additional loads for a truck (cross-driver view) ──────────────────────────
+
+@router.get("/trucks/{truck_id}/additional-loads")
+def list_truck_additional_loads(
+    truck_id: int,
+    year: int = Query(...),
+    month: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    truck = db.query(Truck).filter(Truck.id == truck_id).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found")
+    _check_entity_access(truck.entity_id, current_user)
+
+    rows = (
+        db.query(DriverAdditionalLoad, Driver)
+        .join(DriverPayCycle, DriverAdditionalLoad.pay_cycle_id == DriverPayCycle.id)
+        .join(Driver, DriverPayCycle.driver_id == Driver.id)
+        .filter(
+            DriverAdditionalLoad.truck_registration == truck.registration,
+            DriverPayCycle.pay_year  == year,
+            DriverPayCycle.pay_month == month,
+        )
+        .all()
+    )
+
+    result = []
+    for al, driver in rows:
+        d = {c.name: getattr(al, c.name) for c in al.__table__.columns}
+        d["driver_id"]   = driver.id
+        d["driver_name"] = f"{driver.first_name} {driver.last_name}".strip()
+        result.append(d)
+    return result

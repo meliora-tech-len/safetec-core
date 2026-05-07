@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { getSuppliers, getEntities, createSupplierBulk, updateSupplier, deleteSupplier } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { Plus, Search, Edit2, Trash2, User, X, Building2 } from 'lucide-react'
+import { Plus, Search, Edit2, Trash2, User, X } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 
@@ -118,6 +119,7 @@ export default function SuppliersPage() {
           <thead>
             <tr>
               <th>Name</th>
+              <th>Payment Term</th>
               <th>Contact Person</th>
               <th>Email</th>
               <th>Phone</th>
@@ -128,16 +130,26 @@ export default function SuppliersPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
+              <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
             ) : suppliers.length === 0 ? (
-              <tr><td colSpan={7}>
+              <tr><td colSpan={8}>
                 <div className="empty-state"><User size={32} /><p>No suppliers found</p></div>
               </td></tr>
             ) : suppliers.map(supplier => (
               <tr key={supplier.id}>
                 <td>
-                  <div style={{ fontWeight: 600 }}>{supplier.name}</div>
+                  <Link to={`/suppliers/${supplier.id}`} style={{ fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>
+                    {supplier.name}
+                  </Link>
                   {supplier.trading_name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{supplier.trading_name}</div>}
+                  {supplier.is_diesel_supplier && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#d97706', background: 'rgba(234,179,8,0.12)', padding: '1px 6px', borderRadius: 4, marginTop: 3, display: 'inline-block' }}>
+                      Diesel
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <PaymentTermBadge term={supplier.payment_term} />
                 </td>
                 <td>{supplier.contact_person || '—'}</td>
                 <td>{supplier.email || '—'}</td>
@@ -172,6 +184,23 @@ export default function SuppliersPage() {
         />
       )}
     </div>
+  )
+}
+
+function PaymentTermBadge({ term }) {
+  const is30 = term === '30_days'
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '2px 8px',
+      borderRadius: 4,
+      fontSize: 11,
+      fontWeight: 700,
+      background: is30 ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)',
+      color: is30 ? '#d97706' : '#16a34a',
+    }}>
+      {is30 ? '30 Days' : 'Current / Cash'}
+    </span>
   )
 }
 
@@ -306,6 +335,8 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
     city: supplier?.city || '',
     postal_code: supplier?.postal_code || '',
     notes: supplier?.notes || '',
+    payment_term: supplier?.payment_term || 'current',
+    is_diesel_supplier: supplier?.is_diesel_supplier || false,
   })
   const [saving, setSaving] = useState(false)
 
@@ -356,6 +387,25 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
                 <label>Trading Name</label>
                 <input value={form.trading_name} onChange={e => set('trading_name', e.target.value)} placeholder="If different from above" />
               </div>
+            </div>
+            <div className="form-group">
+              <label>Payment Terms *</label>
+              <select value={form.payment_term} onChange={e => set('payment_term', e.target.value)}>
+                <option value="current">Current / Cash</option>
+                <option value="30_days">30 Days</option>
+              </select>
+            </div>
+            <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+              <input
+                type="checkbox"
+                id="is_diesel_supplier"
+                checked={form.is_diesel_supplier}
+                onChange={e => set('is_diesel_supplier', e.target.checked)}
+                style={{ width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
+              />
+              <label htmlFor="is_diesel_supplier" style={{ margin: 0, cursor: 'pointer', fontWeight: 500 }}>
+                Diesel supplier — appears in diesel rate management
+              </label>
             </div>
             <div className="form-row">
               <div className="form-group">

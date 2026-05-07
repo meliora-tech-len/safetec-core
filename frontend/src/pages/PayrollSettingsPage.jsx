@@ -75,7 +75,7 @@ function GroupForm({ group, onSave, onCancel }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
         <div className="form-group" style={{ margin: 0 }}>
           <label className="form-label">Route Group Name *</label>
-          <input className="form-control" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Hotazel" required />
+          <input className="form-control" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Lohatla" required />
         </div>
         <div className="form-group" style={{ margin: 0 }}>
           <label className="form-label">Base Loads (full week) *</label>
@@ -318,8 +318,26 @@ export default function PayrollSettingsPage() {
         </div>
       </div>
 
-      {/* ── Assmang Bonus ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+      {/* ── Casual Rate · Assmang Bonus · Payroll Factor ──────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20, marginBottom: 24 }}>
+        <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Casual Driver Rate
+          </h3>
+          <p style={{ margin: '0 0 12px', fontSize: 11, color: 'var(--text-muted)' }}>
+            Lohatla only. Applied per load, no basic salary.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <label className="form-label" style={{ margin: 0 }}>Rate per load</label>
+            <input
+              className="form-input" type="number" step="0.01"
+              value={form.lohatla_casual_rate_per_load ?? ''}
+              onChange={e => set('lohatla_casual_rate_per_load', e.target.value)}
+              style={{ width: 140, textAlign: 'right' }}
+            />
+          </div>
+        </div>
+
         <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
           <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Assmang Bonus

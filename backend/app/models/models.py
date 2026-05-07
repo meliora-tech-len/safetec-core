@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime, Date, ForeignKey,
-    Text, Numeric, Enum, JSON
+    Text, Numeric, Enum, JSON, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -37,6 +37,11 @@ class DocumentType(str, enum.Enum):
     invoice = "invoice"
     quote = "quote"
     purchase_order = "purchase_order"
+
+
+class PaymentTermType(str, enum.Enum):
+    current = "current"
+    days_30 = "30_days"
 
 
 class TruckStatus(str, enum.Enum):
@@ -179,8 +184,14 @@ class Supplier(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    short_name = Column(String(100))
+    category = Column(String(100))
+    payment_term = Column(Enum(PaymentTermType), nullable=False, default=PaymentTermType.current)
+    is_diesel_supplier = Column(Boolean, default=False)
+
     entity = relationship("BusinessEntity", back_populates="suppliers")
     invoices = relationship("Invoice", back_populates="supplier")
+    supplier_invoices = relationship("SupplierInvoice", back_populates="supplier", cascade="all, delete-orphan")
 
 
 # ── Invoices & Line Items ─────────────────────────────────────────────────────
@@ -236,6 +247,42 @@ class InvoiceLineItem(Base):
     invoice = relationship("Invoice", back_populates="line_items")
 
 
+# ── Supplier Invoices (incoming payables) ─────────────────────────────────────
+
+class SupplierInvoice(Base):
+    __tablename__ = "supplier_invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
+    entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
+
+    invoice_date = Column(DateTime(timezone=True), nullable=False)
+    invoice_number = Column(String(100), nullable=False)
+    amount = Column(Numeric(12, 2), nullable=False)
+    vat_applicable = Column(Boolean, default=True)
+    vehicle_reg = Column(String(50))
+    description = Column(Text)
+
+    statement_month = Column(Integer)
+    statement_year = Column(Integer)
+
+    is_verified = Column(Boolean, default=False)
+    verified_at = Column(DateTime(timezone=True))
+    payment_due_date = Column(DateTime(timezone=True))
+    is_paid = Column(Boolean, default=False)
+    paid_date = Column(DateTime(timezone=True))
+    payment_reference = Column(String(200))
+
+    notes = Column(Text)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    supplier = relationship("Supplier", back_populates="supplier_invoices")
+    entity = relationship("BusinessEntity")
+    created_by = relationship("User", foreign_keys=[created_by_id])
+
+
 # ── Audit Log ─────────────────────────────────────────────────────────────────
 
 class AuditLog(Base):
@@ -277,6 +324,20 @@ class Truck(Base):
 
     finance_institution = Column(String(200))
 
+    is_subcontractor = Column(Boolean, default=False, nullable=False)
+
+    # Grouping / ownership fields (see migration 022)
+    # operator: who operates the truck — None = entity-owned fleet
+    #           e.g. "Betopess", "Alex Maintenance", "Julian"
+    operator         = Column(String(100))
+    # contract_context: which work programme the truck belongs to
+    #           e.g. "OBHI", "Safetec", "Intsimbi"
+    contract_context = Column(String(100))
+    # temp_registration: old or temporary plate (e.g. GP reg before EC transfer)
+    # TECH-DEBT: existing TruckLoad.driver_name links to driver by name string,
+    # not by driver FK. Should be migrated to FK when driver-load linking is implemented.
+    temp_registration = Column(String(50))
+
     status = Column(Enum(TruckStatus), default=TruckStatus.active, nullable=False)
     notes = Column(Text)
 
@@ -316,6 +377,13 @@ class DriverType(str, enum.Enum):
     casual = "casual"
 
 
+class PayrollStatus(str, enum.Enum):
+    auto_draft = "auto_draft"
+    pending_review = "pending_review"
+    verified = "verified"
+    paid = "paid"
+
+
 class Driver(Base):
     __tablename__ = "drivers"
 
@@ -344,6 +412,7 @@ class Driver(Base):
     loads = relationship("DriverLoad", back_populates="driver", cascade="all, delete-orphan", order_by="DriverLoad.load_date.desc()")
     payments = relationship("DriverPayment", back_populates="driver", cascade="all, delete-orphan", order_by="DriverPayment.payment_date.desc()")
     pay_cycles = relationship("DriverPayCycle", back_populates="driver", cascade="all, delete-orphan")
+    payroll_entries = relationship("PayrollEntry", back_populates="driver", cascade="all, delete-orphan", order_by="PayrollEntry.pay_year.desc(), PayrollEntry.pay_month.desc()")
 
 
 # ── PayrollSettings ───────────────────────────────────────────────────────────
@@ -355,16 +424,16 @@ class PayrollSettings(Base):
     effective_date = Column(DateTime(timezone=True), nullable=False)
 
     # Base salaries (weekly, 7 loads)
-    hotazel_base_salary       = Column(Numeric(12, 2), nullable=False, default=13574.38)
     lohatla_base_salary       = Column(Numeric(12, 2), nullable=False, default=16481.55)
 
     # Load incentive per extra load (above 7)
-    hotazel_incentive_per_load = Column(Numeric(12, 2), nullable=False, default=2900.00)
     lohatla_incentive_per_load = Column(Numeric(12, 2), nullable=False, default=2610.00)
 
     # Subsistence per load
-    hotazel_subs_per_load     = Column(Numeric(12, 2), nullable=False, default=405.00)
     lohatla_subs_per_load     = Column(Numeric(12, 2), nullable=False, default=459.66)
+
+    # Casual driver: flat per-load rate (Lohatla only, no BC rules)
+    lohatla_casual_rate_per_load = Column(Numeric(12, 2), nullable=False, default=2610.00)
 
     # Assmang bonus (per load, applied to ALL loads)
     assmang_bonus_per_load    = Column(Numeric(12, 2), nullable=False, default=150.00)
@@ -394,8 +463,6 @@ class DriverPayCycle(Base):
     pay_year              = Column(Integer, nullable=False)
     payroll_settings_id   = Column(Integer, ForeignKey("payroll_settings.id", ondelete="RESTRICT"), nullable=True)
 
-    hotazel_base_loads    = Column(Integer, default=0, nullable=False)
-    hotazel_extra_loads   = Column(Integer, default=0, nullable=False)
     lohatla_base_loads    = Column(Integer, default=0, nullable=False)
     lohatla_extra_loads   = Column(Integer, default=0, nullable=False)
 
@@ -421,14 +488,16 @@ class DriverPayCycle(Base):
 class DriverTripLog(Base):
     __tablename__ = "driver_trip_logs"
 
-    id           = Column(Integer, primary_key=True, index=True)
-    pay_cycle_id = Column(Integer, ForeignKey("driver_pay_cycles.id", ondelete="CASCADE"), nullable=False)
-    trip_date    = Column(DateTime(timezone=True), nullable=False)
-    mine_name    = Column(String(200), nullable=False)
-    notes        = Column(String(500), nullable=True)
-    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+    id             = Column(Integer, primary_key=True, index=True)
+    pay_cycle_id   = Column(Integer, ForeignKey("driver_pay_cycles.id", ondelete="CASCADE"), nullable=False)
+    trip_date      = Column(DateTime(timezone=True), nullable=False)
+    mine_name      = Column(String(200), nullable=False)
+    notes          = Column(String(500), nullable=True)
+    truck_load_id  = Column(Integer, ForeignKey("truck_loads.id", ondelete="SET NULL"), nullable=True)
+    created_at     = Column(DateTime(timezone=True), server_default=func.now())
 
-    pay_cycle = relationship("DriverPayCycle", back_populates="trip_log")
+    pay_cycle  = relationship("DriverPayCycle", back_populates="trip_log")
+    truck_load = relationship("TruckLoad")
 
 
 class DriverAdditionalLoad(Base):
@@ -605,3 +674,164 @@ class DriverSalaryConfig(Base):
 
     entity = relationship("BusinessEntity")
     truck = relationship("Truck")
+
+
+# ── Diesel Module ─────────────────────────────────────────────────────────────
+
+class DieselSettings(Base):
+    """Per-entity diesel admin fee configuration."""
+    __tablename__ = "diesel_settings"
+
+    id = Column(Integer, primary_key=True)
+    entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False, unique=True)
+    admin_fee_pct = Column(Numeric(5, 4), nullable=False, default=0)
+    apply_admin_fee = Column(Boolean, nullable=False, default=True)
+    additional_charge_per_ton = Column(Numeric(10, 2), nullable=False, default=0)
+    updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    entity = relationship("BusinessEntity")
+    updater = relationship("User", foreign_keys=[updated_by])
+
+
+class DieselRate(Base):
+    """Versioned price-per-litre per supplier/entity. A new row is added when the rate changes."""
+    __tablename__ = "diesel_rates"
+
+    id = Column(Integer, primary_key=True)
+    entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False)
+    rate_per_litre = Column(Numeric(10, 4), nullable=False)
+    additional_charge_per_ton = Column(Numeric(10, 2), nullable=False, default=0)
+    effective_date = Column(Date, nullable=False)
+    notes = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    entity = relationship("BusinessEntity")
+    supplier = relationship("Supplier")
+    creator = relationship("User", foreign_keys=[created_by])
+
+
+class DieselFillUp(Base):
+    """A single diesel fill-up transaction."""
+    __tablename__ = "diesel_fillups"
+
+    id = Column(Integer, primary_key=True)
+    entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
+    truck_id = Column(Integer, ForeignKey("trucks.id", ondelete="RESTRICT"), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False)
+
+    fillup_date = Column(Date, nullable=False)
+    litres = Column(Numeric(10, 2), nullable=False)
+    rate_per_litre = Column(Numeric(10, 4), nullable=False)
+    amount = Column(Numeric(12, 2), nullable=False)           # litres × rate
+    admin_fee_pct = Column(Numeric(5, 4), nullable=False, default=0)
+    admin_fee_amount = Column(Numeric(12, 2), nullable=False, default=0)
+    total_amount = Column(Numeric(12, 2), nullable=False)     # amount + admin_fee_amount
+
+    invoice_number = Column(String(100))
+    slip_number = Column(String(100))
+    truckload_id = Column(Integer, ForeignKey("truck_loads.id", ondelete="SET NULL"), nullable=True)
+
+    verified = Column(Boolean, nullable=False, default=False)
+    verified_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at = Column(DateTime(timezone=True))
+
+    notes = Column(Text)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    entity = relationship("BusinessEntity")
+    truck = relationship("Truck")
+    supplier = relationship("Supplier")
+    truckload = relationship("TruckLoad")
+    verifier = relationship("User", foreign_keys=[verified_by])
+    creator = relationship("User", foreign_keys=[created_by])
+
+
+# ── Payroll Entries (auto-draft workflow) ─────────────────────────────────────
+
+class PayrollEntry(Base):
+    """
+    One record per driver per calendar month. Created automatically when the
+    first truckload for that driver/month is captured; updated on every
+    subsequent truckload change while still in auto_draft. Once advanced past
+    auto_draft the truckload_changed flag is raised instead of overwriting.
+
+    Status machine: auto_draft → pending_review → verified → paid
+    """
+    __tablename__ = "payroll_entries"
+    __table_args__ = (
+        UniqueConstraint("driver_id", "pay_month", "pay_year", name="uq_payroll_entry_driver_month"),
+    )
+
+    id                      = Column(Integer, primary_key=True, index=True)
+    entity_id               = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
+    driver_id               = Column(Integer, ForeignKey("drivers.id", ondelete="RESTRICT"), nullable=False)
+    pay_month               = Column(Integer, nullable=False)
+    pay_year                = Column(Integer, nullable=False)
+
+    status                  = Column(Enum(PayrollStatus), nullable=False, default=PayrollStatus.auto_draft)
+
+    payroll_settings_id     = Column(Integer, ForeignKey("payroll_settings.id", ondelete="RESTRICT"), nullable=True)
+
+    # Load counts
+    lohatla_base_loads      = Column(Integer, nullable=False, default=0)
+    lohatla_extra_loads     = Column(Integer, nullable=False, default=0)
+    lohatla_total_loads     = Column(Integer, nullable=False, default=0)
+
+    # Computed income
+    basic_salary            = Column(Numeric(12, 2), nullable=False, default=0)
+    load_earnings           = Column(Numeric(12, 2), nullable=False, default=0)
+    subsistence             = Column(Numeric(12, 2), nullable=False, default=0)
+    assmang_bonus           = Column(Numeric(12, 2), nullable=False, default=0)
+    additional_income       = Column(Numeric(12, 2), nullable=False, default=0)
+    gross                   = Column(Numeric(12, 2), nullable=False, default=0)
+
+    # Statutory deductions (permanent only; casual rows store 0)
+    nbcrfli                 = Column(Numeric(12, 2), nullable=False, default=0)
+    provident               = Column(Numeric(12, 2), nullable=False, default=0)
+    wellness                = Column(Numeric(12, 2), nullable=False, default=0)
+    sick_fund               = Column(Numeric(12, 2), nullable=False, default=0)
+    holiday_fund            = Column(Numeric(12, 2), nullable=False, default=0)
+    leave_pay               = Column(Numeric(12, 2), nullable=False, default=0)
+    paye                    = Column(Numeric(12, 2), nullable=False, default=0)
+    uif                     = Column(Numeric(12, 2), nullable=False, default=0)
+    total_statutory         = Column(Numeric(12, 2), nullable=False, default=0)
+
+    # Manual deductions (editable at any status)
+    subsistence_advance     = Column(Numeric(12, 2), nullable=False, default=0)
+    staff_loan_deduction    = Column(Numeric(12, 2), nullable=False, default=0)
+    cash_advance_deduction  = Column(Numeric(12, 2), nullable=False, default=0)
+
+    total_deductions        = Column(Numeric(12, 2), nullable=False, default=0)
+    net_payable             = Column(Numeric(12, 2), nullable=False, default=0)
+
+    # Warning flag: truckload edited/deleted after entry moved past auto_draft
+    truckload_changed       = Column(Boolean, nullable=False, default=False)
+    truckload_changed_note  = Column(Text, nullable=True)
+
+    # Payment info
+    payment_date            = Column(Date, nullable=True)
+    payment_reference       = Column(String(200), nullable=True)
+
+    comments                = Column(Text, nullable=True)
+
+    # Workflow audit
+    reviewed_by             = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at             = Column(DateTime(timezone=True), nullable=True)
+    verified_by             = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at             = Column(DateTime(timezone=True), nullable=True)
+
+    created_at              = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at              = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+    # Relationships
+    driver                  = relationship("Driver", back_populates="payroll_entries")
+    entity                  = relationship("BusinessEntity")
+    payroll_settings        = relationship("PayrollSettings")
+    reviewer                = relationship("User", foreign_keys=[reviewed_by])
+    verifier                = relationship("User", foreign_keys=[verified_by])

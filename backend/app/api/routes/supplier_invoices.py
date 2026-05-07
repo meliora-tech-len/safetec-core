@@ -1,0 +1,340 @@
+import calendar
+from datetime import datetime, timezone
+from decimal import Decimal
+from collections import defaultdict
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import List, Optional
+
+from app.db.database import get_db
+from app.core.security import get_current_user
+from app.models.models import User, Supplier, SupplierInvoice, PaymentTermType
+from app.schemas.schemas import (
+    SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
+    SupplierStatementGroup, SupplierPayablesDashboard,
+    SupplierCurrentPayable, Supplier30DaysPayable,
+)
+from app.services.audit import log_action
+
+router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
+
+
+def _check_entity_access(entity_id: int, user: User):
+    if user.role == "admin":
+        return
+    access_ids = [a.entity_id for a in user.entity_access]
+    if entity_id not in access_ids:
+        raise HTTPException(status_code=403, detail="Access denied to this entity")
+
+
+def _accessible_entity_ids(user: User) -> Optional[List[int]]:
+    if user.role == "admin":
+        return None
+    return [a.entity_id for a in user.entity_access]
+
+
+def calculate_supplier_due_date(invoice_date: datetime, payment_term: PaymentTermType) -> datetime:
+    """
+    current: due by last day of the same calendar month.
+    30_days: due on the 7th of the month AFTER the statement (invoice) month.
+    """
+    if payment_term == PaymentTermType.current:
+        last_day = calendar.monthrange(invoice_date.year, invoice_date.month)[1]
+        return invoice_date.replace(day=last_day, hour=23, minute=59, second=59, microsecond=0)
+    else:  # days_30
+        if invoice_date.month == 12:
+            return invoice_date.replace(year=invoice_date.year + 1, month=1, day=7,
+                                        hour=0, minute=0, second=0, microsecond=0)
+        else:
+            return invoice_date.replace(month=invoice_date.month + 1, day=7,
+                                        hour=0, minute=0, second=0, microsecond=0)
+
+
+# ── Dashboard summary ─────────────────────────────────────────────────────────
+# IMPORTANT: This must be declared BEFORE /{invoice_id} to avoid routing conflict.
+
+@router.get("/dashboard-summary", response_model=SupplierPayablesDashboard)
+def get_dashboard_summary(
+    entity_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    accessible = _accessible_entity_ids(current_user)
+    now = datetime.now(tz=timezone.utc)
+
+    q = db.query(SupplierInvoice).join(Supplier).filter(SupplierInvoice.is_paid == False)
+
+    if accessible is not None:
+        q = q.filter(SupplierInvoice.entity_id.in_(accessible))
+    if entity_id:
+        _check_entity_access(entity_id, current_user)
+        q = q.filter(SupplierInvoice.entity_id == entity_id)
+
+    all_unpaid = q.all()
+
+    current_payables: dict = {}   # supplier_id -> {name, total, count}
+    days_30_payables: dict = {}   # (supplier_id, year, month) -> {name, total, count, due_date}
+
+    for inv in all_unpaid:
+        supplier = inv.supplier
+        term = supplier.payment_term
+
+        if term == PaymentTermType.current:
+            # Only show if invoice is from this calendar month
+            if inv.invoice_date.month == now.month and inv.invoice_date.year == now.year:
+                key = inv.supplier_id
+                if key not in current_payables:
+                    current_payables[key] = {"supplier_name": supplier.name, "total": Decimal("0"), "count": 0}
+                current_payables[key]["total"] += inv.amount
+                current_payables[key]["count"] += 1
+        else:  # days_30
+            key = (inv.supplier_id, inv.statement_year, inv.statement_month)
+            if key not in days_30_payables:
+                days_30_payables[key] = {
+                    "supplier_name": supplier.name,
+                    "statement_month": inv.statement_month,
+                    "statement_year": inv.statement_year,
+                    "total": Decimal("0"),
+                    "count": 0,
+                    "due_date": inv.payment_due_date,
+                }
+            days_30_payables[key]["total"] += inv.amount
+            days_30_payables[key]["count"] += 1
+
+    current_list = [
+        SupplierCurrentPayable(
+            supplier_id=sid,
+            supplier_name=v["supplier_name"],
+            total_outstanding=v["total"],
+            invoice_count=v["count"],
+        )
+        for sid, v in current_payables.items()
+    ]
+    days30_list = [
+        Supplier30DaysPayable(
+            supplier_id=k[0],
+            supplier_name=v["supplier_name"],
+            statement_month=v["statement_month"],
+            statement_year=v["statement_year"],
+            total_outstanding=v["total"],
+            due_date=v["due_date"],
+            invoice_count=v["count"],
+        )
+        for k, v in days_30_payables.items()
+    ]
+
+    total_current = sum(x.total_outstanding for x in current_list)
+    total_30 = sum(x.total_outstanding for x in days30_list)
+
+    return SupplierPayablesDashboard(
+        current_payables=current_list,
+        days_30_payables=days30_list,
+        total_current=total_current,
+        total_30_days=total_30,
+    )
+
+
+# ── List invoices grouped by statement ───────────────────────────────────────
+
+@router.get("/", response_model=List[SupplierStatementGroup])
+def list_supplier_invoices(
+    supplier_id: int = Query(...),
+    entity_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    _check_entity_access(supplier.entity_id, current_user)
+
+    q = db.query(SupplierInvoice).filter(SupplierInvoice.supplier_id == supplier_id)
+    if entity_id:
+        _check_entity_access(entity_id, current_user)
+        q = q.filter(SupplierInvoice.entity_id == entity_id)
+
+    invoices = q.order_by(
+        SupplierInvoice.statement_year.desc(),
+        SupplierInvoice.statement_month.desc(),
+        SupplierInvoice.invoice_date.asc(),
+    ).all()
+
+    # Group by (year, month)
+    groups: dict = {}
+    for inv in invoices:
+        key = (inv.statement_year, inv.statement_month)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(inv)
+
+    result = []
+    for (year, month), group_invs in groups.items():
+        subtotal = sum(i.amount for i in group_invs)
+        due_date = group_invs[0].payment_due_date if group_invs else None
+        is_fully_paid = all(i.is_paid for i in group_invs)
+        result.append(SupplierStatementGroup(
+            statement_month=month,
+            statement_year=year,
+            invoices=[SupplierInvoiceOut.model_validate(i) for i in group_invs],
+            subtotal=subtotal,
+            payment_due_date=due_date,
+            is_fully_paid=is_fully_paid,
+        ))
+
+    return result
+
+
+# ── Single invoice ────────────────────────────────────────────────────────────
+
+@router.get("/{invoice_id}", response_model=SupplierInvoiceOut)
+def get_supplier_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+    return inv
+
+
+# ── Create ────────────────────────────────────────────────────────────────────
+
+@router.post("/", response_model=SupplierInvoiceOut)
+def create_supplier_invoice(
+    payload: SupplierInvoiceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    supplier = db.query(Supplier).filter(Supplier.id == payload.supplier_id).first()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    _check_entity_access(payload.entity_id, current_user)
+
+    inv_date = payload.invoice_date
+    due_date = calculate_supplier_due_date(inv_date, supplier.payment_term)
+
+    inv = SupplierInvoice(
+        **payload.model_dump(),
+        statement_month=inv_date.month,
+        statement_year=inv_date.year,
+        payment_due_date=due_date,
+        created_by_id=current_user.id,
+    )
+    db.add(inv)
+    log_action(
+        db, "supplier_invoice.created", user_id=current_user.id,
+        entity_id=payload.entity_id, resource_type="supplier_invoice",
+        description=f"Created invoice {payload.invoice_number} for supplier {supplier.name}",
+    )
+    db.commit()
+    db.refresh(inv)
+    return inv
+
+
+# ── Update ────────────────────────────────────────────────────────────────────
+
+@router.put("/{invoice_id}", response_model=SupplierInvoiceOut)
+def update_supplier_invoice(
+    invoice_id: int,
+    payload: SupplierInvoiceUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+
+    updates = payload.model_dump(exclude_none=True)
+
+    # Auto-set verified_at when marking verified
+    if updates.get("is_verified") is True and not inv.is_verified:
+        updates["verified_at"] = datetime.now(tz=timezone.utc)
+
+    # Recalculate due date if invoice_date changed
+    if "invoice_date" in updates:
+        supplier = db.query(Supplier).filter(Supplier.id == inv.supplier_id).first()
+        new_date = updates["invoice_date"]
+        updates["payment_due_date"] = calculate_supplier_due_date(new_date, supplier.payment_term)
+        updates["statement_month"] = new_date.month
+        updates["statement_year"] = new_date.year
+
+    for field, value in updates.items():
+        setattr(inv, field, value)
+
+    log_action(
+        db, "supplier_invoice.updated", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice",
+        resource_id=invoice_id, description=f"Updated invoice {inv.invoice_number}",
+    )
+    db.commit()
+    db.refresh(inv)
+    return inv
+
+
+# ── Delete ────────────────────────────────────────────────────────────────────
+
+@router.delete("/{invoice_id}")
+def delete_supplier_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+
+    log_action(
+        db, "supplier_invoice.deleted", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice",
+        resource_id=invoice_id, description=f"Deleted invoice {inv.invoice_number}",
+    )
+    db.delete(inv)
+    db.commit()
+    return {"detail": "Invoice deleted"}
+
+
+# ── Mark statement group as paid ──────────────────────────────────────────────
+
+@router.post("/statements/{supplier_id}/{year}/{month}/mark-paid")
+def mark_statement_paid(
+    supplier_id: int,
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    _check_entity_access(supplier.entity_id, current_user)
+
+    now = datetime.now(tz=timezone.utc)
+    unpaid = (
+        db.query(SupplierInvoice)
+        .filter(
+            SupplierInvoice.supplier_id == supplier_id,
+            SupplierInvoice.statement_year == year,
+            SupplierInvoice.statement_month == month,
+            SupplierInvoice.is_paid == False,
+        )
+        .all()
+    )
+
+    if not unpaid:
+        raise HTTPException(status_code=400, detail="No unpaid invoices in this statement period")
+
+    for inv in unpaid:
+        inv.is_paid = True
+        inv.paid_date = now
+
+    log_action(
+        db, "supplier_invoice.statement_paid", user_id=current_user.id,
+        entity_id=supplier.entity_id, resource_type="supplier_invoice",
+        description=f"Marked {len(unpaid)} invoices paid for {supplier.name} {month}/{year}",
+    )
+    db.commit()
+    return {"detail": f"{len(unpaid)} invoice(s) marked as paid"}

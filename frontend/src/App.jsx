@@ -8,6 +8,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
 import DashboardPage from './pages/DashboardPage'
 import SuppliersPage from './pages/SuppliersPage'
+import SupplierProfilePage from './pages/SupplierProfilePage'
 import InvoicesPage from './pages/InvoicesPage'
 import InvoiceFormPage from './pages/InvoiceFormPage'
 import InvoiceDetailPage from './pages/InvoiceDetailPage'
@@ -19,9 +20,14 @@ import FleetPage from './pages/FleetPage'
 import ClientsPage from './pages/ClientsPage'
 import DriversPage from './pages/DriversPage'
 import DriverDetailPage from './pages/DriverDetailPage'
+import DriverAssignmentsPage from './pages/DriverAssignmentsPage'
 import PayrollSettingsPage from './pages/PayrollSettingsPage'
 import TruckLoadsPage from './pages/TruckLoadsPage'
+import TruckLoadProfilePage from './pages/TruckLoadProfilePage'
 import MinesSettingsPage from './pages/MinesSettingsPage'
+import DieselFillUpsPage from './pages/DieselFillUpsPage'
+import DieselRatesPage from './pages/DieselRatesPage'
+import ReportsPage from './pages/ReportsPage'
 import './styles/globals.css'
 
 function PrivateRoute({ children }) {
@@ -52,6 +58,7 @@ export default function App() {
 
             {/* Suppliers */}
             <Route path="/suppliers" element={<SuppliersPage />} />
+            <Route path="/suppliers/:supplierId" element={<SupplierProfilePage />} />
 
             {/* Fleet */}
             <Route path="/fleet" element={<FleetPage />} />
@@ -62,6 +69,7 @@ export default function App() {
             {/* Drivers */}
             <Route path="/drivers" element={<DriversPage />} />
             <Route path="/drivers/:driverId" element={<DriverDetailPage />} />
+            <Route path="/fleet/assignments" element={<DriverAssignmentsPage />} />
 
             {/* Quotes */}
             <Route path="/quotes" element={<InvoicesPage docType="quote" />} />
@@ -91,6 +99,14 @@ export default function App() {
 
             {/* Truck Loads */}
             <Route path="/truck-loads" element={<PrivateRoute><TruckLoadsPage /></PrivateRoute>} />
+            <Route path="/truck-loads/:truckId" element={<PrivateRoute><TruckLoadProfilePage /></PrivateRoute>} />
+
+            {/* Diesel */}
+            <Route path="/diesel" element={<DieselFillUpsPage />} />
+            <Route path="/reports" element={<AdminRoute><ReportsPage /></AdminRoute>} />
+
+            {/* Settings (admin) — diesel rates alongside payroll & mines */}
+            <Route path="/settings/diesel-rates" element={<AdminRoute><DieselRatesPage /></AdminRoute>} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

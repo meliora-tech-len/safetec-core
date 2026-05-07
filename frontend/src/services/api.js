@@ -113,6 +113,10 @@ export const deleteMine = (id) => api.delete(`/mines/${id}`)
 export const getMineRates = (mineId, params = {}) => api.get(`/mines/${mineId}/rates`, { params })
 export const addMineRate = (mineId, data) => api.post(`/mines/${mineId}/rates`, data)
 
+// ── Fleet (single truck) ──────────────────────────────────────────────────────
+export const getTruck = (id) => api.get(`/fleet/trucks/${id}`)
+export const getFleetTrucks = (params = {}) => api.get('/fleet/trucks', { params })
+
 // ── Truck Loads ───────────────────────────────────────────────────────────────
 export const getTruckLoads = (params = {}) => api.get('/truck-loads', { params })
 export const getTruckLoadSummary = (params = {}) => api.get('/truck-loads/summary', { params })
@@ -121,10 +125,56 @@ export const bulkCreateTruckLoads = (data) => api.post('/truck-loads/bulk', data
 export const updateTruckLoad = (id, data) => api.put(`/truck-loads/${id}`, data)
 export const deleteTruckLoad = (id) => api.delete(`/truck-loads/${id}`)
 
+// ── Drivers ───────────────────────────────────────────────────────────────────
+export const getDrivers = (params = {}) => api.get('/drivers', { params })
+export const addDriverAdditionalLoad = (driverId, year, month, data) =>
+  api.post(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads`, data)
+export const deleteDriverAdditionalLoad = (driverId, year, month, loadId) =>
+  api.delete(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}`)
+export const addDriverFoodPayment = (driverId, year, month, data) =>
+  api.post(`/drivers/${driverId}/cycles/${year}/${month}/food-payments`, data)
+export const getTruckAdditionalLoads = (truckId, params = {}) =>
+  api.get(`/fleet/trucks/${truckId}/additional-loads`, { params })
+
 // ── Driver Salary Configs ─────────────────────────────────────────────────────
 export const getDriverSalaryConfigs = (params = {}) => api.get('/driver-salary-configs', { params })
 export const createDriverSalaryConfig = (data) => api.post('/driver-salary-configs', data)
 export const updateDriverSalaryConfig = (id, data) => api.put(`/driver-salary-configs/${id}`, data)
 export const deleteDriverSalaryConfig = (id) => api.delete(`/driver-salary-configs/${id}`)
+
+// ── Diesel ────────────────────────────────────────────────────────────────────
+export const getDieselSettings = (params = {}) => api.get('/diesel/settings', { params })
+export const updateDieselSettings = (entityId, data) => api.put(`/diesel/settings/${entityId}`, data)
+
+export const getDieselRates = (params = {}) => api.get('/diesel/rates', { params })
+export const getDieselRate = (id) => api.get(`/diesel/rates/${id}`)
+export const getCurrentDieselRate = (supplierId, params = {}) => api.get(`/diesel/rates/supplier/${supplierId}/current`, { params })
+export const createDieselRate = (data) => api.post('/diesel/rates', data)
+export const updateDieselRate = (id, data) => api.put(`/diesel/rates/${id}`, data)
+
+export const getDieselFillUps = (params = {}) => api.get('/diesel/fillups', { params })
+export const getDieselFillUpSummary = (params = {}) => api.get('/diesel/fillups/summary', { params })
+export const getDieselFillUp = (id) => api.get(`/diesel/fillups/${id}`)
+export const getDieselFillUpsByTruck = (truckId, params = {}) => api.get(`/diesel/fillups/truck/${truckId}`, { params })
+export const createDieselFillUp = (data) => api.post('/diesel/fillups', data)
+export const updateDieselFillUp = (id, data) => api.put(`/diesel/fillups/${id}`, data)
+export const deleteDieselFillUp = (id) => api.delete(`/diesel/fillups/${id}`)
+export const verifyDieselFillUp = (id) => api.patch(`/diesel/fillups/${id}/verify`)
+
+export const getDieselReportByTruck = (params) => api.get('/diesel/reports/monthly-by-truck', { params })
+export const getDieselReportBySupplier = (params) => api.get('/diesel/reports/monthly-by-supplier', { params })
+export const getDieselCostPerLoad = (truckloadId) => api.get('/diesel/reports/cost-per-load', { params: { truckload_id: truckloadId } })
+export const getDieselAnnualSummary = (params) => api.get('/diesel/reports/annual-summary', { params })
+
+// ── Supplier Invoices ─────────────────────────────────────────────────────────
+export const getSupplierInvoices = (params = {}) => api.get('/supplier-invoices/', { params })
+export const getSupplierInvoice = (id) => api.get(`/supplier-invoices/${id}`)
+export const createSupplierInvoice = (data) => api.post('/supplier-invoices/', data)
+export const updateSupplierInvoice = (id, data) => api.put(`/supplier-invoices/${id}`, data)
+export const deleteSupplierInvoice = (id) => api.delete(`/supplier-invoices/${id}`)
+export const markStatementPaid = (supplierId, year, month) =>
+  api.post(`/supplier-invoices/statements/${supplierId}/${year}/${month}/mark-paid`)
+export const getSupplierPayablesDashboard = (params = {}) =>
+  api.get('/supplier-invoices/dashboard-summary', { params })
 
 export default api

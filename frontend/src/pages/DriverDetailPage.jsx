@@ -9,10 +9,6 @@ const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const MONTHS = ['January','February','March','April','May','June',
                 'July','August','September','October','November','December']
 
-const HOTAZEL_MINES = ['Mokala','Assmang','Sebilo','Tawana']
-const LOHATLA_MINES = ['Glosam','Driehoek','Future','Afrimat','Boskop']
-const ALL_MINES = [...HOTAZEL_MINES, ...LOHATLA_MINES]
-
 // ── API hook ──────────────────────────────────────────────────────────────────
 function useApi() {
   const h = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` })
@@ -31,34 +27,44 @@ const fmtDate = (d) => {
 }
 
 // ── Live calculator (mirrors payroll_calculator.py) ───────────────────────────
-function calcLive(inputs, settings, additionalLoads) {
+function calcLive(inputs, settings, additionalLoads, driverType) {
   if (!settings) return null
   const s = settings
-  const hBase  = Number(inputs.hotazel_base_loads  || 0)
-  const hExtra = Number(inputs.hotazel_extra_loads || 0)
   const lBase  = Number(inputs.lohatla_base_loads  || 0)
   const lExtra = Number(inputs.lohatla_extra_loads || 0)
-  const hTotal = hBase + hExtra
   const lTotal = lBase + lExtra
-  const grand  = hTotal + lTotal
+  const grand  = lTotal
+  const additionalTotal = (additionalLoads || []).reduce((sum, al) => sum + parseFloat(al.amount || 0), 0)
+
+  if (driverType === 'casual') {
+    const casualRate   = parseFloat(s.lohatla_casual_rate_per_load || 0)
+    const loadEarnings = casualRate * lTotal
+    const gross        = loadEarnings + additionalTotal
+    return {
+      grand, lTotal, additionalTotal, gross,
+      isCasual: true,
+      casualRate, loadEarnings,
+      basicSalary: 0, subsL: 0, totalSubs: 0,
+      incL: 0, totalInc: 0, assmang: 0,
+    }
+  }
 
   const basicSalary =
-    (hBase > 0 ? parseFloat(s.hotazel_base_salary) : 0) +
     (lBase > 0 ? parseFloat(s.lohatla_base_salary) : 0)
 
-  const subsH = parseFloat(s.hotazel_subs_per_load) * hTotal
   const subsL = parseFloat(s.lohatla_subs_per_load) * lTotal
-  const totalSubs = subsH + subsL
+  const totalSubs = subsL
 
-  const incH = parseFloat(s.hotazel_incentive_per_load) * hExtra
   const incL = parseFloat(s.lohatla_incentive_per_load) * lExtra
-  const totalInc = incH + incL
+  const totalInc = incL
 
   const assmang = parseFloat(s.assmang_bonus_per_load) * grand
-  const additionalTotal = (additionalLoads || []).reduce((sum, al) => sum + parseFloat(al.amount || 0), 0)
   const gross = basicSalary + totalSubs + totalInc + assmang + additionalTotal
 
-  return { grand, hTotal, lTotal, basicSalary, subsH, subsL, totalSubs, incH, incL, totalInc, assmang, additionalTotal, gross }
+  return {
+    grand, lTotal, basicSalary, subsL, totalSubs,
+    incL, totalInc, assmang, additionalTotal, gross, isCasual: false,
+  }
 }
 
 // ── Statutory deductions from calc result (permanent only) ───────────────────
@@ -233,7 +239,7 @@ export default function DriverDetailPage() {
   const [editModal,   setEditModal]   = useState(false)
 
   // Load inputs (controlled, live calc)
-  const [loads, setLoads] = useState({ hotazel_base_loads: 0, hotazel_extra_loads: 0, lohatla_base_loads: 0, lohatla_extra_loads: 0 })
+  const [loads, setLoads] = useState({ lohatla_base_loads: 0, lohatla_extra_loads: 0 })
   const [subsAdvance, setSubsAdvance] = useState(0)
   const [subsVerified, setSubsVerified] = useState(false)
   const [loanBal, setLoanBal]   = useState(0)
@@ -270,8 +276,6 @@ export default function DriverDetailPage() {
       .then(c => {
         setCycle(c)
         setLoads({
-          hotazel_base_loads:  c.hotazel_base_loads,
-          hotazel_extra_loads: c.hotazel_extra_loads,
           lohatla_base_loads:  c.lohatla_base_loads,
           lohatla_extra_loads: c.lohatla_extra_loads,
         })
@@ -300,14 +304,14 @@ export default function DriverDetailPage() {
   }
 
   // Live calc
-  const liveCalc = calcLive(loads, settings, cycle?.additional_loads)
+  const liveCalc = calcLive(loads, settings, cycle?.additional_loads, driver?.driver_type)
   const stat = liveCalc && driver?.driver_type === 'permanent'
     ? calcStatutory(liveCalc.basicSalary, settings)
     : null
   const subsAdvanceParsed = parseFloat(subsAdvance || 0)
   const loanDedParsed = parseFloat(loanDed || 0)
   const cashDedParsed = parseFloat(cashDed || 0)
-  const totalDeductions = (stat ? stat.total : 0) + subsAdvanceParsed + loanDedParsed + cashDedParsed
+  const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed : 0) + loanDedParsed + cashDedParsed
   const netPayable = liveCalc ? liveCalc.gross - totalDeductions : 0
 
   // Save loads
@@ -372,6 +376,14 @@ export default function DriverDetailPage() {
         </div>
       </div>
 
+      {/* Pre-populated from truck loads banner */}
+      {cycle?.was_prefilled && (
+        <div style={{ marginBottom: 16, padding: '10px 14px', background: 'var(--accent-subtle)', borderRadius: 8, border: '1px solid var(--accent)', fontSize: 13, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontWeight: 600 }}>Load counts pre-populated from truck loads</span>
+          <span style={{ color: 'var(--text-secondary)' }}>— verify and adjust if needed before saving.</span>
+        </div>
+      )}
+
       {/* Top stat row */}
       {liveCalc && (
         <div className="grid-4" style={{ marginBottom: 20 }}>
@@ -399,59 +411,54 @@ export default function DriverDetailPage() {
             <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
               <h3 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 700 }}>Load Entry</h3>
               <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--text-muted)', background: 'var(--accent-subtle)', borderRadius: 6, padding: '8px 10px' }}>
-                Enter loads per mine group — calculations update automatically.
+                {isPermanent
+                  ? 'Enter loads per mine group — calculations update automatically.'
+                  : 'Casual driver: enter total Lohatla loads. Rate × loads = earnings. No BC rules apply.'}
               </p>
 
-              {/* Hotazel group */}
-              <div style={{ background: 'rgba(37,99,235,0.06)', borderRadius: 8, padding: '14px 16px', marginBottom: 12 }}>
-                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--accent)', marginBottom: 10 }}>Hotazel Group (Mokala · Assmang · Sebilo · Tawana)</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div>
-                    <label className="form-label">Base loads (max 7)</label>
-                    <input className="form-input" type="number" min="0" max="7" value={loads.hotazel_base_loads}
-                      onChange={e => setLoads(l => ({ ...l, hotazel_base_loads: parseInt(e.target.value) || 0 }))} />
-                    {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      Subs: {fmt(parseFloat(settings.hotazel_subs_per_load) * loads.hotazel_base_loads)} · Base: {fmt(settings.hotazel_base_salary)}
-                    </div>}
-                  </div>
-                  <div>
-                    <label className="form-label">Extra loads (&gt;7)</label>
-                    <input className="form-input" type="number" min="0" value={loads.hotazel_extra_loads}
-                      onChange={e => setLoads(l => ({ ...l, hotazel_extra_loads: parseInt(e.target.value) || 0 }))} />
-                    {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      Subs: {fmt(parseFloat(settings.hotazel_subs_per_load) * loads.hotazel_extra_loads)} · Inc: {fmt(parseFloat(settings.hotazel_incentive_per_load) * loads.hotazel_extra_loads)}
-                    </div>}
-                  </div>
-                </div>
-              </div>
-
-              {/* Lohatla group */}
+              {/* Lohatla Mine */}
               <div style={{ background: 'rgba(22,163,74,0.06)', borderRadius: 8, padding: '14px 16px', marginBottom: 16 }}>
-                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--success)', marginBottom: 10 }}>Lohatla Group (Glosam · Driehoek · Future · Afrimat · Boskop)</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div>
-                    <label className="form-label">Base loads (max 7)</label>
-                    <input className="form-input" type="number" min="0" max="7" value={loads.lohatla_base_loads}
-                      onChange={e => setLoads(l => ({ ...l, lohatla_base_loads: parseInt(e.target.value) || 0 }))} />
-                    {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      Subs: {fmt(parseFloat(settings.lohatla_subs_per_load) * loads.lohatla_base_loads)} · Base: {fmt(settings.lohatla_base_salary)}
-                    </div>}
-                  </div>
-                  <div>
-                    <label className="form-label">Extra loads (&gt;7)</label>
-                    <input className="form-input" type="number" min="0" value={loads.lohatla_extra_loads}
-                      onChange={e => setLoads(l => ({ ...l, lohatla_extra_loads: parseInt(e.target.value) || 0 }))} />
-                    {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      Subs: {fmt(parseFloat(settings.lohatla_subs_per_load) * loads.lohatla_extra_loads)} · Inc: {fmt(parseFloat(settings.lohatla_incentive_per_load) * loads.lohatla_extra_loads)}
-                    </div>}
-                  </div>
+                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--success)', marginBottom: 10 }}>
+                  {'Lohatla Mine'}
                 </div>
+                {isPermanent ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <label className="form-label">Base loads (max 7)</label>
+                      <input className="form-input" type="number" min="0" max="7" value={loads.lohatla_base_loads}
+                        onChange={e => setLoads(l => ({ ...l, lohatla_base_loads: parseInt(e.target.value) || 0 }))} />
+                      {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                        Subs: {fmt(parseFloat(settings.lohatla_subs_per_load) * loads.lohatla_base_loads)} · Base: {fmt(settings.lohatla_base_salary)}
+                      </div>}
+                    </div>
+                    <div>
+                      <label className="form-label">Extra loads (&gt;7)</label>
+                      <input className="form-input" type="number" min="0" value={loads.lohatla_extra_loads}
+                        onChange={e => setLoads(l => ({ ...l, lohatla_extra_loads: parseInt(e.target.value) || 0 }))} />
+                      {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                        Subs: {fmt(parseFloat(settings.lohatla_subs_per_load) * loads.lohatla_extra_loads)} · Inc: {fmt(parseFloat(settings.lohatla_incentive_per_load) * loads.lohatla_extra_loads)}
+                      </div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="form-label">Total loads</label>
+                    <input className="form-input" type="number" min="0" value={loads.lohatla_base_loads}
+                      onChange={e => setLoads(l => ({ ...l, lohatla_base_loads: parseInt(e.target.value) || 0, lohatla_extra_loads: 0 }))} />
+                    {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Rate: {fmt(settings.lohatla_casual_rate_per_load)} per load · Earnings: {fmt((parseFloat(settings.lohatla_casual_rate_per_load) || 0) * loads.lohatla_base_loads)}
+                    </div>}
+                  </div>
+                )}
               </div>
 
               {/* Auto-calc summary */}
               {liveCalc && (
                 <div style={{ background: 'var(--bg-page)', borderRadius: 8, padding: '12px 14px', marginBottom: 16, fontSize: 13 }}>
-                  {[
+                  {liveCalc.isCasual ? [
+                    [`Load earnings (${liveCalc.lTotal} × ${fmt(liveCalc.casualRate)})`, fmt(liveCalc.loadEarnings)],
+                    ['Additional loads', fmt(liveCalc.additionalTotal)],
+                  ] : [
                     ['Basic salary',    fmt(liveCalc.basicSalary)],
                     ['Subsistence',     fmt(liveCalc.totalSubs)],
                     ['Load incentive',  fmt(liveCalc.totalInc)],
@@ -469,24 +476,26 @@ export default function DriverDetailPage() {
                 </div>
               )}
 
-              {/* Subsistence advance */}
-              <div style={{ marginBottom: 12 }}>
-                <label className="form-label">Subsistence advance paid (R)</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input className="form-input" type="number" step="0.01" value={subsAdvance} onChange={e => setSubsAdvance(e.target.value)} style={{ flex: 1 }} />
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, whiteSpace: 'nowrap' }}>
-                    <input type="checkbox" checked={subsVerified} onChange={e => setSubsVerified(e.target.checked)} />Verified
-                  </label>
-                </div>
-                {liveCalc && (
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                    Budgeted: {fmt(liveCalc.totalSubs)} · Paid: {fmt(subsAdvance)} ·{' '}
-                    <span style={{ color: subsAdvanceParsed > liveCalc.totalSubs ? 'var(--danger)' : 'var(--success)' }}>
-                      {subsAdvanceParsed > liveCalc.totalSubs ? `Overpaid ${fmt(subsAdvanceParsed - liveCalc.totalSubs)}` : `Within budget`}
-                    </span>
+              {/* Subsistence advance — permanent only */}
+              {isPermanent && (
+                <div style={{ marginBottom: 12 }}>
+                  <label className="form-label">Subsistence advance paid (R)</label>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input className="form-input" type="number" step="0.01" value={subsAdvance} onChange={e => setSubsAdvance(e.target.value)} style={{ flex: 1 }} />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, whiteSpace: 'nowrap' }}>
+                      <input type="checkbox" checked={subsVerified} onChange={e => setSubsVerified(e.target.checked)} />Verified
+                    </label>
                   </div>
-                )}
-              </div>
+                  {liveCalc && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Budgeted: {fmt(liveCalc.totalSubs)} · Paid: {fmt(subsAdvance)} ·{' '}
+                      <span style={{ color: subsAdvanceParsed > liveCalc.totalSubs ? 'var(--danger)' : 'var(--success)' }}>
+                        {subsAdvanceParsed > liveCalc.totalSubs ? `Overpaid ${fmt(subsAdvanceParsed - liveCalc.totalSubs)}` : `Within budget`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Loans */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
@@ -522,13 +531,16 @@ export default function DriverDetailPage() {
                 <h3 style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 700 }}>Payslip Summary</h3>
 
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Income</div>
-                {[
+                {(liveCalc.isCasual ? [
+                  [`Loads (${liveCalc.lTotal} × ${fmt(liveCalc.casualRate)})`, fmt(liveCalc.loadEarnings)],
+                  ['Additional loads',   fmt(liveCalc.additionalTotal)],
+                ] : [
                   ['Basic salary',       fmt(liveCalc.basicSalary)],
                   ['Load incentive',     fmt(liveCalc.totalInc)],
                   ['Assmang bonus',      fmt(liveCalc.assmang)],
                   ['Subsistence',        fmt(liveCalc.totalSubs)],
                   ['Additional loads',   fmt(liveCalc.additionalTotal)],
-                ].map(([l, v]) => (
+                ]).map(([l, v]) => (
                   <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
                     <span style={{ color: 'var(--text-secondary)' }}>{l}</span><span>{v}</span>
                   </div>
@@ -547,6 +559,12 @@ export default function DriverDetailPage() {
                       ['Sick fund',     fmt(stat.sickFund)],
                       ['Holiday fund',  fmt(stat.holidayFund)],
                       ['Leave pay',     fmt(stat.leavePay)],
+                    ].map(([l, v]) => (
+                      <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>{l}</span><span style={{ color: 'var(--danger)' }}>({v})</span>
+                      </div>
+                    ))}
+                    {[
                       ['PAYE',          fmt(stat.paye)],
                       ['Subs advance',  fmt(subsAdvanceParsed)],
                       ['Staff loan',    fmt(loanDedParsed)],
@@ -559,6 +577,20 @@ export default function DriverDetailPage() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 600 }}>
                       <span>Total deductions</span><span style={{ color: 'var(--danger)' }}>({fmt(totalDeductions)})</span>
                     </div>
+                  </>
+                )}
+
+                {!isPermanent && (loanDedParsed > 0 || cashDedParsed > 0) && (
+                  <>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 6px' }}>Deductions</div>
+                    {[
+                      ['Staff loan',   fmt(loanDedParsed)],
+                      ['Cash advance', fmt(cashDedParsed)],
+                    ].filter(([, v]) => parseFloat(v.replace(/[^0-9.]/g, '')) > 0).map(([l, v]) => (
+                      <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>{l}</span><span style={{ color: 'var(--danger)' }}>({v})</span>
+                      </div>
+                    ))}
                   </>
                 )}
 
@@ -680,10 +712,10 @@ export default function DriverDetailPage() {
             {/* Trip log */}
             <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Trip Log <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>(audit trail only)</span></h3>
+                <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Trip Log <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>{cycle?.trip_log?.length || 0} trips</span></h3>
                 <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setTripModal(true)}><Plus size={13} /> Add trip</button>
               </div>
-              <p style={{ margin: '0 0 10px', fontSize: 11, color: 'var(--text-muted)' }}>Trip dates are an audit trail and do not affect calculations.</p>
+              <p style={{ margin: '0 0 10px', fontSize: 11, color: 'var(--text-muted)' }}>Auto-populated from Truck Loads. Manual entries can also be added.</p>
               {cycle?.trip_log?.length > 0 ? (
                 <div className="table-wrapper">
                   <table>
@@ -693,14 +725,23 @@ export default function DriverDetailPage() {
                         <tr key={t.id}>
                           <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{i + 1}</td>
                           <td style={{ fontSize: 12 }}>{fmtDate(t.trip_date)}</td>
-                          <td style={{ fontSize: 12 }}>{t.mine_name}</td>
-                          <td style={{ fontSize: 12 }}>{t.notes || '—'}</td>
+                          <td style={{ fontSize: 12 }}>
+                            {t.mine_name}
+                            {t.truck_load_id && (
+                              <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '1px 5px', borderRadius: 4 }}>auto</span>
+                            )}
+                          </td>
+                          <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                            {t.truck_load_id ? `Load #${t.truck_load_id}` : (t.notes || '—')}
+                          </td>
                           <td>
-                            <button className="btn-icon" onClick={async () => {
-                              if (!confirm('Delete trip?')) return
-                              try { await api.del(`/api/drivers/${driverId}/cycles/${year}/${month}/trips/${t.id}`); loadCycle() }
-                              catch { toast.error('Delete failed') }
-                            }} style={{ padding: 4, color: 'var(--danger)' }}><Trash2 size={11} /></button>
+                            {!t.truck_load_id && (
+                              <button className="btn-icon" onClick={async () => {
+                                if (!confirm('Delete trip?')) return
+                                try { await api.del(`/api/drivers/${driverId}/cycles/${year}/${month}/trips/${t.id}`); loadCycle() }
+                                catch { toast.error('Delete failed') }
+                              }} style={{ padding: 4, color: 'var(--danger)' }}><Trash2 size={11} /></button>
+                            )}
                           </td>
                         </tr>
                       ))}

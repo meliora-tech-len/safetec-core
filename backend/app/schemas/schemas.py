@@ -195,6 +195,11 @@ class Token(BaseModel):
 
 # ── Suppliers ─────────────────────────────────────────────────────────────────
 
+class PaymentTermType(str, Enum):
+    current = "current"
+    days_30 = "30_days"
+
+
 class SupplierBase(BaseModel):
     entity_id: int
     name: str
@@ -208,6 +213,8 @@ class SupplierBase(BaseModel):
     city: Optional[str] = None
     postal_code: Optional[str] = None
     notes: Optional[str] = None
+    payment_term: PaymentTermType = PaymentTermType.current
+    is_diesel_supplier: bool = False
 
 class SupplierCreate(SupplierBase):
     pass
@@ -225,6 +232,8 @@ class SupplierBulkCreate(BaseModel):
     city: Optional[str] = None
     postal_code: Optional[str] = None
     notes: Optional[str] = None
+    payment_term: PaymentTermType = PaymentTermType.current
+    is_diesel_supplier: bool = False
 
 class SupplierUpdate(BaseModel):
     name: Optional[str] = None
@@ -239,10 +248,13 @@ class SupplierUpdate(BaseModel):
     postal_code: Optional[str] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None
+    payment_term: Optional[PaymentTermType] = None
+    is_diesel_supplier: Optional[bool] = None
 
 class SupplierOut(SupplierBase):
     id: int
     is_active: bool
+    is_diesel_supplier: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -435,8 +447,12 @@ class TruckBase(BaseModel):
     licence_number: Optional[str] = None
     licence_expiry: Optional[datetime] = None
     finance_institution: Optional[str] = None
+    is_subcontractor: bool = False
     status: TruckStatus = TruckStatus.active
     notes: Optional[str] = None
+    operator: Optional[str] = None
+    contract_context: Optional[str] = None
+    temp_registration: Optional[str] = None
 
 
 class TruckCreate(TruckBase):
@@ -453,8 +469,12 @@ class TruckUpdate(BaseModel):
     licence_number: Optional[str] = None
     licence_expiry: Optional[datetime] = None
     finance_institution: Optional[str] = None
+    is_subcontractor: Optional[bool] = None
     status: Optional[TruckStatus] = None
     notes: Optional[str] = None
+    operator: Optional[str] = None
+    contract_context: Optional[str] = None
+    temp_registration: Optional[str] = None
     trailers: Optional[List[TrailerCreate]] = None
 
 
@@ -665,12 +685,10 @@ class PayrollMineGroupOut(PayrollMineGroupBase):
 class PayrollSettingsOut(BaseModel):
     id: int
     effective_date: datetime
-    hotazel_base_salary: Decimal
     lohatla_base_salary: Decimal
-    hotazel_incentive_per_load: Decimal
     lohatla_incentive_per_load: Decimal
-    hotazel_subs_per_load: Decimal
     lohatla_subs_per_load: Decimal
+    lohatla_casual_rate_per_load: Decimal
     assmang_bonus_per_load: Decimal
     nbcrfli_rate: Decimal
     provident_rate: Decimal
@@ -689,12 +707,10 @@ class PayrollSettingsOut(BaseModel):
 
 class PayrollSettingsUpdate(BaseModel):
     effective_date: Optional[datetime] = None
-    hotazel_base_salary: Optional[Decimal] = None
     lohatla_base_salary: Optional[Decimal] = None
-    hotazel_incentive_per_load: Optional[Decimal] = None
     lohatla_incentive_per_load: Optional[Decimal] = None
-    hotazel_subs_per_load: Optional[Decimal] = None
     lohatla_subs_per_load: Optional[Decimal] = None
+    lohatla_casual_rate_per_load: Optional[Decimal] = None
     assmang_bonus_per_load: Optional[Decimal] = None
     nbcrfli_rate: Optional[Decimal] = None
     provident_rate: Optional[Decimal] = None
@@ -717,6 +733,7 @@ class DriverTripLogCreate(BaseModel):
 class DriverTripLogOut(DriverTripLogCreate):
     id: int
     pay_cycle_id: int
+    truck_load_id: Optional[int] = None
     created_at: datetime
 
     class Config:
@@ -778,8 +795,6 @@ class DriverFoodPaymentOut(DriverFoodPaymentCreate):
 
 
 class DriverPayCycleUpdate(BaseModel):
-    hotazel_base_loads: Optional[int] = None
-    hotazel_extra_loads: Optional[int] = None
     lohatla_base_loads: Optional[int] = None
     lohatla_extra_loads: Optional[int] = None
     subsistence_advance_paid: Optional[Decimal] = None
@@ -797,8 +812,6 @@ class DriverPayCycleOut(BaseModel):
     pay_month: int
     pay_year: int
     payroll_settings_id: Optional[int] = None
-    hotazel_base_loads: int
-    hotazel_extra_loads: int
     lohatla_base_loads: int
     lohatla_extra_loads: int
     subsistence_advance_paid: Decimal
@@ -812,6 +825,7 @@ class DriverPayCycleOut(BaseModel):
     additional_loads: List[DriverAdditionalLoadOut] = []
     food_payments: List[DriverFoodPaymentOut] = []
     calc: Optional[Any] = None
+    was_prefilled: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -976,3 +990,321 @@ class DriverSalaryConfigOut(DriverSalaryConfigBase):
 
     class Config:
         from_attributes = True
+
+
+# ── Supplier Invoice Schemas ──────────────────────────────────────────────────
+
+class SupplierInvoiceCreate(BaseModel):
+    supplier_id: int
+    entity_id: int
+    invoice_date: datetime
+    invoice_number: str
+    amount: Decimal
+    vat_applicable: bool = True
+    vehicle_reg: Optional[str] = None
+    description: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SupplierInvoiceUpdate(BaseModel):
+    invoice_date: Optional[datetime] = None
+    invoice_number: Optional[str] = None
+    amount: Optional[Decimal] = None
+    vat_applicable: Optional[bool] = None
+    vehicle_reg: Optional[str] = None
+    description: Optional[str] = None
+    is_verified: Optional[bool] = None
+    is_paid: Optional[bool] = None
+    paid_date: Optional[datetime] = None
+    payment_reference: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SupplierInvoiceOut(BaseModel):
+    id: int
+    supplier_id: int
+    entity_id: int
+    invoice_date: datetime
+    invoice_number: str
+    amount: Decimal
+    vat_applicable: bool
+    vehicle_reg: Optional[str] = None
+    description: Optional[str] = None
+    statement_month: Optional[int] = None
+    statement_year: Optional[int] = None
+    is_verified: bool
+    verified_at: Optional[datetime] = None
+    payment_due_date: Optional[datetime] = None
+    is_paid: bool
+    paid_date: Optional[datetime] = None
+    payment_reference: Optional[str] = None
+    notes: Optional[str] = None
+    created_by_id: Optional[int] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SupplierStatementGroup(BaseModel):
+    statement_month: int
+    statement_year: int
+    invoices: List[SupplierInvoiceOut]
+    subtotal: Decimal
+    payment_due_date: Optional[datetime] = None
+    is_fully_paid: bool
+
+
+class SupplierCurrentPayable(BaseModel):
+    supplier_id: int
+    supplier_name: str
+    total_outstanding: Decimal
+    invoice_count: int
+
+
+class Supplier30DaysPayable(BaseModel):
+    supplier_id: int
+    supplier_name: str
+    statement_month: int
+    statement_year: int
+    total_outstanding: Decimal
+    due_date: Optional[datetime] = None
+    invoice_count: int
+
+
+class SupplierPayablesDashboard(BaseModel):
+    current_payables: List[SupplierCurrentPayable] = []
+    days_30_payables: List[Supplier30DaysPayable] = []
+    total_current: Decimal = Decimal("0")
+    total_30_days: Decimal = Decimal("0")
+
+
+# ── Diesel Schemas ─────────────────────────────────────────────────────────────
+
+from datetime import date as date_type  # noqa: E402 (already imported above as date_type for drivers, reuse)
+
+
+class DieselSettingsOut(BaseModel):
+    id: int
+    entity_id: int
+    admin_fee_pct: Decimal
+    apply_admin_fee: bool
+    additional_charge_per_ton: Decimal = Decimal("0")
+    updated_by: Optional[int] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DieselSettingsUpdate(BaseModel):
+    admin_fee_pct: Decimal
+    apply_admin_fee: bool
+    additional_charge_per_ton: Decimal = Decimal("0")
+
+
+class DieselRateCreate(BaseModel):
+    entity_id: int
+    supplier_id: int
+    rate_per_litre: Decimal
+    additional_charge_per_ton: Decimal = Decimal("0")
+    effective_date: date_type
+    notes: Optional[str] = None
+
+
+class DieselRateUpdate(BaseModel):
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class DieselRateOut(BaseModel):
+    id: int
+    entity_id: int
+    supplier_id: int
+    rate_per_litre: Decimal
+    additional_charge_per_ton: Decimal = Decimal("0")
+    effective_date: date_type
+    notes: Optional[str] = None
+    is_active: bool
+    created_by: Optional[int] = None
+    created_at: datetime
+    supplier_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DieselFillUpCreate(BaseModel):
+    entity_id: int
+    truck_id: int
+    supplier_id: int
+    fillup_date: date_type
+    litres: Decimal
+    rate_per_litre: Decimal
+    invoice_number: Optional[str] = None
+    slip_number: Optional[str] = None
+    truckload_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class DieselFillUpUpdate(BaseModel):
+    truck_id: Optional[int] = None
+    supplier_id: Optional[int] = None
+    fillup_date: Optional[date_type] = None
+    litres: Optional[Decimal] = None
+    rate_per_litre: Optional[Decimal] = None
+    invoice_number: Optional[str] = None
+    slip_number: Optional[str] = None
+    truckload_id: Optional[int] = None
+    verified: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class DieselFillUpOut(BaseModel):
+    id: int
+    entity_id: int
+    truck_id: int
+    supplier_id: int
+    fillup_date: date_type
+    litres: Decimal
+    rate_per_litre: Decimal
+    amount: Decimal
+    admin_fee_pct: Decimal
+    admin_fee_amount: Decimal
+    total_amount: Decimal
+    invoice_number: Optional[str] = None
+    slip_number: Optional[str] = None
+    truckload_id: Optional[int] = None
+    verified: bool
+    verified_by: Optional[int] = None
+    verified_at: Optional[datetime] = None
+    notes: Optional[str] = None
+    created_by: Optional[int] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    # Enriched
+    truck_registration: Optional[str] = None
+    supplier_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DieselSummaryByTruck(BaseModel):
+    truck_reg: str
+    fillup_count: int
+    total_litres: Decimal
+    total_amount: Decimal
+    total_admin_fee: Decimal
+    grand_total: Decimal
+
+
+class DieselSupplierReconciliation(BaseModel):
+    supplier_name: str
+    fillup_count: int
+    total_litres: Decimal
+    total_amount: Decimal
+    verified_amount: Decimal
+    unverified_amount: Decimal
+
+
+class DieselAnnualMonthRow(BaseModel):
+    month: int
+    fillup_count: int
+    total_litres: Decimal
+    total_amount: Decimal
+    total_admin_fee: Decimal
+    grand_total: Decimal
+
+
+class DieselFillUpSummary(BaseModel):
+    total_fillups: int = 0
+    total_litres: Decimal = Decimal("0")
+    total_amount: Decimal = Decimal("0")
+    total_admin_fee: Decimal = Decimal("0")
+    grand_total: Decimal = Decimal("0")
+
+
+# ── PayrollEntry Schemas ──────────────────────────────────────────────────────
+
+from app.models.models import PayrollStatus  # noqa: E402
+
+
+class PayrollEntryOut(BaseModel):
+    id: int
+    entity_id: int
+    driver_id: int
+    pay_month: int
+    pay_year: int
+    status: PayrollStatus
+    payroll_settings_id: Optional[int] = None
+
+    lohatla_base_loads: int
+    lohatla_extra_loads: int
+    lohatla_total_loads: int
+
+    # Income
+    basic_salary: Decimal
+    load_earnings: Decimal
+    subsistence: Decimal
+    assmang_bonus: Decimal
+    additional_income: Decimal
+    gross: Decimal
+
+    # Statutory deductions
+    nbcrfli: Decimal
+    provident: Decimal
+    wellness: Decimal
+    sick_fund: Decimal
+    holiday_fund: Decimal
+    leave_pay: Decimal
+    paye: Decimal
+    uif: Decimal
+    total_statutory: Decimal
+
+    # Manual deductions
+    subsistence_advance: Decimal
+    staff_loan_deduction: Decimal
+    cash_advance_deduction: Decimal
+
+    total_deductions: Decimal
+    net_payable: Decimal
+
+    truckload_changed: bool
+    truckload_changed_note: Optional[str] = None
+
+    payment_date: Optional[date_type] = None
+    payment_reference: Optional[str] = None
+    comments: Optional[str] = None
+
+    reviewed_by: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    verified_by: Optional[int] = None
+    verified_at: Optional[datetime] = None
+
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PayrollEntryUpdate(BaseModel):
+    """Fields the user can manually edit regardless of status."""
+    lohatla_base_loads: Optional[int] = None
+    lohatla_extra_loads: Optional[int] = None
+    lohatla_total_loads: Optional[int] = None
+    subsistence_advance: Optional[Decimal] = None
+    staff_loan_deduction: Optional[Decimal] = None
+    cash_advance_deduction: Optional[Decimal] = None
+    additional_income: Optional[Decimal] = None
+    payment_date: Optional[date_type] = None
+    payment_reference: Optional[str] = None
+    comments: Optional[str] = None
+    truckload_changed_note: Optional[str] = None
+
+
+class PayrollEntryStatusTransition(BaseModel):
+    """Advance or revert the status of a payroll entry."""
+    status: PayrollStatus

@@ -2,12 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, TruckLoad, Mine, MineRate, Truck
+from app.models.models import (
+    User, TruckLoad, Mine, MineRate, Truck,
+    Driver, DriverType, DriverPayCycle, DriverTripLog, PayrollSettings,
+)
 from app.schemas.schemas import (
     TruckLoadCreate, TruckLoadUpdate, TruckLoadOut,
     TruckLoadBulkCreate, TruckLoadSummary,
@@ -17,6 +20,7 @@ from app.services.audit import log_action
 router = APIRouter(prefix="/api/truck-loads", tags=["truck-loads"])
 
 VAT_RATE = Decimal("1.15")
+
 
 
 def _check_entity_access(entity_id: int, user: User):
@@ -59,6 +63,107 @@ def _enrich(load: TruckLoad) -> dict:
     d["truck_registration"] = load.truck.registration if load.truck else None
     d["mine_name"] = load.mine.name if load.mine else None
     return d
+
+
+def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
+    """
+    After any truck load change, find the active driver for this truck and
+    re-sync their DriverPayCycle load counts for the affected month.
+    No-ops silently if no driver is assigned to the truck.
+    """
+    driver = db.query(Driver).filter(
+        Driver.truck_id == truck_id,
+        Driver.is_active == True,
+    ).first()
+    if not driver:
+        return
+
+    year = load_date.year
+    month = load_date.month
+    month_start = datetime(year, month, 1, tzinfo=timezone.utc)
+    if month == 12:
+        month_end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        month_end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+
+    # Count ALL loads for this truck in this calendar month.
+    total_loads = db.query(func.count(TruckLoad.id)).filter(
+        TruckLoad.truck_id == truck_id,
+        TruckLoad.load_date >= month_start,
+        TruckLoad.load_date < month_end,
+    ).scalar() or 0
+
+    if driver.driver_type == DriverType.permanent:
+        lohatla_base  = min(7, total_loads)
+        lohatla_extra = max(0, total_loads - 7)
+    else:
+        # Casual: flat per-load rate, no base/extra split
+        lohatla_base  = total_loads
+        lohatla_extra = 0
+
+    cycle = db.query(DriverPayCycle).filter(
+        DriverPayCycle.driver_id == driver.id,
+        DriverPayCycle.pay_month == month,
+        DriverPayCycle.pay_year  == year,
+    ).first()
+
+    if cycle:
+        cycle.lohatla_base_loads  = lohatla_base
+        cycle.lohatla_extra_loads = lohatla_extra
+    else:
+        settings = db.query(PayrollSettings).order_by(PayrollSettings.id.desc()).first()
+        cycle = DriverPayCycle(
+            driver_id=driver.id,
+            pay_month=month,
+            pay_year=year,
+            payroll_settings_id=settings.id if settings else None,
+            lohatla_base_loads=lohatla_base,
+            lohatla_extra_loads=lohatla_extra,
+        )
+        db.add(cycle)
+        db.flush()
+
+    return driver, cycle
+
+
+def _add_trip_log(load: TruckLoad, db: Session):
+    """Create a DriverTripLog entry for this load if a driver is assigned to the truck."""
+    driver = db.query(Driver).filter(
+        Driver.truck_id == load.truck_id,
+        Driver.is_active == True,
+    ).first()
+    if not driver:
+        return
+
+    year  = load.load_date.year
+    month = load.load_date.month
+
+    # Ensure the pay cycle exists first
+    cycle = db.query(DriverPayCycle).filter(
+        DriverPayCycle.driver_id == driver.id,
+        DriverPayCycle.pay_month == month,
+        DriverPayCycle.pay_year  == year,
+    ).first()
+    if not cycle:
+        # Will be created by _sync_driver_pay_cycle — flush needed first
+        return
+
+    mine_name = load.mine.name if load.mine else "Unknown"
+    entry = DriverTripLog(
+        pay_cycle_id=cycle.id,
+        trip_date=load.load_date,
+        mine_name=mine_name,
+        truck_load_id=load.id,
+        notes=f"Auto: truck load #{load.id}",
+    )
+    db.add(entry)
+
+
+def _remove_trip_log(load_id: int, db: Session):
+    """Delete the DriverTripLog entry that was auto-created for this truck load."""
+    db.query(DriverTripLog).filter(
+        DriverTripLog.truck_load_id == load_id
+    ).delete(synchronize_session=False)
 
 
 # ── List loads ────────────────────────────────────────────────────────────────
@@ -163,7 +268,6 @@ def create_truck_load(
 ):
     _check_entity_access(payload.entity_id, current_user)
 
-    # Resolve rate from MineRate if not provided
     rate = payload.rate_per_ton
     if rate is None:
         rate = _resolve_rate(db, payload.mine_id, payload.entity_id)
@@ -176,7 +280,14 @@ def create_truck_load(
     load = TruckLoad(**payload.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
     _compute_amounts(load)
     db.add(load)
+    db.flush()  # get load.id before syncing
+
+    # Sync driver pay cycle (creates or updates load counts)
+    _sync_driver_pay_cycle(load.truck_id, load.load_date, db)
     db.flush()
+
+    # Add trip log entry (pay cycle now exists)
+    _add_trip_log(load, db)
 
     log_action(
         db, "truck_load.created", user_id=current_user.id,
@@ -217,6 +328,18 @@ def bulk_create_truck_loads(
         db.flush()
         created.append(load)
 
+    # Sync each unique truck/month combination once
+    seen = set()
+    for load in created:
+        key = (load.truck_id, load.load_date.year, load.load_date.month)
+        if key not in seen:
+            _sync_driver_pay_cycle(load.truck_id, load.load_date, db)
+            db.flush()
+            seen.add(key)
+
+    for load in created:
+        _add_trip_log(load, db)
+
     log_action(
         db, "truck_load.bulk_created", user_id=current_user.id,
         resource_type="truck_load",
@@ -243,10 +366,30 @@ def update_truck_load(
         raise HTTPException(status_code=404, detail="Truck load not found")
     _check_entity_access(load.entity_id, current_user)
 
+    old_truck_id  = load.truck_id
+    old_load_date = load.load_date
+
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(load, field, value)
 
     _compute_amounts(load)
+
+    # If truck or date changed, re-sync both the old and new month
+    new_truck_id  = load.truck_id
+    new_load_date = load.load_date
+
+    months_to_sync = {(old_truck_id, old_load_date), (new_truck_id, new_load_date)}
+    for truck_id, ld in months_to_sync:
+        _sync_driver_pay_cycle(truck_id, ld, db)
+
+    # Update the linked trip log entry date/mine if it moved
+    trip_entry = db.query(DriverTripLog).filter(
+        DriverTripLog.truck_load_id == load_id
+    ).first()
+    if trip_entry:
+        trip_entry.trip_date = new_load_date
+        if load.mine:
+            trip_entry.mine_name = load.mine.name
 
     log_action(
         db, "truck_load.updated", user_id=current_user.id,
@@ -274,11 +417,22 @@ def delete_truck_load(
     if not load:
         raise HTTPException(status_code=404, detail="Truck load not found")
 
+    truck_id  = load.truck_id
+    load_date = load.load_date
+
+    # Remove auto-created trip log entry before deleting the load
+    _remove_trip_log(load_id, db)
+
     log_action(
         db, "truck_load.deleted", user_id=current_user.id,
         entity_id=load.entity_id, resource_type="truck_load",
         resource_id=load_id, description=f"Deleted truck load {load_id}",
     )
     db.delete(load)
+    db.flush()
+
+    # Re-sync the driver's cycle for this month (count is now one less)
+    _sync_driver_pay_cycle(truck_id, load_date, db)
+
     db.commit()
     return {"detail": "Truck load deleted"}

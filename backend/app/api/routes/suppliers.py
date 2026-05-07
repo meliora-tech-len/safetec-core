@@ -24,6 +24,7 @@ def list_suppliers(
     entity_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
+    is_diesel_supplier: Optional[bool] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, le=500),
     db: Session = Depends(get_db),
@@ -42,6 +43,9 @@ def list_suppliers(
 
     if not include_inactive:
         query = query.filter(Supplier.is_active == True)
+
+    if is_diesel_supplier is not None:
+        query = query.filter(Supplier.is_diesel_supplier == is_diesel_supplier)
 
     if search:
         search_term = f"%{search}%"

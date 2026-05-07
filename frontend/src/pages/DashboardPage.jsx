@@ -1,21 +1,29 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { getDashboardStats } from '../services/api'
+import { useNavigate, Link } from 'react-router-dom'
+import { getDashboardStats, getSupplierPayablesDashboard } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
-import { TrendingUp, AlertCircle, FileText, Clock, Building2, ChevronRight } from 'lucide-react'
+import { TrendingUp, AlertCircle, FileText, Clock, Building2, ChevronRight, CreditCard } from 'lucide-react'
+
+const MONTH_NAMES = [
+  '', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
 
 export default function DashboardPage() {
   const { entities, activeEntity, setActiveEntity, isAdmin } = useAuth()
   const [stats, setStats] = useState(null)
+  const [payables, setPayables] = useState(null)
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
   useEffect(() => {
     setLoading(true)
-    getDashboardStats(activeEntity?.id || undefined)
-      .then(r => setStats(r.data))
-      .finally(() => setLoading(false))
+    const params = activeEntity?.id ? { entity_id: activeEntity.id } : {}
+    Promise.all([
+      getDashboardStats(activeEntity?.id || undefined).then(r => setStats(r.data)),
+      getSupplierPayablesDashboard(params).then(r => setPayables(r.data)),
+    ]).finally(() => setLoading(false))
   }, [activeEntity])
 
   const handleEntityChange = (e) => {
@@ -81,6 +89,72 @@ export default function DashboardPage() {
               sub={`+ ${stats.total_quotes} quotes`}
             />
           </div>
+
+          {/* Supplier Payables */}
+          {payables && (payables.current_payables.length > 0 || payables.days_30_payables.length > 0) && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <CreditCard size={15} color="var(--text-muted)" /> Supplier Payables
+                </span>
+                <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--text-muted)' }}>
+                  {payables.total_current > 0 && (
+                    <span>Current: <strong style={{ color: '#16a34a' }}>{formatCurrency(payables.total_current)}</strong></span>
+                  )}
+                  {payables.total_30_days > 0 && (
+                    <span>30 Days: <strong style={{ color: '#d97706' }}>{formatCurrency(payables.total_30_days)}</strong></span>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                {payables.current_payables.length > 0 && (
+                  <div className="card" style={{ flex: 1, minWidth: 260 }}>
+                    <div style={styles.cardHeader}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>Current / Cash</span>
+                      <span style={styles.greenBadge}>Due this month</span>
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      {payables.current_payables.map(p => (
+                        <div key={p.supplier_id} style={styles.payableRow}>
+                          <div>
+                            <Link to={`/suppliers/${p.supplier_id}`} style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', textDecoration: 'none' }}>
+                              {p.supplier_name}
+                            </Link>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.invoice_count} invoice{p.invoice_count !== 1 ? 's' : ''}</div>
+                          </div>
+                          <span style={{ fontWeight: 700 }}>{formatCurrency(p.total_outstanding)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {payables.days_30_payables.length > 0 && (
+                  <div className="card" style={{ flex: 1, minWidth: 260 }}>
+                    <div style={styles.cardHeader}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>30 Days</span>
+                      <span style={styles.amberBadge}>Pay on 7th</span>
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      {payables.days_30_payables.map(p => (
+                        <div key={`${p.supplier_id}-${p.statement_year}-${p.statement_month}`} style={styles.payableRow}>
+                          <div>
+                            <Link to={`/suppliers/${p.supplier_id}`} style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', textDecoration: 'none' }}>
+                              {p.supplier_name}
+                            </Link>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                              {MONTH_NAMES[p.statement_month]} {p.statement_year} · {p.invoice_count} invoice{p.invoice_count !== 1 ? 's' : ''}
+                              {p.due_date && ` · Due ${formatDate(p.due_date)}`}
+                            </div>
+                          </div>
+                          <span style={{ fontWeight: 700 }}>{formatCurrency(p.total_outstanding)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div style={styles.grid}>
             {/* Recent Invoices */}
@@ -186,5 +260,17 @@ const styles = {
   entityDot: {
     width: 8, height: 8, borderRadius: '50%',
     background: 'var(--accent)', flexShrink: 0,
+  },
+  payableRow: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '8px 0', borderBottom: '1px solid var(--border)', gap: 12,
+  },
+  greenBadge: {
+    padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
+    background: 'rgba(34,197,94,0.15)', color: '#16a34a',
+  },
+  amberBadge: {
+    padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
+    background: 'rgba(245,158,11,0.15)', color: '#d97706',
   },
 }

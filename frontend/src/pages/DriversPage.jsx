@@ -211,7 +211,7 @@ export default function DriversPage() {
   const [loading, setLoading]   = useState(true)
   const [search, setSearch]     = useState('')
   const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
-  const [filterType, setFilterType]     = useState('')
+  const [filterType, setFilterType]     = useState('permanent')
   const [showInactive, setShowInactive] = useState(false)
   const [modal, setModal]       = useState(null)
 
@@ -304,11 +304,22 @@ export default function DriversPage() {
             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         )}
-        <select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ width: 'auto', minWidth: 140 }}>
-          <option value="">All types</option>
-          <option value="permanent">Permanent</option>
-          <option value="casual">Casual</option>
-        </select>
+        <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 3, gap: 2 }}>
+          {[['permanent', 'Permanent'], ['casual', 'Casual']].map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => setFilterType(f => f === val ? '' : val)}
+              style={{
+                padding: '4px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+                border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                background: filterType === val ? 'var(--accent)' : 'transparent',
+                color: filterType === val ? '#fff' : 'var(--text-muted)',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <button
           className="btn-ghost btn-sm"
           style={{ color: showInactive ? 'var(--accent)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}
