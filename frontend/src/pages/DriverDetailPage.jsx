@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, X, Edit2, Check } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
+import VerifyBadge from '../components/VerifyBadge'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -12,11 +13,12 @@ const MONTHS = ['January','February','March','April','May','June',
 // ── API hook ──────────────────────────────────────────────────────────────────
 function useApi() {
   const h = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` })
-  const get  = (p)    => fetch(`${API}${p}`, { headers: h() }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-  const post = (p, b) => fetch(`${API}${p}`, { method: 'POST',   headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-  const put  = (p, b) => fetch(`${API}${p}`, { method: 'PUT',    headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-  const del  = (p)    => fetch(`${API}${p}`, { method: 'DELETE', headers: h() }).then(r => { if (!r.ok) return r.json().then(e => Promise.reject(e)) })
-  return { get, post, put, del }
+  const get   = (p)    => fetch(`${API}${p}`, { headers: h() }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+  const post  = (p, b) => fetch(`${API}${p}`, { method: 'POST',   headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+  const put   = (p, b) => fetch(`${API}${p}`, { method: 'PUT',    headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+  const patch = (p)    => fetch(`${API}${p}`, { method: 'PATCH',  headers: h() }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+  const del   = (p)    => fetch(`${API}${p}`, { method: 'DELETE', headers: h() }).then(r => { if (!r.ok) return r.json().then(e => Promise.reject(e)) })
+  return { get, post, put, patch, del }
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -618,7 +620,7 @@ export default function DriverDetailPage() {
               {cycle?.additional_loads?.length > 0 ? (
                 <div className="table-wrapper" style={{ marginBottom: 12 }}>
                   <table>
-                    <thead><tr><th>Date</th><th>Route</th><th>Amount</th><th style={{ width: 60 }}>✓</th><th style={{ width: 60 }}></th></tr></thead>
+                    <thead><tr><th>Date</th><th>Route</th><th>Amount</th><th>Verified</th><th style={{ width: 60 }}></th></tr></thead>
                     <tbody>
                       {cycle.additional_loads.map(al => (
                         <tr key={al.id}>
@@ -626,11 +628,11 @@ export default function DriverDetailPage() {
                           <td style={{ fontSize: 12 }}>{al.route_name}{al.truck_registration && <span style={{ color: 'var(--text-muted)' }}> · {al.truck_registration}</span>}</td>
                           <td style={{ fontSize: 12 }}>{fmt(al.amount)}</td>
                           <td>
-                            <input type="checkbox" checked={al.is_verified} onChange={async e => {
+                            <VerifyBadge item={al} onVerify={async (item) => {
                               try {
-                                await api.put(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${al.id}`, { is_verified: e.target.checked })
+                                await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/verify`)
                                 loadCycle()
-                              } catch { toast.error('Failed to update') }
+                              } catch (e) { toast.error(e?.detail || 'Verification failed') }
                             }} />
                           </td>
                           <td style={{ display: 'flex', gap: 4 }}>
@@ -686,11 +688,11 @@ export default function DriverDetailPage() {
                           <td style={{ fontSize: 12 }}>{fp.paid_by || '—'}</td>
                           <td style={{ fontSize: 12 }}>{fmt(fp.amount)}</td>
                           <td>
-                            <input type="checkbox" checked={fp.is_verified} onChange={async e => {
+                            <VerifyBadge item={fp} onVerify={async (item) => {
                               try {
-                                await api.put(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${fp.id}`, { is_verified: e.target.checked })
+                                await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/verify`)
                                 loadCycle()
-                              } catch { toast.error('Failed to update') }
+                              } catch (e) { toast.error(e?.detail || 'Verification failed') }
                             }} />
                           </td>
                           <td style={{ display: 'flex', gap: 4 }}>

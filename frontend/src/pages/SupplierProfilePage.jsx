@@ -4,11 +4,13 @@ import {
   getSupplier, getEntities,
   getSupplierInvoices, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, markStatementPaid,
+  verifySupplierInvoice,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, CheckCircle, ChevronDown, ChevronUp, Save, X } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
+import VerifyBadge from '../components/VerifyBadge'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -163,10 +165,9 @@ export default function SupplierProfilePage() {
     } catch (e) { toast.error(errorMessage(e)) }
   }
 
-  const handleVerify = async (inv, e) => {
-    e.stopPropagation()
+  const handleVerify = async (inv) => {
     try {
-      await updateSupplierInvoice(inv.id, { is_verified: !inv.is_verified })
+      await verifySupplierInvoice(inv.id)
       loadInvoices()
     } catch (e) { toast.error(errorMessage(e)) }
   }
@@ -503,14 +504,8 @@ export default function SupplierProfilePage() {
                           </td>
 
                           {/* Verified */}
-                          <td style={{ ...styles.td, textAlign: 'center' }}>
-                            <button
-                              onClick={e => handleVerify(inv, e)}
-                              title={inv.is_verified ? 'Verified' : 'Mark verified'}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: inv.is_verified ? '#16a34a' : 'var(--border)' }}
-                            >
-                              <CheckCircle size={16} />
-                            </button>
+                          <td style={styles.td}>
+                            <VerifyBadge item={inv} onVerify={handleVerify} />
                           </td>
 
                           {/* Paid */}

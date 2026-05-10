@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
+  getIncomeExpensesReport,
 } from '../services/api'
 import toast from 'react-hot-toast'
 
@@ -13,9 +14,10 @@ const fmtL = (n) => `${Number(n || 0).toLocaleString('en-ZA', { minimumFractionD
 const fmtN = (n, d = 2) => Number(n || 0).toFixed(d)
 
 const TABS = [
-  { key: 'truck', label: 'Monthly by Truck' },
-  { key: 'supplier', label: 'Supplier Reconciliation' },
-  { key: 'annual', label: 'Annual Summary' },
+  { key: 'income',   label: 'Income vs Expenses' },
+  { key: 'truck',    label: 'Diesel by Truck' },
+  { key: 'supplier', label: 'Diesel by Supplier' },
+  { key: 'annual',   label: 'Diesel Annual' },
 ]
 
 const thisYear = new Date().getFullYear()
@@ -24,12 +26,15 @@ const thisMonth = new Date().getMonth() + 1
 export default function ReportsPage() {
   const { isAdmin, activeEntity, entities } = useAuth()
 
-  const [tab, setTab] = useState('truck')
+  const [tab, setTab]         = useState('income')
   const [entityId, setEntityId] = useState(activeEntity?.id || '')
-  const [year, setYear] = useState(thisYear)
-  const [month, setMonth] = useState(thisMonth)
+  const [year, setYear]       = useState(thisYear)
+  const [month, setMonth]     = useState(thisMonth)
   const [loading, setLoading] = useState(false)
-  const [data, setData] = useState([])
+
+  // Diesel reports use an array; income report uses a structured object
+  const [dieselData, setDieselData]   = useState([])
+  const [incomeData, setIncomeData]   = useState(null)
 
   useEffect(() => {
     if (!isAdmin && activeEntity?.id) setEntityId(activeEntity.id)
@@ -38,14 +43,20 @@ export default function ReportsPage() {
   const load = useCallback(async () => {
     if (!entityId) return
     setLoading(true)
-    setData([])
+    setDieselData([])
+    setIncomeData(null)
     try {
-      let res
-      const p = { entity_id: entityId, year, month }
-      if (tab === 'truck') res = await getDieselReportByTruck(p)
-      else if (tab === 'supplier') res = await getDieselReportBySupplier(p)
-      else res = await getDieselAnnualSummary({ entity_id: entityId, year })
-      setData(res.data || [])
+      if (tab === 'income') {
+        const res = await getIncomeExpensesReport({ entity_id: entityId, year })
+        setIncomeData(res.data)
+      } else {
+        const p = { entity_id: entityId, year, month }
+        let res
+        if (tab === 'truck')         res = await getDieselReportByTruck(p)
+        else if (tab === 'supplier') res = await getDieselReportBySupplier(p)
+        else                         res = await getDieselAnnualSummary({ entity_id: entityId, year })
+        setDieselData(res.data || [])
+      }
     } catch {
       toast.error('Failed to load report')
     } finally {
@@ -57,20 +68,34 @@ export default function ReportsPage() {
 
   const years = Array.from({ length: 5 }, (_, i) => thisYear - i)
 
-  // CSV export helper
   const exportCsv = () => {
-    if (!data.length) return
-    const headers = Object.keys(data[0])
-    const rows = data.map(r => headers.map(h => `"${r[h] ?? ''}"`).join(','))
-    const csv = [headers.join(','), ...rows].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `diesel-report-${tab}-${year}${tab !== 'annual' ? `-${String(month).padStart(2, '0')}` : ''}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    if (tab === 'income') {
+      if (!incomeData?.months) return
+      const headers = ['Month', 'Revenue', 'Diesel', 'Suppliers', 'Payroll', 'Total Expenses', 'Net']
+      const rows = incomeData.months.map(r => [
+        r.month_name, r.truck_income, r.diesel, r.suppliers, r.payroll, r.total_expenses, r.net,
+      ].map(v => `"${v}"`).join(','))
+      const csv = [headers.join(','), ...rows].join('\n')
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url
+      a.download = `income-expenses-${year}.csv`; a.click()
+      URL.revokeObjectURL(url)
+    } else {
+      if (!dieselData.length) return
+      const headers = Object.keys(dieselData[0])
+      const rows = dieselData.map(r => headers.map(h => `"${r[h] ?? ''}"`).join(','))
+      const csv = [headers.join(','), ...rows].join('\n')
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url
+      a.download = `diesel-${tab}-${year}${tab !== 'annual' ? `-${String(month).padStart(2, '0')}` : ''}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
   }
+
+  const hasData = tab === 'income' ? !!incomeData : dieselData.length > 0
 
   return (
     <div style={styles.page}>
@@ -79,20 +104,17 @@ export default function ReportsPage() {
           <h1 style={styles.title}>Reports</h1>
           <p style={styles.subtitle}>Business reports and reconciliations</p>
         </div>
-        <button onClick={exportCsv} style={styles.btnSecondary} disabled={!data.length}>
+        <button onClick={exportCsv} style={styles.btnSecondary} disabled={!hasData}>
           Export CSV
         </button>
       </div>
 
-      {/* Tabs + filters in one bar */}
+      {/* Tabs + filters */}
       <div style={styles.tabBar}>
         <div style={styles.tabs}>
           {TABS.map(t => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              style={{ ...styles.tab, ...(tab === t.key ? styles.tabActive : {}) }}
-            >
+            <button key={t.key} onClick={() => setTab(t.key)}
+              style={{ ...styles.tab, ...(tab === t.key ? styles.tabActive : {}) }}>
               {t.label}
             </button>
           ))}
@@ -107,7 +129,7 @@ export default function ReportsPage() {
           <select value={year} onChange={e => setYear(Number(e.target.value))} style={styles.select}>
             {years.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-          {tab !== 'annual' && (
+          {tab !== 'annual' && tab !== 'income' && (
             <select value={month} onChange={e => setMonth(Number(e.target.value))} style={styles.select}>
               {MONTH_OPTS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
@@ -115,25 +137,148 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      <div style={styles.card}>
-        {loading ? (
-          <div style={styles.empty}>Loading…</div>
-        ) : data.length === 0 ? (
-          <div style={styles.empty}>No data for this period.</div>
-        ) : tab === 'truck' ? (
-          <TruckReport data={data} />
-        ) : tab === 'supplier' ? (
-          <SupplierReport data={data} />
-        ) : (
-          <AnnualReport data={data} year={year} />
-        )}
-      </div>
-
-      {/* ── Future report sections slot in here ── */}
-      {/* e.g. <SarsSection /> */}
+      {loading ? (
+        <div style={{ ...styles.card, ...styles.empty }}>Loading…</div>
+      ) : tab === 'income' ? (
+        incomeData
+          ? <IncomeExpensesReport data={incomeData} year={year} />
+          : <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
+      ) : (
+        <div style={styles.card}>
+          {dieselData.length === 0 ? (
+            <div style={styles.empty}>No data for this period.</div>
+          ) : tab === 'truck' ? (
+            <TruckReport data={dieselData} />
+          ) : tab === 'supplier' ? (
+            <SupplierReport data={dieselData} />
+          ) : (
+            <AnnualReport data={dieselData} year={year} />
+          )}
+        </div>
+      )}
     </div>
   )
 }
+
+// ── Income vs Expenses ─────────────────────────────────────────────────────────
+function IncomeExpensesReport({ data, year }) {
+  const { months, totals, has_payroll_entries } = data
+
+  const netColor = (n) => n > 0 ? '#16a34a' : n < 0 ? 'var(--danger)' : 'var(--text-muted)'
+
+  // Summary cards
+  const cards = [
+    { label: 'Total Revenue',   value: totals.total_income,   color: '#16a34a' },
+    { label: 'Total Expenses',  value: totals.total_expenses,  color: 'var(--danger)' },
+    { label: 'Net Profit / Loss', value: totals.net,           color: netColor(totals.net) },
+  ]
+
+  return (
+    <div>
+      {/* Summary cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: 20 }}>
+        {cards.map(c => (
+          <div key={c.label} style={{
+            background: 'var(--bg-surface)', border: '1px solid var(--border)',
+            borderRadius: 10, padding: '16px 20px',
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 6 }}>
+              {c.label}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: c.color }}>
+              {fmtR(c.value)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Expense breakdown pills */}
+      <div style={{ padding: '0 20px 16px', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Diesel',     value: totals.diesel    },
+          { label: 'Suppliers',  value: totals.suppliers  },
+          { label: 'Payroll',    value: totals.payroll    },
+        ].map(c => (
+          <div key={c.label} style={{ fontSize: 13 }}>
+            <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>{c.label}:</span>
+            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{fmtR(c.value)}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Payroll source notice */}
+      {!has_payroll_entries && totals.payroll > 0 && (
+        <div style={{
+          margin: '0 20px 16px', padding: '8px 12px', background: 'rgba(245,158,11,0.1)',
+          border: '1px solid rgba(245,158,11,0.3)', borderRadius: 6,
+          fontSize: 12, color: '#92400e',
+        }}>
+          Payroll figures are calculated from in-progress pay cycles. Finalize payroll to lock in these amounts.
+        </div>
+      )}
+
+      {/* Monthly table */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Month</th>
+              <th style={{ ...styles.th, textAlign: 'right', color: '#16a34a' }}>Revenue</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>Diesel</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>Suppliers</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>Payroll</th>
+              <th style={{ ...styles.th, textAlign: 'right', color: 'var(--danger)' }}>Total Expenses</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>Net</th>
+            </tr>
+          </thead>
+          <tbody>
+            {months.map(r => {
+              const hasActivity = r.total_income > 0 || r.total_expenses > 0
+              return (
+                <tr key={r.month} style={{
+                  ...styles.row,
+                  opacity: hasActivity ? 1 : 0.4,
+                }}>
+                  <td style={{ ...styles.td, fontWeight: 600 }}>{r.month_name} {year}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', color: '#16a34a', fontWeight: 600 }}>
+                    {hasActivity ? fmtR(r.truck_income) : '—'}
+                  </td>
+                  <td style={{ ...styles.td, textAlign: 'right' }}>
+                    {r.diesel > 0 ? fmtR(r.diesel) : '—'}
+                  </td>
+                  <td style={{ ...styles.td, textAlign: 'right' }}>
+                    {r.suppliers > 0 ? fmtR(r.suppliers) : '—'}
+                  </td>
+                  <td style={{ ...styles.td, textAlign: 'right' }}>
+                    {r.payroll > 0 ? fmtR(r.payroll) : '—'}
+                  </td>
+                  <td style={{ ...styles.td, textAlign: 'right', color: 'var(--danger)' }}>
+                    {r.total_expenses > 0 ? fmtR(r.total_expenses) : '—'}
+                  </td>
+                  <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: netColor(r.net) }}>
+                    {hasActivity ? fmtR(r.net) : '—'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={styles.totalRow}>
+              <td style={{ ...styles.td, fontWeight: 700 }}>YEAR TOTAL</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmtR(totals.total_income)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.diesel)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.suppliers)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.payroll)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: 'var(--danger)' }}>{fmtR(totals.total_expenses)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, fontSize: 14, color: netColor(totals.net) }}>{fmtR(totals.net)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 
 // ── Monthly by Truck ────────────────────────────────────────────────────────────
 function TruckReport({ data }) {

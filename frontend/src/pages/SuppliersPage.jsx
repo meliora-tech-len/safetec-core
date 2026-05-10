@@ -337,6 +337,7 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
     notes: supplier?.notes || '',
     payment_term: supplier?.payment_term || 'current',
     is_diesel_supplier: supplier?.is_diesel_supplier || false,
+    requires_registration: supplier?.requires_registration !== false,
   })
   const [saving, setSaving] = useState(false)
 
@@ -345,11 +346,16 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setSaving(true)
+    // Clear reg number when supplier doesn't require one
+    const cleanedForm = {
+      ...form,
+      registration_number: form.requires_registration ? form.registration_number : '',
+    }
     if (mode === 'create') {
-      const { entity_id, entity_ids, ...fields } = form
+      const { entity_id, entity_ids, ...fields } = cleanedForm
       await onSave({ entity_ids, ...fields })
     } else {
-      const { entity_id, entity_ids, ...fields } = form
+      const { entity_id, entity_ids, ...fields } = cleanedForm
       await onSave({ ...fields, entity_id: parseInt(entity_id) })
     }
     setSaving(false)
@@ -407,14 +413,32 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
                 Diesel supplier — appears in diesel rate management
               </label>
             </div>
+            <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+              <input
+                type="checkbox"
+                id="requires_registration"
+                checked={form.requires_registration}
+                onChange={e => set('requires_registration', e.target.checked)}
+                style={{ width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
+              />
+              <label htmlFor="requires_registration" style={{ margin: 0, cursor: 'pointer', fontWeight: 500 }}>
+                Has company registration number
+              </label>
+            </div>
             <div className="form-row">
-              <div className="form-group">
-                <label>Registration No.</label>
-                <input value={form.registration_number} onChange={e => set('registration_number', e.target.value)} />
-              </div>
+              {form.requires_registration && (
+                <div className="form-group">
+                  <label>Registration No.</label>
+                  <input
+                    value={form.registration_number}
+                    onChange={e => set('registration_number', e.target.value)}
+                    placeholder="e.g. 2003/012345/07"
+                  />
+                </div>
+              )}
               <div className="form-group">
                 <label>VAT Number</label>
-                <input value={form.vat_number} onChange={e => set('vat_number', e.target.value)} />
+                <input value={form.vat_number} onChange={e => set('vat_number', e.target.value)} placeholder="e.g. 4720123456" />
               </div>
             </div>
             <hr />

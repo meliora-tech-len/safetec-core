@@ -187,7 +187,8 @@ class Supplier(Base):
     short_name = Column(String(100))
     category = Column(String(100))
     payment_term = Column(Enum(PaymentTermType), nullable=False, default=PaymentTermType.current)
-    is_diesel_supplier = Column(Boolean, default=False)
+    is_diesel_supplier       = Column(Boolean, default=False)
+    requires_registration    = Column(Boolean, nullable=False, default=True)
 
     entity = relationship("BusinessEntity", back_populates="suppliers")
     invoices = relationship("Invoice", back_populates="supplier")
@@ -266,8 +267,11 @@ class SupplierInvoice(Base):
     statement_month = Column(Integer)
     statement_year = Column(Integer)
 
-    is_verified = Column(Boolean, default=False)
-    verified_at = Column(DateTime(timezone=True))
+    is_verified  = Column(Boolean, default=False)
+    verified_by  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at  = Column(DateTime(timezone=True))
+    verified2_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified2_at = Column(DateTime(timezone=True))
     payment_due_date = Column(DateTime(timezone=True))
     is_paid = Column(Boolean, default=False)
     paid_date = Column(DateTime(timezone=True))
@@ -511,6 +515,10 @@ class DriverAdditionalLoad(Base):
     litres          = Column(Numeric(10, 2), nullable=True)
     amount          = Column(Numeric(12, 2), nullable=False)
     is_verified     = Column(Boolean, default=False)
+    verified_by     = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at     = Column(DateTime(timezone=True))
+    verified2_by    = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified2_at    = Column(DateTime(timezone=True))
     notes           = Column(String(500), nullable=True)
     created_at      = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -526,6 +534,10 @@ class DriverFoodPayment(Base):
     amount       = Column(Numeric(12, 2), nullable=False)
     paid_by      = Column(String(100), nullable=True)
     is_verified  = Column(Boolean, default=False)
+    verified_by  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at  = Column(DateTime(timezone=True))
+    verified2_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified2_at = Column(DateTime(timezone=True))
     notes        = Column(String(500), nullable=True)
     created_at   = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -735,21 +747,24 @@ class DieselFillUp(Base):
     slip_number = Column(String(100))
     truckload_id = Column(Integer, ForeignKey("truck_loads.id", ondelete="SET NULL"), nullable=True)
 
-    verified = Column(Boolean, nullable=False, default=False)
-    verified_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    verified_at = Column(DateTime(timezone=True))
+    verified     = Column(Boolean, nullable=False, default=False)
+    verified_by  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at  = Column(DateTime(timezone=True))
+    verified2_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified2_at = Column(DateTime(timezone=True))
 
     notes = Column(Text)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    entity = relationship("BusinessEntity")
-    truck = relationship("Truck")
-    supplier = relationship("Supplier")
+    entity    = relationship("BusinessEntity")
+    truck     = relationship("Truck")
+    supplier  = relationship("Supplier")
     truckload = relationship("TruckLoad")
-    verifier = relationship("User", foreign_keys=[verified_by])
-    creator = relationship("User", foreign_keys=[created_by])
+    verifier  = relationship("User", foreign_keys=[verified_by])
+    verifier2 = relationship("User", foreign_keys=[verified2_by])
+    creator   = relationship("User", foreign_keys=[created_by])
 
 
 # ── Payroll Entries (auto-draft workflow) ─────────────────────────────────────

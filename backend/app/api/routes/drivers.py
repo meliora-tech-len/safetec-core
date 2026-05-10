@@ -23,6 +23,7 @@ from app.schemas.schemas import (
 )
 from app.services.audit import log_action
 from app.services.payroll_calculator import calculate_pay_cycle
+from app.services.verification import apply_verify_step, get_verification_display
 from app.api.routes.payroll_settings import _get_current as _get_payroll_settings
 
 router = APIRouter(prefix="/api/drivers", tags=["drivers"])
@@ -502,7 +503,28 @@ def delete_additional_load(
     return {"detail": "Additional load deleted"}
 
 
-# ─── Food payments ────────────────────────────────────────────────────────────
+@router.patch("/{driver_id}/cycles/{year}/{month}/additional-loads/{load_id}/verify")
+def verify_additional_load(
+    driver_id: int, year: int, month: int, load_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    _check_access(driver.entity_id, current_user)
+    entry = db.query(DriverAdditionalLoad).filter(DriverAdditionalLoad.id == load_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Additional load not found")
+    apply_verify_step(entry, current_user, is_admin=(current_user.role == "admin"))
+    db.commit()
+    db.refresh(entry)
+    d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}
+    d.update(get_verification_display(db, entry))
+    return d
+
+
+# ─── Food payments ─────────────────────────────────────────────────────────
 
 @router.post("/{driver_id}/cycles/{year}/{month}/food-payments", response_model=DriverFoodPaymentOut)
 def add_food_payment(
@@ -560,3 +582,24 @@ def delete_food_payment(
     db.delete(entry)
     db.commit()
     return {"detail": "Food payment deleted"}
+
+
+@router.patch("/{driver_id}/cycles/{year}/{month}/food-payments/{payment_id}/verify")
+def verify_food_payment(
+    driver_id: int, year: int, month: int, payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    _check_access(driver.entity_id, current_user)
+    entry = db.query(DriverFoodPayment).filter(DriverFoodPayment.id == payment_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Food payment not found")
+    apply_verify_step(entry, current_user, is_admin=(current_user.role == "admin"))
+    db.commit()
+    db.refresh(entry)
+    d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}
+    d.update(get_verification_display(db, entry))
+    return d

@@ -15,6 +15,7 @@ from app.schemas.schemas import (
     SupplierCurrentPayable, Supplier30DaysPayable,
 )
 from app.services.audit import log_action
+from app.services.verification import apply_verify_step, get_verification_display
 
 router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
 
@@ -272,6 +273,27 @@ def update_supplier_invoice(
     db.commit()
     db.refresh(inv)
     return inv
+
+
+# ── 2-step verify ─────────────────────────────────────────────────────────────
+
+@router.patch("/{invoice_id}/verify")
+def verify_supplier_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+
+    apply_verify_step(inv, current_user, is_admin=(current_user.role == "admin"))
+    db.commit()
+    db.refresh(inv)
+    d = {c.name: getattr(inv, c.name) for c in inv.__table__.columns}
+    d.update(get_verification_display(db, inv))
+    return d
 
 
 # ── Delete ────────────────────────────────────────────────────────────────────

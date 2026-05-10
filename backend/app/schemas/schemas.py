@@ -215,6 +215,7 @@ class SupplierBase(BaseModel):
     notes: Optional[str] = None
     payment_term: PaymentTermType = PaymentTermType.current
     is_diesel_supplier: bool = False
+    requires_registration: bool = True
 
 class SupplierCreate(SupplierBase):
     pass
@@ -234,6 +235,7 @@ class SupplierBulkCreate(BaseModel):
     notes: Optional[str] = None
     payment_term: PaymentTermType = PaymentTermType.current
     is_diesel_supplier: bool = False
+    requires_registration: bool = True
 
 class SupplierUpdate(BaseModel):
     name: Optional[str] = None
@@ -250,11 +252,13 @@ class SupplierUpdate(BaseModel):
     is_active: Optional[bool] = None
     payment_term: Optional[PaymentTermType] = None
     is_diesel_supplier: Optional[bool] = None
+    requires_registration: Optional[bool] = None
 
 class SupplierOut(SupplierBase):
     id: int
     is_active: bool
     is_diesel_supplier: bool
+    requires_registration: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
 

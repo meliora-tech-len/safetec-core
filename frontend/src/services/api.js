@@ -159,7 +159,17 @@ export const getDieselFillUpsByTruck = (truckId, params = {}) => api.get(`/diese
 export const createDieselFillUp = (data) => api.post('/diesel/fillups', data)
 export const updateDieselFillUp = (id, data) => api.put(`/diesel/fillups/${id}`, data)
 export const deleteDieselFillUp = (id) => api.delete(`/diesel/fillups/${id}`)
-export const verifyDieselFillUp = (id) => api.patch(`/diesel/fillups/${id}/verify`)
+export const verifyDieselFillUp       = (id) => api.patch(`/diesel/fillups/${id}/verify`)
+export const verifySupplierInvoice    = (id) => api.patch(`/supplier-invoices/${id}/verify`)
+export const verifyAdditionalLoad     = (driverId, year, month, loadId) =>
+  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/verify`)
+export const verifyFoodPayment        = (driverId, year, month, paymentId) =>
+  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}/verify`)
+
+// ── Business Reports ──────────────────────────────────────────────────────────
+export const getIncomeExpensesReport = (params) => api.get('/reports/income-expenses', { params })
+export const getPayrollEntries = (params = {}) => api.get('/payroll-entries/', { params })
+export const getPayrollEntriesSummary = (params) => api.get('/payroll-entries/summary', { params })
 
 export const getDieselReportByTruck = (params) => api.get('/diesel/reports/monthly-by-truck', { params })
 export const getDieselReportBySupplier = (params) => api.get('/diesel/reports/monthly-by-supplier', { params })

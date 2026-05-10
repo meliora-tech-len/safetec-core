@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.db.database import engine, SessionLocal
 from app.models.models import Base, Role
-from app.api.routes import auth, users, entities, suppliers, invoices, audit, settings, roles, fleet, drivers, payroll_settings, payroll_mine_groups, mines, truck_loads, driver_salary_configs, supplier_invoices, diesel
+from app.api.routes import auth, users, entities, suppliers, invoices, audit, settings, roles, fleet, drivers, payroll_settings, payroll_mine_groups, mines, truck_loads, driver_salary_configs, supplier_invoices, diesel, payroll_entries, reports
 
 Base.metadata.create_all(bind=engine)
 
@@ -70,6 +70,8 @@ app.include_router(truck_loads.router)
 app.include_router(driver_salary_configs.router)
 app.include_router(supplier_invoices.router)
 app.include_router(diesel.router)
+app.include_router(payroll_entries.router)
+app.include_router(reports.router)
 
 
 @app.get("/health")

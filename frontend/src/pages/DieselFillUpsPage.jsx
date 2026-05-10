@@ -7,9 +7,10 @@ import {
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
-import { Plus, Search, X, Trash2, CheckCircle, AlertCircle, Fuel, Save } from 'lucide-react'
+import { Plus, Search, X, Trash2, AlertCircle, Fuel, Save } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import SearchableSelect from '../components/SearchableSelect'
+import VerifyBadge from '../components/VerifyBadge'
 
 const API = import.meta.env.VITE_API_URL || ''
 function rawApi(path, opts = {}) {
@@ -199,8 +200,7 @@ export default function DieselFillUpsPage() {
     finally { setSaving(false) }
   }
 
-  const handleVerify = async (f, e) => {
-    e.stopPropagation()
+  const handleVerify = async (f) => {
     try { await verifyDieselFillUp(f.id); load() }
     catch (err) { toast.error(errorMessage(err)) }
   }
@@ -353,7 +353,7 @@ export default function DieselFillUpsPage() {
               <th className="text-right">Total</th>
               <th>Invoice #</th>
               <th>Slip #</th>
-              <th style={{ textAlign: 'center' }}>Verified</th>
+              <th>Verified</th>
               <th></th>
             </tr>
           </thead>
@@ -424,8 +424,8 @@ export default function DieselFillUpsPage() {
                   <td className="text-right" style={{ fontWeight: 700 }}>{formatCurrency(f.total_amount)}</td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.invoice_number || '—'}</td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.slip_number || '—'}</td>
-                  <td style={{ textAlign: 'center' }} onClick={e => handleVerify(f, e)}>
-                    <CheckCircle size={16} style={{ color: f.verified ? '#16a34a' : 'var(--border)', cursor: 'pointer' }} />
+                  <td>
+                    <VerifyBadge item={f} onVerify={handleVerify} />
                   </td>
                   <td onClick={e => e.stopPropagation()}>
                     <button className="btn-icon btn-ghost" onClick={e => handleDelete(f, e)} title="Delete">

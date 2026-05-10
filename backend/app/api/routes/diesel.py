@@ -21,6 +21,7 @@ from app.schemas.schemas import (
 )
 from app.services.diesel_service import DieselCalculationService
 from app.services.audit import log_action
+from app.services.verification import apply_verify_step, get_verification_display
 
 router = APIRouter(prefix="/api/diesel", tags=["diesel"])
 
@@ -44,10 +45,12 @@ def _require_admin(user: User):
         raise HTTPException(status_code=403, detail="Admin access required")
 
 
-def _enrich_fillup(f: DieselFillUp) -> dict:
+def _enrich_fillup(f: DieselFillUp, db=None) -> dict:
     d = {c.name: getattr(f, c.name) for c in f.__table__.columns}
     d["truck_registration"] = f.truck.registration if f.truck else None
-    d["supplier_name"] = f.supplier.name if f.supplier else None
+    d["supplier_name"]      = f.supplier.name if f.supplier else None
+    if db:
+        d.update(get_verification_display(db, f))
     return d
 
 
@@ -310,7 +313,7 @@ def list_fillups(
         q = q.filter(DieselFillUp.verified == verified)
 
     fillups = q.order_by(DieselFillUp.fillup_date.desc(), DieselFillUp.id.desc()).offset(skip).limit(limit).all()
-    return [_enrich_fillup(f) for f in fillups]
+    return [_enrich_fillup(f, db) for f in fillups]
 
 
 @router.get("/fillups/truck/{truck_id}", response_model=List[DieselFillUpOut])
@@ -470,7 +473,7 @@ def delete_fillup(
     return {"detail": "Fill-up deleted"}
 
 
-@router.patch("/fillups/{fillup_id}/verify", response_model=DieselFillUpOut)
+@router.patch("/fillups/{fillup_id}/verify")
 def verify_fillup(
     fillup_id: int,
     db: Session = Depends(get_db),
@@ -481,17 +484,10 @@ def verify_fillup(
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
 
-    f.verified = not f.verified
-    if f.verified:
-        f.verified_by = current_user.id
-        f.verified_at = datetime.now(tz=timezone.utc)
-    else:
-        f.verified_by = None
-        f.verified_at = None
-
+    apply_verify_step(f, current_user, is_admin=(current_user.role == "admin"))
     db.commit()
     db.refresh(f)
-    return _enrich_fillup(f)
+    return _enrich_fillup(f, db)
 
 
 # ── Diesel Reports ────────────────────────────────────────────────────────────
