@@ -33,7 +33,7 @@ def login(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
 
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
     log_action(
         db, action="auth.login", user_id=user.id,
         description=f"User {user.email} logged in",

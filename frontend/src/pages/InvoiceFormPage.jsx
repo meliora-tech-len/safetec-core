@@ -2,16 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Plus, Trash2, AlertCircle, ArrowLeft, Save } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
-
-const API = import.meta.env.VITE_API_URL || ''
-
-function api(path, opts = {}) {
-  const token = localStorage.getItem('token')
-  return fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...opts.headers },
-    ...opts,
-  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-}
+import { getEntities, getSuppliers, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
 
 const emptyLine = () => ({
   _id: Math.random().toString(36).slice(2),
@@ -54,18 +45,18 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
 
   // ── Load initial data ─────────────────────────────────────────────
   useEffect(() => {
+    let ignore = false
     const init = async () => {
       setLoading(true)
       try {
-        const [ents, sups] = await Promise.all([
-          api('/api/entities/'),
-          api('/api/suppliers/'),
-        ])
-        setEntities(ents)
-        setSuppliers(sups)
+        const [entsRes, supsRes] = await Promise.all([getEntities(), getSuppliers()])
+        if (ignore) return
+        setEntities(entsRes.data)
+        setSuppliers(supsRes.data)
 
         if (isEdit) {
-          const inv = await api(`/api/invoices/${id}`)
+          const inv = (await getInvoice(id)).data
+          if (ignore) return
           setEntityId(String(inv.entity_id))
           setSupplierId(String(inv.supplier_id))
           setInvoiceNumber(inv.invoice_number)
@@ -85,28 +76,30 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             sort_order: li.sort_order,
           })))
         } else {
-          // Default to active entity
-          const defaultEntity = activeEntity || ents[0]
+          const defaultEntity = activeEntity || entsRes.data[0]
           if (defaultEntity) {
             setEntityId(String(defaultEntity.id))
             setVatRate(parseFloat(defaultEntity.vat_rate) || 0.15)
           }
         }
       } catch (e) {
-        console.error(e)
-        setError('Failed to load data')
+        if (!ignore) {
+          console.error(e)
+          setError('Failed to load data')
+        }
       } finally {
-        setLoading(false)
+        if (!ignore) setLoading(false)
       }
     }
     init()
+    return () => { ignore = true }
   }, [id])
 
   // ── Fetch next invoice number when entity changes (new only) ──────
   useEffect(() => {
     if (isEdit || !entityId || invoiceNumberEdited) return
-    api(`/api/entities/${entityId}/next-number?doc_type=${docType}`)
-      .then(data => setInvoiceNumber(data.next_number))
+    getNextInvoiceNumber(entityId, docType)
+      .then(res => setInvoiceNumber(res.data.next_number))
       .catch(() => {})
   }, [entityId, isEdit, invoiceNumberEdited])
 
@@ -184,13 +177,13 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
       }
 
       if (isEdit) {
-        await api(`/api/invoices/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+        await updateInvoice(id, payload)
       } else {
-        await api('/api/invoices/', { method: 'POST', body: JSON.stringify(payload) })
+        await createInvoice(payload)
       }
       navigate(`/${docPath}`)
     } catch (e) {
-      setError(e.detail || 'Failed to save invoice')
+      setError(e.response?.data?.detail || 'Failed to save invoice')
     } finally {
       setSaving(false)
     }

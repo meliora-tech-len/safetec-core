@@ -38,7 +38,7 @@ export const forgotPassword = (email) => api.post('/auth/forgot-password', { ema
 export const resetPassword = (token, new_password) => api.post('/auth/reset-password', { token, new_password })
 
 // ── Entities ──────────────────────────────────────────────────────────────────
-export const getEntities = () => api.get('/entities/')
+export const getEntities = (params = {}) => api.get('/entities/', { params })
 export const getEntity = (id) => api.get(`/entities/${id}`)
 export const createEntity = (data) => api.post('/entities/', data)
 export const updateEntity = (id, data) => api.put(`/entities/${id}`, data)
@@ -98,6 +98,11 @@ export const getNextInvoiceNumber = (entityId, docType = 'invoice') =>
 export const updateUserPermissions = (id, data) => api.put(`/users/${id}/permissions`, data)
 export const resetUserPassword = (id, data) => api.post(`/users/${id}/reset-password`, data)
 export const reactivateUser = (id) => api.post(`/users/${id}/reactivate`)
+
+// ── Roles ─────────────────────────────────────────────────────────────────────
+export const getRoles = () => api.get('/roles/')
+export const createRole = (data) => api.post('/roles/', data)
+export const deleteRole = (key) => api.delete(`/roles/${key}`)
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 export const getSettings = () => api.get('/settings/')

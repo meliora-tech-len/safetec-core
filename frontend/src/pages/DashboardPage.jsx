@@ -18,12 +18,21 @@ export default function DashboardPage() {
   const navigate = useNavigate()
 
   useEffect(() => {
+    let ignore = false
     setLoading(true)
     const params = activeEntity?.id ? { entity_id: activeEntity.id } : {}
     Promise.all([
-      getDashboardStats(activeEntity?.id || undefined).then(r => setStats(r.data)),
-      getSupplierPayablesDashboard(params).then(r => setPayables(r.data)),
-    ]).finally(() => setLoading(false))
+      getDashboardStats(activeEntity?.id || undefined),
+      getSupplierPayablesDashboard(params),
+    ]).then(([statsRes, payablesRes]) => {
+      if (!ignore) {
+        setStats(statsRes.data)
+        setPayables(payablesRes.data)
+      }
+    }).finally(() => {
+      if (!ignore) setLoading(false)
+    })
+    return () => { ignore = true }
   }, [activeEntity])
 
   const handleEntityChange = (e) => {

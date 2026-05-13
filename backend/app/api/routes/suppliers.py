@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from app.db.database import get_db
 from app.core.security import get_current_user
@@ -106,21 +107,25 @@ def create_supplier_bulk(
         _check_entity_access(eid, current_user)
 
     fields = payload.model_dump(exclude={"entity_ids"})
-    created = []
-    for eid in payload.entity_ids:
-        supplier = Supplier(entity_id=eid, **fields)
-        db.add(supplier)
-        log_action(
-            db, "supplier.created", user_id=current_user.id,
-            entity_id=eid, resource_type="supplier",
-            description=f"Created supplier {supplier.name}",
-        )
-        created.append(supplier)
+    try:
+        created = []
+        for eid in payload.entity_ids:
+            supplier = Supplier(entity_id=eid, **fields)
+            db.add(supplier)
+            log_action(
+                db, "supplier.created", user_id=current_user.id,
+                entity_id=eid, resource_type="supplier",
+                description=f"Created supplier {supplier.name}",
+            )
+            created.append(supplier)
 
-    db.commit()
-    for s in created:
-        db.refresh(s)
-    return created
+        db.commit()
+        for s in created:
+            db.refresh(s)
+        return created
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create suppliers")
 
 
 @router.put("/{supplier_id}", response_model=SupplierOut)

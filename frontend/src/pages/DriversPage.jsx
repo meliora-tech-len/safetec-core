@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Users, Plus, Search, X } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
@@ -210,23 +210,31 @@ export default function DriversPage() {
   const [trucks, setTrucks]     = useState([])
   const [loading, setLoading]   = useState(true)
   const [search, setSearch]     = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [filterType, setFilterType]     = useState('permanent')
   const [showInactive, setShowInactive] = useState(false)
   const [modal, setModal]       = useState(null)
+  const loadSeqRef = useRef(0)
 
   // Sync with sidebar entity switcher
   useEffect(() => {
     setFilterEntity(activeEntity?.id?.toString() || '')
   }, [activeEntity])
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400)
+    return () => clearTimeout(t)
+  }, [search])
+
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      if (filterEntity) params.set('entity_id', filterEntity)
-      if (filterType)   params.set('driver_type', filterType)
-      if (search)       params.set('search', search)
+      if (filterEntity)      params.set('entity_id', filterEntity)
+      if (filterType)        params.set('driver_type', filterType)
+      if (debouncedSearch)   params.set('search', debouncedSearch)
       if (showInactive) params.set('is_active', 'false')
       // when showing inactive, don't filter by is_active at all — pass nothing to get all
       const isActiveParam = showInactive ? '' : 'true'
@@ -236,23 +244,27 @@ export default function DriversPage() {
         api.get(`/api/drivers?${params}`),
         api.get(`/api/drivers/stats${filterEntity ? `?entity_id=${filterEntity}` : ''}`),
       ])
-      setDrivers(driverData)
-      setStats(statsData)
+      if (loadSeqRef.current === seq) {
+        setDrivers(driverData)
+        setStats(statsData)
+      }
     } catch {
-      toast.error('Failed to load drivers')
+      if (loadSeqRef.current === seq) toast.error('Failed to load drivers')
     } finally {
-      setLoading(false)
+      if (loadSeqRef.current === seq) setLoading(false)
     }
-  }, [filterEntity, filterType, search, showInactive])
+  }, [filterEntity, filterType, debouncedSearch, showInactive])
 
   useEffect(() => {
+    let ignore = false
     Promise.all([
       api.get('/api/entities/'),
       api.get('/api/fleet/trucks?limit=500'),
-    ]).then(([e, t]) => { setEntities(e); setTrucks(t) }).catch(() => {})
+    ]).then(([e, t]) => { if (!ignore) { setEntities(e); setTrucks(t) } }).catch(() => {})
+    return () => { ignore = true }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
 
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
 

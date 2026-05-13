@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
+from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from app.db.database import get_db
 from app.core.security import get_current_user
@@ -141,26 +142,31 @@ def create_truck(
     truck_fields = payload.model_dump(exclude={"trailers"})
     if truck_fields.get("registration"):
         truck_fields["registration"] = truck_fields["registration"].strip().replace(" ", "")
-    truck = Truck(**truck_fields)
-    db.add(truck)
-    db.flush()  # get truck.id
 
-    for t in trailer_data:
-        trailer = Trailer(
-            truck_id=truck.id,
-            entity_id=payload.entity_id,
-            **t.model_dump(),
+    try:
+        truck = Truck(**truck_fields)
+        db.add(truck)
+        db.flush()  # get truck.id
+
+        for t in trailer_data:
+            trailer = Trailer(
+                truck_id=truck.id,
+                entity_id=payload.entity_id,
+                **t.model_dump(),
+            )
+            db.add(trailer)
+
+        log_action(
+            db, "truck.created", user_id=current_user.id,
+            entity_id=payload.entity_id, resource_type="truck",
+            description=f"Created truck {truck.registration}",
         )
-        db.add(trailer)
-
-    log_action(
-        db, "truck.created", user_id=current_user.id,
-        entity_id=payload.entity_id, resource_type="truck",
-        description=f"Created truck {truck.registration}",
-    )
-    db.commit()
-    db.refresh(truck)
-    return truck
+        db.commit()
+        db.refresh(truck)
+        return truck
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create truck")
 
 
 # ── Update truck ──────────────────────────────────────────────────────────────
@@ -177,31 +183,35 @@ def update_truck(
         raise HTTPException(status_code=404, detail="Truck not found")
     _check_entity_access(truck.entity_id, current_user)
 
-    update_fields = payload.model_dump(exclude={"trailers"}, exclude_none=True)
-    if "registration" in update_fields and update_fields["registration"]:
-        update_fields["registration"] = update_fields["registration"].strip().replace(" ", "")
-    for field, value in update_fields.items():
-        setattr(truck, field, value)
+    try:
+        update_fields = payload.model_dump(exclude={"trailers"}, exclude_none=True)
+        if "registration" in update_fields and update_fields["registration"]:
+            update_fields["registration"] = update_fields["registration"].strip().replace(" ", "")
+        for field, value in update_fields.items():
+            setattr(truck, field, value)
 
-    # Full replace on trailers if provided
-    if payload.trailers is not None:
-        db.query(Trailer).filter(Trailer.truck_id == truck_id).delete()
-        for t in payload.trailers:
-            trailer = Trailer(
-                truck_id=truck_id,
-                entity_id=truck.entity_id,
-                **t.model_dump(),
-            )
-            db.add(trailer)
+        # Full replace on trailers if provided
+        if payload.trailers is not None:
+            db.query(Trailer).filter(Trailer.truck_id == truck_id).delete()
+            for t in payload.trailers:
+                trailer = Trailer(
+                    truck_id=truck_id,
+                    entity_id=truck.entity_id,
+                    **t.model_dump(),
+                )
+                db.add(trailer)
 
-    log_action(
-        db, "truck.updated", user_id=current_user.id,
-        entity_id=truck.entity_id, resource_type="truck",
-        resource_id=truck_id, description=f"Updated truck {truck.registration}",
-    )
-    db.commit()
-    db.refresh(truck)
-    return truck
+        log_action(
+            db, "truck.updated", user_id=current_user.id,
+            entity_id=truck.entity_id, resource_type="truck",
+            resource_id=truck_id, description=f"Updated truck {truck.registration}",
+        )
+        db.commit()
+        db.refresh(truck)
+        return truck
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update truck")
 
 
 # ── Delete truck ──────────────────────────────────────────────────────────────

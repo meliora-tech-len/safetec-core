@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getSuppliers, getEntities, createSupplierBulk, updateSupplier } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
@@ -17,19 +17,29 @@ export default function ClientsPage() {
   const [entities, setEntities] = useState([])
   const [loading, setLoading]   = useState(true)
   const [search, setSearch]     = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [modal, setModal]       = useState(null)
+  const loadSeqRef = useRef(0)
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400)
+    return () => clearTimeout(t)
+  }, [search])
 
   const load = useCallback(() => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
     const params = {}
     if (filterEntity) params.entity_id = filterEntity
-    if (search)       params.search    = search
-    getSuppliers(params).then(r => setClients(r.data)).finally(() => setLoading(false))
-  }, [filterEntity, search])
+    if (debouncedSearch) params.search = debouncedSearch
+    getSuppliers(params)
+      .then(r => { if (loadSeqRef.current === seq) setClients(r.data) })
+      .finally(() => { if (loadSeqRef.current === seq) setLoading(false) })
+  }, [filterEntity, debouncedSearch])
 
   useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''

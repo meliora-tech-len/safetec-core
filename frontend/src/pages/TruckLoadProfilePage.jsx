@@ -206,7 +206,7 @@ function DieselSection({ truck, year, month, suppliers }) {
             <div>
               <label className="form-label">Supplier *</label>
               <SearchableSelect value={String(form.supplier_id)} onChange={v => set('supplier_id', v)}
-                options={suppliers} getValue={s => String(s.id)} getLabel={s => s.name} placeholder="Supplier…" />
+                options={suppliers} getValue={s => String(s.id)} getLabel={s => s.name} placeholder="Supplier…" formInput />
             </div>
             <div>
               <label className="form-label">Invoice #</label>
@@ -514,7 +514,7 @@ function FoodAllowanceSection({ truck, year, month, drivers }) {
             <label className="form-label">Driver *</label>
             <SearchableSelect value={String(form.driver_id)} onChange={v => set('driver_id', v)}
               options={drivers} getValue={d => String(d.id)}
-              getLabel={d => `${d.first_name} ${d.last_name}`} placeholder="Driver…" />
+              getLabel={d => `${d.first_name} ${d.last_name}`} placeholder="Driver…" formInput />
           </div>
           <div>
             <label className="form-label">Date</label>
@@ -678,7 +678,7 @@ export default function TruckLoadProfilePage() {
       getMines({ active_only: false }),
       getDrivers({ entity_id: truck.entity_id, is_active: true, limit: 200 }),
       getSettings(),
-      getSuppliers({ limit: 500 }),
+      getSuppliers({ is_diesel_supplier: true, entity_id: truck.entity_id, limit: 500 }),
     ]).then(([minesRes, driversRes, settingsRes, suppliersRes]) => {
       setMines(minesRes.data)
       setDrivers(driversRes.data)

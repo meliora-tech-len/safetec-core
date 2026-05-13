@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getInvoices, getEntities, downloadInvoicePdf } from '../services/api'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
@@ -14,22 +14,32 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const [entities, setEntities] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const loadSeqRef = useRef(0)
   const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [filterStatus, setFilterStatus] = useState('')
   const [showCancelled, setShowCancelled] = useState(false)
   const navigate = useNavigate()
   const { theme } = useTheme()
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400)
+    return () => clearTimeout(t)
+  }, [search])
+
   const load = useCallback(() => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
     const params = { document_type: docType, limit: 500 }
     if (filterEntity) params.entity_id = filterEntity
-    if (search) params.search = search
-    getInvoices(params).then(r => setAllInvoices(r.data)).finally(() => setLoading(false))
-  }, [docType, filterEntity, search])
+    if (debouncedSearch) params.search = debouncedSearch
+    getInvoices(params)
+      .then(r => { if (loadSeqRef.current === seq) setAllInvoices(r.data) })
+      .finally(() => { if (loadSeqRef.current === seq) setLoading(false) })
+  }, [docType, filterEntity, debouncedSearch])
 
   useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
   const stats = useMemo(() => {

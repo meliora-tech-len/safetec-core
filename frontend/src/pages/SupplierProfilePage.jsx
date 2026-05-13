@@ -199,6 +199,8 @@ export default function SupplierProfilePage() {
 
   const allInvoices = groups.flatMap(g => g.invoices)
   const multiEntity = entities.length > 1
+  // Suppliers with requires_registration=false (e.g. Axxess) don't use vehicle regs on invoices
+  const showVehicleReg = supplier?.requires_registration !== false
 
   if (loading) return <div style={styles.page}><div className="loading-center"><div className="spinner" /></div></div>
   if (!supplier) return <div style={styles.page}><p style={{ color: 'var(--text-muted)' }}>Supplier not found.</p></div>
@@ -227,7 +229,7 @@ export default function SupplierProfilePage() {
             columns={[
               { header: 'Invoice Date',    value: r => formatDate(r.invoice_date) },
               { header: 'Invoice #',       key: 'invoice_number' },
-              { header: 'Vehicle Reg',     key: 'vehicle_reg' },
+              ...(showVehicleReg ? [{ header: 'Vehicle Reg', key: 'vehicle_reg' }] : []),
               { header: 'Description',     key: 'description' },
               { header: 'Amount',          value: r => parseFloat(r.amount).toFixed(2) },
               { header: 'VAT Applicable',  value: r => r.vat_applicable ? 'Yes' : 'No' },
@@ -264,7 +266,7 @@ export default function SupplierProfilePage() {
                 {multiEntity && <th style={styles.th}>Entity</th>}
                 <th style={styles.th}>Date</th>
                 <th style={styles.th}>Invoice #</th>
-                <th style={styles.th}>Vehicle Reg</th>
+                {showVehicleReg && <th style={styles.th}>Vehicle Reg</th>}
                 <th style={styles.th}>Description</th>
                 <th style={styles.th}>Amount</th>
                 <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
@@ -281,6 +283,7 @@ export default function SupplierProfilePage() {
                     entities={entities} multiEntity={multiEntity}
                     firstInputRef={firstInputRef}
                     onKeyDown={handleKeyDown}
+                    showVehicleReg={showVehicleReg}
                   />
                 : <tr>
                     <td
@@ -348,7 +351,7 @@ export default function SupplierProfilePage() {
                       {multiEntity && <th style={styles.th}>Entity</th>}
                       <th style={styles.th}>Date</th>
                       <th style={styles.th}>Invoice #</th>
-                      <th style={styles.th}>Vehicle Reg</th>
+                      {showVehicleReg && <th style={styles.th}>Vehicle Reg</th>}
                       <th style={styles.th}>Description</th>
                       <th style={styles.th}>Amount</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
@@ -431,22 +434,24 @@ export default function SupplierProfilePage() {
                           </td>
 
                           {/* Vehicle Reg */}
-                          <td style={styles.td}>
-                            {isEditing ? (
-                              <input
-                                value={f.vehicle_reg}
-                                onChange={e => setEditForm(p => ({ ...p, vehicle_reg: e.target.value }))}
-                                onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
-                                onClick={e => e.stopPropagation()}
-                                style={{ ...styles.cellInput, width: 90 }}
-                                placeholder="KDJ034EC"
-                              />
-                            ) : (
-                              <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                                {inv.vehicle_reg || '—'}
-                              </span>
-                            )}
-                          </td>
+                          {showVehicleReg && (
+                            <td style={styles.td}>
+                              {isEditing ? (
+                                <input
+                                  value={f.vehicle_reg}
+                                  onChange={e => setEditForm(p => ({ ...p, vehicle_reg: e.target.value }))}
+                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ ...styles.cellInput, width: 90 }}
+                                  placeholder="KDJ034EC"
+                                />
+                              ) : (
+                                <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                                  {inv.vehicle_reg || '—'}
+                                </span>
+                              )}
+                            </td>
+                          )}
 
                           {/* Description */}
                           <td style={{ ...styles.td, maxWidth: 200 }}>
@@ -564,7 +569,7 @@ export default function SupplierProfilePage() {
 }
 
 
-function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown }) {
+function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return (
     <tr style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border-accent)' }}>
@@ -586,12 +591,14 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
           onKeyDown={e => onKeyDown(e, onSave, onCancel)}
           style={{ ...styles.cellInput, minWidth: 90 }} />
       </td>
-      <td style={styles.td}>
-        <input value={form.vehicle_reg} placeholder="KDJ034EC"
-          onChange={e => set('vehicle_reg', e.target.value)}
-          onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-          style={{ ...styles.cellInput, width: 90 }} />
-      </td>
+      {showVehicleReg && (
+        <td style={styles.td}>
+          <input value={form.vehicle_reg} placeholder="KDJ034EC"
+            onChange={e => set('vehicle_reg', e.target.value)}
+            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            style={{ ...styles.cellInput, width: 90 }} />
+        </td>
+      )}
       <td style={styles.td}>
         <input value={form.description} placeholder="Description"
           onChange={e => set('description', e.target.value)}

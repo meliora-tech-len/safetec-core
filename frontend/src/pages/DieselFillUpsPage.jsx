@@ -71,7 +71,7 @@ export default function DieselFillUpsPage() {
   useEffect(() => {
     if (!filterEntity) { setTrucks([]); setSuppliers([]); return }
     rawApi(`/api/fleet/trucks?entity_id=${filterEntity}&limit=200`).then(setTrucks).catch(() => setTrucks([]))
-    getSuppliers({ entity_id: filterEntity, limit: 500 }).then(r => setSuppliers(r.data || [])).catch(() => setSuppliers([]))
+    getSuppliers({ entity_id: filterEntity, is_diesel_supplier: true, limit: 500 }).then(r => setSuppliers(r.data || [])).catch(() => setSuppliers([]))
   }, [filterEntity])
 
   const buildParams = useCallback(() => {
@@ -101,7 +101,7 @@ export default function DieselFillUpsPage() {
     const eid = editForm.entity_id
     if (!eid) { setRowTrucks([]); setRowSuppliers([]); setDieselSettings(null); return }
     rawApi(`/api/fleet/trucks?entity_id=${eid}&limit=200`).then(setRowTrucks).catch(() => setRowTrucks([]))
-    getSuppliers({ entity_id: eid, limit: 500 }).then(r => setRowSuppliers(r.data || [])).catch(() => setRowSuppliers([]))
+    getSuppliers({ entity_id: eid, is_diesel_supplier: true, limit: 500 }).then(r => setRowSuppliers(r.data || [])).catch(() => setRowSuppliers([]))
     getDieselSettings({ entity_id: eid }).then(r => setDieselSettings(r.data?.[0] || null)).catch(() => {})
   }, [editForm.entity_id])
 

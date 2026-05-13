@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 from typing import List
 
 from app.db.database import get_db
@@ -57,32 +58,36 @@ def create_user(
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    user = User(
-        email=payload.email,
-        full_name=payload.full_name,
-        hashed_password=get_password_hash(payload.password),
-        role=payload.role,
-    )
-    db.add(user)
-    db.flush()
+    try:
+        user = User(
+            email=payload.email,
+            full_name=payload.full_name,
+            hashed_password=get_password_hash(payload.password),
+            role=payload.role,
+        )
+        db.add(user)
+        db.flush()
 
-    # Grant access to specified entities (all modules by default)
-    default_modules = ["suppliers", "invoices"]
-    for entity_id in (payload.entity_ids or []):
-        entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
-        if entity:
-            access = UserEntityAccess(
-                user_id=user.id,
-                entity_id=entity_id,
-                allowed_modules=default_modules,
-            )
-            db.add(access)
+        # Grant access to specified entities (all modules by default)
+        default_modules = ["suppliers", "invoices"]
+        for entity_id in (payload.entity_ids or []):
+            entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+            if entity:
+                access = UserEntityAccess(
+                    user_id=user.id,
+                    entity_id=entity_id,
+                    allowed_modules=default_modules,
+                )
+                db.add(access)
 
-    log_action(db, "user.created", user_id=current_user.id, resource_type="user",
-               resource_id=user.id, description=f"Created user {user.full_name} ({user.email}) with role '{user.role}'")
-    db.commit()
-    db.refresh(user)
-    return user
+        log_action(db, "user.created", user_id=current_user.id, resource_type="user",
+                   resource_id=user.id, description=f"Created user {user.full_name} ({user.email}) with role '{user.role}'")
+        db.commit()
+        db.refresh(user)
+        return user
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create user")
 
 
 # ── Update (details) ──────────────────────────────────────────────────────────
@@ -98,40 +103,46 @@ def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if payload.full_name is not None:
-        user.full_name = payload.full_name
+    # Validate email uniqueness before entering the transaction
     if payload.email is not None:
-        # Check email uniqueness
         existing = db.query(User).filter(User.email == payload.email, User.id != user_id).first()
         if existing:
             raise HTTPException(status_code=400, detail="Email already in use")
-        user.email = payload.email
-    if payload.role is not None:
-        user.role = payload.role
-    if payload.is_active is not None:
-        user.is_active = payload.is_active
-    if payload.password:
-        user.hashed_password = get_password_hash(payload.password)
 
-    # Update entity access if provided (simple list of entity IDs, default modules)
-    if payload.entity_ids is not None:
-        db.query(UserEntityAccess).filter(UserEntityAccess.user_id == user_id).delete()
-        default_modules = ["suppliers", "invoices"]
-        for entity_id in payload.entity_ids:
-            entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
-            if entity:
-                access = UserEntityAccess(
-                    user_id=user.id,
-                    entity_id=entity_id,
-                    allowed_modules=default_modules,
-                )
-                db.add(access)
+    try:
+        if payload.full_name is not None:
+            user.full_name = payload.full_name
+        if payload.email is not None:
+            user.email = payload.email
+        if payload.role is not None:
+            user.role = payload.role
+        if payload.is_active is not None:
+            user.is_active = payload.is_active
+        if payload.password:
+            user.hashed_password = get_password_hash(payload.password)
 
-    log_action(db, "user.updated", user_id=current_user.id, resource_type="user",
-               resource_id=user_id, description=f"Updated user {user.full_name} ({user.email})")
-    db.commit()
-    db.refresh(user)
-    return user
+        # Update entity access if provided (simple list of entity IDs, default modules)
+        if payload.entity_ids is not None:
+            db.query(UserEntityAccess).filter(UserEntityAccess.user_id == user_id).delete()
+            default_modules = ["suppliers", "invoices"]
+            for entity_id in payload.entity_ids:
+                entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+                if entity:
+                    access = UserEntityAccess(
+                        user_id=user.id,
+                        entity_id=entity_id,
+                        allowed_modules=default_modules,
+                    )
+                    db.add(access)
+
+        log_action(db, "user.updated", user_id=current_user.id, resource_type="user",
+                   resource_id=user_id, description=f"Updated user {user.full_name} ({user.email})")
+        db.commit()
+        db.refresh(user)
+        return user
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update user")
 
 
 # ── Password Reset (admin sets new password) ───────────────────────────────────
@@ -170,35 +181,39 @@ def update_permissions(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Remove all existing access
-    db.query(UserEntityAccess).filter(UserEntityAccess.user_id == user_id).delete()
+    try:
+        # Remove all existing access
+        db.query(UserEntityAccess).filter(UserEntityAccess.user_id == user_id).delete()
 
-    # Re-create with granular permissions
-    for perm in payload.permissions:
-        entity = db.query(BusinessEntity).filter(BusinessEntity.id == perm.entity_id).first()
-        if not entity:
-            continue
-        access = UserEntityAccess(
-            user_id=user_id,
-            entity_id=perm.entity_id,
-            can_create=perm.can_create,
-            can_edit=perm.can_edit,
-            can_delete=perm.can_delete,
-            allowed_modules=perm.allowed_modules,
-        )
-        db.add(access)
+        # Re-create with granular permissions
+        for perm in payload.permissions:
+            entity = db.query(BusinessEntity).filter(BusinessEntity.id == perm.entity_id).first()
+            if not entity:
+                continue
+            access = UserEntityAccess(
+                user_id=user_id,
+                entity_id=perm.entity_id,
+                can_create=perm.can_create,
+                can_edit=perm.can_edit,
+                can_delete=perm.can_delete,
+                allowed_modules=perm.allowed_modules,
+            )
+            db.add(access)
 
-    log_action(db, "user.permissions_updated", user_id=current_user.id, resource_type="user",
-               resource_id=user_id, description=f"Updated permissions for {user.full_name} ({user.email})")
-    db.commit()
-    db.refresh(user)
+        log_action(db, "user.permissions_updated", user_id=current_user.id, resource_type="user",
+                   resource_id=user_id, description=f"Updated permissions for {user.full_name} ({user.email})")
+        db.commit()
+        db.refresh(user)
 
-    # Enrich for response
-    for access in user.entity_access:
-        if access.entity:
-            access.entity_code = access.entity.code
-            access.entity_name = access.entity.name
-    return user
+        # Enrich for response
+        for access in user.entity_access:
+            if access.entity:
+                access.entity_code = access.entity.code
+                access.entity_name = access.entity.name
+        return user
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update permissions")
 
 
 # ── Deactivate ────────────────────────────────────────────────────────────────

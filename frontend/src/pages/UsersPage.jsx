@@ -1,15 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Users, Plus, Edit2, Key, Shield, UserX, UserCheck, X, Check, Eye, EyeOff } from 'lucide-react'
-
-const API = import.meta.env.VITE_API_URL || ''
-
-function api(path, opts = {}) {
-  const token = localStorage.getItem('token')
-  return fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...opts.headers },
-    ...opts,
-  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-}
+import toast from 'react-hot-toast'
+import {
+  getUsers, getEntities, getRoles,
+  createUser, updateUser, deleteUser,
+  updateUserPermissions, resetUserPassword, reactivateUser,
+} from '../services/api'
 
 const ALL_MODULES = [
   { key: 'suppliers', label: 'Suppliers' },
@@ -39,10 +35,10 @@ export default function UsersPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [u, e, r] = await Promise.all([api('/api/users/'), api('/api/entities/'), api('/api/roles/')])
-      setUsers(u)
-      setEntities(e)
-      setRoles(r)
+      const [uRes, eRes, rRes] = await Promise.all([getUsers(), getEntities(), getRoles()])
+      setUsers(uRes.data)
+      setEntities(eRes.data)
+      setRoles(rRes.data)
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
@@ -129,16 +125,11 @@ export default function UsersPage() {
     try {
       let savedUser
       if (modal.mode === 'create') {
-        savedUser = await api('/api/users/', {
-          method: 'POST',
-          body: JSON.stringify({ ...form, password, entity_ids: [] }),
-        })
+        savedUser = (await createUser({ ...form, password, entity_ids: [] })).data
       } else {
         const updatePayload = { ...form }
         if (password) updatePayload.password = password
-        savedUser = await api(`/api/users/${modal.user.id}`, {
-          method: 'PUT', body: JSON.stringify(updatePayload),
-        })
+        savedUser = (await updateUser(modal.user.id, updatePayload)).data
       }
 
       // Save permissions
@@ -154,14 +145,12 @@ export default function UsersPage() {
             can_delete: p.can_delete,
           })),
       }
-      await api(`/api/users/${userId}/permissions`, {
-        method: 'PUT', body: JSON.stringify(permsPayload),
-      })
+      await updateUserPermissions(userId, permsPayload)
 
       await load()
       setModal(null)
     } catch (e) {
-      setError(e.detail || 'Failed to save user')
+      setError(e.response?.data?.detail || 'Failed to save user')
     } finally {
       setSaving(false)
     }
@@ -170,16 +159,16 @@ export default function UsersPage() {
   const handleDeactivate = async (user) => {
     if (!confirm(`Deactivate "${user.full_name}"? They will not be able to log in.`)) return
     try {
-      await api(`/api/users/${user.id}`, { method: 'DELETE' })
+      await deleteUser(user.id)
       await load()
-    } catch (e) { alert(e.detail || 'Failed') }
+    } catch (e) { toast.error(e.response?.data?.detail || 'Failed to deactivate user') }
   }
 
   const handleReactivate = async (user) => {
     try {
-      await api(`/api/users/${user.id}/reactivate`, { method: 'POST' })
+      await reactivateUser(user.id)
       await load()
-    } catch (e) { alert(e.detail || 'Failed') }
+    } catch (e) { toast.error(e.response?.data?.detail || 'Failed to reactivate user') }
   }
 
   const handlePasswordReset = async () => {
@@ -190,13 +179,11 @@ export default function UsersPage() {
     setSaving(true)
     setError('')
     try {
-      await api(`/api/users/${modal.user.id}/reset-password`, {
-        method: 'POST', body: JSON.stringify({ new_password: password }),
-      })
+      await resetUserPassword(modal.user.id, { new_password: password })
       setPassword('')
-      alert('Password updated successfully')
+      toast.success('Password updated successfully')
     } catch (e) {
-      setError(e.detail || 'Failed to reset password')
+      setError(e.response?.data?.detail || 'Failed to reset password')
     } finally {
       setSaving(false)
     }

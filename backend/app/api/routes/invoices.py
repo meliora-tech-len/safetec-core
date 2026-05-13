@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_
+from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timezone
 from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Supplier
@@ -101,7 +102,7 @@ def dashboard_stats(
 
     invoices = base_query.options(joinedload(Invoice.supplier), joinedload(Invoice.entity)).all()
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     outstanding = sum(
         inv.total for inv in invoices
         if inv.status in ("sent", "overdue") and inv.document_type == "invoice"
@@ -197,50 +198,54 @@ def create_invoice(
     vat_rate = payload.vat_rate if payload.vat_rate is not None else entity.vat_rate
     subtotal, vat_amount, total = _calculate_totals(payload.line_items, vat_rate, payload.is_vat_exempt)
 
-    invoice = Invoice(
-        entity_id=payload.entity_id,
-        supplier_id=payload.supplier_id,
-        document_type=payload.document_type,
-        invoice_number=invoice_number,
-        status=payload.status,
-        is_vat_exempt=payload.is_vat_exempt,
-        issue_date=payload.issue_date or datetime.utcnow(),
-        due_date=payload.due_date,
-        notes=payload.notes,
-        terms=payload.terms,
-        subtotal=subtotal,
-        vat_amount=vat_amount,
-        total=total,
-        vat_rate=vat_rate,
-    )
-    db.add(invoice)
-    db.flush()
-
-    for i, item_data in enumerate(payload.line_items):
-        amount = (Decimal(str(item_data.quantity)) * Decimal(str(item_data.unit_price))).quantize(Decimal("0.01"))
-        item = InvoiceLineItem(
-            invoice_id=invoice.id,
-            description=item_data.description,
-            quantity=item_data.quantity,
-            unit_price=item_data.unit_price,
-            amount=amount,
-            is_vat_exempt=item_data.is_vat_exempt,
-            sort_order=item_data.sort_order or i,
+    try:
+        invoice = Invoice(
+            entity_id=payload.entity_id,
+            supplier_id=payload.supplier_id,
+            document_type=payload.document_type,
+            invoice_number=invoice_number,
+            status=payload.status,
+            is_vat_exempt=payload.is_vat_exempt,
+            issue_date=payload.issue_date or datetime.now(timezone.utc),
+            due_date=payload.due_date,
+            notes=payload.notes,
+            terms=payload.terms,
+            subtotal=subtotal,
+            vat_amount=vat_amount,
+            total=total,
+            vat_rate=vat_rate,
         )
-        db.add(item)
+        db.add(invoice)
+        db.flush()
 
-    doc_label = "Invoice" if payload.document_type == "invoice" else "Quote"
-    log_action(
-        db, f"{payload.document_type}.created", user_id=current_user.id,
-        entity_id=payload.entity_id, resource_type="invoice",
-        resource_id=invoice.id,
-        description=f"{doc_label} {invoice_number} created for {supplier.name} — R {total:,.2f}",
-    )
-    db.commit()
-    db.refresh(invoice)
-    return db.query(Invoice).options(
-        joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
-    ).filter(Invoice.id == invoice.id).first()
+        for i, item_data in enumerate(payload.line_items):
+            amount = (Decimal(str(item_data.quantity)) * Decimal(str(item_data.unit_price))).quantize(Decimal("0.01"))
+            item = InvoiceLineItem(
+                invoice_id=invoice.id,
+                description=item_data.description,
+                quantity=item_data.quantity,
+                unit_price=item_data.unit_price,
+                amount=amount,
+                is_vat_exempt=item_data.is_vat_exempt,
+                sort_order=item_data.sort_order or i,
+            )
+            db.add(item)
+
+        doc_label = "Invoice" if payload.document_type == "invoice" else "Quote"
+        log_action(
+            db, f"{payload.document_type}.created", user_id=current_user.id,
+            entity_id=payload.entity_id, resource_type="invoice",
+            resource_id=invoice.id,
+            description=f"{doc_label} {invoice_number} created for {supplier.name} — R {total:,.2f}",
+        )
+        db.commit()
+        db.refresh(invoice)
+        return db.query(Invoice).options(
+            joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
+        ).filter(Invoice.id == invoice.id).first()
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create invoice")
 
 
 @router.put("/{invoice_id}", response_model=InvoiceOut)
@@ -255,44 +260,48 @@ def update_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(invoice.entity_id, current_user)
 
-    if invoice.status == "paid" and payload.status != "cancelled":
+    if invoice.status == "paid":
         raise HTTPException(status_code=400, detail="Cannot edit a paid invoice")
 
-    old_status = invoice.status
-    update_data = payload.model_dump(exclude={"line_items"}, exclude_none=True)
-    for field, value in update_data.items():
-        setattr(invoice, field, value)
+    try:
+        old_status = invoice.status
+        update_data = payload.model_dump(exclude={"line_items"}, exclude_none=True)
+        for field, value in update_data.items():
+            setattr(invoice, field, value)
 
-    if payload.line_items is not None:
-        db.query(InvoiceLineItem).filter(InvoiceLineItem.invoice_id == invoice_id).delete()
-        entity = db.query(BusinessEntity).filter(BusinessEntity.id == invoice.entity_id).first()
-        for i, item_data in enumerate(payload.line_items):
-            amount = (Decimal(str(item_data.quantity)) * Decimal(str(item_data.unit_price))).quantize(Decimal("0.01"))
-            db.add(InvoiceLineItem(
-                invoice_id=invoice.id,
-                description=item_data.description,
-                quantity=item_data.quantity,
-                unit_price=item_data.unit_price,
-                amount=amount,
-                is_vat_exempt=item_data.is_vat_exempt,
-                sort_order=item_data.sort_order or i,
-            ))
-        subtotal, vat_amount, total = _calculate_totals(payload.line_items, invoice.vat_rate, invoice.is_vat_exempt)
-        invoice.subtotal = subtotal
-        invoice.vat_amount = vat_amount
-        invoice.total = total
+        if payload.line_items is not None:
+            db.query(InvoiceLineItem).filter(InvoiceLineItem.invoice_id == invoice_id).delete()
+            entity = db.query(BusinessEntity).filter(BusinessEntity.id == invoice.entity_id).first()
+            for i, item_data in enumerate(payload.line_items):
+                amount = (Decimal(str(item_data.quantity)) * Decimal(str(item_data.unit_price))).quantize(Decimal("0.01"))
+                db.add(InvoiceLineItem(
+                    invoice_id=invoice.id,
+                    description=item_data.description,
+                    quantity=item_data.quantity,
+                    unit_price=item_data.unit_price,
+                    amount=amount,
+                    is_vat_exempt=item_data.is_vat_exempt,
+                    sort_order=item_data.sort_order or i,
+                ))
+            subtotal, vat_amount, total = _calculate_totals(payload.line_items, invoice.vat_rate, invoice.is_vat_exempt)
+            invoice.subtotal = subtotal
+            invoice.vat_amount = vat_amount
+            invoice.total = total
 
-    inv_supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
-    inv_supplier_name = inv_supplier.name if inv_supplier else "Unknown"
-    status_note = f" — status changed to '{invoice.status}'" if payload.status and payload.status != old_status else ""
-    log_action(db, "invoice.updated", user_id=current_user.id,
-               entity_id=invoice.entity_id, resource_type="invoice",
-               resource_id=invoice_id,
-               description=f"Updated {invoice.invoice_number} for {inv_supplier_name}{status_note}")
-    db.commit()
-    return db.query(Invoice).options(
-        joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
-    ).filter(Invoice.id == invoice.id).first()
+        inv_supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
+        inv_supplier_name = inv_supplier.name if inv_supplier else "Unknown"
+        status_note = f" — status changed to '{invoice.status}'" if payload.status and payload.status != old_status else ""
+        log_action(db, "invoice.updated", user_id=current_user.id,
+                   entity_id=invoice.entity_id, resource_type="invoice",
+                   resource_id=invoice_id,
+                   description=f"Updated {invoice.invoice_number} for {inv_supplier_name}{status_note}")
+        db.commit()
+        return db.query(Invoice).options(
+            joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
+        ).filter(Invoice.id == invoice.id).first()
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update invoice")
 
 
 @router.delete("/{invoice_id}")

@@ -17,7 +17,7 @@ import { createPortal } from 'react-dom'
  */
 export default function SearchableSelect({
   value, onChange, options = [], getValue, getLabel,
-  placeholder = 'Select…', style = {},
+  placeholder = 'Select…', style = {}, formInput = false,
 }) {
   const [open, setOpen]       = useState(false)
   const [query, setQuery]     = useState('')
@@ -116,7 +116,21 @@ export default function SearchableSelect({
   }
 
   // ── Styles ───────────────────────────────────────────────────────────────────
-  const inputStyle = {
+  const inputStyle = formInput ? {
+    padding: '8px 12px',
+    fontSize: 14,
+    borderRadius: 'var(--radius-sm)',
+    border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`,
+    background: 'var(--bg-base)',
+    color: open || selected ? 'var(--text-primary)' : 'var(--text-muted)',
+    cursor: open ? 'text' : 'pointer',
+    outline: 'none',
+    width: '100%',
+    boxSizing: 'border-box',
+    transition: 'border-color 0.15s',
+    boxShadow: open ? '0 0 0 3px var(--accent-dim)' : 'none',
+    ...style,
+  } : {
     padding: '4px 6px',
     fontSize: 12,
     borderRadius: 5,

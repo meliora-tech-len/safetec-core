@@ -4,16 +4,8 @@ import {
   ChevronDown, ChevronRight, X, Check, Palette
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
-
-const API = import.meta.env.VITE_API_URL || ''
-
-function api(path, opts = {}) {
-  const token = localStorage.getItem('token')
-  return fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...opts.headers },
-    ...opts,
-  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-}
+import toast from 'react-hot-toast'
+import { getEntities, createEntity, updateEntity, uploadEntityLogo, archiveEntity, restoreEntity } from '../services/api'
 
 const TABS = ['General', 'Banking', 'Branding', 'Invoice Config']
 
@@ -49,8 +41,8 @@ export default function EntitiesPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const data = await api(`/api/entities/?include_inactive=${showArchived}`)
-      setEntities(data)
+      const res = await getEntities({ include_inactive: showArchived })
+      setEntities(res.data)
     } catch (e) {
       console.error(e)
     } finally {
@@ -125,31 +117,24 @@ export default function EntitiesPage() {
 
       let saved
       if (modal.mode === 'create') {
-        saved = await api('/api/entities/', { method: 'POST', body: JSON.stringify(payload) })
+        saved = (await createEntity(payload)).data
       } else {
         const { code, ...updatePayload } = payload // code is not editable on update
-        saved = await api(`/api/entities/${modal.entity.id}`, {
-          method: 'PUT', body: JSON.stringify(updatePayload),
-        })
+        saved = (await updateEntity(modal.entity.id, updatePayload)).data
       }
 
       // Upload logo if selected
       if (logoFile && saved.id) {
         const formData = new FormData()
         formData.append('file', logoFile)
-        const token = localStorage.getItem('token')
-        await fetch(`${API}/api/entities/${saved.id}/logo`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-          body: formData,
-        })
+        await uploadEntityLogo(saved.id, formData)
       }
 
       await load()
       await refreshEntities()
       setModal(null)
     } catch (e) {
-      setError(e.detail || 'Failed to save entity')
+      setError(e.response?.data?.detail || 'Failed to save entity')
     } finally {
       setSaving(false)
     }
@@ -158,19 +143,19 @@ export default function EntitiesPage() {
   const handleArchive = async (entity) => {
     if (!confirm(`Archive "${entity.name}"? It will be hidden from normal use.`)) return
     try {
-      await api(`/api/entities/${entity.id}`, { method: 'DELETE' })
+      await archiveEntity(entity.id)
       await load()
     } catch (e) {
-      alert(e.detail || 'Failed to archive entity')
+      toast.error(e.response?.data?.detail || 'Failed to archive entity')
     }
   }
 
   const handleRestore = async (entity) => {
     try {
-      await api(`/api/entities/${entity.id}/restore`, { method: 'POST' })
+      await restoreEntity(entity.id)
       await load()
     } catch (e) {
-      alert(e.detail || 'Failed to restore entity')
+      toast.error(e.response?.data?.detail || 'Failed to restore entity')
     }
   }
 

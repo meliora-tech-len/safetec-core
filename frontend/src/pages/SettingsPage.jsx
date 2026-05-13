@@ -1,15 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Settings, Save, Plus, Trash2, RefreshCw } from 'lucide-react'
-
-const API = import.meta.env.VITE_API_URL || ''
-
-function api(path, opts = {}) {
-  const token = localStorage.getItem('token')
-  return fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...opts.headers },
-    ...opts,
-  }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-}
+import { getSettings, updateSetting, getEntities, updateEntity, getRoles, createRole, deleteRole } from '../services/api'
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState({})
@@ -27,16 +18,16 @@ export default function SettingsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [s, e, r] = await Promise.all([
-        api('/api/settings/'),
-        api('/api/entities/'),
-        api('/api/roles/'),
+      const [sRes, eRes, rRes] = await Promise.all([
+        getSettings(),
+        getEntities(),
+        getRoles(),
       ])
       const map = {}
-      s.forEach(item => { map[item.key] = item })
+      sRes.data.forEach(item => { map[item.key] = item })
       setSettings(map)
-      setEntities(e)
-      setRoles(r)
+      setEntities(eRes.data)
+      setRoles(rRes.data)
 
       // Parse initial values
       if (map.vat_rate) setVatRate(String(parseFloat(map.vat_rate.value) * 100))
@@ -50,14 +41,11 @@ export default function SettingsPage() {
     setSaving(p => ({ ...p, [key]: true }))
     setErrors(p => ({ ...p, [key]: null }))
     try {
-      await api(`/api/settings/${key}`, {
-        method: 'PUT',
-        body: JSON.stringify({ value: String(value), label }),
-      })
+      await updateSetting(key, { value: String(value), label })
       setSavedOk(p => ({ ...p, [key]: true }))
       setTimeout(() => setSavedOk(p => ({ ...p, [key]: false })), 2000)
     } catch (e) {
-      setErrors(p => ({ ...p, [key]: e.detail || 'Failed to save' }))
+      setErrors(p => ({ ...p, [key]: e.response?.data?.detail || 'Failed to save' }))
     } finally {
       setSaving(p => ({ ...p, [key]: false }))
     }
@@ -82,15 +70,12 @@ export default function SettingsPage() {
     setSaving(p => ({ ...p, roles: true }))
     setErrors(p => ({ ...p, roles: null }))
     try {
-      const created = await api('/api/roles/', {
-        method: 'POST',
-        body: JSON.stringify({ key, display_name: displayName }),
-      })
-      setRoles(prev => [...prev, created])
+      const res = await createRole({ key, display_name: displayName })
+      setRoles(prev => [...prev, res.data])
       setNewRoleKey('')
       setNewRoleDisplay('')
     } catch (e) {
-      setErrors(p => ({ ...p, roles: e.detail || 'Failed to create role' }))
+      setErrors(p => ({ ...p, roles: e.response?.data?.detail || 'Failed to create role' }))
     } finally {
       setSaving(p => ({ ...p, roles: false }))
     }
@@ -99,10 +84,10 @@ export default function SettingsPage() {
   const handleRemoveRole = async (roleKey) => {
     setSaving(p => ({ ...p, roles: true }))
     try {
-      await api(`/api/roles/${roleKey}`, { method: 'DELETE' })
+      await deleteRole(roleKey)
       setRoles(prev => prev.filter(r => r.key !== roleKey))
     } catch (e) {
-      setErrors(p => ({ ...p, roles: e.detail || 'Failed to delete role' }))
+      setErrors(p => ({ ...p, roles: e.response?.data?.detail || 'Failed to delete role' }))
     } finally {
       setSaving(p => ({ ...p, roles: false }))
     }
@@ -111,19 +96,16 @@ export default function SettingsPage() {
   const saveEntityInvoiceConfig = async (entity) => {
     setSaving(p => ({ ...p, [`entity_${entity.id}`]: true }))
     try {
-      await api(`/api/entities/${entity.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          invoice_prefix: entity.invoice_prefix,
-          invoice_counter: entity.invoice_counter,
-          quote_prefix: entity.quote_prefix,
-          quote_counter: entity.quote_counter,
-        }),
+      await updateEntity(entity.id, {
+        invoice_prefix: entity.invoice_prefix,
+        invoice_counter: entity.invoice_counter,
+        quote_prefix: entity.quote_prefix,
+        quote_counter: entity.quote_counter,
       })
       setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: true }))
       setTimeout(() => setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: false })), 2000)
     } catch (e) {
-      setErrors(p => ({ ...p, [`entity_${entity.id}`]: e.detail || 'Failed to save' }))
+      setErrors(p => ({ ...p, [`entity_${entity.id}`]: e.response?.data?.detail || 'Failed to save' }))
     } finally {
       setSaving(p => ({ ...p, [`entity_${entity.id}`]: false }))
     }

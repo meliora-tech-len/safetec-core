@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Truck, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertCircle } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
@@ -618,42 +618,60 @@ export default function FleetPage() {
   const [allDrivers, setAllDrivers] = useState([])
   const [loading, setLoading]     = useState(true)
   const [search, setSearch]       = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [filterStatus, setFilterStatus]           = useState('')
   const [filterSubcontractor, setFilterSubcontractor] = useState('false')
   const [modal, setModal]         = useState(null)
   const [selected, setSelected]   = useState(null)
+  const loadSeqRef = useRef(0)
 
   // Sync with sidebar entity switcher
   useEffect(() => {
     setFilterEntity(activeEntity?.id?.toString() || '')
   }, [activeEntity])
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400)
+    return () => clearTimeout(t)
+  }, [search])
+
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
     try {
       const params = new URLSearchParams()
       if (filterEntity) params.set('entity_id', filterEntity)
       if (filterStatus) params.set('status', filterStatus)
       if (filterSubcontractor !== '') params.set('is_subcontractor', filterSubcontractor)
-      if (search)       params.set('search', search)
+      if (debouncedSearch) params.set('search', debouncedSearch)
 
       const [truckData, statsData] = await Promise.all([
         api.get(`/api/fleet/trucks?${params}`),
         api.get(`/api/fleet/stats${filterEntity ? `?entity_id=${filterEntity}` : ''}`),
       ])
-      setTrucks(truckData)
-      setStats(statsData)
+      if (loadSeqRef.current === seq) {
+        setTrucks(truckData)
+        setStats(statsData)
+      }
     } catch {
-      toast.error('Failed to load fleet data')
+      if (loadSeqRef.current === seq) toast.error('Failed to load fleet data')
     } finally {
-      setLoading(false)
+      if (loadSeqRef.current === seq) setLoading(false)
     }
-  }, [filterEntity, filterStatus, filterSubcontractor, search])
+  }, [filterEntity, filterStatus, filterSubcontractor, debouncedSearch])
 
-  useEffect(() => { api.get('/api/entities/').then(setEntities).catch(() => {}) }, [])
-  useEffect(() => { api.get('/api/drivers?limit=500&is_active=true').then(setAllDrivers).catch(() => {}) }, [])
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    let ignore = false
+    api.get('/api/entities/').then(e => { if (!ignore) setEntities(e) }).catch(() => {})
+    return () => { ignore = true }
+  }, [])
+  useEffect(() => {
+    let ignore = false
+    api.get('/api/drivers?limit=500&is_active=true').then(d => { if (!ignore) setAllDrivers(d) }).catch(() => {})
+    return () => { ignore = true }
+  }, [])
+  useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
 
   const handleDelete = async () => {
     try {
