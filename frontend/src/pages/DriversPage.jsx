@@ -46,17 +46,16 @@ function StatCards({ stats }) {
 
 // ── Add / Edit modal ──────────────────────────────────────────────────────────
 const BLANK = {
-  entity_id: '', truck_id: '', employee_number: '',
+  entity_id: '', employee_number: '',
   first_name: '', last_name: '', driver_type: 'casual',
   id_number: '', tax_number: '', bank_name: '', bank_account_number: '', notes: '',
 }
 
-function DriverModal({ driver, entities, trucks, onSave, onClose }) {
+function DriverModal({ driver, entities, onSave, onClose }) {
   const isEdit = !!driver?.id
   const api = useApi()
   const [form, setForm] = useState(() => driver ? {
     entity_id:          driver.entity_id,
-    truck_id:           driver.truck_id || '',
     employee_number:    driver.employee_number || '',
     first_name:         driver.first_name,
     last_name:          driver.last_name,
@@ -70,9 +69,6 @@ function DriverModal({ driver, entities, trucks, onSave, onClose }) {
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  // trucks scoped to selected entity
-  const entityTrucks = trucks.filter(t => String(t.entity_id) === String(form.entity_id))
-
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.entity_id) { toast.error('Select an entity'); return }
@@ -82,7 +78,6 @@ function DriverModal({ driver, entities, trucks, onSave, onClose }) {
       const payload = {
         ...form,
         entity_id: Number(form.entity_id),
-        truck_id: form.truck_id ? Number(form.truck_id) : null,
       }
       if (isEdit) {
         await api.put(`/api/drivers/${driver.id}`, payload)
@@ -112,7 +107,7 @@ function DriverModal({ driver, entities, trucks, onSave, onClose }) {
             <div className="form-row">
               <div className="form-group">
                 <label>Entity *</label>
-                <select value={form.entity_id} onChange={e => setForm(f => ({ ...f, entity_id: e.target.value, truck_id: '' }))} disabled={isEdit} required>
+                <select value={form.entity_id} onChange={e => setForm(f => ({ ...f, entity_id: e.target.value }))} disabled={isEdit} required>
                   <option value="">Select entity…</option>
                   {entities.map(en => <option key={en.id} value={en.id}>{en.name} ({en.code})</option>)}
                 </select>
@@ -141,13 +136,6 @@ function DriverModal({ driver, entities, trucks, onSave, onClose }) {
               <div className="form-group">
                 <label>Employee Number</label>
                 <input value={form.employee_number} onChange={e => set('employee_number', e.target.value)} placeholder="e.g. THEM002" style={{ fontFamily: 'monospace' }} />
-              </div>
-              <div className="form-group">
-                <label>Assigned Truck</label>
-                <select value={form.truck_id} onChange={e => set('truck_id', e.target.value)}>
-                  <option value="">None</option>
-                  {entityTrucks.map(t => <option key={t.id} value={t.id}>{t.registration} — {t.make} {t.model || ''}</option>)}
-                </select>
               </div>
             </div>
 
@@ -207,7 +195,6 @@ export default function DriversPage() {
   const [drivers, setDrivers]   = useState([])
   const [stats, setStats]       = useState(null)
   const [entities, setEntities] = useState([])
-  const [trucks, setTrucks]     = useState([])
   const [loading, setLoading]   = useState(true)
   const [search, setSearch]     = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -257,10 +244,7 @@ export default function DriversPage() {
 
   useEffect(() => {
     let ignore = false
-    Promise.all([
-      api.get('/api/entities/'),
-      api.get('/api/fleet/trucks?limit=500'),
-    ]).then(([e, t]) => { if (!ignore) { setEntities(e); setTrucks(t) } }).catch(() => {})
+    api.get('/api/entities/').then(e => { if (!ignore) setEntities(e) }).catch(() => {})
     return () => { ignore = true }
   }, [])
 
@@ -405,7 +389,6 @@ export default function DriversPage() {
         <DriverModal
           driver={modal.driver || null}
           entities={entities}
-          trucks={trucks}
           onSave={() => { setModal(null); load() }}
           onClose={() => setModal(null)}
         />

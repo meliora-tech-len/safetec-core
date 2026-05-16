@@ -108,6 +108,96 @@ function TrailerFields({ trailers, onChange }) {
   )
 }
 
+// ── Combobox (styled datalist replacement) ────────────────────────────────────
+
+function ComboBox({ value, onChange, options, placeholder }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState(value)
+  const containerRef = useRef(null)
+
+  // Keep local query in sync when value changes externally
+  useEffect(() => { setQuery(value) }, [value])
+
+  const filtered = query
+    ? options.filter(o => o.toLowerCase().includes(query.toLowerCase()))
+    : options
+
+  const select = (opt) => {
+    setQuery(opt)
+    onChange(opt)
+    setOpen(false)
+  }
+
+  const handleInput = (e) => {
+    setQuery(e.target.value)
+    onChange(e.target.value)
+    setOpen(true)
+  }
+
+  const handleBlur = (e) => {
+    // Delay close so clicks on options register first
+    if (!containerRef.current?.contains(e.relatedTarget)) {
+      setOpen(false)
+    }
+  }
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative' }} onBlur={handleBlur}>
+      <div style={{ position: 'relative' }}>
+        <input
+          value={query}
+          onChange={handleInput}
+          onFocus={() => setOpen(true)}
+          placeholder={placeholder}
+          autoComplete="off"
+          style={{ paddingRight: 32 }}
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={() => setOpen(o => !o)}
+          style={{
+            position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+            background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+            color: 'var(--text-muted)', display: 'flex', alignItems: 'center',
+          }}
+        >
+          <ChevronDown size={14} />
+        </button>
+      </div>
+      {open && filtered.length > 0 && (
+        <ul style={{
+          position: 'absolute', zIndex: 200, top: 'calc(100% + 4px)', left: 0, right: 0,
+          margin: 0, padding: '4px 0', listStyle: 'none',
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+          maxHeight: 220, overflowY: 'auto',
+        }}>
+          {filtered.map(opt => (
+            <li
+              key={opt}
+              tabIndex={0}
+              onMouseDown={() => select(opt)}
+              onKeyDown={e => e.key === 'Enter' && select(opt)}
+              style={{
+                padding: '8px 14px', fontSize: 13, cursor: 'pointer',
+                color: opt === value ? 'var(--accent)' : 'var(--text-primary)',
+                fontWeight: opt === value ? 600 : 400,
+                background: 'transparent',
+                transition: 'background 0.1s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-surface)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              {opt}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 // ── Truck form modal ──────────────────────────────────────────────────────────
 
 const BLANK_TRUCK = {
@@ -366,10 +456,26 @@ function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
               <div style={{ padding: 12, background: 'var(--bg-base)', borderRadius: 6, border: '1px solid var(--border)' }}>
                 <div className="form-group">
                   <label>Institution Name</label>
-                  <input
+                  <ComboBox
                     value={form.finance_institution}
-                    onChange={e => set('finance_institution', e.target.value)}
-                    placeholder="e.g. WesBank, Absa, Standard Bank"
+                    onChange={v => set('finance_institution', v)}
+                    placeholder="Select or type institution…"
+                    options={[
+                      'WesBank (FNB)',
+                      'MFC (Nedbank)',
+                      'ABSA Vehicle Finance',
+                      'Standard Bank Vehicle Finance',
+                      'Nedbank Vehicle Finance',
+                      'FNB Vehicle Finance',
+                      'Capitec Bank',
+                      'Investec',
+                      'Bidvest Bank',
+                      'African Bank',
+                      'Discovery Bank',
+                      'Mercantile Bank',
+                      'Old Mutual Finance',
+                      'Sasfin Bank',
+                    ]}
                   />
                 </div>
               </div>

@@ -7,7 +7,7 @@ import {
 import { Plus, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Save, RefreshCw, Fuel } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-const fmt = (n, d = 4) => Number(n || 0).toFixed(d)
+const fmt = (n, d = 2) => Number(n || 0).toFixed(d)
 const fmt2 = (n) => Number(n || 0).toFixed(2)
 const fmtDate = (s) => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-ZA') : '—'
 
@@ -459,12 +459,12 @@ export default function DieselRatesPage() {
               <div style={styles.field}>
                 <label style={styles.label}>Rate per Litre (R)</label>
                 <input
-                  type="number" step="0.0001" min="0"
+                  type="number" step="0.01" min="0"
                   value={form.rate_per_litre}
                   onChange={e => setForm(f => ({ ...f, rate_per_litre: e.target.value }))}
                   style={styles.input}
                   disabled={!!editRate}
-                  placeholder="e.g. 24.5000"
+                  placeholder="e.g. 24.50"
                 />
               </div>
               <div style={styles.field}>

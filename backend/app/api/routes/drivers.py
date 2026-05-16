@@ -59,6 +59,7 @@ def _build_summary(driver: Driver, month_start: date) -> dict:
         "first_name": driver.first_name,
         "last_name": driver.last_name,
         "driver_type": driver.driver_type,
+        "truck_id": driver.truck_id,
         "truck_registration": driver.truck.registration if driver.truck else None,
         "is_active": driver.is_active,
         "load_count_this_month": load_count,
@@ -207,6 +208,14 @@ def create_driver(
     current_user: User = Depends(get_current_user),
 ):
     _check_access(payload.entity_id, current_user)
+    if payload.truck_id and payload.driver_type == DriverType.permanent:
+        conflict = db.query(Driver).filter(
+            Driver.truck_id == payload.truck_id,
+            Driver.is_active == True,
+            Driver.driver_type == DriverType.permanent,
+        ).first()
+        if conflict:
+            raise HTTPException(status_code=400, detail=f"Truck already assigned to {conflict.first_name} {conflict.last_name}")
     driver = Driver(**payload.model_dump())
     db.add(driver)
     db.flush()
@@ -235,7 +244,21 @@ def update_driver(
         raise HTTPException(status_code=404, detail="Driver not found")
     _check_access(driver.entity_id, current_user)
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    update_data = payload.model_dump(exclude_unset=True)
+    new_truck_id = update_data.get("truck_id")
+    if new_truck_id is not None and new_truck_id != driver.truck_id:
+        effective_type = update_data.get("driver_type", driver.driver_type)
+        if effective_type == DriverType.permanent or driver.driver_type == DriverType.permanent:
+            conflict = db.query(Driver).filter(
+                Driver.truck_id == new_truck_id,
+                Driver.is_active == True,
+                Driver.driver_type == DriverType.permanent,
+                Driver.id != driver_id,
+            ).first()
+            if conflict:
+                raise HTTPException(status_code=400, detail=f"Truck already assigned to {conflict.first_name} {conflict.last_name}")
+
+    for field, value in update_data.items():
         setattr(driver, field, value)
 
     log_action(db, "driver.updated", user_id=current_user.id,

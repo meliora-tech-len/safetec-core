@@ -10,7 +10,7 @@ import {
   getTruck, getTruckLoads, getTruckLoadSummary,
   createTruckLoad, updateTruckLoad, deleteTruckLoad,
   getMines, getDrivers, getSettings, getSuppliers,
-  getDieselFillUps, createDieselFillUp, deleteDieselFillUp,
+  getDieselFillUps, createDieselFillUp, deleteDieselFillUp, getCurrentDieselRate,
   addDriverAdditionalLoad, deleteDriverAdditionalLoad,
   addDriverFoodPayment, getTruckAdditionalLoads,
 } from '../services/api'
@@ -69,7 +69,7 @@ function EditRow({ form, setForm, mines, drivers, vatRate, rateSource, setRateSo
       <td style={S.td}>
         <SearchableSelect value={form.driver_name} onChange={v => set('driver_name', v)}
           options={drivers} getValue={d => `${d.first_name} ${d.last_name}`.trim()}
-          getLabel={d => `${d.first_name} ${d.last_name}`.trim()} placeholder="Driver…"
+          getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`.trim()} placeholder="Driver…"
           style={{ minWidth: 110 }} />
       </td>
       <td style={S.td}>
@@ -126,10 +126,27 @@ function DieselSection({ truck, year, month, suppliers }) {
   const [addingNew, setAddingNew] = useState(false)
   const [saving, setSaving]       = useState(false)
   const [form, setForm]           = useState({ ...EMPTY_DIESEL })
+  const [autoRate, setAutoRate]   = useState(null)
+  const [rateEdited, setRateEdited] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const litresNum = parseFloat(form.litres) || 0
   const rateNum   = parseFloat(form.rate_per_litre) || 0
+
+  useEffect(() => {
+    if (!form.supplier_id || !form.fillup_date) return
+    getCurrentDieselRate(form.supplier_id, {
+      entity_id: truck.entity_id,
+      on_date: form.fillup_date,
+    }).then(r => {
+      const rate = r.data
+      if (rate && !rateEdited) {
+        setAutoRate(rate.rate_per_litre)
+        setForm(f => ({ ...f, rate_per_litre: parseFloat(rate.rate_per_litre).toFixed(2) }))
+      }
+      if (!rate) setAutoRate(null)
+    }).catch(() => {})
+  }, [form.supplier_id, form.fillup_date, truck.entity_id, rateEdited])
   const calcAmt   = litresNum > 0 && rateNum > 0 ? (litresNum * rateNum).toFixed(2) : null
 
   const fetchFillups = useCallback(async () => {
@@ -205,7 +222,7 @@ function DieselSection({ truck, year, month, suppliers }) {
             </div>
             <div>
               <label className="form-label">Supplier *</label>
-              <SearchableSelect value={String(form.supplier_id)} onChange={v => set('supplier_id', v)}
+              <SearchableSelect value={String(form.supplier_id)} onChange={v => { set('supplier_id', v); setRateEdited(false); setAutoRate(null) }}
                 options={suppliers} getValue={s => String(s.id)} getLabel={s => s.name} placeholder="Supplier…" formInput />
             </div>
             <div>
@@ -217,8 +234,18 @@ function DieselSection({ truck, year, month, suppliers }) {
               <input className="form-input" type="number" step="0.01" min="0" value={form.litres} onChange={e => set('litres', e.target.value)} placeholder="0.00" />
             </div>
             <div>
-              <label className="form-label">Rate/L *</label>
-              <input className="form-input" type="number" step="0.001" min="0" value={form.rate_per_litre} onChange={e => set('rate_per_litre', e.target.value)} placeholder="0.000" />
+              <label className="form-label">
+                Rate/L *{autoRate && (
+                  <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700,
+                    color: rateEdited ? '#d97706' : '#16a34a' }}>
+                    {rateEdited ? 'manual' : 'auto'}
+                  </span>
+                )}
+              </label>
+              <input className="form-input" type="number" step="0.01" min="0"
+                value={form.rate_per_litre}
+                onChange={e => { set('rate_per_litre', e.target.value); setRateEdited(true) }}
+                placeholder="0.00" />
             </div>
             <div>
               <label className="form-label">Amount</label>
@@ -276,11 +303,11 @@ function DieselSection({ truck, year, month, suppliers }) {
                   </thead>
                   <tbody>
                     {entries.map(f => (
-                      <tr key={f.id}>
+                      <tr key={f.id} style={{ height: 48 }}>
                         <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(f.fillup_date)}</td>
                         <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{f.invoice_number || '—'}</td>
                         <td style={{ textAlign: 'right' }}>{parseFloat(f.litres).toFixed(1)}</td>
-                        <td style={{ textAlign: 'right', fontSize: 12 }}>R {parseFloat(f.rate_per_litre).toFixed(3)}</td>
+                        <td style={{ textAlign: 'right', fontSize: 12 }}>R {parseFloat(f.rate_per_litre).toFixed(2)}</td>
                         <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(f.amount)}</td>
                         <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(f.admin_fee_amount)}</td>
                         <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(f.total_amount)}</td>
@@ -371,6 +398,10 @@ function AdditionalLoadsSection({ truck, year, month, drivers }) {
   }
 
   const total = entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
+  const driverTypeByName = drivers.reduce((acc, d) => {
+    acc[`${d.first_name} ${d.last_name}`.trim()] = d.driver_type
+    return acc
+  }, {})
 
   return (
     <div style={{ marginTop: 20 }}>
@@ -396,7 +427,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers }) {
               <label className="form-label">Driver *</label>
               <SearchableSelect value={String(form.driver_id)} onChange={v => set('driver_id', v)}
                 options={drivers} getValue={d => String(d.id)}
-                getLabel={d => `${d.first_name} ${d.last_name}`} placeholder="Driver…" />
+                getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`} placeholder="Driver…" />
             </div>
             <div>
               <label className="form-label">Description *</label>
@@ -442,7 +473,17 @@ function AdditionalLoadsSection({ truck, year, month, drivers }) {
             <tbody>
               {entries.map(e => (
                 <tr key={e.id}>
-                  <td style={{ fontWeight: 600, fontSize: 13 }}>{e.driver_name}</td>
+                  <td style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      {e.driver_name}
+                      {driverTypeByName[e.driver_name] && (
+                        <span className={`badge ${driverTypeByName[e.driver_name] === 'permanent' ? 'badge-paid' : 'badge-quote'}`}
+                          style={{ fontSize: 9, padding: '1px 5px' }}>
+                          {driverTypeByName[e.driver_name] === 'permanent' ? 'P' : 'C'}
+                        </span>
+                      )}
+                    </span>
+                  </td>
                   <td style={{ fontSize: 13 }}>{e.route_name}</td>
                   <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.load_date)}</td>
                   <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(e.amount)}</td>
@@ -804,6 +845,10 @@ export default function TruckLoadProfilePage() {
   const entityCode = truck ? (entities.find(e => e.id === truck.entity_id)?.code || '') : ''
   const isSafetec  = entityCode === 'SFT'
   const permanentDriver = drivers.find(d => d.truck_id === truck?.id && d.driver_type === 'permanent')
+  const driverTypeByName = drivers.reduce((acc, d) => {
+    acc[`${d.first_name} ${d.last_name}`.trim()] = d.driver_type
+    return acc
+  }, {})
   const showPo = truck?.notes?.toLowerCase() === 'intsimbi'
   const COLS   = showPo ? 12 : 11
 
@@ -987,7 +1032,19 @@ export default function TruckLoadProfilePage() {
                     <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(l.load_date)}</td>
                     <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.slip_number || '—'}</td>
                     {showPo && <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.po_number || '—'}</td>}
-                    <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{l.driver_name || '—'}</td>
+                    <td style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                      {l.driver_name ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          {l.driver_name}
+                          {driverTypeByName[l.driver_name] && (
+                            <span className={`badge ${driverTypeByName[l.driver_name] === 'permanent' ? 'badge-paid' : 'badge-quote'}`}
+                              style={{ fontSize: 9, padding: '1px 5px' }}>
+                              {driverTypeByName[l.driver_name] === 'permanent' ? 'P' : 'C'}
+                            </span>
+                          )}
+                        </span>
+                      ) : '—'}
+                    </td>
                     <td style={{ fontSize: 13 }}>{l.mine_name || '—'}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(l.tonnes)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(l.rate_per_ton)}</td>

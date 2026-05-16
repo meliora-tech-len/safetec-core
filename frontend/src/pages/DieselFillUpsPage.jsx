@@ -7,7 +7,7 @@ import {
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
-import { Plus, Search, X, Trash2, AlertCircle, Fuel, Save } from 'lucide-react'
+import { Plus, Search, X, Trash2, AlertCircle, AlertTriangle, Fuel, Save } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import SearchableSelect from '../components/SearchableSelect'
 import VerifyBadge from '../components/VerifyBadge'
@@ -60,6 +60,7 @@ export default function DieselFillUpsPage() {
   const [preview,      setPreview]      = useState({ amount: null, fee: null, total: null })
   const [dieselSettings, setDieselSettings] = useState(null)
   const [saving,       setSaving]       = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const firstInputRef = useRef(null)
 
   useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
@@ -115,7 +116,7 @@ export default function DieselFillUpsPage() {
       const rate = r.data
       if (rate && !rateEdited) {
         setAutoRate(rate.rate_per_litre)
-        setEditForm(f => ({ ...f, rate_per_litre: String(rate.rate_per_litre) }))
+        setEditForm(f => ({ ...f, rate_per_litre: parseFloat(rate.rate_per_litre).toFixed(2) }))
       }
       if (!rate) setAutoRate(null)
     }).catch(() => {})
@@ -155,7 +156,7 @@ export default function DieselFillUpsPage() {
       supplier_id:   String(f.supplier_id  || ''),
       fillup_date:   f.fillup_date || today,
       litres:        f.litres     != null ? String(f.litres)        : '',
-      rate_per_litre: f.rate_per_litre != null ? String(f.rate_per_litre) : '',
+      rate_per_litre: f.rate_per_litre != null ? parseFloat(f.rate_per_litre).toFixed(2) : '',
       invoice_number: f.invoice_number || '',
       slip_number:   f.slip_number    || '',
       notes:         f.notes          || '',
@@ -205,11 +206,15 @@ export default function DieselFillUpsPage() {
     catch (err) { toast.error(errorMessage(err)) }
   }
 
-  const handleDelete = async (f, e) => {
+  const handleDelete = (f, e) => {
     e.stopPropagation()
-    if (!confirm(`Delete fill-up of ${f.litres}L on ${formatDate(f.fillup_date)}?`)) return
-    try { await deleteDieselFillUp(f.id); toast.success('Deleted'); load() }
+    setDeleteTarget(f)
+  }
+
+  const confirmDelete = async () => {
+    try { await deleteDieselFillUp(deleteTarget.id); toast.success('Deleted'); load() }
     catch (err) { toast.error(errorMessage(err)) }
+    finally { setDeleteTarget(null) }
   }
 
   const handleKeyDown = (e) => {
@@ -251,7 +256,7 @@ export default function DieselFillUpsPage() {
               { header: 'Truck',         key: 'truck_registration' },
               { header: 'Supplier',      key: 'supplier_name' },
               { header: 'Litres',        value: r => parseFloat(r.litres).toFixed(2) },
-              { header: 'Rate/L',        value: r => parseFloat(r.rate_per_litre).toFixed(4) },
+              { header: 'Rate/L',        value: r => parseFloat(r.rate_per_litre).toFixed(2) },
               { header: 'Amount (excl)', value: r => parseFloat(r.amount).toFixed(2) },
               { header: 'Admin Fee %',   value: r => (parseFloat(r.admin_fee_pct) * 100).toFixed(2) + '%' },
               { header: 'Admin Fee Amt', value: r => parseFloat(r.admin_fee_amount).toFixed(2) },
@@ -269,60 +274,70 @@ export default function DieselFillUpsPage() {
       </div>
 
       {/* Filters */}
-      <div className="card" style={{ padding: '14px 18px', marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
-        {isAdmin && (
-          <div className="form-group" style={{ margin: 0, minWidth: 160 }}>
-            <label className="form-label">Entity</label>
-            <select className="form-control" value={filterEntity} onChange={e => setFilterEntity(e.target.value)}>
-              <option value="">All Entities</option>
-              {entities.map(e => <option key={e.id} value={e.id}>{e.code} — {e.name}</option>)}
+      <div className="card" style={{ padding: '14px 18px', marginBottom: 20 }}>
+        {/* Row 1: Entity, Supplier, Search, Verified (right) */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+          {isAdmin && (
+            <div className="form-group" style={{ margin: 0, width: 180 }}>
+              <label className="form-label">Entity</label>
+              <select className="form-control" value={filterEntity} onChange={e => setFilterEntity(e.target.value)}>
+                <option value="">All Entities</option>
+                {entities.map(e => <option key={e.id} value={e.id}>{e.code} — {e.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="form-group" style={{ margin: 0, width: 160 }}>
+            <label className="form-label">Supplier</label>
+            <select className="form-control" value={filterSupplier} onChange={e => setFilterSupplier(e.target.value)}>
+              <option value="">All Suppliers</option>
+              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
-        )}
-        <div className="form-group" style={{ margin: 0 }}>
-          <label className="form-label">Verified</label>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {['', 'true', 'false'].map(v => (
-              <button key={v}
-                className={`btn btn-sm ${filterVerified === v ? 'btn-primary' : 'btn-ghost'}`}
-                onClick={() => setFilterVerified(v)} style={{ fontSize: 12 }}>
-                {v === '' ? 'All' : v === 'true' ? 'Verified' : 'Unverified'}
-              </button>
-            ))}
+          <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 200 }}>
+            <label className="form-label">Search</label>
+            <div className="search-bar">
+              <Search size={13} />
+              <input placeholder="Truck / supplier / invoice…" value={search} onChange={e => setSearch(e.target.value)} />
+              {search && <button className="btn-icon" onClick={() => setSearch('')}><X size={12} /></button>}
+            </div>
+          </div>
+          <div className="form-group" style={{ margin: 0, marginLeft: 'auto' }}>
+            <label className="form-label">Verified</label>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {['', 'true', 'false'].map(v => (
+                <button key={v}
+                  className={`btn btn-sm ${filterVerified === v ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setFilterVerified(v)} style={{ fontSize: 12 }}>
+                  {v === '' ? 'All' : v === 'true' ? 'Verified' : 'Unverified'}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-        <div className="form-group" style={{ margin: 0, minWidth: 90 }}>
-          <label className="form-label">Month</label>
-          <select className="form-control" value={filterMonth} onChange={e => setFilterMonth(parseInt(e.target.value))}>
-            {MONTHS.slice(1).map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
-          </select>
-        </div>
-        <div className="form-group" style={{ margin: 0, minWidth: 80 }}>
-          <label className="form-label">Year</label>
-          <select className="form-control" value={filterYear} onChange={e => setFilterYear(parseInt(e.target.value))}>
-            {years.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-        </div>
-        <div className="form-group" style={{ margin: 0, minWidth: 130 }}>
-          <label className="form-label">Truck</label>
-          <select className="form-control" value={filterTruck} onChange={e => setFilterTruck(e.target.value)}>
-            <option value="">All Trucks</option>
-            {trucks.map(t => <option key={t.id} value={t.id}>{t.registration}</option>)}
-          </select>
-        </div>
-        <div className="form-group" style={{ margin: 0, minWidth: 130 }}>
-          <label className="form-label">Supplier</label>
-          <select className="form-control" value={filterSupplier} onChange={e => setFilterSupplier(e.target.value)}>
-            <option value="">All Suppliers</option>
-            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </div>
-        <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 180 }}>
-          <label className="form-label">Search</label>
-          <div className="search-bar">
-            <Search size={13} />
-            <input placeholder="Truck / supplier / invoice…" value={search} onChange={e => setSearch(e.target.value)} />
-            {search && <button className="btn-icon" onClick={() => setSearch('')}><X size={12} /></button>}
+
+        {/* Divider */}
+        <div style={{ borderTop: '1px solid var(--border)', margin: '12px 0' }} />
+
+        {/* Row 2: Truck, Month, Year */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+          <div className="form-group" style={{ margin: 0, width: 160 }}>
+            <label className="form-label">Truck</label>
+            <select className="form-control" value={filterTruck} onChange={e => setFilterTruck(e.target.value)}>
+              <option value="">All Trucks</option>
+              {trucks.map(t => <option key={t.id} value={t.id}>{t.registration}</option>)}
+            </select>
+          </div>
+          <div className="form-group" style={{ margin: 0, width: 110 }}>
+            <label className="form-label">Month</label>
+            <select className="form-control" value={filterMonth} onChange={e => setFilterMonth(parseInt(e.target.value))}>
+              {MONTHS.slice(1).map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+            </select>
+          </div>
+          <div className="form-group" style={{ margin: 0, width: 90 }}>
+            <label className="form-label">Year</label>
+            <select className="form-control" value={filterYear} onChange={e => setFilterYear(parseInt(e.target.value))}>
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
           </div>
         </div>
       </div>
@@ -416,7 +431,7 @@ export default function DieselFillUpsPage() {
                     )}
                   </td>
                   <td className="text-right" style={{ fontSize: 13 }}>{parseFloat(f.litres).toFixed(2)}</td>
-                  <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>R {parseFloat(f.rate_per_litre).toFixed(4)}</td>
+                  <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>R {parseFloat(f.rate_per_litre).toFixed(2)}</td>
                   <td className="text-right">{formatCurrency(f.amount)}</td>
                   <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {parseFloat(f.admin_fee_amount) > 0 ? formatCurrency(f.admin_fee_amount) : '—'}
@@ -452,6 +467,49 @@ export default function DieselFillUpsPage() {
           )}
         </table>
       </div>
+
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 420, padding: 0, position: 'relative', overflow: 'hidden' }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '16px 20px', borderBottom: '1px solid var(--border)',
+            }}>
+              <AlertTriangle size={18} color="var(--danger)" style={{ flexShrink: 0 }} />
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Delete Fill-Up</span>
+            </div>
+            <div style={{ padding: '24px 20px' }}>
+              <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                You are about to permanently delete the fill-up of{' '}
+                <strong style={{ color: 'var(--text-primary)' }}>{parseFloat(deleteTarget.litres).toFixed(2)} L</strong>
+                {' '}on <strong style={{ color: 'var(--text-primary)' }}>{formatDate(deleteTarget.fillup_date)}</strong>
+                {deleteTarget.supplier_name && <> from <strong style={{ color: 'var(--text-primary)' }}>{deleteTarget.supplier_name}</strong></>}.
+              </p>
+              <div style={{
+                padding: '10px 14px', borderRadius: 6,
+                background: 'rgba(220,38,38,0.07)', border: '1px solid rgba(220,38,38,0.2)',
+                fontSize: 12, color: 'var(--danger)', fontWeight: 500,
+              }}>
+                This record will be gone forever and cannot be recovered.
+              </div>
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end', gap: 10,
+              padding: '12px 20px', borderTop: '1px solid var(--border)',
+            }}>
+              <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button onClick={confirmDelete} style={{
+                padding: '7px 18px', borderRadius: 7, border: 'none',
+                background: 'var(--danger)', color: '#fff',
+                fontWeight: 600, fontSize: 13, cursor: 'pointer',
+              }}>
+                Delete Fill-Up
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -515,16 +573,14 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
 
       {/* Rate/L */}
       <td style={S.td}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-          <input type="number" step="0.0001" min="0.0001" placeholder="0.0000" value={form.rate_per_litre}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+          <span style={{ height: 13, fontSize: 9, fontWeight: 700,
+            color: rateEdited && autoRate ? '#d97706' : '#16a34a' }}>
+            {autoRate && !rateEdited ? 'auto' : rateEdited && autoRate ? 'manual' : ''}
+          </span>
+          <input type="number" step="0.01" min="0.01" placeholder="0.00" value={form.rate_per_litre}
             onChange={e => { set('rate_per_litre', e.target.value); setRateEdited(true) }} onKeyDown={onKeyDown}
             style={{ ...S.input, width: 78, textAlign: 'right' }} />
-          {autoRate && !rateEdited && (
-            <span style={{ fontSize: 9, color: '#16a34a', fontWeight: 700 }}>auto</span>
-          )}
-          {rateEdited && autoRate && (
-            <span style={{ fontSize: 9, color: '#d97706' }}>manual</span>
-          )}
         </div>
       </td>
 
@@ -587,7 +643,7 @@ const styles = {
 }
 
 const S = {
-  td: { padding: '6px 8px', fontSize: 12, verticalAlign: 'middle' },
+  td: { padding: '6px 8px', fontSize: 12, verticalAlign: 'bottom' },
   input: {
     padding: '4px 7px', fontSize: 12, borderRadius: 5,
     border: '1px solid var(--border)', background: 'var(--bg-card)',

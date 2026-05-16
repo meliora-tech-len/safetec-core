@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import Sidebar from './Sidebar'
+import FeedbackWidget from '../FeedbackWidget'
 
 export default function AppLayout() {
   return (
@@ -17,6 +18,7 @@ export default function AppLayout() {
           error: { iconTheme: { primary: 'var(--danger)', secondary: 'var(--bg-card)' } },
         }}
       />
+      <FeedbackWidget />
     </div>
   )
 }

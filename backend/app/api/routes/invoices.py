@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
@@ -328,7 +329,7 @@ def delete_invoice(
 
 
 @router.get("/{invoice_id}/pdf")
-def download_invoice_pdf(
+async def download_invoice_pdf(
     invoice_id: int,
     theme: str = Query("dark", pattern="^(dark|light)$"),
     db: Session = Depends(get_db),
@@ -341,7 +342,9 @@ def download_invoice_pdf(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(invoice.entity_id, current_user)
 
-    pdf_bytes = generate_invoice_pdf(invoice, invoice.entity, invoice.supplier, theme=theme)
+    pdf_bytes = await asyncio.to_thread(
+        generate_invoice_pdf, invoice, invoice.entity, invoice.supplier, theme=theme
+    )
     filename = f"{invoice.invoice_number}.pdf"
     return Response(
         content=pdf_bytes,
@@ -351,7 +354,7 @@ def download_invoice_pdf(
 
 
 @router.post("/{invoice_id}/send-email", status_code=200)
-def send_invoice_email_endpoint(
+async def send_invoice_email_endpoint(
     invoice_id: int,
     theme: str = Query("dark", pattern="^(dark|light)$"),
     db: Session = Depends(get_db),
@@ -367,7 +370,9 @@ def send_invoice_email_endpoint(
     if not invoice.supplier or not invoice.supplier.email:
         raise HTTPException(status_code=422, detail="Supplier has no email address")
 
-    pdf_bytes = generate_invoice_pdf(invoice, invoice.entity, invoice.supplier, theme=theme)
+    pdf_bytes = await asyncio.to_thread(
+        generate_invoice_pdf, invoice, invoice.entity, invoice.supplier, theme=theme
+    )
     send_invoice_email(
         to=invoice.supplier.email,
         invoice_number=invoice.invoice_number,

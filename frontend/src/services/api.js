@@ -132,6 +132,7 @@ export const deleteTruckLoad = (id) => api.delete(`/truck-loads/${id}`)
 
 // ── Drivers ───────────────────────────────────────────────────────────────────
 export const getDrivers = (params = {}) => api.get('/drivers', { params })
+export const updateDriver = (id, data) => api.put(`/drivers/${id}`, data)
 export const addDriverAdditionalLoad = (driverId, year, month, data) =>
   api.post(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads`, data)
 export const deleteDriverAdditionalLoad = (driverId, year, month, loadId) =>
@@ -191,5 +192,8 @@ export const markStatementPaid = (supplierId, year, month) =>
   api.post(`/supplier-invoices/statements/${supplierId}/${year}/${month}/mark-paid`)
 export const getSupplierPayablesDashboard = (params = {}) =>
   api.get('/supplier-invoices/dashboard-summary', { params })
+
+// ── Feedback ──────────────────────────────────────────────────────────────────
+export const submitFeedback = (data) => api.post('/feedback/', data)
 
 export default api

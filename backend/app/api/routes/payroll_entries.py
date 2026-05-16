@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import List, Optional
 
@@ -52,7 +52,7 @@ def list_payroll_entries(
     if status:
         q = q.filter(PayrollEntry.status == status)
 
-    entries = q.order_by(PayrollEntry.pay_year.desc(), PayrollEntry.pay_month.desc()).offset(skip).limit(limit).all()
+    entries = q.options(joinedload(PayrollEntry.driver)).order_by(PayrollEntry.pay_year.desc(), PayrollEntry.pay_month.desc()).offset(skip).limit(limit).all()
 
     result = []
     for e in entries:

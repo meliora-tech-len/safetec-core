@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     BASE_URL: Optional[str] = None
     FRONTEND_URL: str = "http://localhost:5173"
 
+    ENVIRONMENT: str = "development"  # Set to "production" on server to disable /docs
+
+    # Linear integration — optional. If not set, feedback submission is disabled.
+    LINEAR_API_TOKEN: Optional[str] = None
+    LINEAR_TEAM_ID: Optional[str] = None
+
     # SMTP — optional. If not set, reset links are printed to the server console.
     SMTP_HOST: Optional[str] = None
     SMTP_PORT: int = 587

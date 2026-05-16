@@ -231,7 +231,6 @@ export default function DriverDetailPage() {
   const [cycle,    setCycle]    = useState(null)
   const [settings, setSettings] = useState(null)
   const [entities, setEntities] = useState([])
-  const [trucks,   setTrucks]   = useState([])
   const [loading,  setLoading]  = useState(true)
 
   // Modal state
@@ -263,13 +262,6 @@ export default function DriverDetailPage() {
       setEntities(ents)
     }).catch(() => toast.error('Failed to load driver'))
   }, [driverId])
-
-  // Load trucks when driver entity is known
-  useEffect(() => {
-    if (!driver) return
-    api.get(`/api/fleet/trucks?entity_id=${driver.entity_id}&limit=200`)
-      .then(setTrucks).catch(() => {})
-  }, [driver])
 
   // Load cycle whenever month/year or driverId changes
   const loadCycle = useCallback(() => {
@@ -821,7 +813,6 @@ export default function DriverDetailPage() {
         <EditDriverModal
           driver={driver}
           entities={entities}
-          trucks={trucks}
           onClose={() => setEditModal(false)}
           onSave={async (data) => {
             try {
@@ -838,10 +829,9 @@ export default function DriverDetailPage() {
 }
 
 // ── Edit driver modal ─────────────────────────────────────────────────────────
-function EditDriverModal({ driver, entities, trucks, onSave, onClose }) {
+function EditDriverModal({ driver, entities, onSave, onClose }) {
   const [form, setForm] = useState({
     entity_id:           driver.entity_id,
-    truck_id:            driver.truck_id || '',
     employee_number:     driver.employee_number || '',
     first_name:          driver.first_name,
     last_name:           driver.last_name,
@@ -854,7 +844,6 @@ function EditDriverModal({ driver, entities, trucks, onSave, onClose }) {
     notes:               driver.notes || '',
   })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  const entityTrucks = trucks.filter(t => String(t.entity_id) === String(form.entity_id))
 
   return (
     <Modal title="Edit Driver" onClose={onClose}>
@@ -885,13 +874,6 @@ function EditDriverModal({ driver, entities, trucks, onSave, onClose }) {
           <input className="form-input" value={form.employee_number} onChange={e => set('employee_number', e.target.value)} />
         </div>
         <div>
-          <label className="form-label">Assigned Truck</label>
-          <select className="form-input" value={form.truck_id} onChange={e => set('truck_id', e.target.value ? parseInt(e.target.value) : null)}>
-            <option value="">None</option>
-            {entityTrucks.map(t => <option key={t.id} value={t.id}>{t.registration} ({t.fleet_number || t.make})</option>)}
-          </select>
-        </div>
-        <div>
           <label className="form-label">ID Number</label>
           <input className="form-input" value={form.id_number} onChange={e => set('id_number', e.target.value)} />
         </div>
@@ -918,7 +900,7 @@ function EditDriverModal({ driver, entities, trucks, onSave, onClose }) {
         <button className="btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
         <button className="btn-primary" style={{ flex: 1 }} onClick={() => {
           if (!form.first_name.trim() || !form.last_name.trim()) { toast.error('Name required'); return }
-          onSave({ ...form, truck_id: form.truck_id || null })
+          onSave({ ...form })
         }}>Save</button>
       </div>
     </Modal>

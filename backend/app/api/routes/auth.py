@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from app.db.database import get_db
 from app.core.security import verify_password, create_access_token, get_current_user, get_password_hash
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.models.models import User
 from app.schemas.schemas import Token, UserOut
 from app.services.audit import log_action
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=Token)
+@limiter.limit("10/minute")
 def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -62,7 +64,8 @@ class ResetPasswordRequest(BaseModel):
 
 
 @router.post("/forgot-password", status_code=204)
-def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/hour")
+def forgot_password(request: Request, body: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """
     Generate a password-reset token and email it to the user.
     Always returns 204 to avoid leaking whether the email exists.

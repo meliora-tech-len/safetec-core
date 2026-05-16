@@ -631,6 +631,7 @@ class DriverSummary(BaseModel):
     first_name: str
     last_name: str
     driver_type: DriverType
+    truck_id: Optional[int] = None
     truck_registration: Optional[str] = None
     is_active: bool
     load_count_this_month: int = 0

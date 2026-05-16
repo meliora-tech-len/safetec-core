@@ -1,10 +1,17 @@
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as StarletteResponse
+from app.core.config import settings
+from app.core.limiter import limiter
 from app.db.database import engine, SessionLocal
 from app.models.models import Base, Role
-from app.api.routes import auth, users, entities, suppliers, invoices, audit, settings, roles, fleet, drivers, payroll_settings, payroll_mine_groups, mines, truck_loads, driver_salary_configs, supplier_invoices, diesel, payroll_entries, reports
+from app.api.routes import auth, users, entities, suppliers, invoices, audit, roles, fleet, drivers, payroll_settings, payroll_mine_groups, mines, truck_loads, driver_salary_configs, supplier_invoices, diesel, payroll_entries, reports, feedback
+from app.api.routes import settings as settings_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -25,12 +32,33 @@ def _seed_default_roles():
 
 _seed_default_roles()
 
+_is_dev = settings.ENVIRONMENT == "development"
+
 app = FastAPI(
     title="safetec_core API",
     description="Centralized Business Management System",
     version="1.1.0",
     redirect_slashes=False,
+    docs_url="/docs" if _is_dev else None,
+    openapi_url="/openapi.json" if _is_dev else None,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: StarletteResponse = await call_next(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        return response
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,10 +69,9 @@ app.add_middleware(
         "https://larissa-engelbrecht-safetec-core.vercel.app",
         "https://safetec-core-frontend-git-production-larissas-projects-452e33a2.vercel.app",
     ],
-    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 # ── Static files (local dev logo storage) ────────────────────────────────────
@@ -59,7 +86,7 @@ app.include_router(entities.router)
 app.include_router(suppliers.router)
 app.include_router(invoices.router)
 app.include_router(audit.router)
-app.include_router(settings.router)
+app.include_router(settings_router.router)
 app.include_router(roles.router)
 app.include_router(fleet.router)
 app.include_router(drivers.router)
@@ -72,6 +99,7 @@ app.include_router(supplier_invoices.router)
 app.include_router(diesel.router)
 app.include_router(payroll_entries.router)
 app.include_router(reports.router)
+app.include_router(feedback.router)
 
 
 @app.get("/health")

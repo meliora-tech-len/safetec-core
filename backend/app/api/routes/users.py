@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List
 
@@ -21,8 +21,9 @@ def list_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    users = db.query(User).all()
-    # Enrich entity_access with entity code/name
+    users = db.query(User).options(
+        joinedload(User.entity_access).joinedload(UserEntityAccess.entity)
+    ).all()
     for user in users:
         for access in user.entity_access:
             if access.entity:
@@ -37,7 +38,9 @@ def get_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).options(
+        joinedload(User.entity_access).joinedload(UserEntityAccess.entity)
+    ).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     for access in user.entity_access:
