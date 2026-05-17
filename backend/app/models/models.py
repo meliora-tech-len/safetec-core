@@ -56,6 +56,12 @@ class TrailerStatus(str, enum.Enum):
     maintenance = "maintenance"
 
 
+class PersonalVehicleStatus(str, enum.Enum):
+    active = "active"
+    sold = "sold"
+    written_off = "written_off"
+
+
 # ── Business Entities ────────────────────────────────────────────────────────
 
 class BusinessEntity(Base):
@@ -367,6 +373,8 @@ class Trailer(Base):
     slot = Column(Integer, nullable=False)
     registration = Column(String(50), index=True)
     vin = Column(String(100))
+    licence_number = Column(String(100))
+    licence_expiry = Column(DateTime(timezone=True))
     status = Column(Enum(TrailerStatus), default=TrailerStatus.active, nullable=False)
     notes = Column(Text)
 
@@ -374,6 +382,28 @@ class Trailer(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     truck = relationship("Truck", back_populates="trailers")
+    entity = relationship("BusinessEntity")
+
+
+class PersonalVehicle(Base):
+    __tablename__ = "personal_vehicles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+
+    owner = Column(String(100))
+    vehicle_type = Column(String(200), nullable=False)
+    year = Column(Integer)
+    registration = Column(String(50), index=True)
+    licence_number = Column(String(100))
+    licence_expiry = Column(DateTime(timezone=True))
+
+    status = Column(Enum(PersonalVehicleStatus), default=PersonalVehicleStatus.active, nullable=False)
+    notes = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
     entity = relationship("BusinessEntity")
 
 

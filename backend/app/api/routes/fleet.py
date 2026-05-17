@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from sqlalchemy.exc import SQLAlchemyError
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone, timedelta
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
+    PersonalVehicleCreate, PersonalVehicleUpdate, PersonalVehicleOut,
 )
 from app.services.audit import log_action
 
@@ -53,12 +55,20 @@ def get_fleet_stats(
         Trailer.truck_id.in_(truck_ids)
     ).scalar() if truck_ids else 0
 
+    pv_q = db.query(func.count(PersonalVehicle.id)).filter(
+        PersonalVehicle.status == PersonalVehicleStatus.active
+    )
+    if entity_id:
+        pv_q = pv_q.filter(PersonalVehicle.entity_id == entity_id)
+    total_personal_vehicles = pv_q.scalar() or 0
+
     return FleetStats(
         total_trucks=len(trucks),
         active=sum(1 for t in trucks if t.status == TruckStatus.active),
         inactive=sum(1 for t in trucks if t.status == TruckStatus.inactive),
         maintenance=sum(1 for t in trucks if t.status == TruckStatus.maintenance),
         total_trailers=total_trailers,
+        total_personal_vehicles=total_personal_vehicles,
     )
 
 
@@ -274,3 +284,165 @@ def list_truck_additional_loads(
         d["driver_name"] = f"{driver.first_name} {driver.last_name}".strip()
         result.append(d)
     return result
+
+
+# ── Personal Vehicles ─────────────────────────────────────────────────────────
+
+@router.get("/personal-vehicles", response_model=List[PersonalVehicleOut])
+def list_personal_vehicles(
+    entity_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    accessible = _accessible_entity_ids(current_user)
+    q = db.query(PersonalVehicle)
+    if accessible is not None:
+        q = q.filter(PersonalVehicle.entity_id.in_(accessible))
+    if entity_id:
+        _check_entity_access(entity_id, current_user)
+        q = q.filter(PersonalVehicle.entity_id == entity_id)
+    if status:
+        q = q.filter(PersonalVehicle.status == status)
+    return q.order_by(PersonalVehicle.owner, PersonalVehicle.vehicle_type).all()
+
+
+@router.post("/personal-vehicles", response_model=PersonalVehicleOut)
+def create_personal_vehicle(
+    payload: PersonalVehicleCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _check_entity_access(payload.entity_id, current_user)
+    pv = PersonalVehicle(**payload.model_dump())
+    db.add(pv)
+    db.commit()
+    db.refresh(pv)
+    return pv
+
+
+@router.put("/personal-vehicles/{pv_id}", response_model=PersonalVehicleOut)
+def update_personal_vehicle(
+    pv_id: int,
+    payload: PersonalVehicleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    pv = db.query(PersonalVehicle).filter(PersonalVehicle.id == pv_id).first()
+    if not pv:
+        raise HTTPException(status_code=404, detail="Personal vehicle not found")
+    _check_entity_access(pv.entity_id, current_user)
+    for field, value in payload.model_dump(exclude_none=True).items():
+        setattr(pv, field, value)
+    db.commit()
+    db.refresh(pv)
+    return pv
+
+
+@router.delete("/personal-vehicles/{pv_id}")
+def delete_personal_vehicle(
+    pv_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can delete personal vehicles")
+    pv = db.query(PersonalVehicle).filter(PersonalVehicle.id == pv_id).first()
+    if not pv:
+        raise HTTPException(status_code=404, detail="Personal vehicle not found")
+    db.delete(pv)
+    db.commit()
+    return {"detail": "Personal vehicle deleted"}
+
+
+# ── Licence alerts ────────────────────────────────────────────────────────────
+
+@router.get("/licence-alerts")
+def get_licence_alerts(
+    entity_id: Optional[int] = Query(None),
+    days: int = Query(60, ge=1, le=365),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    accessible = _accessible_entity_ids(current_user)
+    cutoff = datetime.now(timezone.utc) + timedelta(days=days)
+    now = datetime.now(timezone.utc)
+    items = []
+
+    # Trucks
+    tq = db.query(Truck).filter(Truck.licence_expiry.isnot(None))
+    if accessible is not None:
+        tq = tq.filter(Truck.entity_id.in_(accessible))
+    if entity_id:
+        tq = tq.filter(Truck.entity_id == entity_id)
+    for truck in tq.all():
+        expiry = truck.licence_expiry
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry <= cutoff:
+            days_left = max(0, (expiry - now).days)
+            items.append({
+                "type": "truck",
+                "id": truck.id,
+                "registration": truck.registration,
+                "description": f"{truck.make} {truck.model or ''}".strip(),
+                "fleet_number": truck.fleet_number,
+                "licence_expiry": truck.licence_expiry.isoformat(),
+                "days_until_expiry": days_left,
+                "expired": expiry < now,
+                "entity_id": truck.entity_id,
+            })
+
+    # Trailers
+    trailer_q = db.query(Trailer).filter(Trailer.licence_expiry.isnot(None))
+    if accessible is not None:
+        trailer_q = trailer_q.filter(Trailer.entity_id.in_(accessible))
+    if entity_id:
+        trailer_q = trailer_q.filter(Trailer.entity_id == entity_id)
+    for trailer in trailer_q.all():
+        expiry = trailer.licence_expiry
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry <= cutoff:
+            days_left = max(0, (expiry - now).days)
+            items.append({
+                "type": "trailer",
+                "id": trailer.id,
+                "registration": trailer.registration,
+                "description": f"Trailer (slot {trailer.slot})",
+                "fleet_number": None,
+                "licence_expiry": trailer.licence_expiry.isoformat(),
+                "days_until_expiry": days_left,
+                "expired": expiry < now,
+                "entity_id": trailer.entity_id,
+            })
+
+    # Personal vehicles
+    pv_q = db.query(PersonalVehicle).filter(
+        PersonalVehicle.licence_expiry.isnot(None),
+        PersonalVehicle.status == PersonalVehicleStatus.active,
+    )
+    if accessible is not None:
+        pv_q = pv_q.filter(PersonalVehicle.entity_id.in_(accessible))
+    if entity_id:
+        pv_q = pv_q.filter(PersonalVehicle.entity_id == entity_id)
+    for pv in pv_q.all():
+        expiry = pv.licence_expiry
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry <= cutoff:
+            days_left = max(0, (expiry - now).days)
+            items.append({
+                "type": "personal_vehicle",
+                "id": pv.id,
+                "registration": pv.registration,
+                "description": f"{pv.owner or ''} — {pv.vehicle_type}".strip(" —"),
+                "fleet_number": None,
+                "licence_expiry": pv.licence_expiry.isoformat(),
+                "days_until_expiry": days_left,
+                "expired": expiry < now,
+                "entity_id": pv.entity_id,
+            })
+
+    items.sort(key=lambda x: x["days_until_expiry"])
+    return {"items": items, "count": len(items)}

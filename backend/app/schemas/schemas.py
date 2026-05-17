@@ -407,13 +407,15 @@ Token.model_rebuild()
 
 # ── Fleet Schemas ─────────────────────────────────────────────────────────────
 
-from app.models.models import TruckStatus, TrailerStatus  # noqa: E402
+from app.models.models import TruckStatus, TrailerStatus, PersonalVehicleStatus  # noqa: E402
 
 
 class TrailerBase(BaseModel):
     slot: int
     registration: Optional[str] = None
     vin: Optional[str] = None
+    licence_number: Optional[str] = None
+    licence_expiry: Optional[datetime] = None
     status: TrailerStatus = TrailerStatus.active
     notes: Optional[str] = None
 
@@ -425,6 +427,8 @@ class TrailerCreate(TrailerBase):
 class TrailerUpdate(BaseModel):
     registration: Optional[str] = None
     vin: Optional[str] = None
+    licence_number: Optional[str] = None
+    licence_expiry: Optional[datetime] = None
     status: Optional[TrailerStatus] = None
     notes: Optional[str] = None
 
@@ -513,6 +517,43 @@ class FleetStats(BaseModel):
     inactive: int = 0
     maintenance: int = 0
     total_trailers: int = 0
+    total_personal_vehicles: int = 0
+
+
+class PersonalVehicleBase(BaseModel):
+    entity_id: int
+    owner: Optional[str] = None
+    vehicle_type: str
+    year: Optional[int] = None
+    registration: Optional[str] = None
+    licence_number: Optional[str] = None
+    licence_expiry: Optional[datetime] = None
+    status: PersonalVehicleStatus = PersonalVehicleStatus.active
+    notes: Optional[str] = None
+
+
+class PersonalVehicleCreate(PersonalVehicleBase):
+    pass
+
+
+class PersonalVehicleUpdate(BaseModel):
+    owner: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    year: Optional[int] = None
+    registration: Optional[str] = None
+    licence_number: Optional[str] = None
+    licence_expiry: Optional[datetime] = None
+    status: Optional[PersonalVehicleStatus] = None
+    notes: Optional[str] = None
+
+
+class PersonalVehicleOut(PersonalVehicleBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 
 # ── Driver Schemas ────────────────────────────────────────────────────────────
