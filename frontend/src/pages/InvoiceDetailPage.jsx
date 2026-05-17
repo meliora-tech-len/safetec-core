@@ -2,16 +2,17 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getInvoice, updateInvoice, deleteInvoice, downloadInvoicePdf } from '../services/api'
 import { useTheme } from '../hooks/useTheme'
-import { formatCurrency, formatDate, statusBadgeClass, errorMessage } from '../utils/helpers'
+import { formatCurrency, formatDate, statusBadgeClass, statusLabel, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail } from 'lucide-react'
+import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail, Send } from 'lucide-react'
 import DeleteModal from '../components/DeleteModal'
 
 const STATUS_FLOW = {
-  draft: ['sent', 'cancelled'],
-  sent: ['overdue', 'cancelled'],
-  overdue: ['cancelled'],
-  paid: [],
+  draft:     ['ready', 'cancelled'],
+  ready:     ['sent', 'cancelled'],
+  sent:      ['overdue', 'cancelled'],
+  overdue:   ['cancelled'],
+  paid:      [],
   cancelled: [],
 }
 
@@ -123,15 +124,21 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
               <Edit2 size={13} /> Edit
             </button>
           )}
+          {/* Prominent "Mark as Sent" when ready to send */}
+          {invoice.status === 'ready' && (
+            <button className="btn-primary btn-sm" onClick={() => handleStatusChange('sent')} disabled={updating}>
+              <Send size={13} /> Mark as Sent
+            </button>
+          )}
           {canRecordPayment && (
             <button className="btn-primary btn-sm" onClick={() => setShowPayModal(true)} disabled={updating}>
               <CheckCircle size={13} /> Record Payment
             </button>
           )}
-          {nextStatuses.map(s => (
+          {nextStatuses.filter(s => !(invoice.status === 'ready' && s === 'sent')).map(s => (
             <button key={s} className="btn-ghost btn-sm"
               onClick={() => handleStatusChange(s)} disabled={updating}>
-              Mark as {s}
+              Mark as {statusLabel(s)}
             </button>
           ))}
           {invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
@@ -139,6 +146,23 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
           )}
         </div>
       </div>
+
+      {/* Ready-to-send banner */}
+      {invoice.status === 'ready' && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16,
+          padding: '10px 16px', borderRadius: 8,
+          background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)',
+        }}>
+          <Send size={14} style={{ color: '#a78bfa', flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: '#a78bfa', flex: 1 }}>
+            PDF has been generated. Once you have sent this {invoice.document_type}, click <strong>Mark as Sent</strong> to update the status.
+          </span>
+          <button className="btn-primary btn-sm" onClick={() => handleStatusChange('sent')} disabled={updating}>
+            <Send size={12} /> Mark as Sent
+          </button>
+        </div>
+      )}
 
       <div style={styles.grid}>
         {/* Invoice card */}
@@ -169,7 +193,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
                 {val !== null ? (
                   <div style={styles.metaVal}>{val}</div>
                 ) : (
-                  <span className={statusBadgeClass(invoice.status)}>{invoice.status}</span>
+                  <span className={statusBadgeClass(invoice.status)}>{statusLabel(invoice.status)}</span>
                 )}
               </div>
             ))}

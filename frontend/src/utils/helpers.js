@@ -22,8 +22,13 @@ export const formatDateTime = (dateStr) => {
 }
 
 export const statusBadgeClass = (status) => {
-  const map = { draft: 'draft', sent: 'sent', paid: 'paid', overdue: 'overdue', cancelled: 'cancelled' }
+  const map = { draft: 'draft', ready: 'ready', sent: 'sent', paid: 'paid', overdue: 'overdue', cancelled: 'cancelled' }
   return `badge badge-${map[status] || 'draft'}`
+}
+
+export const statusLabel = (status) => {
+  const labels = { draft: 'Draft', ready: 'Ready to Send', sent: 'Sent', paid: 'Paid', overdue: 'Overdue', cancelled: 'Cancelled' }
+  return labels[status] || status
 }
 
 export const docTypeBadgeClass = (type) => `badge badge-${type}`

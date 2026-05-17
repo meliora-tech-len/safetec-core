@@ -27,6 +27,7 @@ class Role(Base):
 
 class InvoiceStatus(str, enum.Enum):
     draft = "draft"
+    ready = "ready"      # PDF generated, not yet sent
     sent = "sent"
     paid = "paid"
     overdue = "overdue"

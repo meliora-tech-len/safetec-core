@@ -397,6 +397,7 @@ class DashboardStats(BaseModel):
     paid_this_month: Decimal = Decimal("0")
     overdue_count: int = 0
     draft_count: int = 0
+    ready_count: int = 0
     recent_invoices: List[InvoiceSummary] = []
     entity_breakdown: List[dict] = []
 

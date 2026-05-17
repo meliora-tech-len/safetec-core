@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getInvoices, getEntities, downloadInvoicePdf } from '../services/api'
-import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
+import { formatCurrency, formatDate, statusBadgeClass, statusLabel } from '../utils/helpers'
 import { Plus, Search, X, FileText, Download, EyeOff } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useTheme } from '../hooks/useTheme'
@@ -43,10 +43,11 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
   const stats = useMemo(() => {
-    const s = { draft: 0, sent: 0, sentTotal: 0, overdue: 0, overdueTotal: 0, paid: 0, paidTotal: 0, cancelled: 0 }
+    const s = { draft: 0, ready: 0, readyTotal: 0, sent: 0, sentTotal: 0, overdue: 0, overdueTotal: 0, paid: 0, paidTotal: 0, cancelled: 0 }
     for (const inv of allInvoices) {
       const total = parseFloat(inv.total) || 0
       if (inv.status === 'draft') s.draft++
+      else if (inv.status === 'ready') { s.ready++; s.readyTotal += total }
       else if (inv.status === 'sent') { s.sent++; s.sentTotal += total }
       else if (inv.status === 'overdue') { s.overdue++; s.overdueTotal += total }
       else if (inv.status === 'paid') { s.paid++; s.paidTotal += total }
@@ -108,7 +109,16 @@ export default function InvoicesPage({ docType = 'invoice' }) {
       {!loading && (
         <div style={styles.statsBar}>
           <StatPill label="Draft" count={stats.draft} color="var(--text-muted)" bg="var(--bg-secondary)" />
-          <StatPill label="Outstanding" count={stats.sent} amount={stats.sentTotal} color="var(--warning)" bg="rgba(245,158,11,0.1)" />
+          <StatPill
+            label="Ready to Send"
+            count={stats.ready}
+            amount={stats.readyTotal}
+            color="#a78bfa"
+            bg="rgba(139,92,246,0.1)"
+            highlight={stats.ready > 0}
+            onClick={() => setFilterStatus(filterStatus === 'ready' ? '' : 'ready')}
+          />
+          <StatPill label="Sent" count={stats.sent} amount={stats.sentTotal} color="var(--accent)" bg="rgba(79,142,247,0.1)" />
           <StatPill label="Overdue" count={stats.overdue} amount={stats.overdueTotal} color="var(--danger)" bg="rgba(239,68,68,0.1)" />
           <StatPill label="Paid" count={stats.paid} amount={stats.paidTotal} color="var(--success)" bg="rgba(34,197,94,0.1)" />
         </div>
@@ -127,9 +137,10 @@ export default function InvoicesPage({ docType = 'invoice' }) {
             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         )}
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ width: 140 }}>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ width: 160 }}>
           <option value="">All Statuses</option>
           <option value="draft">Draft</option>
+          <option value="ready">Ready to Send</option>
           <option value="sent">Sent</option>
           <option value="paid">Paid</option>
           <option value="overdue">Overdue</option>
@@ -179,7 +190,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
                     {formatDate(inv.due_date)}
                   </span>
                 </td>
-                <td><span className={statusBadgeClass(inv.status)}>{inv.status}</span></td>
+                <td><span className={statusBadgeClass(inv.status)}>{statusLabel(inv.status)}</span></td>
                 <td className="text-right font-bold">{formatCurrency(inv.total)}</td>
                 <td onClick={e => handlePdf(e, inv)} style={{ textAlign: 'center' }}>
                   <button className="btn-icon btn-ghost" title="Download PDF">
@@ -195,10 +206,21 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   )
 }
 
-function StatPill({ label, count, amount, color, bg }) {
+function StatPill({ label, count, amount, color, bg, highlight, onClick }) {
   return (
-    <div style={{ ...styles.statPill, background: bg, borderColor: color + '40' }}>
-      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</span>
+    <div
+      onClick={onClick}
+      style={{
+        ...styles.statPill,
+        background: bg,
+        borderColor: highlight ? color : color + '40',
+        borderWidth: highlight ? 1.5 : 1,
+        cursor: onClick ? 'pointer' : 'default',
+        boxShadow: highlight ? `0 0 0 3px ${color}22` : 'none',
+        transition: 'box-shadow 0.15s',
+      }}
+    >
+      <span style={{ fontSize: 11, color: highlight ? color : 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</span>
       <span style={{ fontSize: 20, fontWeight: 800, color, lineHeight: 1.1 }}>{count}</span>
       {amount !== undefined && (
         <span style={{ fontSize: 11, color, fontWeight: 600 }}>{formatCurrency(amount)}</span>

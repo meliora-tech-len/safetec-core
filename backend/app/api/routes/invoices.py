@@ -117,6 +117,7 @@ def dashboard_stats(
     )
     overdue_count = sum(1 for inv in invoices if inv.status == "overdue")
     draft_count = sum(1 for inv in invoices if inv.status == "draft")
+    ready_count = sum(1 for inv in invoices if inv.status == "ready")
     total_invoices = sum(1 for inv in invoices if inv.document_type == "invoice")
     total_quotes = sum(1 for inv in invoices if inv.document_type == "quote")
 
@@ -156,6 +157,7 @@ def dashboard_stats(
         paid_this_month=Decimal(str(paid_this_month)),
         overdue_count=overdue_count,
         draft_count=draft_count,
+        ready_count=ready_count,
         recent_invoices=recent_out,
         entity_breakdown=list(entity_map.values()),
     )
@@ -345,6 +347,16 @@ async def download_invoice_pdf(
     pdf_bytes = await asyncio.to_thread(
         generate_invoice_pdf, invoice, invoice.entity, invoice.supplier, theme=theme
     )
+
+    # Advance draft → ready on first PDF generation
+    if invoice.status == "draft":
+        invoice.status = "ready"
+        log_action(db, "invoice.ready", user_id=current_user.id,
+                   entity_id=invoice.entity_id, resource_type="invoice",
+                   resource_id=invoice_id,
+                   description=f"{invoice.invoice_number} marked as ready (PDF generated)")
+        db.commit()
+
     filename = f"{invoice.invoice_number}.pdf"
     return Response(
         content=pdf_bytes,
@@ -381,6 +393,11 @@ async def send_invoice_email_endpoint(
         pdf_bytes=pdf_bytes,
     )
     doc_label = "Invoice" if invoice.document_type == "invoice" else "Quote"
+
+    # Mark as sent when emailed via the app
+    if invoice.status in ("draft", "ready"):
+        invoice.status = "sent"
+
     log_action(db, "invoice.emailed", user_id=current_user.id,
                entity_id=invoice.entity_id, resource_type="invoice",
                resource_id=invoice_id,
