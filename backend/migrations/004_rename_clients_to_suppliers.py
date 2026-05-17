@@ -38,8 +38,10 @@ def run():
                 conn.commit()
                 print(f"  OK: {label}")
             except Exception as e:
-                if "already exists" in str(e).lower() or "no such column" in str(e).lower():
-                    print(f"  SKIP: {label} (already done)")
+                err = str(e).lower()
+                if ("already exists" in err or "no such column" in err
+                        or "does not exist" in err or "undefined table" in err):
+                    print(f"  SKIP: {label} (already done or not applicable)")
                 else:
                     conn.rollback()
                     print(f"  FAIL: {label}: {e}")
