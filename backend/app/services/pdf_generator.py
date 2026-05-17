@@ -474,7 +474,6 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
     footer_text = f"{entity.name}"
     if entity.vat_number:
         footer_text += f"  |  VAT: {entity.vat_number}"
-    footer_text += f"  |  Generated {format_date(datetime.now())}"
     story.append(Paragraph(footer_text, s_footer))
 
     doc.build(story)

@@ -29,6 +29,7 @@ class InvoiceStatus(str, enum.Enum):
     draft = "draft"
     ready = "ready"      # PDF generated, not yet sent
     sent = "sent"
+    accepted = "accepted"  # quote accepted by client
     paid = "paid"
     overdue = "overdue"
     cancelled = "cancelled"

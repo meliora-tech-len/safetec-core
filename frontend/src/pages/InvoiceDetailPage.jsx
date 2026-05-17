@@ -10,7 +10,8 @@ import DeleteModal from '../components/DeleteModal'
 const STATUS_FLOW = {
   draft:     ['ready', 'cancelled'],
   ready:     ['sent', 'cancelled'],
-  sent:      ['overdue', 'cancelled'],
+  sent:      ['accepted', 'overdue', 'cancelled'],
+  accepted:  ['cancelled'],
   overdue:   ['cancelled'],
   paid:      [],
   cancelled: [],

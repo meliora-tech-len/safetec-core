@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getInvoices, getEntities, downloadInvoicePdf } from '../services/api'
+import { getInvoices, getEntities, downloadInvoicePdf, updateInvoice } from '../services/api'
 import { formatCurrency, formatDate, statusBadgeClass, statusLabel } from '../utils/helpers'
-import { Plus, Search, X, FileText, Download, EyeOff } from 'lucide-react'
+import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useTheme } from '../hooks/useTheme'
 import toast from 'react-hot-toast'
@@ -43,12 +43,13 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
   const stats = useMemo(() => {
-    const s = { draft: 0, ready: 0, readyTotal: 0, sent: 0, sentTotal: 0, overdue: 0, overdueTotal: 0, paid: 0, paidTotal: 0, cancelled: 0 }
+    const s = { draft: 0, ready: 0, readyTotal: 0, sent: 0, sentTotal: 0, accepted: 0, acceptedTotal: 0, overdue: 0, overdueTotal: 0, paid: 0, paidTotal: 0, cancelled: 0 }
     for (const inv of allInvoices) {
       const total = parseFloat(inv.total) || 0
       if (inv.status === 'draft') s.draft++
       else if (inv.status === 'ready') { s.ready++; s.readyTotal += total }
       else if (inv.status === 'sent') { s.sent++; s.sentTotal += total }
+      else if (inv.status === 'accepted') { s.accepted++; s.acceptedTotal += total }
       else if (inv.status === 'overdue') { s.overdue++; s.overdueTotal += total }
       else if (inv.status === 'paid') { s.paid++; s.paidTotal += total }
       else if (inv.status === 'cancelled') s.cancelled++
@@ -66,8 +67,21 @@ export default function InvoicesPage({ docType = 'invoice' }) {
 
   const handlePdf = async (e, inv) => {
     e.stopPropagation()
-    try { await downloadInvoicePdf(inv.id, inv.invoice_number, theme) }
+    try {
+      await downloadInvoicePdf(inv.id, inv.invoice_number, theme)
+      // PDF download advances draft → ready automatically on the backend; refresh list
+      if (inv.status === 'draft') load()
+    }
     catch { toast.error('Failed to generate PDF') }
+  }
+
+  const handleQuickStatus = async (e, inv, newStatus) => {
+    e.stopPropagation()
+    try {
+      await updateInvoice(inv.id, { status: newStatus })
+      toast.success(`Marked as ${statusLabel(newStatus)}`)
+      load()
+    } catch { toast.error('Failed to update status') }
   }
 
   const isInvoice = docType === 'invoice'
@@ -119,6 +133,9 @@ export default function InvoicesPage({ docType = 'invoice' }) {
             onClick={() => setFilterStatus(filterStatus === 'ready' ? '' : 'ready')}
           />
           <StatPill label="Sent" count={stats.sent} amount={stats.sentTotal} color="var(--accent)" bg="rgba(79,142,247,0.1)" />
+          {!isInvoice && stats.accepted > 0 && (
+            <StatPill label="Accepted" count={stats.accepted} amount={stats.acceptedTotal} color="#0d9488" bg="rgba(20,184,166,0.1)" />
+          )}
           <StatPill label="Overdue" count={stats.overdue} amount={stats.overdueTotal} color="var(--danger)" bg="rgba(239,68,68,0.1)" />
           <StatPill label="Paid" count={stats.paid} amount={stats.paidTotal} color="var(--success)" bg="rgba(34,197,94,0.1)" />
         </div>
@@ -142,6 +159,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           <option value="draft">Draft</option>
           <option value="ready">Ready to Send</option>
           <option value="sent">Sent</option>
+          {!isInvoice && <option value="accepted">Accepted</option>}
           <option value="paid">Paid</option>
           <option value="overdue">Overdue</option>
           {showCancelled && <option value="cancelled">Cancelled</option>}
@@ -169,7 +187,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
               <th>Due Date</th>
               <th>Status</th>
               <th className="text-right">Total</th>
-              <th style={{ width: 60 }}>PDF</th>
+              <th style={{ width: 90 }}></th>
             </tr>
           </thead>
           <tbody>
@@ -192,10 +210,32 @@ export default function InvoicesPage({ docType = 'invoice' }) {
                 </td>
                 <td><span className={statusBadgeClass(inv.status)}>{statusLabel(inv.status)}</span></td>
                 <td className="text-right font-bold">{formatCurrency(inv.total)}</td>
-                <td onClick={e => handlePdf(e, inv)} style={{ textAlign: 'center' }}>
-                  <button className="btn-icon btn-ghost" title="Download PDF">
-                    <Download size={13} />
-                  </button>
+                <td style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                    <button className="btn-icon btn-ghost" title="Download PDF" onClick={e => handlePdf(e, inv)}>
+                      <Download size={13} />
+                    </button>
+                    {(inv.status === 'draft' || inv.status === 'ready') && (
+                      <button
+                        className="btn-icon btn-ghost"
+                        title="Mark as Sent"
+                        onClick={e => handleQuickStatus(e, inv, 'sent')}
+                        style={{ color: 'var(--accent)' }}
+                      >
+                        <Send size={13} />
+                      </button>
+                    )}
+                    {inv.status === 'sent' && docType === 'quote' && (
+                      <button
+                        className="btn-icon btn-ghost"
+                        title="Mark as Accepted"
+                        onClick={e => handleQuickStatus(e, inv, 'accepted')}
+                        style={{ color: '#0d9488' }}
+                      >
+                        <CheckCircle size={13} />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
