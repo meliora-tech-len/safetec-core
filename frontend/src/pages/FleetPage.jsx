@@ -882,7 +882,7 @@ export default function FleetPage() {
         alertsShownRef.current = true
         const expired = data.items.filter(a => a.expired)
         const soon    = data.items.filter(a => !a.expired)
-        if (expired.length > 0) toast.error(`${expired.length} licence${expired.length !== 1 ? 's' : ''} expired!`, { duration: 3000 })
+        if (expired.length > 0) toast.error(`${expired.length} licence${expired.length !== 1 ? 's' : ''} expired!`, { duration: 2000 })
         if (soon.length   > 0) toast(`${soon.length} licence${soon.length !== 1 ? 's' : ''} expiring within 30 days`, { icon: '⚠️', duration: 3000 })
       }
     } catch {
