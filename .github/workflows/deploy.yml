@@ -6,8 +6,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  BACKEND_IMAGE: ghcr.io/larissa-engelbrecht/safetec-backend
-  FRONTEND_IMAGE: ghcr.io/larissa-engelbrecht/safetec-frontend
+  BACKEND_IMAGE: ghcr.io/meliora-tech-len/safetec-backend
+  FRONTEND_IMAGE: ghcr.io/meliora-tech-len/safetec-frontend
 
 jobs:
   build-and-push:
