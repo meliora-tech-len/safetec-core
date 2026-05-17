@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import VerifyBadge from '../components/VerifyBadge'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_API_URL || ''
 
 const MONTHS = ['January','February','March','April','May','June',
                 'July','August','September','October','November','December']

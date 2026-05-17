@@ -1,12 +1,15 @@
 services:
+
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
     env_file: ./backend/.env.production
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     restart: unless-stopped
+    networks:
+      - safetec
     volumes:
       - logo_storage:/app/static/logos
     healthcheck:
@@ -15,6 +18,27 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # VITE_API_URL is left empty — Nginx proxies /api to the api service.
+      # Override here only if you need the browser to call a different origin.
+      # args:
+      #   VITE_API_URL: https://api.yourdomain.co.za
+    ports:
+      - "80:80"
+    restart: unless-stopped
+    networks:
+      - safetec
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  safetec:
+    driver: bridge
 
 volumes:
   logo_storage:

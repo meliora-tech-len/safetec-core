@@ -5,7 +5,7 @@ import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_API_URL || ''
 
 const ALERT_DAYS  = 365  // fetch window — catch all expired + expiring soon
 
