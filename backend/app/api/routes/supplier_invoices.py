@@ -1,5 +1,5 @@
 import calendar
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date as date_type
 from decimal import Decimal
 from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Supplier, SupplierInvoice, PaymentTermType
+from app.models.models import User, Supplier, SupplierInvoice, PaymentTermType, Truck, DieselFillUp
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
     SupplierStatementGroup, SupplierPayablesDashboard,
@@ -16,8 +16,82 @@ from app.schemas.schemas import (
 )
 from app.services.audit import log_action
 from app.services.verification import apply_verify_step, get_verification_display
+from app.services.diesel_service import DieselCalculationService
 
 router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
+
+
+def _auto_create_diesel_fillup(
+    db: Session,
+    supplier_invoice: SupplierInvoice,
+    supplier: Supplier,
+    vehicle_reg: str,
+    litres: Decimal,
+    invoice_amount: Decimal,
+    entity_id: int,
+    user_id: int,
+) -> Optional[int]:
+    """
+    Try to create a DieselFillUp linked to a supplier invoice.
+    Returns the new fill-up ID, or None if the truck wasn't found or creation failed.
+    """
+    try:
+        truck = (
+            db.query(Truck)
+            .filter(
+                Truck.registration.ilike(vehicle_reg),
+                Truck.entity_id == entity_id,
+            )
+            .first()
+        )
+        if not truck:
+            return None
+
+        inv_date = supplier_invoice.invoice_date.date() if hasattr(supplier_invoice.invoice_date, 'date') else supplier_invoice.invoice_date
+
+        # Use the active DieselRate if available; otherwise derive from invoice amount / litres
+        rate_record = DieselCalculationService.get_active_rate(db, supplier.id, entity_id, inv_date)
+        if rate_record:
+            rate_per_litre = Decimal(str(rate_record.rate_per_litre))
+        else:
+            rate_per_litre = (invoice_amount / litres).quantize(Decimal("0.0001"))
+
+        settings = DieselCalculationService.get_diesel_settings(db, entity_id)
+        admin_fee_pct = Decimal(str(settings.admin_fee_pct)) if settings else Decimal("0")
+        apply_admin_fee = settings.apply_admin_fee if settings else False
+
+        amounts = DieselCalculationService.calculate_fillup_amounts(
+            litres=litres,
+            rate_per_litre=rate_per_litre,
+            admin_fee_pct=admin_fee_pct,
+            apply_admin_fee=apply_admin_fee,
+        )
+
+        fillup = DieselFillUp(
+            entity_id=entity_id,
+            truck_id=truck.id,
+            supplier_id=supplier.id,
+            fillup_date=inv_date,
+            litres=litres,
+            rate_per_litre=rate_per_litre,
+            invoice_number=supplier_invoice.invoice_number,
+            supplier_invoice_id=supplier_invoice.id,
+            admin_fee_pct=admin_fee_pct,
+            created_by=user_id,
+            **amounts,
+        )
+        db.add(fillup)
+        log_action(
+            db, "diesel_fillup.auto_created", user_id=user_id,
+            entity_id=entity_id, resource_type="diesel_fillup",
+            description=f"Auto-created diesel fill-up from invoice {supplier_invoice.invoice_number} for {truck.registration} ({litres}L)",
+        )
+        db.commit()
+        db.refresh(fillup)
+        return fillup.id
+    except Exception:
+        db.rollback()
+        return None
 
 
 def _check_entity_access(entity_id: int, user: User):
@@ -160,6 +234,21 @@ def list_supplier_invoices(
         SupplierInvoice.invoice_date.asc(),
     ).all()
 
+    # Pre-fetch diesel_fillup_id for all invoices in one query
+    inv_ids = [i.id for i in invoices]
+    fillup_id_by_inv: dict = {}
+    if inv_ids:
+        rows = (
+            db.query(DieselFillUp.supplier_invoice_id, DieselFillUp.id)
+            .filter(DieselFillUp.supplier_invoice_id.in_(inv_ids))
+            .all()
+        )
+        fillup_id_by_inv = {sup_inv_id: fid for sup_inv_id, fid in rows}
+
+    def _to_out(inv) -> SupplierInvoiceOut:
+        out = SupplierInvoiceOut.model_validate(inv)
+        return out.model_copy(update={"diesel_fillup_id": fillup_id_by_inv.get(inv.id)})
+
     # Group by (year, month)
     groups: dict = {}
     for inv in invoices:
@@ -176,7 +265,7 @@ def list_supplier_invoices(
         result.append(SupplierStatementGroup(
             statement_month=month,
             statement_year=year,
-            invoices=[SupplierInvoiceOut.model_validate(i) for i in group_invs],
+            invoices=[_to_out(i) for i in group_invs],
             subtotal=subtotal,
             payment_due_date=due_date,
             is_fully_paid=is_fully_paid,
@@ -231,7 +320,23 @@ def create_supplier_invoice(
     )
     db.commit()
     db.refresh(inv)
-    return inv
+
+    # Auto-create DieselFillUp when supplier is a diesel supplier and enough data is provided
+    diesel_fillup_id = None
+    if supplier.is_diesel_supplier and payload.vehicle_reg and payload.litres and payload.litres > 0:
+        diesel_fillup_id = _auto_create_diesel_fillup(
+            db=db,
+            supplier_invoice=inv,
+            supplier=supplier,
+            vehicle_reg=payload.vehicle_reg,
+            litres=Decimal(str(payload.litres)),
+            invoice_amount=Decimal(str(payload.amount)),
+            entity_id=payload.entity_id,
+            user_id=current_user.id,
+        )
+
+    out = SupplierInvoiceOut.model_validate(inv)
+    return out.model_copy(update={"diesel_fillup_id": diesel_fillup_id})
 
 
 # ── Update ────────────────────────────────────────────────────────────────────

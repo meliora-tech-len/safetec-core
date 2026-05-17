@@ -8,7 +8,7 @@ import {
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertTriangle, Fuel } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
 
@@ -24,6 +24,7 @@ const blankForm = (entityId) => ({
   invoice_date: today,
   invoice_number: '',
   amount: '',
+  litres: '',
   vehicle_reg: '',
   description: '',
   vat_applicable: true,
@@ -96,6 +97,7 @@ export default function SupplierProfilePage() {
       invoice_date: inv.invoice_date?.slice(0, 10) || today,
       invoice_number: inv.invoice_number || '',
       amount: String(inv.amount || ''),
+      litres: inv.litres ? String(inv.litres) : '',
       vehicle_reg: inv.vehicle_reg || '',
       description: inv.description || '',
       vat_applicable: inv.vat_applicable !== false,
@@ -117,6 +119,7 @@ export default function SupplierProfilePage() {
     invoice_date: new Date(form.invoice_date + 'T12:00:00').toISOString(),
     invoice_number: form.invoice_number.trim(),
     amount: parseFloat(form.amount),
+    litres: form.litres ? parseFloat(form.litres) : null,
     vat_applicable: form.vat_applicable,
     vehicle_reg: form.vehicle_reg.trim() || null,
     description: form.description.trim() || null,
@@ -135,8 +138,15 @@ export default function SupplierProfilePage() {
     if (err) return toast.error(err)
     setSaving(true)
     try {
-      await createSupplierInvoice({ ...buildPayload(newForm), supplier_id: parseInt(supplierId) })
-      toast.success('Invoice added')
+      const r = await createSupplierInvoice({ ...buildPayload(newForm), supplier_id: parseInt(supplierId) })
+      const fillupCreated = r.data?.diesel_fillup_id
+      if (fillupCreated && newForm.vehicle_reg) {
+        toast.success(`Invoice added · Diesel log created for ${newForm.vehicle_reg.toUpperCase()}`)
+      } else if (supplier?.is_diesel_supplier && newForm.litres && newForm.vehicle_reg && !fillupCreated) {
+        toast.success('Invoice added · Truck not found — diesel log was not created')
+      } else {
+        toast.success('Invoice added')
+      }
       setShowNew(false)
       setNewForm(blankForm(supplier?.entity_id))
       await loadInvoices()
@@ -208,6 +218,7 @@ export default function SupplierProfilePage() {
   const multiEntity = entities.length > 1
   // Suppliers with requires_registration=false (e.g. Axxess) don't use vehicle regs on invoices
   const showVehicleReg = supplier?.requires_registration !== false
+  const isDiesel = supplier?.is_diesel_supplier === true
 
   if (loading) return <div style={styles.page}><div className="loading-center"><div className="spinner" /></div></div>
   if (!supplier) return <div style={styles.page}><p style={{ color: 'var(--text-muted)' }}>Supplier not found.</p></div>
@@ -276,6 +287,7 @@ export default function SupplierProfilePage() {
                 {showVehicleReg && <th style={styles.th}>Vehicle Reg</th>}
                 <th style={styles.th}>Description</th>
                 <th style={styles.th}>Amount</th>
+                {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Litres</th>}
                 <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
                 <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
                 <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
@@ -291,10 +303,11 @@ export default function SupplierProfilePage() {
                     firstInputRef={firstInputRef}
                     onKeyDown={handleKeyDown}
                     showVehicleReg={showVehicleReg}
+                    isDiesel={isDiesel}
                   />
                 : <tr>
                     <td
-                      colSpan={multiEntity ? 10 : 9}
+                      colSpan={8 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 1 : 0)}
                       style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}
                     >
                       No invoices yet — click "Add Invoice" to start
@@ -406,6 +419,7 @@ export default function SupplierProfilePage() {
                       {showVehicleReg && <th style={styles.th}>Vehicle Reg</th>}
                       <th style={styles.th}>Description</th>
                       <th style={styles.th}>Amount</th>
+                      {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Litres</th>}
                       <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
@@ -421,6 +435,7 @@ export default function SupplierProfilePage() {
                         firstInputRef={firstInputRef}
                         onKeyDown={handleKeyDown}
                         showVehicleReg={showVehicleReg}
+                        isDiesel={isDiesel}
                       />
                     )}
                     {group.invoices.map(inv => {
@@ -545,6 +560,31 @@ export default function SupplierProfilePage() {
                             )}
                           </td>
 
+                          {/* Litres — diesel suppliers only */}
+                          {isDiesel && (
+                            <td style={{ ...styles.td, textAlign: 'right' }}>
+                              {isEditing ? (
+                                <input
+                                  type="number" step="0.001" min="0" placeholder="0.000"
+                                  value={f.litres || ''}
+                                  onChange={e => setEditForm(p => ({ ...p, litres: e.target.value }))}
+                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
+                                />
+                              ) : inv.litres ? (
+                                <span style={{ fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                                  {inv.diesel_fillup_id && <Fuel size={11} color="#16a34a" title="Diesel log created" />}
+                                  {parseFloat(inv.litres).toFixed(1)}L
+                                </span>
+                              ) : (
+                                inv.diesel_fillup_id
+                                  ? <Fuel size={12} color="#16a34a" title="Linked to diesel log" />
+                                  : <span style={{ color: 'var(--text-muted)' }}>—</span>
+                              )}
+                            </td>
+                          )}
+
                           {/* VAT */}
                           <td style={{ ...styles.td, textAlign: 'center' }}>
                             {isEditing ? (
@@ -611,7 +651,7 @@ export default function SupplierProfilePage() {
                         Statement Total:
                       </td>
                       <td style={{ ...styles.td, fontWeight: 700 }}>{formatCurrency(group.subtotal)}</td>
-                      <td colSpan={4} style={styles.td} />
+                      <td colSpan={4 + (isDiesel ? 1 : 0)} style={styles.td} />
                     </tr>
                   </tfoot>
                 </table>
@@ -625,7 +665,7 @@ export default function SupplierProfilePage() {
 }
 
 
-function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg }) {
+function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return (
     <tr style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border-accent)' }}>
@@ -667,6 +707,17 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
           onKeyDown={e => onKeyDown(e, onSave, onCancel)}
           style={{ ...styles.cellInput, width: 90, textAlign: 'right' }} />
       </td>
+      {isDiesel && (
+        <td style={styles.td}>
+          <input type="number" step="0.001" min="0" placeholder="0.000"
+            value={form.litres}
+            onChange={e => set('litres', e.target.value)}
+            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
+            title="Litres of diesel — auto-creates a diesel log entry for this truck"
+          />
+        </td>
+      )}
       <td style={{ ...styles.td, textAlign: 'center' }}>
         <input type="checkbox" checked={form.vat_applicable}
           onChange={e => set('vat_applicable', e.target.checked)} style={{ cursor: 'pointer' }} />

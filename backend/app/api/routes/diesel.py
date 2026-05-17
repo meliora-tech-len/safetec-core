@@ -26,6 +26,25 @@ from app.services.verification import apply_verify_step, get_verification_displa
 router = APIRouter(prefix="/api/diesel", tags=["diesel"])
 
 
+def _sync_truckload_diesel(db: Session, truckload_id: int, fillup: DieselFillUp) -> None:
+    """Copy diesel snapshot fields from a fill-up onto its linked TruckLoad."""
+    tl = db.query(TruckLoad).filter(TruckLoad.id == truckload_id).first()
+    if tl:
+        tl.diesel_invoice = fillup.invoice_number
+        tl.diesel_litres = fillup.litres
+        tl.diesel_rate = fillup.rate_per_litre
+        db.commit()
+
+
+def _clear_truckload_diesel(db: Session, truckload_id: int) -> None:
+    """Clear diesel snapshot fields on a TruckLoad when the linked fill-up is removed."""
+    tl = db.query(TruckLoad).filter(TruckLoad.id == truckload_id).first()
+    if tl:
+        tl.diesel_invoice = None
+        tl.diesel_litres = None
+        tl.diesel_rate = None
+
+
 def _check_entity_access(entity_id: int, user: User):
     if user.role == "admin":
         return
@@ -396,6 +415,7 @@ def create_fillup(
         invoice_number=payload.invoice_number,
         slip_number=payload.slip_number,
         truckload_id=payload.truckload_id,
+        supplier_invoice_id=payload.supplier_invoice_id,
         notes=payload.notes,
         admin_fee_pct=admin_fee_pct,
         **amounts,
@@ -409,6 +429,10 @@ def create_fillup(
     )
     db.commit()
     db.refresh(f)
+
+    if f.truckload_id:
+        _sync_truckload_diesel(db, f.truckload_id, f)
+
     return _enrich_fillup(f)
 
 
@@ -446,6 +470,10 @@ def update_fillup(
     )
     db.commit()
     db.refresh(f)
+
+    if f.truckload_id:
+        _sync_truckload_diesel(db, f.truckload_id, f)
+
     return _enrich_fillup(f)
 
 
@@ -463,12 +491,15 @@ def delete_fillup(
     if f.verified and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Cannot delete a verified fill-up. Contact an admin.")
 
+    old_truckload_id = f.truckload_id
     log_action(
         db, "diesel_fillup.deleted", user_id=current_user.id,
         entity_id=f.entity_id, resource_type="diesel_fillup",
         resource_id=fillup_id, description=f"Deleted diesel fill-up #{fillup_id}",
     )
     db.delete(f)
+    if old_truckload_id:
+        _clear_truckload_diesel(db, old_truckload_id)
     db.commit()
     return {"detail": "Fill-up deleted"}
 

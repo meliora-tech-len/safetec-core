@@ -260,6 +260,7 @@ class SupplierInvoice(Base):
     invoice_date = Column(DateTime(timezone=True), nullable=False)
     invoice_number = Column(String(100), nullable=False)
     amount = Column(Numeric(12, 2), nullable=False)
+    litres = Column(Numeric(10, 3), nullable=True)
     vat_applicable = Column(Boolean, default=True)
     vehicle_reg = Column(String(50))
     description = Column(Text)
@@ -285,6 +286,7 @@ class SupplierInvoice(Base):
     supplier = relationship("Supplier", back_populates="supplier_invoices")
     entity = relationship("BusinessEntity")
     created_by = relationship("User", foreign_keys=[created_by_id])
+    diesel_fillups = relationship("DieselFillUp", back_populates="supplier_invoice")
 
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────
@@ -746,6 +748,7 @@ class DieselFillUp(Base):
     invoice_number = Column(String(100))
     slip_number = Column(String(100))
     truckload_id = Column(Integer, ForeignKey("truck_loads.id", ondelete="SET NULL"), nullable=True)
+    supplier_invoice_id = Column(Integer, ForeignKey("supplier_invoices.id", ondelete="SET NULL"), nullable=True)
 
     verified     = Column(Boolean, nullable=False, default=False)
     verified_by  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -758,13 +761,14 @@ class DieselFillUp(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    entity    = relationship("BusinessEntity")
-    truck     = relationship("Truck")
-    supplier  = relationship("Supplier")
-    truckload = relationship("TruckLoad")
-    verifier  = relationship("User", foreign_keys=[verified_by])
-    verifier2 = relationship("User", foreign_keys=[verified2_by])
-    creator   = relationship("User", foreign_keys=[created_by])
+    entity           = relationship("BusinessEntity")
+    truck            = relationship("Truck")
+    supplier         = relationship("Supplier")
+    truckload        = relationship("TruckLoad")
+    supplier_invoice = relationship("SupplierInvoice", back_populates="diesel_fillups")
+    verifier         = relationship("User", foreign_keys=[verified_by])
+    verifier2        = relationship("User", foreign_keys=[verified2_by])
+    creator          = relationship("User", foreign_keys=[created_by])
 
 
 # ── Payroll Entries (auto-draft workflow) ─────────────────────────────────────

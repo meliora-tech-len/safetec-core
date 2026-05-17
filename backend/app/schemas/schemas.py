@@ -1005,6 +1005,7 @@ class SupplierInvoiceCreate(BaseModel):
     invoice_date: datetime
     invoice_number: str
     amount: Decimal
+    litres: Optional[Decimal] = None
     vat_applicable: bool = True
     vehicle_reg: Optional[str] = None
     description: Optional[str] = None
@@ -1015,6 +1016,7 @@ class SupplierInvoiceUpdate(BaseModel):
     invoice_date: Optional[datetime] = None
     invoice_number: Optional[str] = None
     amount: Optional[Decimal] = None
+    litres: Optional[Decimal] = None
     vat_applicable: Optional[bool] = None
     vehicle_reg: Optional[str] = None
     description: Optional[str] = None
@@ -1032,6 +1034,7 @@ class SupplierInvoiceOut(BaseModel):
     invoice_date: datetime
     invoice_number: str
     amount: Decimal
+    litres: Optional[Decimal] = None
     vat_applicable: bool
     vehicle_reg: Optional[str] = None
     description: Optional[str] = None
@@ -1047,6 +1050,7 @@ class SupplierInvoiceOut(BaseModel):
     created_by_id: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    diesel_fillup_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -1150,6 +1154,7 @@ class DieselFillUpCreate(BaseModel):
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
     truckload_id: Optional[int] = None
+    supplier_invoice_id: Optional[int] = None
     notes: Optional[str] = None
 
 
@@ -1162,6 +1167,7 @@ class DieselFillUpUpdate(BaseModel):
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
     truckload_id: Optional[int] = None
+    supplier_invoice_id: Optional[int] = None
     verified: Optional[bool] = None
     notes: Optional[str] = None
 
@@ -1181,6 +1187,7 @@ class DieselFillUpOut(BaseModel):
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
     truckload_id: Optional[int] = None
+    supplier_invoice_id: Optional[int] = None
     verified: bool
     verified_by: Optional[int] = None
     verified_at: Optional[datetime] = None
