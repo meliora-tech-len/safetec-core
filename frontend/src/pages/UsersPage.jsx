@@ -6,6 +6,7 @@ import {
   createUser, updateUser, deleteUser,
   updateUserPermissions, resetUserPassword, reactivateUser,
 } from '../services/api'
+import DeleteModal from '../components/DeleteModal'
 
 const ALL_MODULES = [
   { key: 'suppliers', label: 'Suppliers' },
@@ -156,13 +157,8 @@ export default function UsersPage() {
     }
   }
 
-  const handleDeactivate = async (user) => {
-    if (!confirm(`Deactivate "${user.full_name}"? They will not be able to log in.`)) return
-    try {
-      await deleteUser(user.id)
-      await load()
-    } catch (e) { toast.error(e.response?.data?.detail || 'Failed to deactivate user') }
-  }
+  const [deactivateTarget, setDeactivateTarget] = useState(null)
+  const handleDeactivate = (user) => setDeactivateTarget(user)
 
   const handleReactivate = async (user) => {
     try {
@@ -467,6 +463,18 @@ export default function UsersPage() {
           </div>
         </div>
       )}
+
+      <DeleteModal
+        isOpen={!!deactivateTarget}
+        onClose={() => setDeactivateTarget(null)}
+        title="Deactivate User"
+        description={deactivateTarget ? `"${deactivateTarget.full_name}" will no longer be able to log in.` : ''}
+        onArchive={async () => {
+          try { await deleteUser(deactivateTarget.id); await load() }
+          catch (e) { toast.error(e.response?.data?.detail || 'Failed to deactivate user') }
+          setDeactivateTarget(null)
+        }}
+      />
     </div>
   )
 }

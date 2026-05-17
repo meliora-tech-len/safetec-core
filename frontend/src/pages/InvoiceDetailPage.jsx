@@ -5,6 +5,7 @@ import { useTheme } from '../hooks/useTheme'
 import { formatCurrency, formatDate, statusBadgeClass, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail } from 'lucide-react'
+import DeleteModal from '../components/DeleteModal'
 
 const STATUS_FLOW = {
   draft: ['sent', 'cancelled'],
@@ -67,16 +68,9 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
     }
   }
 
-  const handleDelete = async () => {
-    if (!confirm(`Cancel ${invoice.invoice_number}?`)) return
-    try {
-      await deleteInvoice(id)
-      toast.success('Cancelled')
-      navigate(-1)
-    } catch (err) {
-      toast.error(errorMessage(err))
-    }
-  }
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+
+  const handleDelete = () => setShowDeleteModal(true)
 
   const handlePdf = async (pdfTheme) => {
     try { await downloadInvoicePdf(invoice.id, invoice.invoice_number, pdfTheme) }
@@ -320,6 +314,18 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
           </div>
         </div>
       )}
+
+      <DeleteModal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        title={`Cancel ${invoice.invoice_number}`}
+        description={`${invoice.supplier?.name ? `${invoice.supplier.name} · ` : ''}${formatCurrency(invoice.total)}`}
+        onArchive={async () => {
+          try { await deleteInvoice(id); toast.success('Invoice cancelled'); navigate(-1) }
+          catch (err) { toast.error(errorMessage(err)) }
+          setShowDeleteModal(false)
+        }}
+      />
     </div>
   )
 }

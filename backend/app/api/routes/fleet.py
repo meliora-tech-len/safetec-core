@@ -262,6 +262,7 @@ def list_truck_additional_loads(
             DriverAdditionalLoad.truck_registration == truck.registration,
             DriverPayCycle.pay_year  == year,
             DriverPayCycle.pay_month == month,
+            DriverAdditionalLoad.is_archived != True,
         )
         .all()
     )

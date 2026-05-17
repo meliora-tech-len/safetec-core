@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Settings, Save, Plus, Trash2, RefreshCw } from 'lucide-react'
 import { getSettings, updateSetting, getEntities, updateEntity, getRoles, createRole, deleteRole } from '../services/api'
+import DeleteModal from '../components/DeleteModal'
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState({})
@@ -81,17 +82,8 @@ export default function SettingsPage() {
     }
   }
 
-  const handleRemoveRole = async (roleKey) => {
-    setSaving(p => ({ ...p, roles: true }))
-    try {
-      await deleteRole(roleKey)
-      setRoles(prev => prev.filter(r => r.key !== roleKey))
-    } catch (e) {
-      setErrors(p => ({ ...p, roles: e.response?.data?.detail || 'Failed to delete role' }))
-    } finally {
-      setSaving(p => ({ ...p, roles: false }))
-    }
-  }
+  const [deleteRoleTarget, setDeleteRoleTarget] = useState(null)
+  const handleRemoveRole = (role) => setDeleteRoleTarget(role)
 
   const saveEntityInvoiceConfig = async (entity) => {
     setSaving(p => ({ ...p, [`entity_${entity.id}`]: true }))
@@ -193,7 +185,7 @@ export default function SettingsPage() {
                 </div>
                 {role.is_protected
                   ? <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>system</span>
-                  : <button onClick={() => handleRemoveRole(role.key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}>
+                  : <button onClick={() => handleRemoveRole(role)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}>
                     <Trash2 size={12} />
                   </button>
                 }
@@ -296,6 +288,25 @@ export default function SettingsPage() {
           Additional system settings will appear here as the application grows — email configuration, automated reports, backup settings, and more.
         </div>
       </Section>
+
+      <DeleteModal
+        isOpen={!!deleteRoleTarget}
+        onClose={() => setDeleteRoleTarget(null)}
+        title="Delete Role"
+        description={deleteRoleTarget ? `"${deleteRoleTarget.display_name}" will be permanently removed. Users with this role will need to be reassigned.` : ''}
+        onDelete={async () => {
+          setSaving(p => ({ ...p, roles: true }))
+          try {
+            await deleteRole(deleteRoleTarget.key)
+            setRoles(prev => prev.filter(r => r.key !== deleteRoleTarget.key))
+          } catch (e) {
+            setErrors(p => ({ ...p, roles: e.response?.data?.detail || 'Failed to delete role' }))
+          } finally {
+            setSaving(p => ({ ...p, roles: false }))
+          }
+          setDeleteRoleTarget(null)
+        }}
+      />
     </div>
   )
 }

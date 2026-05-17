@@ -137,7 +137,7 @@ def get_dashboard_summary(
     accessible = _accessible_entity_ids(current_user)
     now = datetime.now(tz=timezone.utc)
 
-    q = db.query(SupplierInvoice).join(Supplier).filter(SupplierInvoice.is_paid == False)
+    q = db.query(SupplierInvoice).join(Supplier).filter(SupplierInvoice.is_paid == False, SupplierInvoice.is_archived != True)
 
     if accessible is not None:
         q = q.filter(SupplierInvoice.entity_id.in_(accessible))
@@ -223,7 +223,7 @@ def list_supplier_invoices(
         raise HTTPException(status_code=404, detail="Supplier not found")
     _check_entity_access(supplier.entity_id, current_user)
 
-    q = db.query(SupplierInvoice).filter(SupplierInvoice.supplier_id == supplier_id)
+    q = db.query(SupplierInvoice).filter(SupplierInvoice.supplier_id == supplier_id, SupplierInvoice.is_archived != True)
     if entity_id:
         _check_entity_access(entity_id, current_user)
         q = q.filter(SupplierInvoice.entity_id == entity_id)
@@ -399,6 +399,29 @@ def verify_supplier_invoice(
     d = {c.name: getattr(inv, c.name) for c in inv.__table__.columns}
     d.update(get_verification_display(db, inv))
     return d
+
+
+# ── Archive (soft delete) ─────────────────────────────────────────────────────
+
+@router.patch("/{invoice_id}/archive")
+def archive_supplier_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+
+    inv.is_archived = True
+    log_action(
+        db, "supplier_invoice.archived", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice",
+        resource_id=invoice_id, description=f"Archived invoice {inv.invoice_number}",
+    )
+    db.commit()
+    return {"detail": "Invoice archived"}
 
 
 # ── Delete ────────────────────────────────────────────────────────────────────

@@ -526,6 +526,24 @@ def delete_additional_load(
     return {"detail": "Additional load deleted"}
 
 
+@router.patch("/{driver_id}/cycles/{year}/{month}/additional-loads/{load_id}/archive")
+def archive_additional_load(
+    driver_id: int, year: int, month: int, load_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    _check_access(driver.entity_id, current_user)
+    entry = db.query(DriverAdditionalLoad).filter(DriverAdditionalLoad.id == load_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Additional load not found")
+    entry.is_archived = True
+    db.commit()
+    return {"detail": "Additional load archived"}
+
+
 @router.patch("/{driver_id}/cycles/{year}/{month}/additional-loads/{load_id}/verify")
 def verify_additional_load(
     driver_id: int, year: int, month: int, load_id: int,

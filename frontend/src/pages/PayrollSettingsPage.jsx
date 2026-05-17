@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Settings, Plus, Edit2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
+import DeleteModal from '../components/DeleteModal'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -112,11 +113,13 @@ function GroupCard({ group, onRefresh }) {
   const api = useApi()
   const [editing, setEditing] = useState(false)
 
-  const handleDeactivate = async () => {
-    if (!window.confirm(`Remove mine group "${group.name}"?`)) return
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const handleDeactivate = () => setShowDeleteModal(true)
+  const confirmDeactivate = async () => {
     try {
       await api.del(`/api/payroll-mine-groups/${group.id}`)
       toast.success('Mine group removed')
+      setShowDeleteModal(false)
       onRefresh()
     } catch { toast.error('Failed to remove') }
   }
@@ -154,6 +157,14 @@ function GroupCard({ group, onRefresh }) {
           ))}
         </>
       )}
+
+      <DeleteModal
+        isOpen={showDeleteModal}
+        onClose={() => setShowDeleteModal(false)}
+        title="Remove Mine Group"
+        description={`"${group.name}" will be deactivated and hidden from payroll calculations.`}
+        onArchive={confirmDeactivate}
+      />
     </div>
   )
 }

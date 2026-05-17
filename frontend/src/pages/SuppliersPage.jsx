@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, User, X } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
+import DeleteModal from '../components/DeleteModal'
 
 export default function SuppliersPage() {
   const { activeEntity, isAdmin } = useAuth()
@@ -59,16 +60,8 @@ export default function SuppliersPage() {
     }
   }
 
-  const handleDelete = async (supplier) => {
-    if (!confirm(`Deactivate "${supplier.name}"?`)) return
-    try {
-      await deleteSupplier(supplier.id)
-      toast.success('Supplier deactivated')
-      load()
-    } catch (err) {
-      toast.error(errorMessage(err))
-    }
-  }
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const handleDelete = (supplier) => setDeleteTarget(supplier)
 
   const entityName = (id) => entities.find(e => e.id === id)?.name || '—'
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
@@ -193,6 +186,18 @@ export default function SuppliersPage() {
           onClose={closeModal}
         />
       )}
+
+      <DeleteModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Deactivate Supplier"
+        description={deleteTarget ? `"${deleteTarget.name}" will be marked as inactive and hidden from all active supplier lists.` : ''}
+        onArchive={async () => {
+          try { await deleteSupplier(deleteTarget.id); toast.success('Supplier deactivated'); load() }
+          catch (err) { toast.error(errorMessage(err)) }
+          setDeleteTarget(null)
+        }}
+      />
     </div>
   )
 }

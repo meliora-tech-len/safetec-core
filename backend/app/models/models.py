@@ -262,6 +262,7 @@ class SupplierInvoice(Base):
     amount = Column(Numeric(12, 2), nullable=False)
     litres = Column(Numeric(10, 3), nullable=True)
     vat_applicable = Column(Boolean, default=True)
+    is_archived = Column(Boolean, nullable=False, default=False)
     vehicle_reg = Column(String(50))
     description = Column(Text)
 
@@ -522,6 +523,7 @@ class DriverAdditionalLoad(Base):
     verified2_by    = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     verified2_at    = Column(DateTime(timezone=True))
     notes           = Column(String(500), nullable=True)
+    is_archived     = Column(Boolean, nullable=False, default=False)
     created_at      = Column(DateTime(timezone=True), server_default=func.now())
 
     pay_cycle = relationship("DriverPayCycle", back_populates="additional_loads")
@@ -656,6 +658,7 @@ class TruckLoad(Base):
 
     date_paid = Column(DateTime(timezone=True))
     is_paid = Column(Boolean, default=False)
+    is_archived = Column(Boolean, nullable=False, default=False)
     notes = Column(Text)
     checked_by = Column(String(50))
 
@@ -749,6 +752,7 @@ class DieselFillUp(Base):
     slip_number = Column(String(100))
     truckload_id = Column(Integer, ForeignKey("truck_loads.id", ondelete="SET NULL"), nullable=True)
     supplier_invoice_id = Column(Integer, ForeignKey("supplier_invoices.id", ondelete="SET NULL"), nullable=True)
+    is_archived  = Column(Boolean, nullable=False, default=False)
 
     verified     = Column(Boolean, nullable=False, default=False)
     verified_by  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

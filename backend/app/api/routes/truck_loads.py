@@ -199,6 +199,7 @@ def list_truck_loads(
         q = q.filter(TruckLoad.load_date >= date_from)
     if date_to:
         q = q.filter(TruckLoad.load_date <= date_to)
+    q = q.filter(TruckLoad.is_archived != True)
 
     loads = q.order_by(TruckLoad.load_date.desc()).offset(skip).limit(limit).all()
 
@@ -247,6 +248,7 @@ def get_truck_load_summary(
         q = q.filter(TruckLoad.load_date >= date_from)
     if date_to:
         q = q.filter(TruckLoad.load_date <= date_to)
+    q = q.filter(TruckLoad.is_archived != True)
 
     row = q.one()
     return TruckLoadSummary(
@@ -400,6 +402,29 @@ def update_truck_load(
     db.refresh(load)
     d = _enrich(load)
     return TruckLoadOut(**d)
+
+
+# ── Archive load (soft delete) ───────────────────────────────────────────────
+
+@router.patch("/{load_id}/archive")
+def archive_truck_load(
+    load_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    load = db.query(TruckLoad).filter(TruckLoad.id == load_id).first()
+    if not load:
+        raise HTTPException(status_code=404, detail="Truck load not found")
+    _check_entity_access(load.entity_id, current_user)
+
+    load.is_archived = True
+    log_action(
+        db, "truck_load.archived", user_id=current_user.id,
+        entity_id=load.entity_id, resource_type="truck_load",
+        resource_id=load_id, description=f"Archived truck load {load_id}",
+    )
+    db.commit()
+    return {"detail": "Truck load archived"}
 
 
 # ── Delete load ───────────────────────────────────────────────────────────────

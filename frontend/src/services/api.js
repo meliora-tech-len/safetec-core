@@ -129,6 +129,7 @@ export const createTruckLoad = (data) => api.post('/truck-loads', data)
 export const bulkCreateTruckLoads = (data) => api.post('/truck-loads/bulk', data)
 export const updateTruckLoad = (id, data) => api.put(`/truck-loads/${id}`, data)
 export const deleteTruckLoad = (id) => api.delete(`/truck-loads/${id}`)
+export const archiveTruckLoad = (id) => api.patch(`/truck-loads/${id}/archive`)
 
 // ── Drivers ───────────────────────────────────────────────────────────────────
 export const getDrivers = (params = {}) => api.get('/drivers', { params })
@@ -137,6 +138,8 @@ export const addDriverAdditionalLoad = (driverId, year, month, data) =>
   api.post(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads`, data)
 export const deleteDriverAdditionalLoad = (driverId, year, month, loadId) =>
   api.delete(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}`)
+export const archiveDriverAdditionalLoad = (driverId, year, month, loadId) =>
+  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/archive`)
 export const addDriverFoodPayment = (driverId, year, month, data) =>
   api.post(`/drivers/${driverId}/cycles/${year}/${month}/food-payments`, data)
 export const getTruckAdditionalLoads = (truckId, params = {}) =>
@@ -165,7 +168,9 @@ export const getDieselFillUpsByTruck = (truckId, params = {}) => api.get(`/diese
 export const createDieselFillUp = (data) => api.post('/diesel/fillups', data)
 export const updateDieselFillUp = (id, data) => api.put(`/diesel/fillups/${id}`, data)
 export const deleteDieselFillUp = (id) => api.delete(`/diesel/fillups/${id}`)
+export const archiveDieselFillUp = (id) => api.patch(`/diesel/fillups/${id}/archive`)
 export const verifyDieselFillUp       = (id) => api.patch(`/diesel/fillups/${id}/verify`)
+export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)
 export const verifySupplierInvoice    = (id) => api.patch(`/supplier-invoices/${id}/verify`)
 export const verifyAdditionalLoad     = (driverId, year, month, loadId) =>
   api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/verify`)

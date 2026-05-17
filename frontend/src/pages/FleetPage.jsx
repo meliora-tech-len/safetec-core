@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Truck, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertCircle } from 'lucide-react'
+import { Truck, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
+import DeleteModal from '../components/DeleteModal'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -680,37 +681,6 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
 const labelStyle = { fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 2 }
 const valueStyle = { fontFamily: 'monospace', fontSize: 12, color: 'var(--text-primary)' }
 
-// ── Delete confirm ────────────────────────────────────────────────────────────
-
-function DeleteModal({ truck, onConfirm, onClose }) {
-  const [loading, setLoading] = useState(false)
-  const go = async () => {
-    setLoading(true)
-    await onConfirm()
-    setLoading(false)
-  }
-  return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 420 }}>
-        <div className="modal-header">
-          <h2 style={{ color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <AlertCircle size={18} /> Delete Truck
-          </h2>
-          <button className="btn-icon btn-ghost" onClick={onClose}><X size={16} /></button>
-        </div>
-        <div className="modal-body">
-          <p>Are you sure you want to delete truck <strong style={{ fontFamily: 'monospace' }}>{truck.registration}</strong>? This will also delete its trailers and cannot be undone.</p>
-        </div>
-        <div className="modal-footer">
-          <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-danger" onClick={go} disabled={loading}>
-            {loading ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Deleting…</> : 'Delete'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
@@ -947,13 +917,15 @@ export default function FleetPage() {
           onClose={() => { setModal(null); setSelected(null) }}
         />
       )}
-      {modal === 'delete' && selected && (
-        <DeleteModal
-          truck={selected}
-          onConfirm={handleDelete}
-          onClose={() => { setModal(null); setSelected(null) }}
-        />
-      )}
+      <DeleteModal
+        isOpen={modal === 'delete' && !!selected}
+        onClose={() => { setModal(null); setSelected(null) }}
+        title={`Delete Truck ${selected?.registration || ''}`}
+        description={selected ? `This will also delete all trailers linked to ${selected.registration}. This action cannot be undone.` : ''}
+        onDelete={async () => {
+          await handleDelete()
+        }}
+      />
     </div>
   )
 }

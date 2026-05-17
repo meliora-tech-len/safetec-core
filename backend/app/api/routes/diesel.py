@@ -282,6 +282,7 @@ def get_fillup_summary(
         q = q.filter(func.extract("month", DieselFillUp.fillup_date) == month)
     if verified is not None:
         q = q.filter(DieselFillUp.verified == verified)
+    q = q.filter(DieselFillUp.is_archived != True)
 
     rows = q.with_entities(
         func.count(DieselFillUp.id),
@@ -330,6 +331,7 @@ def list_fillups(
         q = q.filter(func.extract("month", DieselFillUp.fillup_date) == month)
     if verified is not None:
         q = q.filter(DieselFillUp.verified == verified)
+    q = q.filter(DieselFillUp.is_archived != True)
 
     fillups = q.order_by(DieselFillUp.fillup_date.desc(), DieselFillUp.id.desc()).offset(skip).limit(limit).all()
     return [_enrich_fillup(f, db) for f in fillups]
@@ -350,7 +352,7 @@ def list_fillups_by_truck(
 
     fillups = (
         db.query(DieselFillUp)
-        .filter(DieselFillUp.truck_id == truck_id)
+        .filter(DieselFillUp.truck_id == truck_id, DieselFillUp.is_archived != True)
         .order_by(DieselFillUp.fillup_date.desc())
         .offset(skip).limit(limit).all()
     )
@@ -475,6 +477,27 @@ def update_fillup(
         _sync_truckload_diesel(db, f.truckload_id, f)
 
     return _enrich_fillup(f)
+
+
+@router.patch("/fillups/{fillup_id}/archive")
+def archive_fillup(
+    fillup_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    f = db.query(DieselFillUp).filter(DieselFillUp.id == fillup_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Fill-up not found")
+    _check_entity_access(f.entity_id, current_user)
+
+    f.is_archived = True
+    log_action(
+        db, "diesel_fillup.archived", user_id=current_user.id,
+        entity_id=f.entity_id, resource_type="diesel_fillup",
+        resource_id=fillup_id, description=f"Archived diesel fill-up #{fillup_id}",
+    )
+    db.commit()
+    return {"detail": "Fill-up archived"}
 
 
 @router.delete("/fillups/{fillup_id}")

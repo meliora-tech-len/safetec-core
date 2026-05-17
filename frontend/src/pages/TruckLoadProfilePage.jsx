@@ -8,13 +8,14 @@ import { useAuth } from '../hooks/useAuth'
 import SearchableSelect from '../components/SearchableSelect'
 import {
   getTruck, getTruckLoads, getTruckLoadSummary,
-  createTruckLoad, updateTruckLoad, deleteTruckLoad,
+  createTruckLoad, updateTruckLoad, deleteTruckLoad, archiveTruckLoad,
   getMines, getDrivers, getSettings, getSuppliers,
-  getDieselFillUps, createDieselFillUp, deleteDieselFillUp, getCurrentDieselRate,
-  addDriverAdditionalLoad, deleteDriverAdditionalLoad,
+  getDieselFillUps, createDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, getCurrentDieselRate,
+  addDriverAdditionalLoad, deleteDriverAdditionalLoad, archiveDriverAdditionalLoad,
   addDriverFoodPayment, getTruckAdditionalLoads,
 } from '../services/api'
 import toast from 'react-hot-toast'
+import DeleteModal from '../components/DeleteModal'
 
 const fmt    = (n) => n == null ? '—' : `R ${parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtNum = (n) => n == null ? '—' : parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
@@ -125,6 +126,7 @@ function DieselSection({ truck, year, month, suppliers }) {
   const [loading, setLoading]     = useState(true)
   const [addingNew, setAddingNew] = useState(false)
   const [saving, setSaving]       = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const [form, setForm]           = useState({ ...EMPTY_DIESEL })
   const [autoRate, setAutoRate]   = useState(null)
   const [rateEdited, setRateEdited] = useState(false)
@@ -186,11 +188,7 @@ function DieselSection({ truck, year, month, suppliers }) {
     } finally { setSaving(false) }
   }
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this diesel entry?')) return
-    try { await deleteDieselFillUp(id); toast.success('Deleted'); fetchFillups() }
-    catch { toast.error('Failed to delete') }
-  }
+  const handleDelete = (f) => setDeleteTarget(f)
 
   // Group by supplier name
   const bySupplier = fillups.reduce((acc, f) => {
@@ -313,7 +311,7 @@ function DieselSection({ truck, year, month, suppliers }) {
                         <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(f.total_amount)}</td>
                         <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.notes || '—'}</td>
                         <td>
-                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(f.id)}>
+                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(f)}>
                             <Trash2 size={13} />
                           </button>
                         </td>
@@ -340,6 +338,23 @@ function DieselSection({ truck, year, month, suppliers }) {
           )}
         </div>
       )}
+
+      <DeleteModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Diesel Entry"
+        description={deleteTarget ? `${parseFloat(deleteTarget.litres).toFixed(1)} L on ${fmtDate(deleteTarget.fillup_date)}${deleteTarget.supplier_name ? ` — ${deleteTarget.supplier_name}` : ''}` : ''}
+        onArchive={async () => {
+          try { await archiveDieselFillUp(deleteTarget.id); toast.success('Entry archived'); fetchFillups() }
+          catch { toast.error('Failed to archive') }
+          setDeleteTarget(null)
+        }}
+        onDelete={async () => {
+          try { await deleteDieselFillUp(deleteTarget.id); toast.success('Entry deleted'); fetchFillups() }
+          catch { toast.error('Failed to delete') }
+          setDeleteTarget(null)
+        }}
+      />
     </div>
   )
 }
@@ -351,6 +366,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
   const [loading, setLoading]   = useState(true)
   const [addingNew, setAddingNew] = useState(false)
   const [saving, setSaving]     = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const [form, setForm]         = useState({ driver_id: '', route_name: '', amount: '', load_date: today, notes: '' })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -388,14 +404,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
     } finally { setSaving(false) }
   }
 
-  const handleDelete = async (entry) => {
-    if (!window.confirm('Delete this additional load?')) return
-    try {
-      await deleteDriverAdditionalLoad(entry.driver_id, year, month, entry.id)
-      toast.success('Deleted')
-      fetchEntries()
-    } catch { toast.error('Failed to delete') }
-  }
+  const handleDelete = (entry) => setDeleteTarget(entry)
 
   const total = entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
   const driverTypeByName = drivers.reduce((acc, d) => {
@@ -493,7 +502,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
                   <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(e.amount)}</td>
                   <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
                   <td>
-                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(e)}>
+                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(e)}>
                       <Trash2 size={13} />
                     </button>
                   </td>
@@ -512,6 +521,23 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
           </table>
         </div>
       )}
+
+      <DeleteModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Additional Load"
+        description={deleteTarget ? `${deleteTarget.route_name} — ${fmt(deleteTarget.amount)}${deleteTarget.driver_name ? ` · ${deleteTarget.driver_name}` : ''}` : ''}
+        onArchive={async () => {
+          try { await archiveDriverAdditionalLoad(deleteTarget.driver_id, year, month, deleteTarget.id); toast.success('Entry archived'); fetchEntries() }
+          catch { toast.error('Failed to archive') }
+          setDeleteTarget(null)
+        }}
+        onDelete={async () => {
+          try { await deleteDriverAdditionalLoad(deleteTarget.driver_id, year, month, deleteTarget.id); toast.success('Entry deleted'); fetchEntries() }
+          catch { toast.error('Failed to delete') }
+          setDeleteTarget(null)
+        }}
+      />
     </div>
   )
 }
@@ -727,6 +753,7 @@ export default function TruckLoadProfilePage() {
 
   // Central driver selection (shared across all tabs)
   const [selectedDriverId, setSelectedDriverId] = useState('')
+  const [deleteTarget, setDeleteTarget]         = useState(null)
 
   // Load edit state
   const [editingId, setEditingId]   = useState(null)
@@ -877,11 +904,9 @@ export default function TruckLoadProfilePage() {
     } catch { toast.error('Failed to update') }
   }
 
-  const handleDelete = async (id, e) => {
+  const handleDelete = (load, e) => {
     e.stopPropagation()
-    if (!window.confirm('Delete this load record?')) return
-    try { await deleteTruckLoad(id); toast.success('Deleted'); fetchLoads() }
-    catch { toast.error('Failed to delete') }
+    setDeleteTarget(load)
   }
 
   // ── Derived ──────────────────────────────────────────────────────────────────
@@ -1121,7 +1146,7 @@ export default function TruckLoadProfilePage() {
                     <td onClick={e => e.stopPropagation()}>
                       {isAdmin && (
                         <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
-                          onClick={e => handleDelete(l.id, e)}><Trash2 size={13} /></button>
+                          onClick={e => handleDelete(l, e)}><Trash2 size={13} /></button>
                       )}
                     </td>
                   </tr>
@@ -1165,6 +1190,23 @@ export default function TruckLoadProfilePage() {
       {activeTab === 'profit' && (
         <ProfitSheetSection month={month} />
       )}
+
+      <DeleteModal
+        isOpen={!!deleteTarget && !['diesel', 'additional'].includes(deleteTarget?._type)}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Truck Load"
+        description={deleteTarget ? `Load on ${fmtDate(deleteTarget.load_date)} · ${fmtNum(deleteTarget.tonnes)} t${deleteTarget.mine_name ? ` from ${deleteTarget.mine_name}` : ''}` : ''}
+        onArchive={async () => {
+          try { await archiveTruckLoad(deleteTarget.id); toast.success('Load archived'); fetchLoads() }
+          catch { toast.error('Failed to archive') }
+          setDeleteTarget(null)
+        }}
+        onDelete={async () => {
+          try { await deleteTruckLoad(deleteTarget.id); toast.success('Load deleted'); fetchLoads() }
+          catch { toast.error('Failed to delete') }
+          setDeleteTarget(null)
+        }}
+      />
     </div>
   )
 }

@@ -3,14 +3,15 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   getSupplier, getEntities,
   getSupplierInvoices, createSupplierInvoice,
-  updateSupplierInvoice, deleteSupplierInvoice, markStatementPaid,
+  updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
   verifySupplierInvoice,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, AlertTriangle, Fuel } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
+import DeleteModal from '../components/DeleteModal'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -319,50 +320,20 @@ export default function SupplierProfilePage() {
         </div>
       ) : null}
 
-      {deleteTarget && (
-        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}
-            style={{ width: '100%', maxWidth: 420, padding: 0, position: 'relative', overflow: 'hidden' }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              padding: '16px 20px',
-              borderBottom: '1px solid var(--border)',
-            }}>
-              <AlertTriangle size={18} color="var(--danger)" style={{ flexShrink: 0 }} />
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Delete Invoice</span>
-            </div>
-            <div style={{ padding: '24px 20px' }}>
-              <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                You are about to permanently delete invoice{' '}
-                <strong style={{ color: 'var(--text-primary)' }}>{deleteTarget.invoice_number}</strong>
-                {deleteTarget.amount && <> ({formatCurrency(deleteTarget.amount)})</>}.
-              </p>
-              <div style={{
-                padding: '10px 14px', borderRadius: 6,
-                background: 'rgba(220,38,38,0.07)', border: '1px solid rgba(220,38,38,0.2)',
-                fontSize: 12, color: 'var(--danger)', fontWeight: 500,
-              }}>
-                This record will be gone forever and cannot be recovered.
-              </div>
-            </div>
-            <div style={{
-              display: 'flex', justifyContent: 'flex-end', gap: 10,
-              padding: '12px 20px', borderTop: '1px solid var(--border)',
-            }}>
-              <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>Cancel</button>
-              <button
-                onClick={confirmDelete}
-                style={{
-                  padding: '7px 18px', borderRadius: 7, border: 'none',
-                  background: 'var(--danger)', color: '#fff',
-                  fontWeight: 600, fontSize: 13, cursor: 'pointer',
-                }}>
-                Delete Invoice
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Supplier Invoice"
+        description={deleteTarget ? `Invoice ${deleteTarget.invoice_number}${deleteTarget.amount ? ` — ${formatCurrency(deleteTarget.amount)}` : ''}` : ''}
+        onArchive={async () => {
+          try { await archiveSupplierInvoice(deleteTarget.id); toast.success('Invoice archived'); setDeleteTarget(null); loadInvoices() }
+          catch (e) { toast.error(errorMessage(e)) }
+        }}
+        onDelete={async () => {
+          try { await deleteSupplierInvoice(deleteTarget.id); toast.success('Invoice deleted'); setDeleteTarget(null); loadInvoices() }
+          catch (e) { toast.error(errorMessage(e)) }
+        }}
+      />
 
       {groups.map((group, groupIndex) => {
         const key = `${group.statement_year}-${group.statement_month}`
