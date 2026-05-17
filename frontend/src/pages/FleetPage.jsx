@@ -132,7 +132,7 @@ function LicencePopover({ items, title, color, icon: Icon, onClose }) {
 
   return (
     <div ref={ref} style={{
-      position: 'absolute', top: 'calc(100% + 10px)', right: 0, zIndex: 400,
+      position: 'absolute', top: 'calc(100% + 10px)', left: 0, zIndex: 400,
       width: 310, maxHeight: 420, display: 'flex', flexDirection: 'column',
       background: 'var(--bg-card)', border: `1.5px solid ${color}`,
       borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
@@ -882,8 +882,8 @@ export default function FleetPage() {
         alertsShownRef.current = true
         const expired = data.items.filter(a => a.expired)
         const soon    = data.items.filter(a => !a.expired)
-        if (expired.length > 0) toast.error(`${expired.length} licence${expired.length !== 1 ? 's' : ''} expired!`, { duration: 6000 })
-        if (soon.length   > 0) toast(`${soon.length} licence${soon.length !== 1 ? 's' : ''} expiring within ${ALERT_DAYS} days`, { icon: '⚠️', duration: 5000 })
+        if (expired.length > 0) toast.error(`${expired.length} licence${expired.length !== 1 ? 's' : ''} expired!`, { duration: 3000 })
+        if (soon.length   > 0) toast(`${soon.length} licence${soon.length !== 1 ? 's' : ''} expiring within 30 days`, { icon: '⚠️', duration: 3000 })
       }
     } catch {
       // silent — alerts are non-critical
