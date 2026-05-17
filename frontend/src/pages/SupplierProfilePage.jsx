@@ -7,7 +7,6 @@ import {
   verifySupplierInvoice, getCurrentDieselRate,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
-import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
@@ -50,7 +49,6 @@ function PaymentTermBadge({ term }) {
 export default function SupplierProfilePage() {
   const { supplierId } = useParams()
   const navigate = useNavigate()
-  const { activeEntity } = useAuth()
 
   const [supplier, setSupplier] = useState(null)
   const [entities, setEntities] = useState([])
@@ -93,18 +91,17 @@ export default function SupplierProfilePage() {
       firstInputRef.current.focus()
   }, [showNew, editingId])
 
-  // Re-fetch the diesel rate whenever the form's entity or date changes
+  // Fetch the diesel rate for this supplier's entity when the form opens or date changes
   useEffect(() => {
-    if (!supplier?.is_diesel_supplier || !showNew || !newForm.entity_id) {
+    if (!supplier?.is_diesel_supplier || !showNew || !supplier?.entity_id) {
       setDieselRate(null)
       return
     }
-    const entityId = parseInt(newForm.entity_id)
-    const date = newForm.invoice_date || new Date().toISOString().slice(0, 10)
-    getCurrentDieselRate(supplier.id, { entity_id: entityId, on_date: date })
+    const date = newForm.invoice_date || today
+    getCurrentDieselRate(supplier.id, { entity_id: supplier.entity_id, on_date: date })
       .then(r => setDieselRate(r.data || null))
       .catch(() => setDieselRate(null))
-  }, [supplier?.id, supplier?.is_diesel_supplier, newForm.entity_id, newForm.invoice_date, showNew])
+  }, [supplier?.id, supplier?.entity_id, supplier?.is_diesel_supplier, newForm.invoice_date, showNew])
 
   // Auto-fill amount when litres change and a diesel rate has been loaded
   useEffect(() => {
@@ -137,13 +134,11 @@ export default function SupplierProfilePage() {
   }
 
   const cancelEdit = () => { setEditingId(null); setEditForm({}) }
-  const cancelNew = () => { setShowNew(false); setNewForm(blankForm(String(activeEntity?.id || supplier?.entity_id || ''))); setAmountAutoFilled(false) }
+  const cancelNew = () => { setShowNew(false); setNewForm(blankForm(supplier?.entity_id)); setAmountAutoFilled(false) }
 
   const handleAddClick = () => {
     setEditingId(null)
-    // Default to the user's active entity; fall back to the supplier's own entity
-    const defaultEntityId = activeEntity?.id || supplier?.entity_id
-    setNewForm(blankForm(String(defaultEntityId || '')))
+    setNewForm(blankForm(supplier?.entity_id))
     setAmountAutoFilled(false)
     setDieselRate(null)
     setShowNew(true)
@@ -466,23 +461,12 @@ export default function SupplierProfilePage() {
                             transition: 'background 0.1s',
                           }}
                         >
-                          {/* Entity cell */}
+                          {/* Entity cell — always read-only; entity is fixed to the supplier profile */}
                           {multiEntity && (
                             <td style={styles.td}>
-                              {isEditing ? (
-                                <select
-                                  value={f.entity_id}
-                                  onChange={e => setEditForm(p => ({ ...p, entity_id: e.target.value }))}
-                                  onClick={e => e.stopPropagation()}
-                                  style={styles.cellSelect}
-                                >
-                                  {entities.map(en => <option key={en.id} value={en.id}>{en.code}</option>)}
-                                </select>
-                              ) : (
-                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  {entities.find(e => e.id === inv.entity_id)?.code || '—'}
-                                </span>
-                              )}
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
+                                {entities.find(e => e.id === inv.entity_id)?.code || '—'}
+                              </span>
                             </td>
                           )}
 
@@ -679,13 +663,12 @@ export default function SupplierProfilePage() {
 
 function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
   return (
     <tr style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border-accent)' }}>
       {multiEntity && (
         <td style={styles.td}>
-          <select value={form.entity_id} onChange={e => set('entity_id', e.target.value)} style={styles.cellSelect}>
-            {entities.map(en => <option key={en.id} value={en.id}>{en.code}</option>)}
-          </select>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{entityCode}</span>
         </td>
       )}
       <td style={styles.td}>
