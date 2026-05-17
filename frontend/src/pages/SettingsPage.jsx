@@ -12,6 +12,7 @@ export default function SettingsPage() {
   const [errors, setErrors] = useState({})
   // Local editable state
   const [vatRate, setVatRate] = useState('15')
+  const [licenceWarnDays, setLicenceWarnDays] = useState('30')
   const [roles, setRoles] = useState([])
   const [newRoleKey, setNewRoleKey] = useState('')
   const [newRoleDisplay, setNewRoleDisplay] = useState('')
@@ -32,6 +33,7 @@ export default function SettingsPage() {
 
       // Parse initial values
       if (map.vat_rate) setVatRate(String(parseFloat(map.vat_rate.value) * 100))
+      if (map.fleet_licence_warn_days) setLicenceWarnDays(map.fleet_licence_warn_days.value)
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
@@ -279,6 +281,43 @@ export default function SettingsPage() {
               })}
             </tbody>
           </table>
+        </div>
+      </Section>
+
+      {/* ── Fleet ───────────────────────────────────────────────────── */}
+      <Section title="Fleet" subtitle="Licence and vehicle management settings">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label className="form-label">Licence Expiry Warning Window</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {['30', '60', '90'].map(days => {
+              const active = licenceWarnDays === days
+              return (
+                <button
+                  key={days}
+                  onClick={async () => {
+                    setLicenceWarnDays(days)
+                    await saveSetting('fleet_licence_warn_days', days, 'Licence Expiry Warning Window')
+                  }}
+                  style={{
+                    padding: '6px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                    border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                    background: active ? 'var(--accent)' : 'var(--bg-surface)',
+                    color: active ? '#fff' : 'var(--text-secondary)',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                  }}
+                >
+                  {days} days
+                </button>
+              )
+            })}
+            {savedOk.fleet_licence_warn_days && (
+              <span style={{ fontSize: 12, color: 'var(--success)', alignSelf: 'center' }}>✓ Saved</span>
+            )}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            The orange warning icon on the Fleet page will show licences expiring within this window.
+            Currently: <strong>{licenceWarnDays} days</strong>
+          </div>
         </div>
       </Section>
 

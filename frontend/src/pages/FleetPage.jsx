@@ -7,7 +7,6 @@ import DeleteModal from '../components/DeleteModal'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-const WARN_DAYS   = 30   // show colour warning in table rows
 const ALERT_DAYS  = 365  // fetch window — catch all expired + expiring soon
 
 const STATUS_COLOURS = {
@@ -57,10 +56,10 @@ function isExpired(expiry) {
   return expiry && new Date(expiry) < new Date()
 }
 
-function isExpiringSoon(expiry) {
+function isExpiringSoon(expiry, warnDays = 30) {
   if (!expiry) return false
   const diff = new Date(expiry) - new Date()
-  return diff > 0 && diff < WARN_DAYS * 86400 * 1000
+  return diff > 0 && diff < warnDays * 86400 * 1000
 }
 
 function daysUntil(expiry) {
@@ -808,6 +807,7 @@ export default function FleetPage() {
   const { isAdmin, activeEntity } = useAuth()
   const api = useFleetApi()
 
+  const [warnDays, setWarnDays] = useState(30)
   const [tab, setTab]           = useState('trucks')
   const [trucks, setTrucks]     = useState([])
   const [pvList, setPvList]     = useState([])
@@ -883,16 +883,20 @@ export default function FleetPage() {
         const expired = data.items.filter(a => a.expired)
         const soon    = data.items.filter(a => !a.expired)
         if (expired.length > 0) toast.error(`${expired.length} licence${expired.length !== 1 ? 's' : ''} expired!`, { duration: 2000 })
-        if (soon.length   > 0) toast(`${soon.length} licence${soon.length !== 1 ? 's' : ''} expiring within 30 days`, { icon: '⚠️', duration: 3000 })
+        if (soon.length   > 0) toast(`${soon.length} licence${soon.length !== 1 ? 's' : ''} expiring within ${warnDays} days`, { icon: '⚠️', duration: 2000 })
       }
     } catch {
       // silent — alerts are non-critical
     }
-  }, [])
+  }, [warnDays])
 
   useEffect(() => {
     let ignore = false
     api.get('/api/entities/').then(e => { if (!ignore) setEntities(e) }).catch(() => {})
+    // Load licence warning window setting
+    api.get('/api/settings/fleet_licence_warn_days')
+      .then(d => { if (!ignore) setWarnDays(parseInt(d.value) || 30) })
+      .catch(() => {})
     return () => { ignore = true }
   }, [])
 
@@ -934,7 +938,7 @@ export default function FleetPage() {
     .sort((a, b) => new Date(b.licence_expiry) - new Date(a.licence_expiry)) // most recently expired first
 
   const soonAlerts = alerts
-    .filter(a => !a.expired && a.days_until_expiry <= WARN_DAYS)
+    .filter(a => !a.expired && a.days_until_expiry <= warnDays)
     .sort((a, b) => a.days_until_expiry - b.days_until_expiry) // soonest first
 
   return (
@@ -980,7 +984,7 @@ export default function FleetPage() {
                 <button
                   onClick={() => setOpenPopover(p => p === 'soon' ? null : 'soon')}
                   style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--warning)', display: 'flex' }}
-                  title={`${soonAlerts.length} licence${soonAlerts.length !== 1 ? 's' : ''} expiring within 30 days`}
+                  title={`${soonAlerts.length} licence${soonAlerts.length !== 1 ? 's' : ''} expiring within ${warnDays} days`}
                 >
                   <Clock size={18} />
                   <span style={{
@@ -995,7 +999,7 @@ export default function FleetPage() {
                 {openPopover === 'soon' && (
                   <LicencePopover
                     items={soonAlerts}
-                    title="Expiring Within 30 Days"
+                    title={`Expiring Within ${warnDays} Days`}
                     color="var(--warning)"
                     icon={Clock}
                     onClose={() => setOpenPopover(null)}
