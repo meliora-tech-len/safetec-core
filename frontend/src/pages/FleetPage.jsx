@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useRef } from 'react'
-import { Truck, Car, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, Bell, AlertTriangle } from 'lucide-react'
+import { Truck, Car, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertTriangle, AlertCircle, Clock } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
@@ -7,8 +7,8 @@ import DeleteModal from '../components/DeleteModal'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-const WARN_DAYS   = 30   // show colour warning
-const ALERT_DAYS  = 60   // fetch in licence alerts
+const WARN_DAYS   = 30   // show colour warning in table rows
+const ALERT_DAYS  = 365  // fetch window — catch all expired + expiring soon
 
 const STATUS_COLOURS = {
   active:      { badge: 'badge-paid',     label: 'Active' },
@@ -119,47 +119,74 @@ function StatCards({ stats, alertCount }) {
 
 // ── Licence alert banner ──────────────────────────────────────────────────────
 
-function LicenceAlertBanner({ alerts, onDismiss }) {
-  if (!alerts || alerts.length === 0) return null
-  const expired = alerts.filter(a => a.expired)
-  const soon    = alerts.filter(a => !a.expired)
+const TYPE_LABEL = { truck: 'Truck', trailer: 'Trailer', personal_vehicle: 'Personal' }
+
+function LicencePopover({ items, title, color, icon: Icon, onClose }) {
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose() }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
   return (
-    <div style={{
-      marginBottom: 16, padding: '10px 14px',
-      background: 'var(--warning-dim, rgba(234,179,8,0.08))',
-      border: '1px solid var(--warning)', borderRadius: 8,
-      display: 'flex', alignItems: 'flex-start', gap: 10,
+    <div ref={ref} style={{
+      position: 'absolute', top: 'calc(100% + 10px)', right: 0, zIndex: 400,
+      width: 310, maxHeight: 420, display: 'flex', flexDirection: 'column',
+      background: 'var(--bg-card)', border: `1.5px solid ${color}`,
+      borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
     }}>
-      <AlertTriangle size={16} style={{ color: 'var(--warning)', marginTop: 2, flexShrink: 0 }} />
-      <div style={{ flex: 1, fontSize: 12 }}>
-        <div style={{ fontWeight: 700, color: 'var(--warning)', marginBottom: 4 }}>
-          Licence Alert — {alerts.length} item{alerts.length !== 1 ? 's' : ''} {expired.length > 0 ? `(${expired.length} expired)` : ''}
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {alerts.slice(0, 8).map((a, i) => (
-            <span key={i} style={{
-              fontSize: 11, padding: '2px 8px', borderRadius: 4,
-              background: a.expired ? 'var(--danger-dim, rgba(239,68,68,0.12))' : 'var(--bg-surface)',
-              border: `1px solid ${a.expired ? 'var(--danger)' : 'var(--warning)'}`,
-              color: a.expired ? 'var(--danger)' : 'var(--text-secondary)',
-              fontFamily: 'monospace',
-            }}>
-              {a.registration || a.description} · {a.expired ? 'EXPIRED' : `${a.days_until_expiry}d`}
-            </span>
-          ))}
-          {alerts.length > 8 && (
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', padding: '2px 4px' }}>
-              +{alerts.length - 8} more
-            </span>
-          )}
-        </div>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '10px 14px', borderBottom: '1px solid var(--border)', flexShrink: 0,
+      }}>
+        <Icon size={14} style={{ color }} />
+        <span style={{ fontWeight: 700, fontSize: 12, color, flex: 1, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          {title}
+        </span>
+        <span style={{
+          fontSize: 10, fontWeight: 700, background: color, color: '#fff',
+          borderRadius: 10, padding: '1px 7px',
+        }}>{items.length}</span>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, marginLeft: 4 }}>
+          <X size={13} />
+        </button>
       </div>
-      <button
-        onClick={onDismiss}
-        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0 }}
-      >
-        <X size={14} />
-      </button>
+      {/* List */}
+      <div style={{ overflowY: 'auto', flex: 1 }}>
+        {items.map((a, i) => (
+          <div key={i} style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '8px 14px', borderBottom: i < items.length - 1 ? '1px solid var(--border)' : 'none',
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: 12, color: 'var(--text-primary)' }}>
+                {a.registration || '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1, display: 'flex', gap: 6, alignItems: 'center' }}>
+                <span style={{
+                  fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4,
+                  background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                  borderRadius: 3, padding: '1px 5px', color: 'var(--text-secondary)',
+                }}>
+                  {TYPE_LABEL[a.type] || a.type}
+                </span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {a.description}
+                </span>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color, flexShrink: 0, textAlign: 'right' }}>
+              {a.expired
+                ? <span>{new Date(a.licence_expiry).toLocaleDateString('en-ZA')}</span>
+                : <span>{a.days_until_expiry}d</span>
+              }
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -788,7 +815,7 @@ export default function FleetPage() {
   const [entities, setEntities] = useState([])
   const [allDrivers, setAllDrivers]   = useState([])
   const [alerts, setAlerts]     = useState([])
-  const [alertsDismissed, setAlertsDismissed] = useState(false)
+  const [openPopover, setOpenPopover] = useState(null) // null | 'expired' | 'soon'
   const [loading, setLoading]   = useState(true)
   const [pvLoading, setPvLoading] = useState(false)
   const [search, setSearch]     = useState('')
@@ -900,8 +927,15 @@ export default function FleetPage() {
   }
 
   const entityMap    = Object.fromEntries(entities.map(e => [e.id, e]))
-  const expiredCount = alerts.filter(a => a.expired).length
-  const alertCount   = alerts.length
+
+  // Split alerts into two groups
+  const expiredAlerts = alerts
+    .filter(a => a.expired)
+    .sort((a, b) => new Date(b.licence_expiry) - new Date(a.licence_expiry)) // most recently expired first
+
+  const soonAlerts = alerts
+    .filter(a => !a.expired && a.days_until_expiry <= WARN_DAYS)
+    .sort((a, b) => a.days_until_expiry - b.days_until_expiry) // soonest first
 
   return (
     <div style={{ padding: '28px 32px', flex: 1 }}>
@@ -911,22 +945,63 @@ export default function FleetPage() {
           <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Truck size={22} style={{ color: 'var(--accent)' }} />
             Fleet Management
-            {alertCount > 0 && (
-              <button
-                onClick={() => setAlertsDismissed(d => !d)}
-                style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: expiredCount > 0 ? 'var(--danger)' : 'var(--warning)' }}
-                title={`${alertCount} licence${alertCount !== 1 ? 's' : ''} expiring soon`}
-              >
-                <Bell size={18} />
-                <span style={{
-                  position: 'absolute', top: 0, right: 0,
-                  background: expiredCount > 0 ? 'var(--danger)' : 'var(--warning)',
-                  color: '#fff', borderRadius: '50%', fontSize: 9, fontWeight: 700,
-                  width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  {alertCount}
-                </span>
-              </button>
+            {/* Expired licences icon */}
+            {expiredAlerts.length > 0 && (
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setOpenPopover(p => p === 'expired' ? null : 'expired')}
+                  style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--danger)', display: 'flex' }}
+                  title={`${expiredAlerts.length} expired licence${expiredAlerts.length !== 1 ? 's' : ''}`}
+                >
+                  <AlertCircle size={18} />
+                  <span style={{
+                    position: 'absolute', top: 0, right: 0,
+                    background: 'var(--danger)', color: '#fff',
+                    borderRadius: '50%', fontSize: 9, fontWeight: 700,
+                    width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {expiredAlerts.length}
+                  </span>
+                </button>
+                {openPopover === 'expired' && (
+                  <LicencePopover
+                    items={expiredAlerts}
+                    title="Expired Licences"
+                    color="var(--danger)"
+                    icon={AlertCircle}
+                    onClose={() => setOpenPopover(null)}
+                  />
+                )}
+              </div>
+            )}
+            {/* Expiring soon icon */}
+            {soonAlerts.length > 0 && (
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setOpenPopover(p => p === 'soon' ? null : 'soon')}
+                  style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--warning)', display: 'flex' }}
+                  title={`${soonAlerts.length} licence${soonAlerts.length !== 1 ? 's' : ''} expiring within 30 days`}
+                >
+                  <Clock size={18} />
+                  <span style={{
+                    position: 'absolute', top: 0, right: 0,
+                    background: 'var(--warning)', color: '#fff',
+                    borderRadius: '50%', fontSize: 9, fontWeight: 700,
+                    width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {soonAlerts.length}
+                  </span>
+                </button>
+                {openPopover === 'soon' && (
+                  <LicencePopover
+                    items={soonAlerts}
+                    title="Expiring Within 30 Days"
+                    color="var(--warning)"
+                    icon={Clock}
+                    onClose={() => setOpenPopover(null)}
+                  />
+                )}
+              </div>
             )}
           </div>
           <div className="page-subtitle">Trucks, trailers and personal vehicles</div>
@@ -983,12 +1058,7 @@ export default function FleetPage() {
       </div>
 
       {/* Stats */}
-      <StatCards stats={stats} alertCount={alertCount} />
-
-      {/* Licence alert banner */}
-      {!alertsDismissed && alerts.length > 0 && (
-        <LicenceAlertBanner alerts={alerts} onDismiss={() => setAlertsDismissed(true)} />
-      )}
+      <StatCards stats={stats} alertCount={expiredAlerts.length + soonAlerts.length} />
 
       {/* Tabs */}
       <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 3, gap: 2, marginBottom: 16, width: 'fit-content' }}>
