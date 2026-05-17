@@ -247,7 +247,10 @@ def list_supplier_invoices(
 
     def _to_out(inv) -> SupplierInvoiceOut:
         out = SupplierInvoiceOut.model_validate(inv)
-        return out.model_copy(update={"diesel_fillup_id": fillup_id_by_inv.get(inv.id)})
+        return out.model_copy(update={
+            "diesel_fillup_id": fillup_id_by_inv.get(inv.id),
+            **get_verification_display(db, inv),
+        })
 
     # Group by (year, month)
     groups: dict = {}
@@ -286,7 +289,8 @@ def get_supplier_invoice(
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(inv.entity_id, current_user)
-    return inv
+    out = SupplierInvoiceOut.model_validate(inv)
+    return out.model_copy(update=get_verification_display(db, inv))
 
 
 # ── Create ────────────────────────────────────────────────────────────────────

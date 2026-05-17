@@ -39,7 +39,7 @@ export default function VerifyBadge({ item, onVerify, disabled = false }) {
       onClick={handleClick}
       title={
         !step1Done      ? 'Click to verify (step 1 of 2)' :
-        !step2Done      ? 'Click to approve (step 2 of 2 — must be a different person)' :
+        !step2Done      ? 'Click to approve (step 2 of 2 — administrator only, must be a different person)' :
                           'Fully verified — admin can click to reset'
       }
       style={{

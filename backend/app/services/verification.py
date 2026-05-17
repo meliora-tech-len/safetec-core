@@ -76,7 +76,12 @@ def apply_verify_step(obj, current_user: User, is_admin: bool):
         obj.verified2_at = None
 
     elif not step2_done:
-        if obj.verified_by == current_user.id and not is_admin:
+        if not is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Step 2 approval requires administrator access.",
+            )
+        if obj.verified_by == current_user.id:
             raise HTTPException(
                 status_code=400,
                 detail="The same person cannot complete both verification steps.",

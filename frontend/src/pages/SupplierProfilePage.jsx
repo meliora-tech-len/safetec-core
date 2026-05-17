@@ -4,7 +4,7 @@ import {
   getSupplier, getEntities,
   getSupplierInvoices, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
-  verifySupplierInvoice,
+  verifySupplierInvoice, getCurrentDieselRate,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
@@ -65,6 +65,10 @@ export default function SupplierProfilePage() {
   const [deleteTarget, setDeleteTarget] = useState(null)  // invoice pending deletion
   const firstInputRef = useRef(null)
 
+  // Diesel rate auto-fill state (for diesel suppliers)
+  const [dieselRate, setDieselRate] = useState(null)
+  const [amountAutoFilled, setAmountAutoFilled] = useState(false)
+
   const loadInvoices = useCallback(() =>
     getSupplierInvoices({ supplier_id: supplierId }).then(r => setGroups(r.data))
   , [supplierId])
@@ -87,6 +91,30 @@ export default function SupplierProfilePage() {
       firstInputRef.current.focus()
   }, [showNew, editingId])
 
+  // Fetch the current diesel rate when the new-row form is open for a diesel supplier
+  useEffect(() => {
+    if (!supplier?.is_diesel_supplier || !supplier?.entity_id || !showNew) {
+      setDieselRate(null)
+      return
+    }
+    const date = newForm.invoice_date || new Date().toISOString().slice(0, 10)
+    getCurrentDieselRate(supplier.id, { entity_id: supplier.entity_id, on_date: date })
+      .then(r => setDieselRate(r.data || null))
+      .catch(() => setDieselRate(null))
+  }, [supplier?.id, supplier?.entity_id, supplier?.is_diesel_supplier, newForm.invoice_date, showNew])
+
+  // Auto-fill amount when litres are entered and a diesel rate is available
+  useEffect(() => {
+    if (!supplier?.is_diesel_supplier || !dieselRate || !newForm.litres) return
+    const litres = parseFloat(newForm.litres)
+    if (isNaN(litres) || litres <= 0) return
+    // Only auto-fill if the amount field is empty or was previously auto-calculated
+    if (newForm.amount && !amountAutoFilled) return
+    const calculated = (litres * parseFloat(dieselRate.rate_per_litre)).toFixed(2)
+    setNewForm(f => ({ ...f, amount: calculated }))
+    setAmountAutoFilled(true)
+  }, [newForm.litres, dieselRate])
+
   const toggleCollapse = (key) => setCollapsed(s => ({ ...s, [key]: !s[key] }))
 
   const startEdit = (inv) => {
@@ -107,7 +135,7 @@ export default function SupplierProfilePage() {
   }
 
   const cancelEdit = () => { setEditingId(null); setEditForm({}) }
-  const cancelNew = () => { setShowNew(false); setNewForm(blankForm(supplier?.entity_id)) }
+  const cancelNew = () => { setShowNew(false); setNewForm(blankForm(supplier?.entity_id)); setAmountAutoFilled(false) }
 
   const handleAddClick = () => {
     setEditingId(null)
@@ -150,6 +178,7 @@ export default function SupplierProfilePage() {
       }
       setShowNew(false)
       setNewForm(blankForm(supplier?.entity_id))
+      setAmountAutoFilled(false)
       await loadInvoices()
     } catch (e) { toast.error(errorMessage(e)) }
     finally { setSaving(false) }
@@ -305,6 +334,9 @@ export default function SupplierProfilePage() {
                     onKeyDown={handleKeyDown}
                     showVehicleReg={showVehicleReg}
                     isDiesel={isDiesel}
+                    dieselRate={dieselRate}
+                    amountAutoFilled={amountAutoFilled}
+                    onAmountEdit={() => setAmountAutoFilled(false)}
                   />
                 : <tr>
                     <td
@@ -407,6 +439,9 @@ export default function SupplierProfilePage() {
                         onKeyDown={handleKeyDown}
                         showVehicleReg={showVehicleReg}
                         isDiesel={isDiesel}
+                        dieselRate={dieselRate}
+                        amountAutoFilled={amountAutoFilled}
+                        onAmountEdit={() => setAmountAutoFilled(false)}
                       />
                     )}
                     {group.invoices.map(inv => {
@@ -636,7 +671,7 @@ export default function SupplierProfilePage() {
 }
 
 
-function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel }) {
+function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return (
     <tr style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border-accent)' }}>
@@ -673,10 +708,17 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
           style={{ ...styles.cellInput, minWidth: 140 }} />
       </td>
       <td style={styles.td}>
-        <input type="number" step="0.01" min="0" placeholder="0.00" value={form.amount}
-          onChange={e => set('amount', e.target.value)}
-          onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-          style={{ ...styles.cellInput, width: 90, textAlign: 'right' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <input type="number" step="0.01" min="0" placeholder="0.00" value={form.amount}
+            onChange={e => { set('amount', e.target.value); onAmountEdit?.() }}
+            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            style={{ ...styles.cellInput, width: 90, textAlign: 'right' }} />
+          {amountAutoFilled && dieselRate && (
+            <span style={{ fontSize: 9, fontWeight: 700, color: '#16a34a', whiteSpace: 'nowrap' }} title={`Auto-calculated: R${parseFloat(dieselRate.rate_per_litre).toFixed(2)}/L`}>
+              auto
+            </span>
+          )}
+        </div>
       </td>
       {isDiesel && (
         <td style={styles.td}>

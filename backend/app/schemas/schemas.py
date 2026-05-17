@@ -1051,6 +1051,11 @@ class SupplierInvoiceOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     diesel_fillup_id: Optional[int] = None
+    # Verification display (initials + date)
+    verified_by_initials: Optional[str] = None
+    verified_by_date: Optional[str] = None
+    verified2_by_initials: Optional[str] = None
+    verified2_by_date: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -1198,6 +1203,11 @@ class DieselFillUpOut(BaseModel):
     # Enriched
     truck_registration: Optional[str] = None
     supplier_name: Optional[str] = None
+    # Verification display (initials + date)
+    verified_by_initials: Optional[str] = None
+    verified_by_date: Optional[str] = None
+    verified2_by_initials: Optional[str] = None
+    verified2_by_date: Optional[str] = None
 
     class Config:
         from_attributes = True
