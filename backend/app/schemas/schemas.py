@@ -281,8 +281,8 @@ class SupplierSummary(BaseModel):
 
 class LineItemBase(BaseModel):
     description: Optional[str] = None
-    quantity: Decimal = Decimal("1")
-    unit_price: Decimal = Decimal("0")
+    quantity: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
     amount: Optional[Decimal] = Decimal("0")
     is_vat_exempt: bool = False
     sort_order: int = 0

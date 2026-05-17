@@ -6,7 +6,7 @@ import { getEntities, getSuppliers, getInvoice, getNextInvoiceNumber, createInvo
 
 const emptyLine = () => ({
   _id: Math.random().toString(36).slice(2),
-  description: '', quantity: '1', unit_price: '', amount: '0',
+  description: '', quantity: '', unit_price: '', amount: '',
   is_vat_exempt: false, sort_order: 0,
 })
 
@@ -69,8 +69,8 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           setLines(inv.line_items.map(li => ({
             _id: String(li.id),
             description: li.description || '',
-            quantity: String(li.quantity),
-            unit_price: String(li.unit_price),
+            quantity: li.quantity != null ? String(li.quantity) : '',
+            unit_price: li.unit_price != null ? String(li.unit_price) : '',
             amount: String(li.amount),
             is_vat_exempt: li.is_vat_exempt || false,
             sort_order: li.sort_order,
@@ -115,11 +115,13 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
     setLines(prev => {
       const updated = [...prev]
       updated[idx] = { ...updated[idx], [field]: value }
-      // Auto-calc amount when qty or price change
+      // Auto-calc amount only when both qty and price are filled
       if (field === 'quantity' || field === 'unit_price') {
-        const qty = parseFloat(field === 'quantity' ? value : updated[idx].quantity) || 0
-        const price = parseFloat(field === 'unit_price' ? value : updated[idx].unit_price) || 0
-        updated[idx].amount = String((qty * price).toFixed(2))
+        const qty   = field === 'quantity'   ? value : updated[idx].quantity
+        const price = field === 'unit_price' ? value : updated[idx].unit_price
+        if (qty !== '' && price !== '') {
+          updated[idx].amount = String((parseFloat(qty) * parseFloat(price)).toFixed(2))
+        }
       }
       return updated
     })
@@ -168,8 +170,8 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           .filter(l => l.description || parseFloat(l.amount))
           .map((l, i) => ({
             description: l.description,
-            quantity: parseFloat(l.quantity) || 1,
-            unit_price: parseFloat(l.unit_price) || 0,
+            quantity: l.quantity !== '' ? parseFloat(l.quantity) : null,
+            unit_price: l.unit_price !== '' ? parseFloat(l.unit_price) : null,
             amount: parseFloat(l.amount) || 0,
             is_vat_exempt: l.is_vat_exempt,
             sort_order: i,
@@ -317,9 +319,10 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                       className="form-input"
                       type="number"
                       style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
+                      placeholder="—"
                       value={line.quantity}
                       onChange={e => updateLine(idx, 'quantity', e.target.value)}
-                      min="1" step="1"
+                      min="0" step="any"
                     />
                     <input
                       className="form-input"

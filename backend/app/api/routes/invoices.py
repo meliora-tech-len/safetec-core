@@ -27,17 +27,25 @@ def _check_entity_access(entity_id: int, user: User):
         raise HTTPException(status_code=403, detail="Access denied to this entity")
 
 
+def _line_amount(item) -> Decimal:
+    """Return the effective amount for a line item.
+    If qty and unit_price are both provided, calculate qty × price.
+    Otherwise use the amount field directly (supports lump-sum lines).
+    """
+    qty   = item.quantity   if item.quantity   is not None else None
+    price = item.unit_price if item.unit_price is not None else None
+    if qty is not None and price is not None:
+        return (Decimal(str(qty)) * Decimal(str(price))).quantize(Decimal("0.01"))
+    return (Decimal(str(item.amount)) if item.amount else Decimal("0")).quantize(Decimal("0.01"))
+
+
 def _calculate_totals(line_items_data, vat_rate: Decimal, is_vat_exempt: bool = False):
-    subtotal = sum(
-        Decimal(str(item.quantity)) * Decimal(str(item.unit_price))
-        for item in line_items_data
-    )
+    subtotal = sum(_line_amount(item) for item in line_items_data)
     if is_vat_exempt:
         vat_amount = Decimal("0")
     else:
         vat_base = sum(
-            Decimal(str(item.quantity)) * Decimal(str(item.unit_price))
-            for item in line_items_data
+            _line_amount(item) for item in line_items_data
             if not getattr(item, 'is_vat_exempt', False)
         )
         vat_amount = (vat_base * vat_rate).quantize(Decimal("0.01"))
@@ -222,13 +230,12 @@ def create_invoice(
         db.flush()
 
         for i, item_data in enumerate(payload.line_items):
-            amount = (Decimal(str(item_data.quantity)) * Decimal(str(item_data.unit_price))).quantize(Decimal("0.01"))
             item = InvoiceLineItem(
                 invoice_id=invoice.id,
                 description=item_data.description,
                 quantity=item_data.quantity,
                 unit_price=item_data.unit_price,
-                amount=amount,
+                amount=_line_amount(item_data),
                 is_vat_exempt=item_data.is_vat_exempt,
                 sort_order=item_data.sort_order or i,
             )
@@ -276,13 +283,12 @@ def update_invoice(
             db.query(InvoiceLineItem).filter(InvoiceLineItem.invoice_id == invoice_id).delete()
             entity = db.query(BusinessEntity).filter(BusinessEntity.id == invoice.entity_id).first()
             for i, item_data in enumerate(payload.line_items):
-                amount = (Decimal(str(item_data.quantity)) * Decimal(str(item_data.unit_price))).quantize(Decimal("0.01"))
                 db.add(InvoiceLineItem(
                     invoice_id=invoice.id,
                     description=item_data.description,
                     quantity=item_data.quantity,
                     unit_price=item_data.unit_price,
-                    amount=amount,
+                    amount=_line_amount(item_data),
                     is_vat_exempt=item_data.is_vat_exempt,
                     sort_order=item_data.sort_order or i,
                 ))
