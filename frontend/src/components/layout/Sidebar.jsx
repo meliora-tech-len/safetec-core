@@ -24,15 +24,14 @@ function darkenHex(hex, factor) {
 }
 
 const NAV = [
-  { to: '/dashboard',   icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/suppliers',   icon: Users,           label: 'Suppliers',   module: 'suppliers' },
-  { to: '/clients',     icon: Users,           label: 'Clients',     module: 'clients' },
-  { to: '/fleet',             icon: Truck,   label: 'Fleet',       module: 'fleet', end: true },
-  { to: '/drivers',           icon: Users,   label: 'Drivers',     module: 'fleet' },
-  { to: '/fleet/assignments', icon: Link2,   label: 'Assignments', module: 'fleet' },
-  { to: '/truck-loads',       icon: Package, label: 'Truck Loads', module: 'fleet' },
-  { to: '/diesel',      icon: Fuel,            label: 'Diesel',      module: 'diesel' },
-  { to: '/audit',       icon: Shield,          label: 'Audit Log',   adminOnly: true },
+  { to: '/dashboard',         icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/suppliers',         icon: Users,           label: 'Suppliers',    module: 'suppliers' },
+  { to: '/fleet',             icon: Truck,           label: 'Fleet',        module: 'fleet',        end: true },
+  { to: '/drivers',           icon: Users,           label: 'Drivers',      module: 'drivers' },
+  { to: '/fleet/assignments', icon: Link2,           label: 'Assignments',  module: 'drivers' },
+  { to: '/truck-loads',       icon: Package,         label: 'Truck Loads',  module: 'truck_loads' },
+  { to: '/diesel',            icon: Fuel,            label: 'Diesel',       module: 'diesel' },
+  { to: '/audit',             icon: Shield,          label: 'Audit Log',    adminOnly: true },
 ]
 
 const DOCUMENTS_NAV = [

@@ -9,10 +9,12 @@ import {
 import DeleteModal from '../components/DeleteModal'
 
 const ALL_MODULES = [
-  { key: 'suppliers', label: 'Suppliers' },
-  { key: 'invoices', label: 'Invoices' },
-  { key: 'fleet', label: 'Fleet' },
-  { key: 'diesel', label: 'Diesel' },
+  { key: 'suppliers',   label: 'Suppliers',             description: 'Supplier records & management' },
+  { key: 'invoices',    label: 'Billing & Invoices',    description: 'Quotes, invoices & purchase orders' },
+  { key: 'fleet',       label: 'Fleet & Vehicles',      description: 'Trucks, trailers & personal vehicles' },
+  { key: 'drivers',     label: 'Drivers & Assignments', description: 'Driver records & truck assignments' },
+  { key: 'truck_loads', label: 'Truck Loads',           description: 'Truck load records & route management' },
+  { key: 'diesel',      label: 'Diesel',                description: 'Diesel fill-ups, consumption & rates' },
 ]
 
 const TABS_USER = ['Details', 'Password', 'Permissions']
@@ -431,7 +433,7 @@ export default function UsersPage() {
                         {ALL_MODULES.map(mod => {
                           const checked = perm.allowed_modules.includes(mod.key)
                           return (
-                            <label key={mod.key} style={{
+                            <label key={mod.key} title={mod.description} style={{
                               display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
                               padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: checked ? 600 : 400,
                               background: checked ? `${perm.entity_color}20` : 'var(--bg-secondary)',
