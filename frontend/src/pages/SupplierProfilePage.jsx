@@ -7,6 +7,7 @@ import {
   verifySupplierInvoice, getCurrentDieselRate,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
+import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
@@ -49,6 +50,7 @@ function PaymentTermBadge({ term }) {
 export default function SupplierProfilePage() {
   const { supplierId } = useParams()
   const navigate = useNavigate()
+  const { activeEntity } = useAuth()
 
   const [supplier, setSupplier] = useState(null)
   const [entities, setEntities] = useState([])
@@ -91,24 +93,24 @@ export default function SupplierProfilePage() {
       firstInputRef.current.focus()
   }, [showNew, editingId])
 
-  // Fetch the current diesel rate when the new-row form is open for a diesel supplier
+  // Re-fetch the diesel rate whenever the form's entity or date changes
   useEffect(() => {
-    if (!supplier?.is_diesel_supplier || !supplier?.entity_id || !showNew) {
+    if (!supplier?.is_diesel_supplier || !showNew || !newForm.entity_id) {
       setDieselRate(null)
       return
     }
+    const entityId = parseInt(newForm.entity_id)
     const date = newForm.invoice_date || new Date().toISOString().slice(0, 10)
-    getCurrentDieselRate(supplier.id, { entity_id: supplier.entity_id, on_date: date })
+    getCurrentDieselRate(supplier.id, { entity_id: entityId, on_date: date })
       .then(r => setDieselRate(r.data || null))
       .catch(() => setDieselRate(null))
-  }, [supplier?.id, supplier?.entity_id, supplier?.is_diesel_supplier, newForm.invoice_date, showNew])
+  }, [supplier?.id, supplier?.is_diesel_supplier, newForm.entity_id, newForm.invoice_date, showNew])
 
-  // Auto-fill amount when litres are entered and a diesel rate is available
+  // Auto-fill amount when litres change and a diesel rate has been loaded
   useEffect(() => {
-    if (!supplier?.is_diesel_supplier || !dieselRate || !newForm.litres) return
+    if (!dieselRate || !newForm.litres) return
     const litres = parseFloat(newForm.litres)
     if (isNaN(litres) || litres <= 0) return
-    // Only auto-fill if the amount field is empty or was previously auto-calculated
     if (newForm.amount && !amountAutoFilled) return
     const calculated = (litres * parseFloat(dieselRate.rate_per_litre)).toFixed(2)
     setNewForm(f => ({ ...f, amount: calculated }))
@@ -135,11 +137,15 @@ export default function SupplierProfilePage() {
   }
 
   const cancelEdit = () => { setEditingId(null); setEditForm({}) }
-  const cancelNew = () => { setShowNew(false); setNewForm(blankForm(supplier?.entity_id)); setAmountAutoFilled(false) }
+  const cancelNew = () => { setShowNew(false); setNewForm(blankForm(String(activeEntity?.id || supplier?.entity_id || ''))); setAmountAutoFilled(false) }
 
   const handleAddClick = () => {
     setEditingId(null)
-    setNewForm(blankForm(supplier?.entity_id))
+    // Default to the user's active entity; fall back to the supplier's own entity
+    const defaultEntityId = activeEntity?.id || supplier?.entity_id
+    setNewForm(blankForm(String(defaultEntityId || '')))
+    setAmountAutoFilled(false)
+    setDieselRate(null)
     setShowNew(true)
   }
 
