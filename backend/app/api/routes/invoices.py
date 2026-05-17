@@ -29,9 +29,11 @@ def _check_entity_access(entity_id: int, user: User):
 
 def _line_amount(item) -> Decimal:
     """Return the effective amount for a line item.
-    If qty and unit_price are both provided, calculate qty × price.
-    Otherwise use the amount field directly (supports lump-sum lines).
+    header, note, and spacer rows always contribute R 0.
+    For item rows: qty × price if both given, else the amount field directly.
     """
+    if getattr(item, 'line_type', 'item') != 'item':
+        return Decimal('0')
     qty   = item.quantity   if item.quantity   is not None else None
     price = item.unit_price if item.unit_price is not None else None
     if qty is not None and price is not None:
@@ -238,6 +240,7 @@ def create_invoice(
                 amount=_line_amount(item_data),
                 is_vat_exempt=item_data.is_vat_exempt,
                 sort_order=item_data.sort_order or i,
+                line_type=item_data.line_type,
             )
             db.add(item)
 
@@ -291,6 +294,7 @@ def update_invoice(
                     amount=_line_amount(item_data),
                     is_vat_exempt=item_data.is_vat_exempt,
                     sort_order=item_data.sort_order or i,
+                    line_type=item_data.line_type,
                 ))
             subtotal, vat_amount, total = _calculate_totals(payload.line_items, invoice.vat_rate, invoice.is_vat_exempt)
             invoice.subtotal = subtotal

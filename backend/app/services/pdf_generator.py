@@ -121,6 +121,9 @@ def _compute_totals(invoice, line_items):
     vat_rate = Decimal(str(invoice.vat_rate)) if invoice.vat_rate else Decimal("0.15")
 
     for item in line_items:
+        # header, note, spacer rows contribute nothing to totals
+        if getattr(item, 'line_type', 'item') != 'item':
+            continue
         amount = Decimal(str(item.amount))
         subtotal += amount
         # Apply VAT if: invoice not fully exempt AND this line not exempt
@@ -202,6 +205,10 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
     s_note_text = st("note_text", fontSize=8, textColor=gray_dark, leading=12)
     s_footer = st("footer", fontSize=7, textColor=gray_mid, alignment=TA_CENTER, leading=9)
     s_exempt_tag = st("exempt", fontSize=7, textColor=gray_mid, leading=9)
+    s_sec_hdr = st("sec_hdr", fontSize=10, fontName="Helvetica-Bold",
+                   textColor=accent_text, leading=13)
+    s_note_ln = st("note_ln", fontSize=8.5, fontName="Helvetica-Oblique",
+                   textColor=gray_mid, leading=12)
 
     # ── Logo ──────────────────────────────────────────────────────────────────
     logo_img = None
@@ -347,28 +354,55 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
         Paragraph("TOTAL", s_col_hdr_r),
     ]]
 
+    # Accumulators for type-aware row building
+    span_cmds      = []   # SPAN directives for full-width rows
+    bg_cmds        = []   # per-row background / padding overrides
+    item_row_idxs  = []   # indices of 'item' rows (for alternating shading only)
+
     for item in sorted_items:
+        row_idx = len(line_rows)   # header is index 0; data starts at 1
+        lt = getattr(item, 'line_type', 'item') or 'item'
         desc = item.description or ""
-        # Add "(No VAT)" tag on line if partially exempt
-        is_line_exempt = getattr(item, "is_vat_exempt", False)
-        if is_line_exempt and not invoice.is_vat_exempt:
-            desc_para = [
-                Paragraph(desc, s_line_desc),
-                Paragraph("No VAT", s_exempt_tag),
-            ]
-        else:
-            desc_para = Paragraph(desc, s_line_desc)
 
-        qty = Decimal(str(item.quantity))
-        qty_str = f"{qty:.2f}" if qty != qty.to_integral_value() else f"{int(qty)}"
-        line_rows.append([
-            desc_para,
-            Paragraph(qty_str, s_line_num),
-            Paragraph(format_currency(item.unit_price), s_line_num),
-            Paragraph(format_currency(item.amount), s_line_num),
-        ])
+        if lt == 'header':
+            line_rows.append([Paragraph(desc, s_sec_hdr), '', '', ''])
+            span_cmds.append(("SPAN", (0, row_idx), (3, row_idx)))
+            bg_cmds.extend([
+                ("BACKGROUND",    (0, row_idx), (-1, row_idx), accent_dark),
+                ("TOPPADDING",    (0, row_idx), (-1, row_idx), 5),
+                ("BOTTOMPADDING", (0, row_idx), (-1, row_idx), 5),
+            ])
 
-    # Pad to minimum rows
+        elif lt == 'note':
+            line_rows.append([Paragraph(desc, s_note_ln), '', '', ''])
+            span_cmds.append(("SPAN", (0, row_idx), (3, row_idx)))
+
+        elif lt == 'spacer':
+            line_rows.append(['', '', '', ''])
+            span_cmds.append(("SPAN", (0, row_idx), (3, row_idx)))
+            bg_cmds.extend([
+                ("TOPPADDING",    (0, row_idx), (-1, row_idx), 2),
+                ("BOTTOMPADDING", (0, row_idx), (-1, row_idx), 2),
+            ])
+
+        else:  # 'item' (default)
+            is_line_exempt = getattr(item, "is_vat_exempt", False)
+            if is_line_exempt and not invoice.is_vat_exempt:
+                desc_para = [Paragraph(desc, s_line_desc), Paragraph("No VAT", s_exempt_tag)]
+            else:
+                desc_para = Paragraph(desc, s_line_desc)
+
+            qty = Decimal(str(item.quantity)) if item.quantity is not None else Decimal('0')
+            qty_str = f"{qty:.2f}" if qty != qty.to_integral_value() else f"{int(qty)}"
+            line_rows.append([
+                desc_para,
+                Paragraph(qty_str, s_line_num),
+                Paragraph(format_currency(item.unit_price), s_line_num),
+                Paragraph(format_currency(item.amount), s_line_num),
+            ])
+            item_row_idxs.append(row_idx)
+
+    # Pad to minimum rows (item-type blank rows)
     min_rows = 8
     while len(line_rows) < min_rows + 1:
         line_rows.append(["", "", "", ""])
@@ -378,11 +412,11 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
         colWidths=[col_desc_w, col_qty_w, col_rate_w, col_total_w],
     )
     row_styles = [
-        # Header
+        # Column header row
         ("BACKGROUND", (0, 0), (-1, 0), accent),
         ("TOPPADDING", (0, 0), (-1, 0), 7),
         ("BOTTOMPADDING", (0, 0), (-1, 0), 7),
-        # All cells
+        # All data cells (default padding)
         ("TOPPADDING", (0, 1), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
@@ -390,11 +424,14 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         # Grid lines (light)
         ("LINEBELOW", (0, 0), (-1, -1), 0.3, divider),
-        # Alternate row shading
     ]
-    for i in range(1, len(line_rows)):
-        if i % 2 == 0:
-            row_styles.append(("BACKGROUND", (0, i), (-1, i), gray_light))
+    # Alternating shading on item rows only
+    for r in item_row_idxs:
+        if r % 2 == 0:
+            row_styles.append(("BACKGROUND", (0, r), (-1, r), gray_light))
+    # SPAN and per-row overrides applied last (they win over base rules)
+    row_styles.extend(span_cmds)
+    row_styles.extend(bg_cmds)
 
     items_table.setStyle(TableStyle(row_styles))
     story.append(items_table)

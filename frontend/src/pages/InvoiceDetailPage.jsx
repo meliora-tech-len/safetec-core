@@ -220,14 +220,39 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
               </tr>
             </thead>
             <tbody>
-              {[...invoice.line_items].sort((a, b) => a.sort_order - b.sort_order).map(li => (
-                <tr key={li.id}>
-                  <td>{li.description}</td>
-                  <td className="text-right">{parseFloat(li.quantity)}</td>
-                  <td className="text-right">{formatCurrency(li.unit_price)}</td>
-                  <td className="text-right font-bold">{formatCurrency(li.amount)}</td>
-                </tr>
-              ))}
+              {[...invoice.line_items].sort((a, b) => a.sort_order - b.sort_order).map(li => {
+                const lt = li.line_type || 'item'
+                if (lt === 'spacer') {
+                  return <tr key={li.id} style={{ height: 12 }}><td colSpan={4} /></tr>
+                }
+                if (lt === 'header') {
+                  return (
+                    <tr key={li.id} style={{ background: 'var(--bg-base)' }}>
+                      <td colSpan={4} style={{ fontWeight: 700, fontSize: 13, padding: '7px 10px', color: 'var(--accent)', borderBottom: '1px solid var(--border)' }}>
+                        {li.description}
+                      </td>
+                    </tr>
+                  )
+                }
+                if (lt === 'note') {
+                  return (
+                    <tr key={li.id}>
+                      <td colSpan={4} style={{ fontSize: 12, fontStyle: 'italic', color: 'var(--text-muted)', padding: '4px 10px' }}>
+                        {li.description}
+                      </td>
+                    </tr>
+                  )
+                }
+                // item (default)
+                return (
+                  <tr key={li.id}>
+                    <td>{li.description}</td>
+                    <td className="text-right">{li.quantity != null ? parseFloat(li.quantity) : '—'}</td>
+                    <td className="text-right">{li.unit_price != null ? formatCurrency(li.unit_price) : '—'}</td>
+                    <td className="text-right font-bold">{formatCurrency(li.amount)}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
 

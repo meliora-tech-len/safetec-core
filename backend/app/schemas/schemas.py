@@ -281,6 +281,14 @@ class LineItemBase(BaseModel):
     amount: Optional[Decimal] = Decimal("0")
     is_vat_exempt: bool = False
     sort_order: int = 0
+    line_type: str = 'item'
+
+    @field_validator('line_type')
+    @classmethod
+    def validate_line_type(cls, v):
+        if v not in {'item', 'header', 'note', 'spacer'}:
+            raise ValueError("line_type must be one of: item, header, note, spacer")
+        return v
 
 class LineItemCreate(LineItemBase):
     pass

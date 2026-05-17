@@ -252,6 +252,7 @@ class InvoiceLineItem(Base):
     amount = Column(Numeric(15, 2), default=0)
     is_vat_exempt = Column(Boolean, default=False)  # line-item level non-VAT override
     sort_order = Column(Integer, default=0)
+    line_type  = Column(String(20), default='item')
 
     invoice = relationship("Invoice", back_populates="line_items")
 

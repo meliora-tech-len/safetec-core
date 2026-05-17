@@ -4,11 +4,41 @@ import { Plus, Trash2, AlertCircle, ArrowLeft, Save } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { getEntities, getSuppliers, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
 
-const emptyLine = () => ({
+const LINE_TYPES = [
+  { value: 'item',   label: 'Item',   color: 'var(--accent)' },
+  { value: 'header', label: 'Header', color: '#7c3aed' },
+  { value: 'note',   label: 'Note',   color: 'var(--text-muted)' },
+  { value: 'spacer', label: 'Space',  color: 'var(--border)' },
+]
+
+const emptyLine = (type = 'item') => ({
   _id: Math.random().toString(36).slice(2),
   description: '', quantity: '', unit_price: '', amount: '',
   is_vat_exempt: false, sort_order: 0,
+  line_type: type,
 })
+
+function LineTypeChip({ value, onChange }) {
+  const t = LINE_TYPES.find(x => x.value === value) || LINE_TYPES[0]
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      title="Row type"
+      style={{
+        fontSize: 9, fontWeight: 700, padding: '2px 3px',
+        border: `1px solid ${t.color}`, color: t.color,
+        background: 'transparent', borderRadius: 4,
+        cursor: 'pointer', width: 54, flexShrink: 0,
+        textTransform: 'uppercase', letterSpacing: 0.3,
+      }}
+    >
+      {LINE_TYPES.map(opt => (
+        <option key={opt.value} value={opt.value}>{opt.label}</option>
+      ))}
+    </select>
+  )
+}
 
 function formatCurrency(val) {
   const n = parseFloat(val) || 0
@@ -74,6 +104,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             amount: String(li.amount),
             is_vat_exempt: li.is_vat_exempt || false,
             sort_order: li.sort_order,
+            line_type: li.line_type || 'item',
           })))
         } else {
           const defaultEntity = activeEntity || entsRes.data[0]
@@ -115,8 +146,15 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
     setLines(prev => {
       const updated = [...prev]
       updated[idx] = { ...updated[idx], [field]: value }
-      // Auto-calc amount only when both qty and price are filled
-      if (field === 'quantity' || field === 'unit_price') {
+      // When switching away from item, clear financial fields
+      if (field === 'line_type' && value !== 'item') {
+        updated[idx].quantity   = ''
+        updated[idx].unit_price = ''
+        updated[idx].amount     = ''
+        updated[idx].is_vat_exempt = false
+      }
+      // Auto-calc amount only for item rows with both qty and price filled
+      if ((field === 'quantity' || field === 'unit_price') && updated[idx].line_type === 'item') {
         const qty   = field === 'quantity'   ? value : updated[idx].quantity
         const price = field === 'unit_price' ? value : updated[idx].unit_price
         if (qty !== '' && price !== '') {
@@ -127,15 +165,16 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
     })
   }
 
-  const addLine = () => setLines(prev => [...prev, emptyLine()])
+  const addLine = (type = 'item') => setLines(prev => [...prev, emptyLine(type)])
   const removeLine = (idx) => setLines(prev => prev.filter((_, i) => i !== idx))
 
-  // ── Totals ────────────────────────────────────────────────────────
-  const subtotal = lines.reduce((sum, l) => sum + (parseFloat(l.amount) || 0), 0)
-  const vatBase = isVatExempt ? 0 : lines.reduce((sum, l) => {
-    if (l.is_vat_exempt) return sum
-    return sum + (parseFloat(l.amount) || 0)
-  }, 0)
+  // ── Totals (item rows only) ───────────────────────────────────────
+  const subtotal = lines
+    .filter(l => (l.line_type || 'item') === 'item')
+    .reduce((sum, l) => sum + (parseFloat(l.amount) || 0), 0)
+  const vatBase = isVatExempt ? 0 : lines
+    .filter(l => (l.line_type || 'item') === 'item' && !l.is_vat_exempt)
+    .reduce((sum, l) => sum + (parseFloat(l.amount) || 0), 0)
   const vatAmount = vatBase * vatRate
   const total = subtotal + vatAmount
 
@@ -147,7 +186,12 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
       setError('Entity, supplier, and invoice number are required')
       return
     }
-    if (lines.every(l => !l.description && !parseFloat(l.amount))) {
+    const hasContent = lines.some(l =>
+      l.line_type === 'spacer' ||
+      l.description ||
+      parseFloat(l.amount)
+    )
+    if (!hasContent) {
       setError('Add at least one line item')
       return
     }
@@ -167,15 +211,19 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
         print_note: printNote,
         status: statusOverride || 'draft',
         line_items: lines
-          .filter(l => l.description || parseFloat(l.amount))
-          .map((l, i) => ({
-            description: l.description,
-            quantity: l.quantity !== '' ? parseFloat(l.quantity) : null,
-            unit_price: l.unit_price !== '' ? parseFloat(l.unit_price) : null,
-            amount: parseFloat(l.amount) || 0,
-            is_vat_exempt: l.is_vat_exempt,
-            sort_order: i,
-          })),
+          .filter(l => l.line_type === 'spacer' || l.description || parseFloat(l.amount))
+          .map((l, i) => {
+            const isItem = (l.line_type || 'item') === 'item'
+            return {
+              description: l.description || null,
+              quantity:    isItem && l.quantity   !== '' ? parseFloat(l.quantity)   : null,
+              unit_price:  isItem && l.unit_price !== '' ? parseFloat(l.unit_price) : null,
+              amount:      isItem ? (parseFloat(l.amount) || 0) : 0,
+              is_vat_exempt: l.is_vat_exempt,
+              sort_order: i,
+              line_type: l.line_type || 'item',
+            }
+          }),
       }
 
       if (isEdit) {
@@ -285,15 +333,30 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
 
           {/* Line Items */}
           <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <h3 style={styles.sectionTitle}>Line Items</h3>
-              <button className="btn-ghost btn-sm" onClick={addLine}>
-                <Plus size={13} /> Add Line
-              </button>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button className="btn-ghost btn-sm" onClick={() => addLine('item')}>
+                  <Plus size={13} /> Add Line
+                </button>
+                <button className="btn-ghost btn-sm" onClick={() => addLine('header')}
+                  style={{ fontSize: 11, color: '#7c3aed', borderColor: '#7c3aed33' }}>
+                  + Header
+                </button>
+                <button className="btn-ghost btn-sm" onClick={() => addLine('note')}
+                  style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  + Note
+                </button>
+                <button className="btn-ghost btn-sm" onClick={() => addLine('spacer')}
+                  style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  + Spacer
+                </button>
+              </div>
             </div>
 
             <div style={{ marginTop: 16 }}>
-              <div style={styles.lineHeader}>
+              {/* Column labels — only relevant for item rows */}
+              <div style={{ ...styles.lineHeader, paddingLeft: 62 }}>
                 <span style={{ flex: 4 }}>Description</span>
                 <span style={{ flex: 1, textAlign: 'right' }}>Qty</span>
                 <span style={{ flex: 2, textAlign: 'right' }}>Rate</span>
@@ -303,61 +366,95 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {lines.map((line, idx) => (
-                  <div key={line._id} style={{
-                    ...styles.lineRow,
-                    background: line.is_vat_exempt && !isVatExempt ? 'rgba(217,119,6,0.04)' : 'transparent',
-                  }}>
-                    <input
-                      className="form-input"
-                      style={{ flex: 4, fontSize: 13 }}
-                      placeholder="Description of service or goods"
-                      value={line.description}
-                      onChange={e => updateLine(idx, 'description', e.target.value)}
-                    />
-                    <input
-                      className="form-input"
-                      type="number"
-                      style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
-                      placeholder="—"
-                      value={line.quantity}
-                      onChange={e => updateLine(idx, 'quantity', e.target.value)}
-                      min="0" step="any"
-                    />
-                    <input
-                      className="form-input"
-                      type="number"
-                      style={{ flex: 2, fontSize: 13, textAlign: 'right' }}
-                      value={line.unit_price}
-                      onChange={e => updateLine(idx, 'unit_price', e.target.value)}
-                      placeholder="0.00"
-                      min="0" step="any"
-                    />
-                    <input
-                      className="form-input"
-                      type="number"
-                      style={{ flex: 2, fontSize: 13, textAlign: 'right' }}
-                      value={line.amount}
-                      onChange={e => updateLine(idx, 'amount', e.target.value)}
-                      min="0" step="any"
-                    />
-                    <div style={{ width: 54, display: 'flex', justifyContent: 'center' }}>
-                      <label title={isVatExempt ? 'Whole invoice is already non-VAT' : 'Exclude this line from VAT'} style={{ cursor: isVatExempt ? 'default' : 'pointer' }}>
+                {lines.map((line, idx) => {
+                  const lt      = line.line_type || 'item'
+                  const isItem  = lt === 'item'
+                  const isSpacer = lt === 'spacer'
+                  return (
+                    <div key={line._id} style={{
+                      ...styles.lineRow,
+                      background: lt === 'header'
+                        ? 'rgba(124,58,237,0.05)'
+                        : (line.is_vat_exempt && !isVatExempt && isItem) ? 'rgba(217,119,6,0.04)' : 'transparent',
+                      minHeight: isSpacer ? 28 : undefined,
+                      opacity: isSpacer ? 0.6 : 1,
+                      alignItems: 'center',
+                    }}>
+                      {/* Type chip */}
+                      <LineTypeChip value={lt} onChange={v => updateLine(idx, 'line_type', v)} />
+
+                      {/* Description — shown for all except spacer */}
+                      {!isSpacer ? (
                         <input
-                          type="checkbox"
-                          checked={line.is_vat_exempt || isVatExempt}
-                          disabled={isVatExempt}
-                          onChange={e => updateLine(idx, 'is_vat_exempt', e.target.checked)}
-                          style={{ width: 15, height: 15, accentColor: '#d97706' }}
+                          className="form-input"
+                          style={{
+                            flex: isItem ? 4 : 9,
+                            fontSize: 13,
+                            fontWeight: lt === 'header' ? 700 : 400,
+                            fontStyle: lt === 'note' ? 'italic' : 'normal',
+                          }}
+                          placeholder={
+                            lt === 'header' ? 'Section heading…' :
+                            lt === 'note'   ? 'Note or additional detail…' :
+                            'Description of service or goods'
+                          }
+                          value={line.description}
+                          onChange={e => updateLine(idx, 'description', e.target.value)}
                         />
-                      </label>
+                      ) : (
+                        <span style={{ flex: 9, fontSize: 11, color: 'var(--text-muted)', paddingLeft: 8, fontStyle: 'italic' }}>
+                          — spacer row —
+                        </span>
+                      )}
+
+                      {/* Financial columns — item rows only */}
+                      {isItem && (<>
+                        <input
+                          className="form-input"
+                          type="number"
+                          style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
+                          placeholder="—"
+                          value={line.quantity}
+                          onChange={e => updateLine(idx, 'quantity', e.target.value)}
+                          min="0" step="any"
+                        />
+                        <input
+                          className="form-input"
+                          type="number"
+                          style={{ flex: 2, fontSize: 13, textAlign: 'right' }}
+                          value={line.unit_price}
+                          onChange={e => updateLine(idx, 'unit_price', e.target.value)}
+                          placeholder="0.00"
+                          min="0" step="any"
+                        />
+                        <input
+                          className="form-input"
+                          type="number"
+                          style={{ flex: 2, fontSize: 13, textAlign: 'right' }}
+                          value={line.amount}
+                          onChange={e => updateLine(idx, 'amount', e.target.value)}
+                          min="0" step="any"
+                        />
+                        <div style={{ width: 54, display: 'flex', justifyContent: 'center' }}>
+                          <label title={isVatExempt ? 'Whole invoice is already non-VAT' : 'Exclude this line from VAT'} style={{ cursor: isVatExempt ? 'default' : 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={line.is_vat_exempt || isVatExempt}
+                              disabled={isVatExempt}
+                              onChange={e => updateLine(idx, 'is_vat_exempt', e.target.checked)}
+                              style={{ width: 15, height: 15, accentColor: '#d97706' }}
+                            />
+                          </label>
+                        </div>
+                      </>)}
+
+                      <button onClick={() => removeLine(idx)} disabled={lines.length === 1}
+                        style={{ width: 30, background: 'none', border: 'none', cursor: lines.length > 1 ? 'pointer' : 'default', color: 'var(--text-muted)', display: 'flex', justifyContent: 'center', padding: 4, flexShrink: 0 }}>
+                        <Trash2 size={14} />
+                      </button>
                     </div>
-                    <button onClick={() => removeLine(idx)} disabled={lines.length === 1}
-                      style={{ width: 30, background: 'none', border: 'none', cursor: lines.length > 1 ? 'pointer' : 'default', color: 'var(--text-muted)', display: 'flex', justifyContent: 'center', padding: 4 }}>
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           </div>
