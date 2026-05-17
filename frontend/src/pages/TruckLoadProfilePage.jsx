@@ -346,7 +346,7 @@ function DieselSection({ truck, year, month, suppliers }) {
 
 
 // ── Additional Loads section (shown below main loads) ─────────────────────────
-function AdditionalLoadsSection({ truck, year, month, drivers }) {
+function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId }) {
   const [entries, setEntries]   = useState([])
   const [loading, setLoading]   = useState(true)
   const [addingNew, setAddingNew] = useState(false)
@@ -380,7 +380,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers }) {
         notes: form.notes || null,
       })
       toast.success('Additional load added')
-      setForm({ driver_id: '', route_name: '', amount: '', load_date: today, notes: '' })
+      setForm({ driver_id: selectedDriverId || '', route_name: '', amount: '', load_date: today, notes: '' })
       setAddingNew(false)
       fetchEntries()
     } catch (e) {
@@ -414,7 +414,11 @@ function AdditionalLoadsSection({ truck, year, month, drivers }) {
             </span>
           )}
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={() => setAddingNew(v => !v)}
+        <button className="btn btn-ghost btn-sm"
+          onClick={() => {
+            setForm({ driver_id: selectedDriverId || '', route_name: '', amount: '', load_date: today, notes: '' })
+            setAddingNew(v => !v)
+          }}
           style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <Plus size={13} /> Add
         </button>
@@ -514,13 +518,24 @@ function AdditionalLoadsSection({ truck, year, month, drivers }) {
 
 
 // ── Food Allowance section ─────────────────────────────────────────────────────
-function FoodAllowanceSection({ truck, year, month, drivers }) {
+function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId }) {
   const [form, setForm]              = useState({ ...EMPTY_FOOD })
   const [saving, setSaving]          = useState(false)
+  const [addingNew, setAddingNew]    = useState(false)
   const [sessionEntries, setSession] = useState([])
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  const selectedDriver = drivers.find(d => String(d.id) === String(form.driver_id))
+  const formDriver = drivers.find(d => String(d.id) === String(form.driver_id))
+
+  const handleOpenAdd = () => {
+    setForm({ ...EMPTY_FOOD, driver_id: selectedDriverId || '' })
+    setAddingNew(true)
+  }
+
+  const handleCancel = () => {
+    setAddingNew(false)
+    setForm({ ...EMPTY_FOOD })
+  }
 
   const handleAdd = async () => {
     if (!form.driver_id) return toast.error('Select a driver')
@@ -534,9 +549,10 @@ function FoodAllowanceSection({ truck, year, month, drivers }) {
         amount,
         notes: form.notes || null,
       })
-      const driverName = `${selectedDriver.first_name} ${selectedDriver.last_name}`
+      const driverName = formDriver ? `${formDriver.first_name} ${formDriver.last_name}` : 'Driver'
       toast.success(`Food allowance saved for ${driverName}`)
       setSession(prev => [...prev, { driver: driverName, amount, date: form.payment_date }])
+      setAddingNew(false)
       setForm({ ...EMPTY_FOOD })
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Failed to save food allowance')
@@ -545,37 +561,48 @@ function FoodAllowanceSection({ truck, year, month, drivers }) {
 
   return (
     <div>
-      <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Food Allowance (Kosgelde)</div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16, background: 'var(--accent-subtle)', borderRadius: 6, padding: '8px 10px' }}>
-          Saved to the driver's Food Allowance (Kosgelde) section on their payslip.
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-          <div>
-            <label className="form-label">Driver *</label>
-            <SearchableSelect value={String(form.driver_id)} onChange={v => set('driver_id', v)}
-              options={drivers} getValue={d => String(d.id)}
-              getLabel={d => `${d.first_name} ${d.last_name}`} placeholder="Driver…" formInput />
-          </div>
-          <div>
-            <label className="form-label">Date</label>
-            <input className="form-input" type="date" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} />
-          </div>
-          <div>
-            <label className="form-label">Amount (R) *</label>
-            <input className="form-input" type="number" step="0.01" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
-          </div>
-          <div>
-            <label className="form-label">Notes</label>
-            <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
-          </div>
-        </div>
-        <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
-          <button className="btn btn-primary" onClick={handleAdd} disabled={saving}>
-            {saving ? 'Saving…' : 'Add'}
-          </button>
-        </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <button className="btn btn-primary" onClick={handleOpenAdd} disabled={addingNew}
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Plus size={14} /> Add Food Allowance
+        </button>
       </div>
+
+      {addingNew && (
+        <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>New Food Allowance Entry</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16, background: 'var(--accent-subtle)', borderRadius: 6, padding: '8px 10px' }}>
+            Saved to the driver's Food Allowance (Kosgelde) section on their payslip.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+            <div>
+              <label className="form-label">Driver *</label>
+              <SearchableSelect value={String(form.driver_id)} onChange={v => set('driver_id', v)}
+                options={drivers} getValue={d => String(d.id)}
+                getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
+                placeholder="Driver…" formInput />
+            </div>
+            <div>
+              <label className="form-label">Date</label>
+              <input className="form-input" type="date" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="form-label">Amount (R) *</label>
+              <input className="form-input" type="number" step="0.01" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
+            </div>
+            <div>
+              <label className="form-label">Notes</label>
+              <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost" onClick={handleCancel}>Cancel</button>
+            <button className="btn btn-primary" onClick={handleAdd} disabled={saving}>
+              {saving ? 'Saving…' : 'Save Entry'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {sessionEntries.length > 0 ? (
         <div className="card" style={{ overflow: 'auto' }}>
@@ -601,12 +628,12 @@ function FoodAllowanceSection({ truck, year, month, drivers }) {
             </tbody>
           </table>
         </div>
-      ) : (
+      ) : !addingNew ? (
         <div className="empty-state" style={{ padding: 40 }}>
           <UtensilsCrossed size={32} />
           <p>No food allowance entries added yet</p>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -698,6 +725,9 @@ export default function TruckLoadProfilePage() {
   const [vatRate, setVatRate]     = useState(0.15)
   const [loading, setLoading]     = useState(true)
 
+  // Central driver selection (shared across all tabs)
+  const [selectedDriverId, setSelectedDriverId] = useState('')
+
   // Load edit state
   const [editingId, setEditingId]   = useState(null)
   const [editForm, setEditForm]     = useState({ ...EMPTY_LOAD })
@@ -728,6 +758,13 @@ export default function TruckLoadProfilePage() {
       if (vat) setVatRate(parseFloat(vat.value))
     }).catch(() => {})
   }, [truck])
+
+  // ── Default central driver to permanent driver once data loads ───────────────
+  useEffect(() => {
+    if (!truck || drivers.length === 0) return
+    const perm = drivers.find(d => d.truck_id === truck.id && d.driver_type === 'permanent')
+    if (perm) setSelectedDriverId(prev => prev || String(perm.id))
+  }, [drivers, truck])
 
   // ── Load loads for current month ─────────────────────────────────────────────
   const fetchLoads = useCallback(async () => {
@@ -770,7 +807,13 @@ export default function TruckLoadProfilePage() {
   const nextMonth = () => { if (month === 12) { setMonth(1); setYear(y => y + 1) } else setMonth(m => m + 1) }
 
   // ── Load edit helpers ────────────────────────────────────────────────────────
-  const startNew  = () => { setEditForm({ ...EMPTY_LOAD }); setRateSource(null); setEditingId('new') }
+  const startNew  = () => {
+    const d = drivers.find(x => String(x.id) === selectedDriverId)
+    const driverName = d ? `${d.first_name} ${d.last_name}`.trim() : ''
+    setEditForm({ ...EMPTY_LOAD, driver_name: driverName })
+    setRateSource(null)
+    setEditingId('new')
+  }
   const cancelEdit = () => { setEditingId(null); setEditForm({ ...EMPTY_LOAD }) }
 
   const startEdit = (load) => {
@@ -845,6 +888,7 @@ export default function TruckLoadProfilePage() {
   const entityCode = truck ? (entities.find(e => e.id === truck.entity_id)?.code || '') : ''
   const isSafetec  = entityCode === 'SFT'
   const permanentDriver = drivers.find(d => d.truck_id === truck?.id && d.driver_type === 'permanent')
+  const selectedDriver  = drivers.find(d => String(d.id) === selectedDriverId)
   const driverTypeByName = drivers.reduce((acc, d) => {
     acc[`${d.first_name} ${d.last_name}`.trim()] = d.driver_type
     return acc
@@ -897,17 +941,35 @@ export default function TruckLoadProfilePage() {
           </div>
         </div>
 
-        <div>
-          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 4 }}>Permanent Driver</div>
-          {permanentDriver ? (
-            <div style={{ fontWeight: 600, fontSize: 14 }}>
-              {permanentDriver.first_name} {permanentDriver.last_name}
-              {permanentDriver.employee_number && (
-                <span style={{ marginLeft: 6, fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{permanentDriver.employee_number}</span>
-              )}
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>Unassigned</div>
+        <div style={{ minWidth: 200 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+            Active Driver
+            {permanentDriver && selectedDriverId === String(permanentDriver.id) && (
+              <span style={{ fontSize: 9, color: '#16a34a', background: 'rgba(22,163,74,0.1)', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>PERMANENT</span>
+            )}
+            {selectedDriver && permanentDriver && selectedDriverId !== String(permanentDriver.id) && (
+              <span style={{ fontSize: 9, color: '#d97706', background: 'rgba(217,119,6,0.1)', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>CASUAL</span>
+            )}
+          </div>
+          <SearchableSelect
+            value={selectedDriverId}
+            onChange={setSelectedDriverId}
+            options={drivers}
+            getValue={d => String(d.id)}
+            getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
+            placeholder="Select driver…"
+            style={{ minWidth: 180 }}
+          />
+          {permanentDriver && selectedDriverId && selectedDriverId !== String(permanentDriver.id) && (
+            <button
+              onClick={() => setSelectedDriverId(String(permanentDriver.id))}
+              style={{ fontSize: 11, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0', marginTop: 3, textDecoration: 'underline' }}
+            >
+              Reset to {permanentDriver.first_name} {permanentDriver.last_name}
+            </button>
+          )}
+          {!permanentDriver && !selectedDriverId && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 2 }}>No permanent driver assigned</div>
           )}
         </div>
 
@@ -1086,7 +1148,7 @@ export default function TruckLoadProfilePage() {
 
       {/* ── Additional Loads (below main loads, same tab) ─────────────────────── */}
       {activeTab === 'loads' && (
-        <AdditionalLoadsSection truck={truck} year={year} month={month} drivers={drivers} />
+        <AdditionalLoadsSection truck={truck} year={year} month={month} drivers={drivers} selectedDriverId={selectedDriverId} />
       )}
 
       {/* ── Diesel tab ─────────────────────────────────────────────────────────── */}
@@ -1096,7 +1158,7 @@ export default function TruckLoadProfilePage() {
 
       {/* ── Food Allowance tab ─────────────────────────────────────────────────── */}
       {activeTab === 'food' && (
-        <FoodAllowanceSection truck={truck} year={year} month={month} drivers={drivers} />
+        <FoodAllowanceSection truck={truck} year={year} month={month} drivers={drivers} selectedDriverId={selectedDriverId} />
       )}
 
       {/* ── Profit Sheet tab (SFT only) ─────────────────────────────────────────── */}
