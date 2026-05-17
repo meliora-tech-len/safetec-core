@@ -11,12 +11,7 @@ class UserRole(str, Enum):
     admin = "admin"
     standard = "standard"
 
-class InvoiceStatus(str, Enum):
-    draft = "draft"
-    sent = "sent"
-    paid = "paid"
-    overdue = "overdue"
-    cancelled = "cancelled"
+from app.models.models import InvoiceStatus  # noqa: E402 — single source of truth
 
 class DocumentType(str, Enum):
     invoice = "invoice"
