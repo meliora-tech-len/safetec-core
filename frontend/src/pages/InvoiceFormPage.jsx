@@ -425,12 +425,9 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
 
           {/* Actions */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <button className="btn-primary" onClick={() => handleSave('sent')} disabled={saving}
+            <button className="btn-primary" onClick={() => handleSave('draft')} disabled={saving}
               style={{ justifyContent: 'center', height: 42 }}>
-              {saving ? 'Saving...' : <><Save size={14} /> {isInvoice ? 'Save & Mark Sent' : `Save ${docLabel}`}</>}
-            </button>
-            <button className="btn-ghost btn-sm" onClick={() => handleSave('draft')} disabled={saving}>
-              Save as Draft
+              {saving ? 'Saving...' : <><Save size={14} /> Save {docLabel}</>}
             </button>
             <button className="btn-ghost btn-sm" onClick={() => navigate(-1)} disabled={saving}>
               Cancel
