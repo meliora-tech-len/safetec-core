@@ -13,6 +13,7 @@ import {
   getDieselFillUps, createDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, getCurrentDieselRate,
   addDriverAdditionalLoad, deleteDriverAdditionalLoad, archiveDriverAdditionalLoad,
   addDriverFoodPayment, getTruckAdditionalLoads,
+  getTruckMonthlyExpenses, upsertTruckMonthlyExpenses,
 } from '../services/api'
 import toast from 'react-hot-toast'
 import DeleteModal from '../components/DeleteModal'
@@ -665,66 +666,125 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
 }
 
 
-// ── Profit Sheet skeleton (SFT only) ──────────────────────────────────────────
-function ProfitSheetSection({ month }) {
-  const incomeRows = [
-    'Income Excl. VAT',
-    'Income Incl. VAT',
-  ]
-  const expenseRows = [
-    "Driver's Salary",
-    'Insurance Trailer',
-    '3rd Party Liability',
-    'Goods in Transit',
-    'Loss of Use',
-    'Personal Accident',
-    'Communication Device',
-    'SAUMA',
-    'Diesel',
-    'Tyre Maintenance',
-    'Other Suppliers',
-  ]
+const INCOME_ROWS = [
+  { key: 'income_excl_vat', label: 'Income Excl. VAT' },
+  { key: 'income_incl_vat', label: 'Income Incl. VAT' },
+]
+const EXPENSE_ROWS = [
+  { key: 'drivers_salary',       label: "Driver's Salary" },
+  { key: 'insurance_trailer',    label: 'Insurance Trailer' },
+  { key: 'liability_3rd_party',  label: '3rd Party Liability' },
+  { key: 'goods_in_transit',     label: 'Goods in Transit' },
+  { key: 'loss_of_use',          label: 'Loss of Use' },
+  { key: 'personal_accident',    label: 'Personal Accident' },
+  { key: 'communication_device', label: 'Communication Device' },
+  { key: 'sauma',                label: 'SAUMA' },
+  { key: 'diesel',               label: 'Diesel' },
+  { key: 'tyre_maintenance',     label: 'Tyre Maintenance' },
+  { key: 'other_suppliers',      label: 'Other Suppliers' },
+]
+
+const inputStyle = {
+  width: '100%', textAlign: 'right', padding: '3px 7px',
+  borderRadius: 4, border: '1px solid var(--border)',
+  background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13,
+}
+
+// ── Profit Sheet (SFT only) ───────────────────────────────────────────────────
+function ProfitSheetSection({ truck, year, month }) {
+  const [data, setData]     = useState({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty]   = useState(false)
+
+  const set = (k, v) => { setData(d => ({ ...d, [k]: v })); setDirty(true) }
+
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await getTruckMonthlyExpenses(truck.id, { year, month })
+      setData(res.data)
+      setDirty(false)
+    } catch { toast.error('Failed to load profit sheet') }
+    finally { setLoading(false) }
+  }, [truck.id, year, month])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await upsertTruckMonthlyExpenses(truck.id, { year, month }, data)
+      toast.success('Profit sheet saved')
+      setDirty(false)
+    } catch { toast.error('Failed to save profit sheet') }
+    finally { setSaving(false) }
+  }
+
+  const incInclVat     = parseFloat(data.income_incl_vat) || 0
+  const totalExpenses  = EXPENSE_ROWS.reduce((s, r) => s + (parseFloat(data[r.key]) || 0), 0)
+  const netProfit      = incInclVat - totalExpenses
+  const hasValues      = incInclVat > 0 || totalExpenses > 0
+
+  if (loading) return <div className="loading-center"><div className="spinner" /></div>
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-      <div className="card" style={{ overflow: 'hidden' }}>
-        <div style={{ padding: '10px 16px', fontWeight: 700, fontSize: 13, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-          Income
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 10, alignItems: 'center' }}>
+        {dirty && <span style={{ fontSize: 12, color: '#d97706' }}>Unsaved changes</span>}
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving || !dirty}
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Save size={14} /> {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '10px 16px', fontWeight: 700, fontSize: 13, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+            Income
+          </div>
+          <table className="data-table">
+            <tbody>
+              {INCOME_ROWS.map(r => (
+                <tr key={r.key}>
+                  <td style={{ color: 'var(--text-secondary)' }}>{r.label}</td>
+                  <td style={{ width: 140 }}>
+                    <input type="number" step="0.01" min="0" style={inputStyle}
+                      value={data[r.key] ?? ''} placeholder="—"
+                      onChange={e => set(r.key, e.target.value || null)} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <table className="data-table">
-          <tbody>
-            {incomeRows.map(r => (
-              <tr key={r}>
-                <td style={{ color: 'var(--text-secondary)' }}>{r}</td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontStyle: 'italic' }}>—</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
 
-      <div className="card" style={{ overflow: 'hidden' }}>
-        <div style={{ padding: '10px 16px', fontWeight: 700, fontSize: 13, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-          Expenses
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '10px 16px', fontWeight: 700, fontSize: 13, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+            Expenses
+          </div>
+          <table className="data-table">
+            <tbody>
+              {EXPENSE_ROWS.map(r => (
+                <tr key={r.key}>
+                  <td style={{ color: 'var(--text-secondary)' }}>{r.label}</td>
+                  <td style={{ width: 140 }}>
+                    <input type="number" step="0.01" min="0" style={inputStyle}
+                      value={data[r.key] ?? ''} placeholder="—"
+                      onChange={e => set(r.key, e.target.value || null)} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <table className="data-table">
-          <tbody>
-            {expenseRows.map(r => (
-              <tr key={r}>
-                <td style={{ color: 'var(--text-secondary)' }}>{r}</td>
-                <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontStyle: 'italic' }}>—</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
 
-      <div className="card" style={{ gridColumn: '1 / -1', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontWeight: 700, fontSize: 15 }}>Net Profit</span>
-        <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: 14 }}>—</span>
-      </div>
-
-      <div style={{ gridColumn: '1 / -1', padding: '8px 4px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-        Profit sheet data will be calculated automatically once income and expense tracking is complete.
+        <div className="card" style={{ gridColumn: '1 / -1', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>Net Profit</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: hasValues ? (netProfit >= 0 ? '#16a34a' : 'var(--danger)') : 'var(--text-muted)', fontStyle: hasValues ? 'normal' : 'italic' }}>
+            {hasValues ? fmt(netProfit) : '—'}
+          </span>
+        </div>
       </div>
     </div>
   )
@@ -1188,7 +1248,7 @@ export default function TruckLoadProfilePage() {
 
       {/* ── Profit Sheet tab (SFT only) ─────────────────────────────────────────── */}
       {activeTab === 'profit' && (
-        <ProfitSheetSection month={month} />
+        <ProfitSheetSection truck={truck} year={year} month={month} />
       )}
 
       <DeleteModal

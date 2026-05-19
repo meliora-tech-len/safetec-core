@@ -333,19 +333,36 @@ export default function PayrollSettingsPage() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20, marginBottom: 24 }}>
         <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
           <h3 style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Casual Driver Rate
+            Casual Driver Rates
           </h3>
           <p style={{ margin: '0 0 12px', fontSize: 11, color: 'var(--text-muted)' }}>
-            Lohatla only. Applied per load, no basic salary.
+            Per load, no basic salary or deductions.
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-            <label className="form-label" style={{ margin: 0 }}>Rate per load</label>
-            <input
-              className="form-input" type="number" step="0.01"
-              value={form.lohatla_casual_rate_per_load ?? ''}
-              onChange={e => set('lohatla_casual_rate_per_load', e.target.value)}
-              style={{ width: 140, textAlign: 'right' }}
-            />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div>
+                <label className="form-label" style={{ margin: 0 }}>Group A rate</label>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Mokala · Assmang · Sebilo · Tawana</div>
+              </div>
+              <input
+                className="form-input" type="number" step="0.01"
+                value={form.casual_rate_group_a ?? ''}
+                onChange={e => set('casual_rate_group_a', e.target.value)}
+                style={{ width: 120, textAlign: 'right' }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div>
+                <label className="form-label" style={{ margin: 0 }}>Group B rate</label>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Glosam · Driehoek · Future · Afrimat · Boskop</div>
+              </div>
+              <input
+                className="form-input" type="number" step="0.01"
+                value={form.casual_rate_group_b ?? ''}
+                onChange={e => set('casual_rate_group_b', e.target.value)}
+                style={{ width: 120, textAlign: 'right' }}
+              />
+            </div>
           </div>
         </div>
 

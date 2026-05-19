@@ -560,6 +560,37 @@ class PersonalVehicleOut(PersonalVehicleBase):
         from_attributes = True
 
 
+# ── Truck Monthly Expenses (Profit Sheet) ────────────────────────────────────
+
+class TruckMonthlyExpensesBase(BaseModel):
+    income_excl_vat:      Optional[Decimal] = None
+    income_incl_vat:      Optional[Decimal] = None
+    drivers_salary:       Optional[Decimal] = None
+    insurance_trailer:    Optional[Decimal] = None
+    liability_3rd_party:  Optional[Decimal] = None
+    goods_in_transit:     Optional[Decimal] = None
+    loss_of_use:          Optional[Decimal] = None
+    personal_accident:    Optional[Decimal] = None
+    communication_device: Optional[Decimal] = None
+    sauma:                Optional[Decimal] = None
+    diesel:               Optional[Decimal] = None
+    tyre_maintenance:     Optional[Decimal] = None
+    other_suppliers:      Optional[Decimal] = None
+    notes:                Optional[str] = None
+
+
+class TruckMonthlyExpensesOut(TruckMonthlyExpensesBase):
+    id:         Optional[int] = None
+    truck_id:   int
+    year:       int
+    month:      int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ── Driver Schemas ────────────────────────────────────────────────────────────
 
 from app.models.models import DriverType  # noqa: E402
@@ -739,6 +770,8 @@ class PayrollSettingsOut(BaseModel):
     lohatla_incentive_per_load: Decimal
     lohatla_subs_per_load: Decimal
     lohatla_casual_rate_per_load: Decimal
+    casual_rate_group_a: Decimal
+    casual_rate_group_b: Decimal
     assmang_bonus_per_load: Decimal
     nbcrfli_rate: Decimal
     provident_rate: Decimal
@@ -761,6 +794,8 @@ class PayrollSettingsUpdate(BaseModel):
     lohatla_incentive_per_load: Optional[Decimal] = None
     lohatla_subs_per_load: Optional[Decimal] = None
     lohatla_casual_rate_per_load: Optional[Decimal] = None
+    casual_rate_group_a: Optional[Decimal] = None
+    casual_rate_group_b: Optional[Decimal] = None
     assmang_bonus_per_load: Optional[Decimal] = None
     nbcrfli_rate: Optional[Decimal] = None
     provident_rate: Optional[Decimal] = None
@@ -847,6 +882,8 @@ class DriverFoodPaymentOut(DriverFoodPaymentCreate):
 class DriverPayCycleUpdate(BaseModel):
     lohatla_base_loads: Optional[int] = None
     lohatla_extra_loads: Optional[int] = None
+    casual_group_a_loads: Optional[int] = None
+    casual_group_b_loads: Optional[int] = None
     subsistence_advance_paid: Optional[Decimal] = None
     subsistence_advance_verified: Optional[bool] = None
     staff_loan_balance: Optional[Decimal] = None
@@ -864,6 +901,8 @@ class DriverPayCycleOut(BaseModel):
     payroll_settings_id: Optional[int] = None
     lohatla_base_loads: int
     lohatla_extra_loads: int
+    casual_group_a_loads: int = 0
+    casual_group_b_loads: int = 0
     subsistence_advance_paid: Decimal
     subsistence_advance_verified: bool
     staff_loan_balance: Decimal
@@ -909,6 +948,7 @@ class MineRateOut(MineRateBase):
 class MineBase(BaseModel):
     name: str
     code: str
+    casual_group: Optional[str] = None  # 'A', 'B', or None
     notes: Optional[str] = None
 
 
@@ -920,6 +960,7 @@ class MineUpdate(BaseModel):
     name: Optional[str] = None
     code: Optional[str] = None
     is_active: Optional[bool] = None
+    casual_group: Optional[str] = None
     notes: Optional[str] = None
 
 

@@ -66,17 +66,21 @@ class ResetPasswordRequest(BaseModel):
 @router.post("/forgot-password", status_code=204)
 @limiter.limit("5/hour")
 def forgot_password(request: Request, body: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    """
-    Generate a password-reset token and email it to the user.
-    Always returns 204 to avoid leaking whether the email exists.
-    """
+    """Generate a password-reset token and email it to the user."""
     user = db.query(User).filter(User.email == body.email.lower().strip()).first()
-    if not user or not user.is_active:
-        return  # silent no-op
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found with that email address.")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="This account has been disabled. Please contact an administrator.")
 
     token = secrets.token_urlsafe(32)
     user.password_reset_token = token
     user.password_reset_expires = datetime.now(timezone.utc) + timedelta(hours=1)
+    log_action(
+        db, action="auth.password_reset_requested", user_id=user.id,
+        description=f"Password reset requested for {user.email}",
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
 
     reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
@@ -109,4 +113,6 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
     user.hashed_password = get_password_hash(body.new_password)
     user.password_reset_token = None
     user.password_reset_expires = None
+    log_action(db, action="auth.password_reset_completed", user_id=user.id,
+               description=f"Password successfully reset for {user.email}")
     db.commit()

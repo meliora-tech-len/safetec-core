@@ -45,6 +45,8 @@ def update_settings(
         "lohatla_incentive_per_load",
         "lohatla_subs_per_load",
         "lohatla_casual_rate_per_load",
+        "casual_rate_group_a",
+        "casual_rate_group_b",
         "assmang_bonus_per_load",
         "nbcrfli_rate", "provident_rate", "wellness_rate", "sick_fund_rate",
         "holiday_fund_rate", "leave_pay_rate", "paye_fixed",

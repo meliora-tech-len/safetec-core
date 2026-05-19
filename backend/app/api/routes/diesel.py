@@ -245,6 +245,11 @@ def update_diesel_rate(
     if payload.is_active is not None:
         rate.is_active = payload.is_active
 
+    log_action(
+        db, "diesel_rate.updated", user_id=current_user.id,
+        entity_id=rate.entity_id, resource_type="diesel_rate",
+        resource_id=rate_id, description=f"Updated diesel rate #{rate_id}",
+    )
     db.commit()
     db.refresh(rate)
     d = {c.name: getattr(rate, c.name) for c in rate.__table__.columns}
@@ -539,6 +544,11 @@ def verify_fillup(
     _check_entity_access(f.entity_id, current_user)
 
     apply_verify_step(f, current_user, is_admin=(current_user.role == "admin"))
+    log_action(
+        db, "diesel_fillup.verified", user_id=current_user.id,
+        entity_id=f.entity_id, resource_type="diesel_fillup",
+        resource_id=fillup_id, description=f"Verified diesel fill-up #{fillup_id}",
+    )
     db.commit()
     db.refresh(f)
     return _enrich_fillup(f, db)

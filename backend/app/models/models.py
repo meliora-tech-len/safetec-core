@@ -410,6 +410,41 @@ class PersonalVehicle(Base):
     entity = relationship("BusinessEntity")
 
 
+class TruckMonthlyExpenses(Base):
+    __tablename__ = "truck_monthly_expenses"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    truck_id            = Column(Integer, ForeignKey("trucks.id", ondelete="CASCADE"), nullable=False)
+    year                = Column(Integer, nullable=False)
+    month               = Column(Integer, nullable=False)
+
+    # Income (manually entered; auto-fill from loads added later)
+    income_excl_vat     = Column(Numeric(12, 2), nullable=True)
+    income_incl_vat     = Column(Numeric(12, 2), nullable=True)
+
+    # Expenses
+    drivers_salary      = Column(Numeric(12, 2), nullable=True)
+    insurance_trailer   = Column(Numeric(12, 2), nullable=True)
+    liability_3rd_party = Column(Numeric(12, 2), nullable=True)
+    goods_in_transit    = Column(Numeric(12, 2), nullable=True)
+    loss_of_use         = Column(Numeric(12, 2), nullable=True)
+    personal_accident   = Column(Numeric(12, 2), nullable=True)
+    communication_device= Column(Numeric(12, 2), nullable=True)
+    sauma               = Column(Numeric(12, 2), nullable=True)
+    diesel              = Column(Numeric(12, 2), nullable=True)
+    tyre_maintenance    = Column(Numeric(12, 2), nullable=True)
+    other_suppliers     = Column(Numeric(12, 2), nullable=True)
+
+    notes               = Column(Text, nullable=True)
+
+    created_at          = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at          = Column(DateTime(timezone=True), onupdate=func.now())
+
+    truck               = relationship("Truck")
+
+    __table_args__ = (UniqueConstraint("truck_id", "year", "month", name="uq_truck_monthly_expenses"),)
+
+
 # ── Drivers ───────────────────────────────────────────────────────────────────
 
 class DriverType(str, enum.Enum):
@@ -472,8 +507,10 @@ class PayrollSettings(Base):
     # Subsistence per load
     lohatla_subs_per_load     = Column(Numeric(12, 2), nullable=False, default=459.66)
 
-    # Casual driver: flat per-load rate (Lohatla only, no BC rules)
-    lohatla_casual_rate_per_load = Column(Numeric(12, 2), nullable=False, default=2610.00)
+    # Casual driver rates by mine group
+    lohatla_casual_rate_per_load = Column(Numeric(12, 2), nullable=False, default=2610.00)  # kept for legacy records
+    casual_rate_group_a          = Column(Numeric(12, 2), nullable=False, default=2200.00)  # Mokala/Assmang/Sebilo/Tawana
+    casual_rate_group_b          = Column(Numeric(12, 2), nullable=False, default=1900.00)  # Glosam/Driehoek/Future/Afrimat/Boskop
 
     # Assmang bonus (per load, applied to ALL loads)
     assmang_bonus_per_load    = Column(Numeric(12, 2), nullable=False, default=150.00)
@@ -505,6 +542,10 @@ class DriverPayCycle(Base):
 
     lohatla_base_loads    = Column(Integer, default=0, nullable=False)
     lohatla_extra_loads   = Column(Integer, default=0, nullable=False)
+
+    # Casual driver: loads split by mine group rate
+    casual_group_a_loads  = Column(Integer, default=0, nullable=False)  # R2200 mines
+    casual_group_b_loads  = Column(Integer, default=0, nullable=False)  # R1900 mines
 
     subsistence_advance_paid     = Column(Numeric(12, 2), default=0)
     subsistence_advance_verified = Column(Boolean, default=False)
@@ -642,6 +683,7 @@ class Mine(Base):
     name = Column(String(100), nullable=False)
     code = Column(String(30), nullable=False)
     is_active = Column(Boolean, default=True)
+    casual_group = Column(String(1), nullable=True)  # 'A', 'B', or None
     notes = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

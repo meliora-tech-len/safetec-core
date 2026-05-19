@@ -7,17 +7,20 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  const [error, setError] = useState(null)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoading(true)
+    setError(null)
     try {
       await forgotPassword(email)
-    } catch {
-      // Always show success to avoid leaking whether the email exists
+      setSubmitted(true)
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'Something went wrong. Please try again.'
+      setError(msg)
     } finally {
       setLoading(false)
-      setSubmitted(true)
     }
   }
 
@@ -50,6 +53,10 @@ export default function ForgotPasswordPage() {
                 />
               </div>
             </div>
+
+            {error && (
+              <div style={styles.errorBox}>{error}</div>
+            )}
 
             <button type="submit" className="btn-primary w-full" disabled={loading}
               style={{ justifyContent: 'center', height: 42, marginTop: 8 }}>
@@ -115,5 +122,13 @@ const styles = {
     border: '1px solid var(--border)',
     borderRadius: 8,
     padding: '16px 18px',
+  },
+  errorBox: {
+    background: 'rgba(239,68,68,0.08)',
+    border: '1px solid rgba(239,68,68,0.3)',
+    borderRadius: 8,
+    padding: '10px 14px',
+    color: 'var(--danger, #ef4444)',
+    fontSize: 13,
   },
 }

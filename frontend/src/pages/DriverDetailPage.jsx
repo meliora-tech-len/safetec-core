@@ -10,6 +10,10 @@ const API = import.meta.env.VITE_API_URL || ''
 const MONTHS = ['January','February','March','April','May','June',
                 'July','August','September','October','November','December']
 
+const GROUP_A_MINES = ['Mokala', 'Assmang', 'Sebilo', 'Tawana']
+const GROUP_B_MINES = ['Glosam', 'Driehoek', 'Future', 'Afrimat', 'Boskop']
+const ALL_MINES = [...GROUP_A_MINES, ...GROUP_B_MINES, 'Tshipi']
+
 // ── API hook ──────────────────────────────────────────────────────────────────
 function useApi() {
   const h = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` })
@@ -39,13 +43,18 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
   const additionalTotal = (additionalLoads || []).reduce((sum, al) => sum + parseFloat(al.amount || 0), 0)
 
   if (driverType === 'casual') {
-    const casualRate   = parseFloat(s.lohatla_casual_rate_per_load || 0)
-    const loadEarnings = casualRate * lTotal
+    const rateA      = parseFloat(s.casual_rate_group_a || 0)
+    const rateB      = parseFloat(s.casual_rate_group_b || 0)
+    const loadsA     = Number(inputs.casual_group_a_loads || 0)
+    const loadsB     = Number(inputs.casual_group_b_loads || 0)
+    const earningsA  = rateA * loadsA
+    const earningsB  = rateB * loadsB
+    const loadEarnings = earningsA + earningsB
     const gross        = loadEarnings + additionalTotal
     return {
-      grand, lTotal, additionalTotal, gross,
+      grand: loadsA + loadsB, loadsA, loadsB, rateA, rateB,
+      earningsA, earningsB, loadEarnings, additionalTotal, gross,
       isCasual: true,
-      casualRate, loadEarnings,
       basicSalary: 0, subsL: 0, totalSubs: 0,
       incL: 0, totalInc: 0, assmang: 0,
     }
@@ -240,7 +249,7 @@ export default function DriverDetailPage() {
   const [editModal,   setEditModal]   = useState(false)
 
   // Load inputs (controlled, live calc)
-  const [loads, setLoads] = useState({ lohatla_base_loads: 0, lohatla_extra_loads: 0 })
+  const [loads, setLoads] = useState({ lohatla_base_loads: 0, lohatla_extra_loads: 0, casual_group_a_loads: 0, casual_group_b_loads: 0 })
   const [subsAdvance, setSubsAdvance] = useState(0)
   const [subsVerified, setSubsVerified] = useState(false)
   const [loanBal, setLoanBal]   = useState(0)
@@ -270,8 +279,10 @@ export default function DriverDetailPage() {
       .then(c => {
         setCycle(c)
         setLoads({
-          lohatla_base_loads:  c.lohatla_base_loads,
-          lohatla_extra_loads: c.lohatla_extra_loads,
+          lohatla_base_loads:   c.lohatla_base_loads,
+          lohatla_extra_loads:  c.lohatla_extra_loads,
+          casual_group_a_loads: c.casual_group_a_loads || 0,
+          casual_group_b_loads: c.casual_group_b_loads || 0,
         })
         setSubsAdvance(parseFloat(c.subsistence_advance_paid) || 0)
         setSubsVerified(c.subsistence_advance_verified || false)
@@ -410,12 +421,10 @@ export default function DriverDetailPage() {
                   : 'Casual driver: enter total Lohatla loads. Rate × loads = earnings. No BC rules apply.'}
               </p>
 
-              {/* Lohatla Mine */}
-              <div style={{ background: 'rgba(22,163,74,0.06)', borderRadius: 8, padding: '14px 16px', marginBottom: 16 }}>
-                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--success)', marginBottom: 10 }}>
-                  {'Lohatla Mine'}
-                </div>
-                {isPermanent ? (
+              {/* Permanent: Lohatla Mine groups | Casual: Group A + Group B */}
+              {isPermanent ? (
+                <div style={{ background: 'rgba(22,163,74,0.06)', borderRadius: 8, padding: '14px 16px', marginBottom: 16 }}>
+                  <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--success)', marginBottom: 10 }}>Lohatla Mine</div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     <div>
                       <label className="form-label">Base loads (max 7)</label>
@@ -434,23 +443,36 @@ export default function DriverDetailPage() {
                       </div>}
                     </div>
                   </div>
-                ) : (
-                  <div>
-                    <label className="form-label">Total loads</label>
-                    <input className="form-input" type="number" min="0" value={loads.lohatla_base_loads}
-                      onChange={e => setLoads(l => ({ ...l, lohatla_base_loads: parseInt(e.target.value) || 0, lohatla_extra_loads: 0 }))} />
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
+                  <div style={{ background: 'rgba(22,163,74,0.06)', borderRadius: 8, padding: '12px 16px' }}>
+                    <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--success)', marginBottom: 2 }}>Group A</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8 }}>Mokala · Assmang · Sebilo · Tawana</div>
+                    <input className="form-input" type="number" min="0" value={loads.casual_group_a_loads}
+                      onChange={e => setLoads(l => ({ ...l, casual_group_a_loads: parseInt(e.target.value) || 0 }))} />
                     {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      Rate: {fmt(settings.lohatla_casual_rate_per_load)} per load · Earnings: {fmt((parseFloat(settings.lohatla_casual_rate_per_load) || 0) * loads.lohatla_base_loads)}
+                      {fmt(settings.casual_rate_group_a)} per load · Earnings: {fmt((parseFloat(settings.casual_rate_group_a) || 0) * loads.casual_group_a_loads)}
                     </div>}
                   </div>
-                )}
-              </div>
+                  <div style={{ background: 'rgba(59,130,246,0.06)', borderRadius: 8, padding: '12px 16px' }}>
+                    <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--accent)', marginBottom: 2 }}>Group B</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8 }}>Glosam · Driehoek · Future · Afrimat · Boskop</div>
+                    <input className="form-input" type="number" min="0" value={loads.casual_group_b_loads}
+                      onChange={e => setLoads(l => ({ ...l, casual_group_b_loads: parseInt(e.target.value) || 0 }))} />
+                    {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      {fmt(settings.casual_rate_group_b)} per load · Earnings: {fmt((parseFloat(settings.casual_rate_group_b) || 0) * loads.casual_group_b_loads)}
+                    </div>}
+                  </div>
+                </div>
+              )}
 
               {/* Auto-calc summary */}
               {liveCalc && (
                 <div style={{ background: 'var(--bg-page)', borderRadius: 8, padding: '12px 14px', marginBottom: 16, fontSize: 13 }}>
                   {liveCalc.isCasual ? [
-                    [`Load earnings (${liveCalc.lTotal} × ${fmt(liveCalc.casualRate)})`, fmt(liveCalc.loadEarnings)],
+                    ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.earningsA)]] : []),
+                    ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.earningsB)]] : []),
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
                   ] : [
                     ['Basic salary',    fmt(liveCalc.basicSalary)],
@@ -526,7 +548,8 @@ export default function DriverDetailPage() {
 
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Income</div>
                 {(liveCalc.isCasual ? [
-                  [`Loads (${liveCalc.lTotal} × ${fmt(liveCalc.casualRate)})`, fmt(liveCalc.loadEarnings)],
+                  ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.earningsA)]] : []),
+                  ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.earningsB)]] : []),
                   ['Additional loads',   fmt(liveCalc.additionalTotal)],
                 ] : [
                   ['Basic salary',       fmt(liveCalc.basicSalary)],

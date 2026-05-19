@@ -3,7 +3,7 @@ import { Plus, Edit2, ChevronDown, ChevronRight, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
   getMines, createMine, updateMine, deleteMine,
-  getMineRates, addMineRate, getEntities,
+  getMineRates, addMineRate, getEntities, getPayrollSettings,
 } from '../services/api'
 
 const fmt = (n) =>
@@ -15,10 +15,11 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-ZA') : 'current')
 
 // ── Mine add/edit form ────────────────────────────────────────────────────────
 
-function MineForm({ mine, onSave, onCancel }) {
+function MineForm({ mine, onSave, onCancel, casualRates }) {
   const [form, setForm] = useState({
     name: mine?.name || '',
     code: mine?.code || '',
+    casual_group: mine?.casual_group || '',
     notes: mine?.notes || '',
   })
   const [saving, setSaving] = useState(false)
@@ -64,6 +65,18 @@ function MineForm({ mine, onSave, onCancel }) {
           required
           maxLength={30}
         />
+      </div>
+      <div className="form-group" style={{ margin: 0, minWidth: 120 }}>
+        <label className="form-label">Casual group</label>
+        <select
+          className="form-control"
+          value={form.casual_group}
+          onChange={e => setForm(f => ({ ...f, casual_group: e.target.value || null }))}
+        >
+          <option value="">None</option>
+          <option value="A">Group A{casualRates?.a ? ` — ${fmt(casualRates.a)}/load` : ''}</option>
+          <option value="B">Group B{casualRates?.b ? ` — ${fmt(casualRates.b)}/load` : ''}</option>
+        </select>
       </div>
       <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 130 }}>
         <label className="form-label">Notes</label>
@@ -196,7 +209,7 @@ function RateHistory({ mineId, entities, selectedEntityId }) {
 
 // ── Mine table row ────────────────────────────────────────────────────────────
 
-function MineRow({ mine, entities, selectedEntityId, onRefresh }) {
+function MineRow({ mine, entities, selectedEntityId, onRefresh, casualRates }) {
   const [expanded, setExpanded] = useState(false)
   const [editingMine, setEditingMine] = useState(false)
   const [editingRate, setEditingRate] = useState(false)
@@ -226,6 +239,7 @@ function MineRow({ mine, entities, selectedEntityId, onRefresh }) {
             mine={mine}
             onSave={() => { setEditingMine(false); onRefresh() }}
             onCancel={() => setEditingMine(false)}
+            casualRates={casualRates}
           />
         </td>
       </tr>
@@ -248,6 +262,19 @@ function MineRow({ mine, entities, selectedEntityId, onRefresh }) {
 
         {/* Code */}
         <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{mine.code}</td>
+
+        {/* Casual group badge */}
+        <td>
+          {mine.casual_group ? (
+            <span style={{
+              fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+              background: mine.casual_group === 'A' ? 'rgba(22,163,74,0.12)' : 'rgba(59,130,246,0.12)',
+              color: mine.casual_group === 'A' ? '#16a34a' : '#2563eb',
+            }}>
+              Group {mine.casual_group}
+            </span>
+          ) : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
+        </td>
 
         {/* Rate column */}
         <td onClick={e => e.stopPropagation()}>
@@ -352,6 +379,7 @@ export default function MinesSettingsPage() {
   const [selectedEntityId, setSelectedEntityId] = useState('')
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
+  const [casualRates, setCasualRates] = useState(null)
 
   const fetchMines = async () => {
     setLoading(true)
@@ -371,6 +399,9 @@ export default function MinesSettingsPage() {
       const active = r.data.filter(e => e.is_active)
       setEntities(active)
       if (active.length > 0) setSelectedEntityId(String(active[0].id))
+    }).catch(() => {})
+    getPayrollSettings().then(r => {
+      setCasualRates({ a: r.data.casual_rate_group_a, b: r.data.casual_rate_group_b })
     }).catch(() => {})
   }, [])
 
@@ -395,6 +426,7 @@ export default function MinesSettingsPage() {
           <MineForm
             onSave={() => { setShowAddForm(false); fetchMines() }}
             onCancel={() => setShowAddForm(false)}
+            casualRates={casualRates}
           />
         </div>
       )}
@@ -451,6 +483,7 @@ export default function MinesSettingsPage() {
                   entities={entities}
                   selectedEntityId={selectedEntityId}
                   onRefresh={fetchMines}
+                  casualRates={casualRates}
                 />
               ))}
             </tbody>

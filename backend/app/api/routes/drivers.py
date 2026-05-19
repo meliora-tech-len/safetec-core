@@ -390,6 +390,10 @@ def update_cycle(
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(cycle, field, value)
 
+    log_action(db, "pay_cycle.updated", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="pay_cycle",
+               resource_id=cycle.id,
+               description=f"Updated pay cycle {year}/{month} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(cycle)
     return _cycle_with_calc(cycle, driver, db)
@@ -443,6 +447,11 @@ def add_trip(
     cycle = _get_cycle_or_404(driver_id, year, month, db)
     trip = DriverTripLog(pay_cycle_id=cycle.id, **payload.model_dump())
     db.add(trip)
+    db.flush()
+    log_action(db, "trip_log.created", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="trip_log",
+               resource_id=trip.id,
+               description=f"Added trip log for {driver.first_name} {driver.last_name} on {payload.trip_date}")
     db.commit()
     db.refresh(trip)
     return trip
@@ -461,6 +470,10 @@ def delete_trip(
     trip = db.query(DriverTripLog).filter(DriverTripLog.id == trip_id).first()
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
+    log_action(db, "trip_log.deleted", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="trip_log",
+               resource_id=trip_id,
+               description=f"Deleted trip log #{trip_id} for {driver.first_name} {driver.last_name}")
     db.delete(trip)
     db.commit()
     return {"detail": "Trip deleted"}
@@ -482,6 +495,11 @@ def add_additional_load(
     cycle = _get_or_create_cycle(driver_id, year, month, db)
     entry = DriverAdditionalLoad(pay_cycle_id=cycle.id, **payload.model_dump())
     db.add(entry)
+    db.flush()
+    log_action(db, "additional_load.created", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="additional_load",
+               resource_id=entry.id,
+               description=f"Added additional load for {driver.first_name} {driver.last_name} ({year}/{month})")
     db.commit()
     db.refresh(entry)
     return entry
@@ -503,6 +521,10 @@ def update_additional_load(
         raise HTTPException(status_code=404, detail="Additional load not found")
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(entry, field, value)
+    log_action(db, "additional_load.updated", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="additional_load",
+               resource_id=load_id,
+               description=f"Updated additional load #{load_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     return entry
@@ -521,6 +543,10 @@ def delete_additional_load(
     entry = db.query(DriverAdditionalLoad).filter(DriverAdditionalLoad.id == load_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
+    log_action(db, "additional_load.deleted", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="additional_load",
+               resource_id=load_id,
+               description=f"Deleted additional load #{load_id} for {driver.first_name} {driver.last_name}")
     db.delete(entry)
     db.commit()
     return {"detail": "Additional load deleted"}
@@ -540,6 +566,10 @@ def archive_additional_load(
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
     entry.is_archived = True
+    log_action(db, "additional_load.archived", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="additional_load",
+               resource_id=load_id,
+               description=f"Archived additional load #{load_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     return {"detail": "Additional load archived"}
 
@@ -558,6 +588,10 @@ def verify_additional_load(
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
     apply_verify_step(entry, current_user, is_admin=(current_user.role == "admin"))
+    log_action(db, "additional_load.verified", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="additional_load",
+               resource_id=load_id,
+               description=f"Verified additional load #{load_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}
@@ -581,6 +615,11 @@ def add_food_payment(
     cycle = _get_or_create_cycle(driver_id, year, month, db)
     entry = DriverFoodPayment(pay_cycle_id=cycle.id, **payload.model_dump())
     db.add(entry)
+    db.flush()
+    log_action(db, "food_payment.created", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="food_payment",
+               resource_id=entry.id,
+               description=f"Added food payment for {driver.first_name} {driver.last_name} ({year}/{month})")
     db.commit()
     db.refresh(entry)
     return entry
@@ -602,6 +641,10 @@ def update_food_payment(
         raise HTTPException(status_code=404, detail="Food payment not found")
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(entry, field, value)
+    log_action(db, "food_payment.updated", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="food_payment",
+               resource_id=payment_id,
+               description=f"Updated food payment #{payment_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     return entry
@@ -620,6 +663,10 @@ def delete_food_payment(
     entry = db.query(DriverFoodPayment).filter(DriverFoodPayment.id == payment_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
+    log_action(db, "food_payment.deleted", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="food_payment",
+               resource_id=payment_id,
+               description=f"Deleted food payment #{payment_id} for {driver.first_name} {driver.last_name}")
     db.delete(entry)
     db.commit()
     return {"detail": "Food payment deleted"}
@@ -639,6 +686,10 @@ def verify_food_payment(
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
     apply_verify_step(entry, current_user, is_admin=(current_user.role == "admin"))
+    log_action(db, "food_payment.verified", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="food_payment",
+               resource_id=payment_id,
+               description=f"Verified food payment #{payment_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}

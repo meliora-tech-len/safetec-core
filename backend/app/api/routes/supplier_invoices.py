@@ -398,6 +398,11 @@ def verify_supplier_invoice(
     _check_entity_access(inv.entity_id, current_user)
 
     apply_verify_step(inv, current_user, is_admin=(current_user.role == "admin"))
+    log_action(
+        db, "supplier_invoice.verified", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice",
+        resource_id=invoice_id, description=f"Verified supplier invoice {inv.invoice_number}",
+    )
     db.commit()
     db.refresh(inv)
     d = {c.name: getattr(inv, c.name) for c in inv.__table__.columns}

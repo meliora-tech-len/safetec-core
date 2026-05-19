@@ -177,6 +177,9 @@ export const verifyAdditionalLoad     = (driverId, year, month, loadId) =>
 export const verifyFoodPayment        = (driverId, year, month, paymentId) =>
   api.patch(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}/verify`)
 
+// ── Payroll Settings ──────────────────────────────────────────────────────────
+export const getPayrollSettings = () => api.get('/payroll-settings')
+
 // ── Business Reports ──────────────────────────────────────────────────────────
 export const getIncomeExpensesReport = (params) => api.get('/reports/income-expenses', { params })
 export const getPayrollEntries = (params = {}) => api.get('/payroll-entries/', { params })
@@ -197,6 +200,12 @@ export const markStatementPaid = (supplierId, year, month) =>
   api.post(`/supplier-invoices/statements/${supplierId}/${year}/${month}/mark-paid`)
 export const getSupplierPayablesDashboard = (params = {}) =>
   api.get('/supplier-invoices/dashboard-summary', { params })
+
+// ── Truck Monthly Expenses (Profit Sheet) ─────────────────────────────────────
+export const getTruckMonthlyExpenses = (truckId, params) =>
+  api.get(`/fleet/trucks/${truckId}/monthly-expenses`, { params })
+export const upsertTruckMonthlyExpenses = (truckId, params, data) =>
+  api.put(`/fleet/trucks/${truckId}/monthly-expenses`, data, { params })
 
 // ── Feedback ──────────────────────────────────────────────────────────────────
 export const submitFeedback = (data) => api.post('/feedback/', data)

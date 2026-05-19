@@ -6,10 +6,11 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
     PersonalVehicleCreate, PersonalVehicleUpdate, PersonalVehicleOut,
+    TruckMonthlyExpensesBase, TruckMonthlyExpensesOut,
 )
 from app.services.audit import log_action
 
@@ -316,6 +317,13 @@ def create_personal_vehicle(
     _check_entity_access(payload.entity_id, current_user)
     pv = PersonalVehicle(**payload.model_dump())
     db.add(pv)
+    db.flush()
+    log_action(
+        db, "personal_vehicle.created", user_id=current_user.id,
+        entity_id=payload.entity_id, resource_type="personal_vehicle",
+        resource_id=pv.id,
+        description=f"Created personal vehicle {pv.registration or pv.vehicle_type} ({pv.owner})",
+    )
     db.commit()
     db.refresh(pv)
     return pv
@@ -334,6 +342,12 @@ def update_personal_vehicle(
     _check_entity_access(pv.entity_id, current_user)
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(pv, field, value)
+    log_action(
+        db, "personal_vehicle.updated", user_id=current_user.id,
+        entity_id=pv.entity_id, resource_type="personal_vehicle",
+        resource_id=pv_id,
+        description=f"Updated personal vehicle {pv.registration or pv.vehicle_type} ({pv.owner})",
+    )
     db.commit()
     db.refresh(pv)
     return pv
@@ -350,6 +364,12 @@ def delete_personal_vehicle(
     pv = db.query(PersonalVehicle).filter(PersonalVehicle.id == pv_id).first()
     if not pv:
         raise HTTPException(status_code=404, detail="Personal vehicle not found")
+    log_action(
+        db, "personal_vehicle.deleted", user_id=current_user.id,
+        entity_id=pv.entity_id, resource_type="personal_vehicle",
+        resource_id=pv_id,
+        description=f"Deleted personal vehicle {pv.registration or pv.vehicle_type} ({pv.owner})",
+    )
     db.delete(pv)
     db.commit()
     return {"detail": "Personal vehicle deleted"}
@@ -446,3 +466,61 @@ def get_licence_alerts(
 
     items.sort(key=lambda x: x["days_until_expiry"])
     return {"items": items, "count": len(items)}
+
+
+# ── Truck Monthly Expenses (Profit Sheet) ────────────────────────────────────
+
+@router.get("/trucks/{truck_id}/monthly-expenses", response_model=TruckMonthlyExpensesOut)
+def get_monthly_expenses(
+    truck_id: int,
+    year:  int = Query(...),
+    month: int = Query(...),
+    db:   Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    truck = db.query(Truck).filter(Truck.id == truck_id).first()
+    if not truck:
+        raise HTTPException(404, "Truck not found")
+    _check_entity_access(truck.entity_id, current_user)
+
+    record = db.query(TruckMonthlyExpenses).filter(
+        TruckMonthlyExpenses.truck_id == truck_id,
+        TruckMonthlyExpenses.year  == year,
+        TruckMonthlyExpenses.month == month,
+    ).first()
+
+    if not record:
+        return TruckMonthlyExpensesOut(truck_id=truck_id, year=year, month=month)
+    return record
+
+
+@router.put("/trucks/{truck_id}/monthly-expenses", response_model=TruckMonthlyExpensesOut)
+def upsert_monthly_expenses(
+    truck_id: int,
+    year:  int = Query(...),
+    month: int = Query(...),
+    data:  TruckMonthlyExpensesBase = ...,
+    db:   Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    truck = db.query(Truck).filter(Truck.id == truck_id).first()
+    if not truck:
+        raise HTTPException(404, "Truck not found")
+    _check_entity_access(truck.entity_id, current_user)
+
+    record = db.query(TruckMonthlyExpenses).filter(
+        TruckMonthlyExpenses.truck_id == truck_id,
+        TruckMonthlyExpenses.year  == year,
+        TruckMonthlyExpenses.month == month,
+    ).first()
+
+    if not record:
+        record = TruckMonthlyExpenses(truck_id=truck_id, year=year, month=month)
+        db.add(record)
+
+    for field, value in data.model_dump().items():
+        setattr(record, field, value)
+
+    db.commit()
+    db.refresh(record)
+    return record
