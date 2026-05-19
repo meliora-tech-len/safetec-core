@@ -41,16 +41,16 @@ const DOCUMENTS_NAV = [
 ]
 
 const ADMIN_NAV = [
-  { to: '/entities',        icon: Building2, label: 'Entities' },
-  { to: '/users',           icon: Users,     label: 'Users' },
-  { to: '/settings',        icon: Settings,  label: 'Settings' },
-  { to: '/reports',         icon: BarChart2, label: 'Reports' },
+  { to: '/entities', icon: Building2, label: 'Entities' },
+  { to: '/users',    icon: Users,     label: 'Users' },
 ]
 
 const SETTINGS_NAV = [
-  { to: '/settings/payroll',       icon: Settings, label: 'Payroll Rates' },
-  { to: '/settings/mines',         icon: MapPin,   label: 'Mines' },
-  { to: '/settings/diesel-rates',  icon: Fuel,     label: 'Diesel Rates' },
+  { to: '/settings',              icon: Settings,  label: 'Settings' },
+  { to: '/reports',               icon: BarChart2, label: 'Reports' },
+  { to: '/settings/payroll',      icon: Settings,  label: 'Payroll Rates' },
+  { to: '/settings/mines',        icon: MapPin,    label: 'Mines' },
+  { to: '/settings/diesel-rates', icon: Fuel,      label: 'Diesel Rates' },
 ]
 
 export default function Sidebar() {
@@ -222,20 +222,18 @@ export default function Sidebar() {
         )}
 
         {/* Settings nav */}
-        {isAdmin && (
-          <div>
-            <div style={styles.navLabel}>Settings</div>
-            {SETTINGS_NAV.map(({ to, icon: Icon, label }) => (
-              <NavLink key={to} to={to} style={({ isActive }) => ({
-                ...styles.navItem,
-                ...(isActive ? styles.navItemActive : {}),
-              })}>
-                <Icon size={16} />
-                <span>{label}</span>
-              </NavLink>
-            ))}
-          </div>
-        )}
+        <div>
+          <div style={styles.navLabel}>Settings</div>
+          {SETTINGS_NAV.map(({ to, icon: Icon, label }) => (
+            <NavLink key={to} to={to} style={({ isActive }) => ({
+              ...styles.navItem,
+              ...(isActive ? styles.navItemActive : {}),
+            })}>
+              <Icon size={16} />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </div>
       </nav>
 
       {/* Theme toggle */}

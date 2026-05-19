@@ -16,11 +16,6 @@ from app.services.audit import log_action
 router = APIRouter(prefix="/api/mines", tags=["mines"])
 
 
-def _require_admin(user: User):
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-
 # ── List mines ────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=List[MineOut])
@@ -57,7 +52,6 @@ def create_mine(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
     mine = Mine(**payload.model_dump())
     db.add(mine)
     log_action(
@@ -78,7 +72,6 @@ def update_mine(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
     mine = db.query(Mine).filter(Mine.id == mine_id).first()
     if not mine:
         raise HTTPException(status_code=404, detail="Mine not found")
@@ -104,7 +97,6 @@ def deactivate_mine(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
     mine = db.query(Mine).filter(Mine.id == mine_id).first()
     if not mine:
         raise HTTPException(status_code=404, detail="Mine not found")
@@ -147,8 +139,6 @@ def add_mine_rate(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
-
     mine = db.query(Mine).filter(Mine.id == mine_id).first()
     if not mine:
         raise HTTPException(status_code=404, detail="Mine not found")

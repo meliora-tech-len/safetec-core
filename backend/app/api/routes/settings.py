@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 @router.get("/", response_model=List[AppSettingOut])
 def list_settings(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ):
     return db.query(AppSetting).order_by(AppSetting.category, AppSetting.key).all()
 
@@ -36,7 +36,7 @@ def update_setting(
     key: str,
     payload: AppSettingUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
 ):
     setting = db.query(AppSetting).filter(AppSetting.key == key).first()
     if not setting:

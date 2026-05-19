@@ -59,11 +59,6 @@ def _accessible_entity_ids(user: User) -> Optional[List[int]]:
     return [a.entity_id for a in user.entity_access]
 
 
-def _require_admin(user: User):
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-
 def _enrich_fillup(f: DieselFillUp, db=None) -> dict:
     d = {c.name: getattr(f, c.name) for c in f.__table__.columns}
     d["truck_registration"] = f.truck.registration if f.truck else None
@@ -99,7 +94,6 @@ def update_diesel_settings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
     if payload.admin_fee_pct < 0 or payload.admin_fee_pct > 100:
         raise HTTPException(status_code=400, detail="admin_fee_pct must be between 0 and 100")
 
