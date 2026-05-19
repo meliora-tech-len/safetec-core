@@ -93,9 +93,11 @@ export default function App() {
             <Route path="/audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
             <Route path="/entities" element={<AdminRoute><EntitiesPage /></AdminRoute>} />
             <Route path="/users" element={<AdminRoute><UsersPage /></AdminRoute>} />
-            <Route path="/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
-            <Route path="/settings/payroll" element={<AdminRoute><PayrollSettingsPage /></AdminRoute>} />
-            <Route path="/settings/mines" element={<AdminRoute><MinesSettingsPage /></AdminRoute>} />
+
+            {/* Settings — all authenticated users */}
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings/payroll" element={<PayrollSettingsPage />} />
+            <Route path="/settings/mines" element={<MinesSettingsPage />} />
 
             {/* Truck Loads */}
             <Route path="/truck-loads" element={<PrivateRoute><TruckLoadsPage /></PrivateRoute>} />
@@ -103,10 +105,8 @@ export default function App() {
 
             {/* Diesel */}
             <Route path="/diesel" element={<DieselFillUpsPage />} />
-            <Route path="/reports" element={<AdminRoute><ReportsPage /></AdminRoute>} />
-
-            {/* Settings (admin) — diesel rates alongside payroll & mines */}
-            <Route path="/settings/diesel-rates" element={<AdminRoute><DieselRatesPage /></AdminRoute>} />
+            <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/settings/diesel-rates" element={<DieselRatesPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
