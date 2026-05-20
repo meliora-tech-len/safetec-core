@@ -205,6 +205,20 @@ export default function Sidebar() {
           </div>
         )}
 
+        {/* Settings nav */}
+        <div>
+          <div style={styles.navLabel}>Settings</div>
+          {SETTINGS_NAV.map(({ to, icon: Icon, label }) => (
+            <NavLink key={to} to={to} style={({ isActive }) => ({
+              ...styles.navItem,
+              ...(isActive ? styles.navItemActive : {}),
+            })}>
+              <Icon size={16} />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </div>
+
         {/* Admin nav */}
         {isAdmin && (
           <div>
@@ -221,19 +235,7 @@ export default function Sidebar() {
           </div>
         )}
 
-        {/* Settings nav */}
-        <div>
-          <div style={styles.navLabel}>Settings</div>
-          {SETTINGS_NAV.map(({ to, icon: Icon, label }) => (
-            <NavLink key={to} to={to} style={({ isActive }) => ({
-              ...styles.navItem,
-              ...(isActive ? styles.navItemActive : {}),
-            })}>
-              <Icon size={16} />
-              <span>{label}</span>
-            </NavLink>
-          ))}
-        </div>
+
       </nav>
 
       {/* Theme toggle */}

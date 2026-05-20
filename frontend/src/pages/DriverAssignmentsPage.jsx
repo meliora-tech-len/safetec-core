@@ -22,7 +22,6 @@ function Stat({ label, value, colour }) {
   )
 }
 
-
 // ── Generic pill group ────────────────────────────────────────────────────────
 function PillGroup({ options, value, onChange }) {
   return (
@@ -46,7 +45,7 @@ function PillGroup({ options, value, onChange }) {
 }
 
 // ── Assignment popover ────────────────────────────────────────────────────────
-function AssignmentPopover({ truck, currentDriver, unassignedDrivers, saving, onAssign, onUnassign, onClose }) {
+function AssignmentPopover({ slot, currentDriver, unassignedDrivers, saving, onAssign, onUnassign, onClose }) {
   const [search, setSearch] = useState('')
   const filtered = unassignedDrivers.filter(d =>
     `${d.first_name} ${d.last_name} ${d.employee_number || ''}`.toLowerCase().includes(search.toLowerCase())
@@ -61,18 +60,26 @@ function AssignmentPopover({ truck, currentDriver, unassignedDrivers, saving, on
       }}
       onClick={e => e.stopPropagation()}
     >
+      {/* Slot heading */}
+      <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 10 }}>
+        Driver {slot} slot
+      </div>
+
       {currentDriver && (
         <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
             Currently assigned
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
                 {currentDriver.first_name} {currentDriver.last_name}
               </span>
+              <span style={currentDriver.driver_type === 'permanent' ? S.typeBadgePermanent : S.typeBadgeCasual}>
+                {currentDriver.driver_type === 'permanent' ? 'P' : 'C'}
+              </span>
               {currentDriver.employee_number && (
-                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', marginLeft: 6 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                   #{currentDriver.employee_number}
                 </span>
               )}
@@ -97,7 +104,7 @@ function AssignmentPopover({ truck, currentDriver, unassignedDrivers, saving, on
         autoFocus
         value={search}
         onChange={e => setSearch(e.target.value)}
-        placeholder="Search permanent drivers…"
+        placeholder="Search drivers…"
         style={{
           width: '100%', marginBottom: 6, padding: '5px 8px', fontSize: 12,
           borderRadius: 6, border: '1px solid var(--border)',
@@ -109,7 +116,7 @@ function AssignmentPopover({ truck, currentDriver, unassignedDrivers, saving, on
       <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
         {filtered.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '10px 0', textAlign: 'center' }}>
-            {unassignedDrivers.length === 0 ? 'All permanent drivers are assigned' : 'No match'}
+            {unassignedDrivers.length === 0 ? 'All drivers are assigned' : 'No match'}
           </div>
         ) : filtered.map(d => (
           <button
@@ -124,9 +131,14 @@ function AssignmentPopover({ truck, currentDriver, unassignedDrivers, saving, on
             onMouseEnter={e => { if (!saving) e.currentTarget.style.background = 'var(--bg-surface)' }}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
           >
-            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>
-              {d.first_name} {d.last_name}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>
+                {d.first_name} {d.last_name}
+              </span>
+              <span style={d.driver_type === 'permanent' ? S.typeBadgePermanent : S.typeBadgeCasual}>
+                {d.driver_type === 'permanent' ? 'P' : 'C'}
+              </span>
+            </div>
             {d.employee_number && (
               <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                 #{d.employee_number}
@@ -147,27 +159,71 @@ function AssignmentPopover({ truck, currentDriver, unassignedDrivers, saving, on
   )
 }
 
-// ── Truck card ────────────────────────────────────────────────────────────────
-function TruckCard({ truck, driver, entityName, isPopoverOpen, onToggle, popoverProps }) {
-  const isAssigned = !!driver
-  const sc = STATUS_COLOURS[truck.status] || STATUS_COLOURS.active
-
+// ── Driver slot row (inside TruckCard) ───────────────────────────────────────
+function DriverSlotRow({ slot, driver, isActive, onToggle }) {
   return (
     <div
       onClick={(e) => { e.stopPropagation(); onToggle() }}
       style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+        background: isActive ? 'var(--accent-subtle)' : 'transparent',
+        transition: 'background 0.12s',
+      }}
+      onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--bg-surface)' }}
+      onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
+    >
+      <span style={{
+        fontSize: 9, fontWeight: 800, letterSpacing: 0.5, flexShrink: 0,
+        background: isActive ? 'var(--accent)' : 'var(--bg-surface)',
+        color: isActive ? '#fff' : 'var(--text-muted)',
+        padding: '1px 5px', borderRadius: 3, minWidth: 18, textAlign: 'center',
+      }}>
+        D{slot}
+      </span>
+      {driver ? (
+        <>
+          <span style={{ fontWeight: 600, fontSize: 12, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {driver.first_name} {driver.last_name}
+          </span>
+          <span style={driver.driver_type === 'permanent' ? S.typeBadgePermanent : S.typeBadgeCasual}>
+            {driver.driver_type === 'permanent' ? 'P' : 'C'}
+          </span>
+          {driver.employee_number && (
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'monospace', flexShrink: 0 }}>
+              #{driver.employee_number}
+            </span>
+          )}
+        </>
+      ) : (
+        <span style={{ fontSize: 11, color: slot === 1 ? 'var(--warning)' : 'var(--text-muted)', fontStyle: 'italic', flex: 1 }}>
+          {slot === 1 ? 'No driver — click to assign' : 'Optional second driver'}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// ── Truck card ────────────────────────────────────────────────────────────────
+function TruckCard({ truck, driver1, driver2, entityName, activeSlot, onToggleSlot, popoverProps }) {
+  const hasAny = !!(driver1 || driver2)
+  const sc = STATUS_COLOURS[truck.status] || STATUS_COLOURS.active
+
+  return (
+    <div
+      onClick={e => e.stopPropagation()}
+      style={{
         position: 'relative',
-        background: isAssigned ? 'var(--bg-card)' : 'rgba(245,158,11,0.03)',
-        border: isPopoverOpen ? '1px solid var(--accent)' : '1px solid var(--border)',
-        borderLeft: isAssigned
-          ? (isPopoverOpen ? '1px solid var(--accent)' : '1px solid var(--border)')
+        background: hasAny ? 'var(--bg-card)' : 'rgba(245,158,11,0.03)',
+        border: activeSlot ? '1px solid var(--accent)' : '1px solid var(--border)',
+        borderLeft: hasAny
+          ? (activeSlot ? '1px solid var(--accent)' : '1px solid var(--border)')
           : '3px solid var(--warning)',
         borderRadius: 10,
         padding: '14px 16px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 8,
-        cursor: 'pointer',
+        gap: 6,
         transition: 'border-color 0.15s',
       }}
     >
@@ -189,41 +245,37 @@ function TruckCard({ truck, driver, entityName, isPopoverOpen, onToggle, popover
         {truck.make}{truck.model ? ` ${truck.model}` : ''}
       </div>
 
-      <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '2px 0' }} />
+      <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0 2px' }} />
 
-      {/* Driver row */}
-      {isAssigned ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1 }}>
-            {driver.first_name} {driver.last_name}
-          </span>
-          {driver.employee_number && (
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', flexShrink: 0 }}>
-              #{driver.employee_number}
-            </span>
-          )}
-        </div>
-      ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <AlertTriangle size={12} style={{ color: 'var(--warning)', flexShrink: 0 }} />
-          <span style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 600 }}>No driver assigned</span>
-        </div>
-      )}
+      {/* Driver slot rows */}
+      <DriverSlotRow
+        slot={1}
+        driver={driver1}
+        isActive={activeSlot === 1}
+        onToggle={() => onToggleSlot(1)}
+      />
+      <DriverSlotRow
+        slot={2}
+        driver={driver2}
+        isActive={activeSlot === 2}
+        onToggle={() => onToggleSlot(2)}
+      />
 
-      {/* Bottom row: entity chip + assign hint */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      {/* Bottom row: entity chip + hint */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
         <span style={{ fontSize: 10, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <UserCheck size={10} /> Click to {isAssigned ? 'reassign' : 'assign'}
+          <UserCheck size={10} /> Click a driver row to assign
         </span>
         <span style={S.entityChip}>{entityName(truck.entity_id)}</span>
       </div>
 
-      {isPopoverOpen && (
+      {activeSlot && (
         <AssignmentPopover
           {...popoverProps}
-          truck={truck}
-          currentDriver={driver}
-          onClose={onToggle}
+          slot={activeSlot}
+          currentDriver={activeSlot === 1 ? driver1 : driver2}
+          onUnassign={() => popoverProps.onUnassign(activeSlot === 1 ? driver1 : driver2)}
+          onClose={() => onToggleSlot(null)}
         />
       )}
     </div>
@@ -288,7 +340,7 @@ function CasualPoolSection({ drivers, entityName, open, onToggle }) {
           Casual Pool
         </span>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          {drivers.length} driver{drivers.length !== 1 ? 's' : ''} · not fixed to a truck
+          {drivers.length} driver{drivers.length !== 1 ? 's' : ''} · unassigned
         </span>
         {open
           ? <ChevronUp size={15} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
@@ -340,7 +392,8 @@ export default function DriverAssignmentsPage() {
   const [filterAssigned, setFilterAssigned] = useState('')
   const [casualOpen, setCasualOpen]         = useState(false)
   const [orphanOpen, setOrphanOpen]         = useState(false)
-  const [activePopoverTruckId, setActivePopoverTruckId] = useState(null)
+  // {truckId, slot} or null
+  const [activePopover, setActivePopover]   = useState(null)
   const [saving, setSaving]                 = useState(false)
 
   useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
@@ -361,20 +414,20 @@ export default function DriverAssignmentsPage() {
 
   // Close popover on outside click
   useEffect(() => {
-    if (!activePopoverTruckId) return
-    const close = () => setActivePopoverTruckId(null)
+    if (!activePopover) return
+    const close = () => setActivePopover(null)
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
-  }, [activePopoverTruckId])
+  }, [activePopover])
 
   // ── Assign / unassign ───────────────────────────────────────────────────────
 
-  const handleAssign = useCallback(async (truckId, driver) => {
+  const handleAssign = useCallback(async (truckId, slot, driver) => {
     setSaving(true)
     try {
-      await updateDriver(driver.id, { truck_id: truckId })
-      toast.success(`${driver.first_name} ${driver.last_name} assigned`)
-      setActivePopoverTruckId(null)
+      await updateDriver(driver.id, { truck_id: truckId, driver_slot: slot })
+      toast.success(`${driver.first_name} ${driver.last_name} assigned as Driver ${slot}`)
+      setActivePopover(null)
       load()
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Assignment failed')
@@ -382,11 +435,12 @@ export default function DriverAssignmentsPage() {
   }, [load])
 
   const handleUnassign = useCallback(async (driver) => {
+    if (!driver) return
     setSaving(true)
     try {
-      await updateDriver(driver.id, { truck_id: null })
+      await updateDriver(driver.id, { truck_id: null, driver_slot: null })
       toast.success(`${driver.first_name} ${driver.last_name} unassigned`)
-      setActivePopoverTruckId(null)
+      setActivePopover(null)
       load()
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Unassign failed')
@@ -395,10 +449,15 @@ export default function DriverAssignmentsPage() {
 
   // ── Derived data ─────────────────────────────────────────────────────────────
 
-  const driverByTruckId = useMemo(() => {
+  const driver1ByTruckId = useMemo(() => {
     const m = {}
-    drivers.filter(d => d.driver_type === 'permanent' && d.truck_id)
-           .forEach(d => { m[d.truck_id] = d })
+    drivers.filter(d => d.driver_slot === 1 && d.truck_id).forEach(d => { m[d.truck_id] = d })
+    return m
+  }, [drivers])
+
+  const driver2ByTruckId = useMemo(() => {
+    const m = {}
+    drivers.filter(d => d.driver_slot === 2 && d.truck_id).forEach(d => { m[d.truck_id] = d })
     return m
   }, [drivers])
 
@@ -414,28 +473,30 @@ export default function DriverAssignmentsPage() {
 
   const filteredTrucks = useMemo(() => {
     let list = ownTrucks
-    if (filterStatus)                    list = list.filter(t => t.status === filterStatus)
-    if (filterAssigned === 'assigned')   list = list.filter(t =>  driverByTruckId[t.id])
-    if (filterAssigned === 'unassigned') list = list.filter(t => !driverByTruckId[t.id])
+    if (filterStatus) list = list.filter(t => t.status === filterStatus)
+    if (filterAssigned === 'assigned')   list = list.filter(t => driver1ByTruckId[t.id] || driver2ByTruckId[t.id])
+    if (filterAssigned === 'unassigned') list = list.filter(t => !driver1ByTruckId[t.id] && !driver2ByTruckId[t.id])
     if (search.trim()) {
       const q = search.toLowerCase()
       list = list.filter(t =>
         t.registration.toLowerCase().includes(q) ||
         t.make.toLowerCase().includes(q) ||
         (t.fleet_number || '').toLowerCase().includes(q) ||
-        (driverByTruckId[t.id] &&
-          `${driverByTruckId[t.id].first_name} ${driverByTruckId[t.id].last_name}`.toLowerCase().includes(q))
+        [driver1ByTruckId[t.id], driver2ByTruckId[t.id]].some(d =>
+          d && `${d.first_name} ${d.last_name}`.toLowerCase().includes(q)
+        )
       )
     }
     return list
-  }, [ownTrucks, filterStatus, filterAssigned, search, driverByTruckId])
+  }, [ownTrucks, filterStatus, filterAssigned, search, driver1ByTruckId, driver2ByTruckId])
 
-  const assignedTrucks      = ownTrucks.filter(t =>  driverByTruckId[t.id])
-  const unassignedTrucks    = ownTrucks.filter(t => !driverByTruckId[t.id])
-  const orphanedDrivers     = drivers.filter(d => d.driver_type === 'permanent' && !d.truck_id)
-  const casualPool          = drivers.filter(d => d.driver_type === 'casual')
-  const unassignedPermanent = useMemo(
-    () => drivers.filter(d => d.driver_type === 'permanent' && !d.truck_id && d.is_active),
+  const assignedTrucks   = ownTrucks.filter(t => driver1ByTruckId[t.id] || driver2ByTruckId[t.id])
+  const unassignedTrucks = ownTrucks.filter(t => !driver1ByTruckId[t.id] && !driver2ByTruckId[t.id])
+  const fullyStaffed     = ownTrucks.filter(t => driver1ByTruckId[t.id] && driver2ByTruckId[t.id])
+  const orphanedDrivers  = drivers.filter(d => d.driver_type === 'permanent' && !d.truck_id)
+  const casualPool       = drivers.filter(d => d.driver_type === 'casual' && !d.truck_id)
+  const unassignedDrivers = useMemo(
+    () => drivers.filter(d => !d.truck_id && d.is_active),
     [drivers]
   )
 
@@ -457,7 +518,7 @@ export default function DriverAssignmentsPage() {
             <Link2 size={22} style={{ color: 'var(--accent)' }} />
             Driver Assignments
           </div>
-          <div className="page-subtitle">Click a truck card to assign or reassign its driver</div>
+          <div className="page-subtitle">Click a driver row on a truck card to assign Driver 1 or Driver 2</div>
         </div>
         <select
           value={filterEntity}
@@ -471,10 +532,10 @@ export default function DriverAssignmentsPage() {
 
       {/* ── Stats ──────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-        <Stat label="Trucks assigned"   value={assignedTrucks.length}   colour="var(--success)" />
-        <Stat label="Trucks unassigned" value={unassignedTrucks.length} colour={unassignedTrucks.length ? 'var(--warning)' : 'var(--text-muted)'} />
-        <Stat label="Permanent drivers" value={drivers.filter(d => d.driver_type === 'permanent').length} colour="var(--accent)" />
-        <Stat label="Casual pool"       value={casualPool.length}       colour="var(--text-secondary)" />
+        <Stat label="Trucks with D1"      value={assignedTrucks.length}   colour="var(--success)" />
+        <Stat label="Fully staffed (D1+D2)" value={fullyStaffed.length}   colour="var(--accent)" />
+        <Stat label="No drivers"          value={unassignedTrucks.length} colour={unassignedTrucks.length ? 'var(--warning)' : 'var(--text-muted)'} />
+        <Stat label="Casual pool"         value={casualPool.length}       colour="var(--text-secondary)" />
       </div>
 
       {/* ── Search + filter bar ─────────────────────────────────────────────── */}
@@ -499,30 +560,41 @@ export default function DriverAssignmentsPage() {
           onChange={setFilterStatus}
         />
         <PillGroup
-          options={[['assigned', 'Assigned'], ['unassigned', 'Unassigned']]}
+          options={[['assigned', 'Has Driver'], ['unassigned', 'No Drivers']]}
           value={filterAssigned}
           onChange={setFilterAssigned}
         />
       </div>
 
       {/* ── Truck card grid ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12, marginBottom: 24 }}>
-        {filteredTrucks.map(truck => (
-          <TruckCard
-            key={truck.id}
-            truck={truck}
-            driver={driverByTruckId[truck.id] || null}
-            entityName={entityName}
-            isPopoverOpen={activePopoverTruckId === truck.id}
-            onToggle={() => setActivePopoverTruckId(id => id === truck.id ? null : truck.id)}
-            popoverProps={{
-              unassignedDrivers: unassignedPermanent,
-              saving,
-              onAssign: (d) => handleAssign(truck.id, d),
-              onUnassign: () => handleUnassign(driverByTruckId[truck.id]),
-            }}
-          />
-        ))}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12, marginBottom: 24 }}>
+        {filteredTrucks.map(truck => {
+          const popoverTruckId = activePopover?.truckId
+          const popoverSlot    = activePopover?.slot
+          return (
+            <TruckCard
+              key={truck.id}
+              truck={truck}
+              driver1={driver1ByTruckId[truck.id] || null}
+              driver2={driver2ByTruckId[truck.id] || null}
+              entityName={entityName}
+              activeSlot={popoverTruckId === truck.id ? popoverSlot : null}
+              onToggleSlot={(slot) => {
+                if (slot === null || (popoverTruckId === truck.id && popoverSlot === slot)) {
+                  setActivePopover(null)
+                } else {
+                  setActivePopover({ truckId: truck.id, slot })
+                }
+              }}
+              popoverProps={{
+                unassignedDrivers,
+                saving,
+                onAssign: (d) => handleAssign(truck.id, activePopover?.slot, d),
+                onUnassign: handleUnassign,
+              }}
+            />
+          )
+        })}
         {filteredTrucks.length === 0 && (
           <div style={{ gridColumn: '1 / -1', padding: '40px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
             No trucks match the current filters.
@@ -562,5 +634,13 @@ const S = {
   casualBadge: {
     fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
     background: 'rgba(234,179,8,0.12)', color: '#92400e', letterSpacing: 0.4,
+  },
+  typeBadgePermanent: {
+    fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+    background: 'rgba(22,163,74,0.12)', color: '#15803d', letterSpacing: 0.3,
+  },
+  typeBadgeCasual: {
+    fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+    background: 'rgba(234,179,8,0.12)', color: '#92400e', letterSpacing: 0.3,
   },
 }

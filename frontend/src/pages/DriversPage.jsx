@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, Plus, Search, X, Trash2 } from 'lucide-react'
+import { Users, Plus, Search, X, Trash2, Edit2 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
@@ -378,19 +378,17 @@ export default function DriversPage() {
                   </td>
                   <td onClick={e => e.stopPropagation()}>
                     <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                      <button className="btn-icon btn-ghost btn-sm" onClick={() => setModal({ mode: 'edit', driver: d })}>
-                        Edit
+                      <button className="btn-icon btn-ghost btn-sm" onClick={() => setModal({ mode: 'edit', driver: d })} title="Edit driver">
+                        <Edit2 size={13} />
                       </button>
-                      {isAdmin && (
-                        <button
-                          className="btn-icon btn-ghost btn-sm"
-                          onClick={() => setDeleteTarget(d)}
-                          title="Delete driver"
-                          style={{ color: 'var(--danger)' }}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
+                      <button
+                        className="btn-icon btn-ghost btn-sm"
+                        onClick={() => setDeleteTarget(d)}
+                        title="Delete driver"
+                        style={{ color: 'var(--danger)' }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </td>
                 </tr>

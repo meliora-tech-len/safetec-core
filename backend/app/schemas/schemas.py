@@ -658,6 +658,7 @@ class DriverPaymentOut(DriverPaymentBase):
 class DriverBase(BaseModel):
     entity_id: int
     truck_id: Optional[int] = None
+    driver_slot: Optional[int] = None
     employee_number: Optional[str] = None
     first_name: str
     last_name: str
@@ -675,6 +676,7 @@ class DriverCreate(DriverBase):
 
 class DriverUpdate(BaseModel):
     truck_id: Optional[int] = None
+    driver_slot: Optional[int] = None
     employee_number: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -708,6 +710,7 @@ class DriverSummary(BaseModel):
     last_name: str
     driver_type: DriverType
     truck_id: Optional[int] = None
+    driver_slot: Optional[int] = None
     truck_registration: Optional[str] = None
     is_active: bool
     load_count_this_month: int = 0

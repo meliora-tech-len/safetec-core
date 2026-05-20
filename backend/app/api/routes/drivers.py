@@ -60,6 +60,7 @@ def _build_summary(driver: Driver, month_start: date) -> dict:
         "last_name": driver.last_name,
         "driver_type": driver.driver_type,
         "truck_id": driver.truck_id,
+        "driver_slot": driver.driver_slot,
         "truck_registration": driver.truck.registration if driver.truck else None,
         "is_active": driver.is_active,
         "load_count_this_month": load_count,
@@ -208,14 +209,17 @@ def create_driver(
     current_user: User = Depends(get_current_user),
 ):
     _check_access(payload.entity_id, current_user)
-    if payload.truck_id and payload.driver_type == DriverType.permanent:
+    if payload.truck_id and payload.driver_slot is not None:
         conflict = db.query(Driver).filter(
             Driver.truck_id == payload.truck_id,
+            Driver.driver_slot == payload.driver_slot,
             Driver.is_active == True,
-            Driver.driver_type == DriverType.permanent,
         ).first()
         if conflict:
-            raise HTTPException(status_code=400, detail=f"Truck already assigned to {conflict.first_name} {conflict.last_name}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Driver {payload.driver_slot} slot is already taken by {conflict.first_name} {conflict.last_name}",
+            )
     driver = Driver(**payload.model_dump())
     db.add(driver)
     db.flush()
@@ -245,18 +249,29 @@ def update_driver(
     _check_access(driver.entity_id, current_user)
 
     update_data = payload.model_dump(exclude_unset=True)
-    new_truck_id = update_data.get("truck_id")
-    if new_truck_id is not None and new_truck_id != driver.truck_id:
-        effective_type = update_data.get("driver_type", driver.driver_type)
-        if effective_type == DriverType.permanent or driver.driver_type == DriverType.permanent:
+
+    # Auto-clear slot when unassigning from a truck
+    if "truck_id" in update_data and update_data["truck_id"] is None:
+        update_data.setdefault("driver_slot", None)
+
+    # Conflict check: only one driver per (truck_id, driver_slot)
+    truck_changing = "truck_id" in update_data
+    slot_changing = "driver_slot" in update_data
+    if truck_changing or slot_changing:
+        effective_truck_id = update_data.get("truck_id", driver.truck_id) if truck_changing else driver.truck_id
+        effective_slot = update_data.get("driver_slot", driver.driver_slot) if slot_changing else driver.driver_slot
+        if effective_truck_id is not None and effective_slot is not None:
             conflict = db.query(Driver).filter(
-                Driver.truck_id == new_truck_id,
+                Driver.truck_id == effective_truck_id,
+                Driver.driver_slot == effective_slot,
                 Driver.is_active == True,
-                Driver.driver_type == DriverType.permanent,
                 Driver.id != driver_id,
             ).first()
             if conflict:
-                raise HTTPException(status_code=400, detail=f"Truck already assigned to {conflict.first_name} {conflict.last_name}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Driver {effective_slot} slot is already taken by {conflict.first_name} {conflict.last_name}",
+                )
 
     for field, value in update_data.items():
         setattr(driver, field, value)
@@ -278,11 +293,10 @@ def delete_driver(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
     driver = db.query(Driver).filter(Driver.id == driver_id).first()
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
+    _check_access(driver.entity_id, current_user)
     log_action(db, "driver.deleted", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="driver",
                resource_id=driver_id,

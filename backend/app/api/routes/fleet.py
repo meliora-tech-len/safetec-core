@@ -236,12 +236,10 @@ def delete_truck(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can delete trucks")
-
     truck = db.query(Truck).filter(Truck.id == truck_id).first()
     if not truck:
         raise HTTPException(status_code=404, detail="Truck not found")
+    _check_entity_access(truck.entity_id, current_user)
 
     log_action(
         db, "truck.deleted", user_id=current_user.id,
@@ -362,11 +360,10 @@ def delete_personal_vehicle(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can delete personal vehicles")
     pv = db.query(PersonalVehicle).filter(PersonalVehicle.id == pv_id).first()
     if not pv:
         raise HTTPException(status_code=404, detail="Personal vehicle not found")
+    _check_entity_access(pv.entity_id, current_user)
     log_action(
         db, "personal_vehicle.deleted", user_id=current_user.id,
         entity_id=pv.entity_id, resource_type="personal_vehicle",

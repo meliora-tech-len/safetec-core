@@ -694,9 +694,7 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
         <td>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
             <button className="btn-icon btn-ghost btn-sm" onClick={() => onEdit(truck)} title="Edit"><Edit2 size={13} /></button>
-            {isAdmin && (
-              <button className="btn-icon btn-ghost btn-sm" onClick={() => onDelete(truck)} title="Delete" style={{ color: 'var(--danger)' }}><Trash2 size={13} /></button>
-            )}
+            <button className="btn-icon btn-ghost btn-sm" onClick={() => onDelete(truck)} title="Delete" style={{ color: 'var(--danger)' }}><Trash2 size={13} /></button>
             <button className="btn-icon btn-ghost btn-sm" onClick={() => setOpen(o => !o)}>
               {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </button>
@@ -786,9 +784,7 @@ function PersonalVehicleRow({ pv, onEdit, onDelete, isAdmin }) {
       <td>
         <div style={{ display: 'flex', gap: 6 }}>
           <button className="btn-icon btn-ghost btn-sm" onClick={() => onEdit(pv)} title="Edit"><Edit2 size={13} /></button>
-          {isAdmin && (
-            <button className="btn-icon btn-ghost btn-sm" onClick={() => onDelete(pv)} title="Delete" style={{ color: 'var(--danger)' }}><Trash2 size={13} /></button>
-          )}
+          <button className="btn-icon btn-ghost btn-sm" onClick={() => onDelete(pv)} title="Delete" style={{ color: 'var(--danger)' }}><Trash2 size={13} /></button>
         </div>
       </td>
     </tr>

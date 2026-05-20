@@ -464,7 +464,8 @@ class Driver(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
-    truck_id = Column(Integer, ForeignKey("trucks.id", ondelete="SET NULL"), nullable=True)
+    truck_id    = Column(Integer, ForeignKey("trucks.id", ondelete="SET NULL"), nullable=True)
+    driver_slot = Column(Integer, nullable=True)  # 1 = Driver 1, 2 = Driver 2; null = unassigned
 
     employee_number = Column(String(50))
     first_name = Column(String(200), nullable=False)

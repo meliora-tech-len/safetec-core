@@ -100,7 +100,7 @@ export default function TruckLoadsPage() {
             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         )}
-       
+
       </div>
 
       {/* List */}

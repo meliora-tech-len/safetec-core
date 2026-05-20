@@ -860,11 +860,14 @@ export default function TruckLoadProfilePage() {
       .catch(() => {})
   }, [truck])
 
-  // ── Default central driver to permanent driver once data loads ───────────────
+  // ── Default central driver to Driver 1 (slot 1) then Driver 2 (slot 2) ─────
   useEffect(() => {
     if (!truck || drivers.length === 0) return
-    const perm = drivers.find(d => d.truck_id === truck.id && d.driver_type === 'permanent')
-    if (perm) setSelectedDriverId(prev => prev || String(perm.id))
+    const assigned =
+      drivers.find(d => d.truck_id === truck.id && d.driver_slot === 1) ||
+      drivers.find(d => d.truck_id === truck.id && d.driver_slot === 2) ||
+      drivers.find(d => d.truck_id === truck.id)  // legacy: no slot set
+    if (assigned) setSelectedDriverId(prev => prev || String(assigned.id))
   }, [drivers, truck])
 
   // ── Load loads for current month ─────────────────────────────────────────────
@@ -988,7 +991,8 @@ export default function TruckLoadProfilePage() {
   // ── Derived ──────────────────────────────────────────────────────────────────
   const entityCode = truck ? (entities.find(e => e.id === truck.entity_id)?.code || '') : ''
   const isSafetec  = entityCode === 'SFT'
-  const permanentDriver = drivers.find(d => d.truck_id === truck?.id && d.driver_type === 'permanent')
+  const permanentDriver = drivers.find(d => d.truck_id === truck?.id && d.driver_slot === 1)
+    ?? drivers.find(d => d.truck_id === truck?.id)
   const selectedDriver  = drivers.find(d => String(d.id) === selectedDriverId)
   const driverTypeByName = drivers.reduce((acc, d) => {
     acc[`${d.first_name} ${d.last_name}`.trim()] = d.driver_type
@@ -1046,10 +1050,14 @@ export default function TruckLoadProfilePage() {
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
             Active Driver
             {permanentDriver && selectedDriverId === String(permanentDriver.id) && (
-              <span style={{ fontSize: 9, color: '#16a34a', background: 'rgba(22,163,74,0.1)', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>PERMANENT</span>
+              <span style={{ fontSize: 9, color: '#16a34a', background: 'rgba(22,163,74,0.1)', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>
+                {permanentDriver.driver_slot === 1 ? 'D1' : permanentDriver.driver_slot === 2 ? 'D2' : 'ASSIGNED'}
+              </span>
             )}
             {selectedDriver && permanentDriver && selectedDriverId !== String(permanentDriver.id) && (
-              <span style={{ fontSize: 9, color: '#d97706', background: 'rgba(217,119,6,0.1)', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>CASUAL</span>
+              <span style={{ fontSize: 9, color: '#d97706', background: 'rgba(217,119,6,0.1)', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}>
+                {selectedDriver.driver_slot === 2 ? 'D2' : 'OTHER'}
+              </span>
             )}
           </div>
           <SearchableSelect
@@ -1066,11 +1074,11 @@ export default function TruckLoadProfilePage() {
               onClick={() => setSelectedDriverId(String(permanentDriver.id))}
               style={{ fontSize: 11, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0', marginTop: 3, textDecoration: 'underline' }}
             >
-              Reset to {permanentDriver.first_name} {permanentDriver.last_name}
+              Reset to Driver 1: {permanentDriver.first_name} {permanentDriver.last_name}
             </button>
           )}
           {!permanentDriver && !selectedDriverId && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 2 }}>No permanent driver assigned</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 2 }}>No driver assigned</div>
           )}
         </div>
 

@@ -4,14 +4,16 @@ import {
   getSupplier, getEntities,
   getSupplierInvoices, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
-  verifySupplierInvoice, getCurrentDieselRate, getTruckLoads,
+  verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
 } from '../services/api'
+import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
 import DeleteModal from '../components/DeleteModal'
+import SearchableSelect from '../components/SearchableSelect'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -49,9 +51,11 @@ function PaymentTermBadge({ term }) {
 export default function SupplierProfilePage() {
   const { supplierId } = useParams()
   const navigate = useNavigate()
+  const { activeEntity } = useAuth()
 
   const [supplier, setSupplier] = useState(null)
   const [entities, setEntities] = useState([])
+  const [trucks, setTrucks] = useState([])
   const [groups, setGroups] = useState([])
   const [truckLoadGroups, setTruckLoadGroups] = useState([])
   const [loadsCollapsed, setLoadsCollapsed] = useState({})
@@ -86,6 +90,22 @@ export default function SupplierProfilePage() {
   }, [supplierId])
 
   useEffect(() => { if (!loading) loadInvoices() }, [loading, loadInvoices])
+
+  // Fetch trucks for vehicle reg dropdown — filtered by active entity (or supplier's entity as fallback)
+  useEffect(() => {
+    if (!supplier) return
+    const entityId = activeEntity?.id || supplier.entity_id
+    getFleetTrucks({ entity_id: entityId, limit: 500 })
+      .then(r => {
+        const sorted = (r.data || []).sort((a, b) => {
+          const fa = parseInt(a.fleet_number) || 9999
+          const fb = parseInt(b.fleet_number) || 9999
+          return fa - fb || a.registration.localeCompare(b.registration)
+        })
+        setTrucks(sorted)
+      })
+      .catch(() => {})
+  }, [supplier, activeEntity])
 
   useEffect(() => {
     getTruckLoads({ supplier_id: supplierId, limit: 500 })
@@ -436,6 +456,7 @@ export default function SupplierProfilePage() {
                     dieselRate={dieselRate}
                     amountAutoFilled={amountAutoFilled}
                     onAmountEdit={() => setAmountAutoFilled(false)}
+                    trucks={trucks}
                   />
                 : <tr>
                     <td
@@ -541,6 +562,7 @@ export default function SupplierProfilePage() {
                         dieselRate={dieselRate}
                         amountAutoFilled={amountAutoFilled}
                         onAmountEdit={() => setAmountAutoFilled(false)}
+                        trucks={trucks}
                       />
                     )}
                     {group.invoices.map(inv => {
@@ -599,14 +621,17 @@ export default function SupplierProfilePage() {
                           {showVehicleReg && (
                             <td style={styles.td}>
                               {isEditing ? (
-                                <input
-                                  value={f.vehicle_reg}
-                                  onChange={e => setEditForm(p => ({ ...p, vehicle_reg: e.target.value }))}
-                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
-                                  onClick={e => e.stopPropagation()}
-                                  style={{ ...styles.cellInput, width: 90 }}
-                                  placeholder="KDJ034EC"
-                                />
+                                <div onClick={e => e.stopPropagation()}>
+                                  <SearchableSelect
+                                    value={f.vehicle_reg}
+                                    onChange={v => setEditForm(p => ({ ...p, vehicle_reg: v }))}
+                                    options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
+                                    getValue={t => t.registration}
+                                    getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
+                                    placeholder="Vehicle reg…"
+                                    style={{ width: 150 }}
+                                  />
+                                </div>
                               ) : (
                                 <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
                                   {inv.vehicle_reg || '—'}
@@ -759,7 +784,7 @@ export default function SupplierProfilePage() {
 }
 
 
-function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit }) {
+function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit, trucks = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
   return (
@@ -782,10 +807,15 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
       </td>
       {showVehicleReg && (
         <td style={styles.td}>
-          <input value={form.vehicle_reg} placeholder="KDJ034EC"
-            onChange={e => set('vehicle_reg', e.target.value)}
-            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-            style={{ ...styles.cellInput, width: 90 }} />
+          <SearchableSelect
+            value={form.vehicle_reg}
+            onChange={v => set('vehicle_reg', v)}
+            options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
+            getValue={t => t.registration}
+            getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
+            placeholder="Vehicle reg…"
+            style={{ width: 150 }}
+          />
         </td>
       )}
       <td style={styles.td}>
