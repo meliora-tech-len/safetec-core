@@ -359,7 +359,10 @@ function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
     try {
       const payload = {
         ...form,
-        trailers: form.trailers.filter(t => t.registration.trim()),
+        licence_expiry: form.licence_expiry || null,
+        trailers: form.trailers
+          .filter(t => t.registration.trim())
+          .map(t => ({ ...t, licence_expiry: t.licence_expiry || null })),
       }
       let savedTruck
       if (isEdit) {
@@ -552,7 +555,11 @@ function PersonalVehicleModal({ pv, entities, onSave, onClose }) {
     if (!form.vehicle_type.trim()) { toast.error('Vehicle type is required'); return }
     setSaving(true)
     try {
-      const payload = { ...form, year: form.year ? Number(form.year) : null }
+      const payload = {
+        ...form,
+        year: form.year ? Number(form.year) : null,
+        licence_expiry: form.licence_expiry || null,
+      }
       if (isEdit) {
         await api.put(`/api/fleet/personal-vehicles/${pv.id}`, payload)
         toast.success('Vehicle updated')
