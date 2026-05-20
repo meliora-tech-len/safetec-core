@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  ArrowLeft, Plus, Save, X, Trash2, CheckCircle,
+  ArrowLeft, Plus, Save, X, Trash2,
   ChevronLeft, ChevronRight, Loader, Fuel, UtensilsCrossed, BarChart3,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
@@ -79,11 +79,11 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
           options={mines.filter(m => m.is_active)} getValue={m => String(m.id)}
           getLabel={m => m.name} placeholder="Mine…" style={{ minWidth: 100 }} />
       </td>
-      <td style={S.td}>
+      {/* <td style={S.td}>
         <SearchableSelect value={String(form.supplier_id)} onChange={v => set('supplier_id', v)}
           options={haulageSuppliers} getValue={s => String(s.id)}
-          getLabel={s => s.name} placeholder="Supplier (optional)…" style={{ minWidth: 130 }} />
-      </td>
+          getLabel={s => s.name} placeholder="Supplier…" style={{ minWidth: 120 }} />
+      </td> */}
       <td style={S.td}>
         <input type="number" step="0.001" min="0" placeholder="0.000" value={form.tonnes}
           onChange={e => set('tonnes', e.target.value)} onKeyDown={handleKey}
@@ -104,9 +104,6 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
       </td>
       <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, fontSize: 12 }}>
         {inclVat ? `R ${parseFloat(inclVat).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}
-      </td>
-      <td style={{ ...S.td, textAlign: 'center' }}>
-        <input type="checkbox" checked={form.is_paid} onChange={e => set('is_paid', e.target.checked)} style={{ cursor: 'pointer' }} />
       </td>
       <td style={S.td}>
         <input value={form.notes} placeholder="Notes"
@@ -999,7 +996,7 @@ export default function TruckLoadProfilePage() {
     return acc
   }, {})
   const showPo = truck?.notes?.toLowerCase() === 'intsimbi'
-  const COLS   = showPo ? 13 : 12
+  const COLS   = showPo ? 11 : 10
 
   const TABS = [
     { key: 'loads',  label: 'Loads'         },
@@ -1185,12 +1182,11 @@ export default function TruckLoadProfilePage() {
                 {showPo && <th>PO #</th>}
                 <th>Driver</th>
                 <th>Mine</th>
-                <th>Supplier</th>
-                <th style={{ textAlign: 'right' }}>Tonnes</th>
-                <th style={{ textAlign: 'right' }}>Rate/t</th>
+                {/* <th>Supplier</th> */}
+                <th>Tonnes</th>
+                <th>Rate/t</th>
                 <th style={{ textAlign: 'right' }}>Excl VAT</th>
                 <th style={{ textAlign: 'right' }}>Incl VAT</th>
-                <th style={{ textAlign: 'center' }}>Paid</th>
                 <th>Notes</th>
                 <th></th>
               </tr>
@@ -1232,14 +1228,11 @@ export default function TruckLoadProfilePage() {
                       ) : '—'}
                     </td>
                     <td style={{ fontSize: 13 }}>{l.mine_name || '—'}</td>
-                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.supplier_name || '—'}</td>
+                    {/* <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.supplier_name || '—'}</td> */}
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(l.tonnes)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(l.rate_per_ton)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(l.amount_excl_vat)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmt(l.amount_incl_vat)}</td>
-                    <td style={{ textAlign: 'center' }} onClick={e => handleTogglePaid(l, e)}>
-                      <CheckCircle size={16} style={{ color: l.is_paid ? '#16a34a' : 'var(--border)', cursor: 'pointer' }} />
-                    </td>
                     <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {l.notes || '—'}
                     </td>
@@ -1256,14 +1249,14 @@ export default function TruckLoadProfilePage() {
             {!loading && loads.length > 0 && summary && (
               <tfoot>
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                  <td colSpan={showPo ? 6 : 5} style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>
+                  <td colSpan={showPo ? 5 : 4} style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>
                     {summary.total_loads} loads
                   </td>
                   <td style={{ textAlign: 'right', padding: '10px 12px' }}>{fmtNum(summary.total_tonnes)}</td>
                   <td />
                   <td style={{ textAlign: 'right', padding: '10px 12px' }}>{fmt(summary.total_excl_vat)}</td>
                   <td style={{ textAlign: 'right', padding: '10px 12px', color: 'var(--accent)' }}>{fmt(summary.total_incl_vat)}</td>
-                  <td colSpan={3} />
+                  <td colSpan={2} />
                 </tr>
               </tfoot>
             )}

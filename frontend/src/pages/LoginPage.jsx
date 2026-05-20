@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
-import { Lock, Mail, Loader } from 'lucide-react'
+import { Lock, Mail, Loader, Eye, EyeOff } from 'lucide-react'
 
 export default function LoginPage() {
   const { login } = useAuth()
@@ -10,6 +10,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showPw, setShowPw] = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -53,12 +54,20 @@ export default function LoginPage() {
             <div style={styles.inputWrap}>
               <Lock size={15} style={styles.inputIcon} />
               <input
-                type="password" value={password}
+                type={showPw ? 'text' : 'password'} value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
-                style={{ paddingLeft: 36 }}
+                style={{ paddingLeft: 36, paddingRight: 36 }}
               />
+              <button
+                type="button"
+                onClick={() => setShowPw(p => !p)}
+                style={styles.eyeBtn}
+                tabIndex={-1}
+              >
+                {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
             </div>
           </div>
 
@@ -109,5 +118,10 @@ const styles = {
     position: 'absolute', left: 10, top: '50%',
     transform: 'translateY(-50%)', color: 'var(--text-muted)',
     pointerEvents: 'none',
+  },
+  eyeBtn: {
+    position: 'absolute', right: 10, top: '50%',
+    transform: 'translateY(-50%)', background: 'none', border: 'none',
+    cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex',
   },
 }

@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
@@ -12,6 +13,15 @@ from app.schemas.schemas import (
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+
+def _check_password_strength(password: str):
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not re.search(r'[A-Z]', password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter")
+    if not re.search(r'[^A-Za-z0-9]', password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one special character")
 
 
 # ── List ──────────────────────────────────────────────────────────────────────
@@ -148,10 +158,34 @@ def update_user(
         raise HTTPException(status_code=500, detail="Failed to update user")
 
 
-# ── Password Reset (admin sets new password) ───────────────────────────────────
+# ── Password update — self-service or admin ───────────────────────────────────
+
+@router.put("/{user_id}/password")
+def update_password(
+    user_id: int,
+    payload: PasswordReset,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "admin" and current_user.id != user_id:
+        raise HTTPException(status_code=403, detail="You can only update your own password")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    _check_password_strength(payload.new_password)
+    user.hashed_password = get_password_hash(payload.new_password)
+    log_action(db, "user.password_changed", user_id=current_user.id, resource_type="user",
+               resource_id=user_id, description=f"Password changed for {user.full_name} ({user.email})")
+    db.commit()
+    return {"detail": "Password updated successfully"}
+
+
+# ── Password Reset (admin sets new password for any user) ────────────────────
 
 @router.post("/{user_id}/reset-password")
-def reset_password(
+def reset_password_admin(
     user_id: int,
     payload: PasswordReset,
     db: Session = Depends(get_db),
@@ -161,12 +195,10 @@ def reset_password(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if len(payload.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-
+    _check_password_strength(payload.new_password)
     user.hashed_password = get_password_hash(payload.new_password)
     log_action(db, "user.password_reset", user_id=current_user.id, resource_type="user",
-               resource_id=user_id, description=f"Password reset for {user.full_name} ({user.email})")
+               resource_id=user_id, description=f"Password reset by admin for {user.full_name} ({user.email})")
     db.commit()
     return {"detail": "Password updated successfully"}
 

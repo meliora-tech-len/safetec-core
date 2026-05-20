@@ -96,7 +96,7 @@ export const getNextInvoiceNumber = (entityId, docType = 'invoice') =>
 
 // ── Users (additions) ─────────────────────────────────────────────────────────
 export const updateUserPermissions = (id, data) => api.put(`/users/${id}/permissions`, data)
-export const resetUserPassword = (id, data) => api.post(`/users/${id}/reset-password`, data)
+export const resetUserPassword = (id, data) => api.put(`/users/${id}/password`, data)
 export const reactivateUser = (id) => api.post(`/users/${id}/reactivate`)
 
 // ── Roles ─────────────────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import re
 import secrets
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -94,8 +95,10 @@ def forgot_password(request: Request, body: ForgotPasswordRequest, db: Session =
 @router.post("/reset-password", status_code=204)
 def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
     """Validate reset token and set a new password."""
-    if not body.token or len(body.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not body.token:
+        raise HTTPException(status_code=400, detail="Invalid reset link")
+    if len(body.new_password) < 8 or not re.search(r'[A-Z]', body.new_password) or not re.search(r'[^A-Za-z0-9]', body.new_password):
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters with an uppercase letter and a special character")
 
     user = db.query(User).filter(User.password_reset_token == body.token).first()
     if not user:

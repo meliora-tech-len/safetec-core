@@ -1,11 +1,15 @@
 import { useEffect, useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { useTheme } from '../../hooks/useTheme'
+import { resetUserPassword } from '../../services/api'
+import toast from 'react-hot-toast'
 import {
   LayoutDashboard, Users, Building2, FileText,
   LogOut, Shield, Sun, Moon, Settings, ChevronDown, Truck,
-  FileCheck, FilePlus, ShoppingCart, Package, MapPin, Fuel, BarChart2, Link2
+  FileCheck, FilePlus, ShoppingCart, Package, MapPin, Fuel, BarChart2, Link2,
+  Key, Eye, EyeOff, X,
 } from 'lucide-react'
 
 function hexToRgb(hex) {
@@ -59,8 +63,32 @@ export default function Sidebar() {
   const navigate = useNavigate()
   const [entityMenuOpen, setEntityMenuOpen] = useState(false)
   const entityMenuRef = useRef(null)
+  const [pwOpen, setPwOpen]       = useState(false)
+  const [newPw, setNewPw]         = useState('')
+  const [showNewPw, setShowNewPw] = useState(false)
+  const [pwSaving, setPwSaving]   = useState(false)
+
+  const pwChecks = {
+    length:  newPw.length >= 8,
+    upper:   /[A-Z]/.test(newPw),
+    special: /[^A-Za-z0-9]/.test(newPw),
+  }
+  const pwAllMet = pwChecks.length && pwChecks.upper && pwChecks.special
 
   const handleLogout = () => { logout(); navigate('/login') }
+
+  const handleSelfPasswordChange = async () => {
+    if (!pwAllMet) return
+    setPwSaving(true)
+    try {
+      await resetUserPassword(user.id, { new_password: newPw })
+      toast.success('Password updated')
+      setNewPw('')
+      setPwOpen(false)
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Failed to update password')
+    } finally { setPwSaving(false) }
+  }
 
   // Close entity dropdown when clicking outside
   useEffect(() => {
@@ -255,10 +283,73 @@ export default function Sidebar() {
             <div style={styles.userRole}>{user?.role}</div>
           </div>
         </div>
-        <button onClick={handleLogout} style={styles.logoutBtn} title="Logout">
-          <LogOut size={14} />
-        </button>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => { setNewPw(''); setShowNewPw(false); setPwOpen(true) }} style={styles.logoutBtn} title="Change password">
+            <Key size={14} />
+          </button>
+          <button onClick={handleLogout} style={styles.logoutBtn} title="Logout">
+            <LogOut size={14} />
+          </button>
+        </div>
       </div>
+
+      {/* Change Password modal — portalled to body so it sits above all page stacking contexts */}
+      {pwOpen && createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: '24px 28px', width: '100%', maxWidth: 360, boxShadow: '0 20px 60px rgba(0,0,0,0.4)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+              <span style={{ fontWeight: 700, fontSize: 16 }}>Change Password</span>
+              <button onClick={() => setPwOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                <X size={17} />
+              </button>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
+              Updating password for <strong>{user?.full_name}</strong>
+            </div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>New Password</label>
+            <div style={{ position: 'relative', marginTop: 6, marginBottom: 6 }}>
+              <input
+                className="form-input"
+                type={showNewPw ? 'text' : 'password'}
+                value={newPw}
+                onChange={e => setNewPw(e.target.value)}
+                placeholder="Minimum 8 characters"
+                style={{ paddingRight: 38 }}
+                autoFocus
+              />
+              <button type="button" onClick={() => setShowNewPw(p => !p)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, display: 'flex' }}>
+                {showNewPw ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '10px 0 4px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {[
+                { met: pwChecks.length,  label: 'At least 8 characters' },
+                { met: pwChecks.upper,   label: 'At least 1 uppercase letter' },
+                { met: pwChecks.special, label: 'At least 1 special character (e.g. !@#$)' },
+              ].map(({ met, label }) => (
+                <li key={label} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: met ? '#16a34a' : 'var(--text-muted)', transition: 'color 0.2s' }}>
+                  <span style={{
+                    width: 14, height: 14, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: met ? '#16a34a' : 'transparent',
+                    border: met ? 'none' : '1.5px solid var(--border)',
+                    transition: 'all 0.2s',
+                  }}>
+                    {met && <svg width="8" height="8" viewBox="0 0 8 8"><polyline points="1,4 3,6 7,2" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                  </span>
+                  {label}
+                </li>
+              ))}
+            </ul>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn-ghost btn-sm" onClick={() => setPwOpen(false)} disabled={pwSaving}>Cancel</button>
+              <button className="btn-primary btn-sm" onClick={handleSelfPasswordChange} disabled={pwSaving || !pwAllMet}>
+                {pwSaving ? 'Saving…' : 'Update Password'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </aside>
   )
 }

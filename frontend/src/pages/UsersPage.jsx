@@ -31,6 +31,13 @@ export default function UsersPage() {
   const [form, setForm] = useState(DEFAULT_FORM)
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
+
+  const pwChecks = {
+    length:  password.length >= 8,
+    upper:   /[A-Z]/.test(password),
+    special: /[^A-Za-z0-9]/.test(password),
+  }
+  const pwAllMet = pwChecks.length && pwChecks.upper && pwChecks.special
   const [permissions, setPermissions] = useState([]) // [{ entity_id, enabled, modules[], can_create, can_edit, can_delete }]
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -84,6 +91,7 @@ export default function UsersPage() {
   }
 
   const openPermissions = (user) => {
+    setForm({ full_name: user.full_name, email: user.email, role: user.role, is_active: user.is_active })
     setPermissions(buildDefaultPermissions(user))
     setTab('Permissions')
     setError('')
@@ -117,8 +125,8 @@ export default function UsersPage() {
       setTab('Password')
       return
     }
-    if (password && password.length < 8) {
-      setError('Password must be at least 8 characters')
+    if (password && !pwAllMet) {
+      setError('Password must meet all requirements')
       setTab('Password')
       return
     }
@@ -170,8 +178,8 @@ export default function UsersPage() {
   }
 
   const handlePasswordReset = async () => {
-    if (!password || password.length < 8) {
-      setError('Password must be at least 8 characters')
+    if (!pwAllMet) {
+      setError('Password must meet all requirements')
       return
     }
     setSaving(true)
@@ -373,15 +381,28 @@ export default function UsersPage() {
                       {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                   </div>
-                  {password && password.length < 8 && (
-                    <div style={{ fontSize: 12, color: '#dc2626', marginTop: 4 }}>Must be at least 8 characters</div>
-                  )}
-                  {password && password.length >= 8 && (
-                    <div style={{ fontSize: 12, color: '#16a34a', marginTop: 4 }}>✓ Password length OK</div>
-                  )}
+                  <ul style={{ listStyle: 'none', padding: 0, margin: '10px 0 0', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {[
+                      { met: pwChecks.length,  label: 'At least 8 characters' },
+                      { met: pwChecks.upper,   label: 'At least 1 uppercase letter' },
+                      { met: pwChecks.special, label: 'At least 1 special character (e.g. !@#$)' },
+                    ].map(({ met, label }) => (
+                      <li key={label} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: met ? '#16a34a' : 'var(--text-muted)', transition: 'color 0.2s' }}>
+                        <span style={{
+                          width: 14, height: 14, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: met ? '#16a34a' : 'transparent',
+                          border: met ? 'none' : '1.5px solid var(--border)',
+                          transition: 'all 0.2s',
+                        }}>
+                          {met && <svg width="8" height="8" viewBox="0 0 8 8"><polyline points="1,4 3,6 7,2" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </span>
+                        {label}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
                 {modal.mode === 'edit' && password && (
-                  <button className="btn-primary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={handlePasswordReset} disabled={saving}>
+                  <button className="btn-primary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={handlePasswordReset} disabled={saving || !pwAllMet}>
                     <Key size={13} /> {saving ? 'Updating...' : 'Update Password Now'}
                   </button>
                 )}
