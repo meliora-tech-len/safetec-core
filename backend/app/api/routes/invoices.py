@@ -206,12 +206,12 @@ def create_invoice(
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
 
-    invoice_number = generate_invoice_number(db, payload.entity_id, payload.document_type)
-
-    vat_rate = payload.vat_rate if payload.vat_rate is not None else entity.vat_rate
-    subtotal, vat_amount, total = _calculate_totals(payload.line_items, vat_rate, payload.is_vat_exempt)
+    vat_rate = payload.vat_rate if payload.vat_rate is not None else (entity.vat_rate or Decimal("0.15"))
 
     try:
+        invoice_number = generate_invoice_number(db, payload.entity_id, payload.document_type)
+        subtotal, vat_amount, total = _calculate_totals(payload.line_items, vat_rate, payload.is_vat_exempt)
+
         invoice = Invoice(
             entity_id=payload.entity_id,
             supplier_id=payload.supplier_id,
@@ -256,9 +256,10 @@ def create_invoice(
         return db.query(Invoice).options(
             joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
         ).filter(Invoice.id == invoice.id).first()
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to create invoice")
+        detail = str(e.orig) if hasattr(e, 'orig') and e.orig else "Failed to create invoice"
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @router.put("/{invoice_id}", response_model=InvoiceOut)
