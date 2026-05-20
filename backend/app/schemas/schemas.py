@@ -980,6 +980,7 @@ class TruckLoadBase(BaseModel):
     entity_id: int
     truck_id: int
     mine_id: int
+    supplier_id: Optional[int] = None
     load_date: datetime
     slip_number: Optional[str] = None
     po_number: Optional[str] = None
@@ -1002,6 +1003,7 @@ class TruckLoadCreate(TruckLoadBase):
 class TruckLoadUpdate(BaseModel):
     truck_id: Optional[int] = None
     mine_id: Optional[int] = None
+    supplier_id: Optional[int] = None
     load_date: Optional[datetime] = None
     slip_number: Optional[str] = None
     po_number: Optional[str] = None
@@ -1026,6 +1028,7 @@ class TruckLoadOut(TruckLoadBase):
     updated_at: Optional[datetime] = None
     truck_registration: Optional[str] = None
     mine_name: Optional[str] = None
+    supplier_name: Optional[str] = None
 
     class Config:
         from_attributes = True

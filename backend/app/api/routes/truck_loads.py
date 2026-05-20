@@ -8,7 +8,7 @@ from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
-    User, TruckLoad, Mine, MineRate, Truck,
+    User, TruckLoad, Mine, MineRate, Truck, Supplier,
     Driver, DriverType, DriverPayCycle, DriverTripLog, PayrollSettings,
 )
 from app.schemas.schemas import (
@@ -61,7 +61,8 @@ def _enrich(load: TruckLoad) -> dict:
     """Return a dict with computed/joined fields for the response."""
     d = {c.name: getattr(load, c.name) for c in load.__table__.columns}
     d["truck_registration"] = load.truck.registration if load.truck else None
-    d["mine_name"] = load.mine.name if load.mine else None
+    d["mine_name"]           = load.mine.name if load.mine else None
+    d["supplier_name"]       = load.supplier.name if load.supplier else None
     return d
 
 
@@ -173,6 +174,7 @@ def list_truck_loads(
     entity_id: Optional[int] = Query(None),
     truck_id: Optional[int] = Query(None),
     mine_id: Optional[int] = Query(None),
+    supplier_id: Optional[int] = Query(None),
     is_paid: Optional[bool] = Query(None),
     date_from: Optional[datetime] = Query(None),
     date_to: Optional[datetime] = Query(None),
@@ -193,6 +195,8 @@ def list_truck_loads(
         q = q.filter(TruckLoad.truck_id == truck_id)
     if mine_id:
         q = q.filter(TruckLoad.mine_id == mine_id)
+    if supplier_id:
+        q = q.filter(TruckLoad.supplier_id == supplier_id)
     if is_paid is not None:
         q = q.filter(TruckLoad.is_paid.is_(is_paid))
     if date_from:

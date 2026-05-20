@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getInvoices, getEntities, downloadInvoicePdf, updateInvoice } from '../services/api'
+import { getInvoices, getEntities, downloadInvoicePdf, updateInvoice, deleteInvoice } from '../services/api'
 import { formatCurrency, formatDate, statusBadgeClass, statusLabel } from '../utils/helpers'
-import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle } from 'lucide-react'
+import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2 } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
+import DeleteModal from '../components/DeleteModal'
 import { useTheme } from '../hooks/useTheme'
 import toast from 'react-hot-toast'
 import { useAuth } from '../hooks/useAuth'
@@ -19,6 +20,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [filterStatus, setFilterStatus] = useState('')
   const [showCancelled, setShowCancelled] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const navigate = useNavigate()
   const { theme } = useTheme()
 
@@ -235,6 +237,16 @@ export default function InvoicesPage({ docType = 'invoice' }) {
                         <CheckCircle size={13} />
                       </button>
                     )}
+                    {inv.status !== 'cancelled' && inv.status !== 'paid' && (
+                      <button
+                        className="btn-icon btn-ghost"
+                        title={`Cancel ${title.slice(0, -1)}`}
+                        onClick={e => { e.stopPropagation(); setDeleteTarget(inv) }}
+                        style={{ color: 'var(--danger)' }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -242,6 +254,25 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           </tbody>
         </table>
       </div>
+
+      <DeleteModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title={`Cancel ${title.slice(0, -1)}`}
+        description={deleteTarget
+          ? `${deleteTarget.invoice_number} — ${formatCurrency(deleteTarget.total)} will be set to Cancelled status.`
+          : ''}
+        onDelete={async () => {
+          try {
+            await deleteInvoice(deleteTarget.id)
+            toast.success(`${title.slice(0, -1)} cancelled`)
+            setDeleteTarget(null)
+            load()
+          } catch (err) {
+            toast.error(err?.response?.data?.detail || 'Failed to cancel')
+          }
+        }}
+      />
     </div>
   )
 }

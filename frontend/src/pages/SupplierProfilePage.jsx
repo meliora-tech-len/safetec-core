@@ -4,7 +4,7 @@ import {
   getSupplier, getEntities,
   getSupplierInvoices, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
-  verifySupplierInvoice, getCurrentDieselRate,
+  verifySupplierInvoice, getCurrentDieselRate, getTruckLoads,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
@@ -53,6 +53,8 @@ export default function SupplierProfilePage() {
   const [supplier, setSupplier] = useState(null)
   const [entities, setEntities] = useState([])
   const [groups, setGroups] = useState([])
+  const [truckLoadGroups, setTruckLoadGroups] = useState([])
+  const [loadsCollapsed, setLoadsCollapsed] = useState({})
   const [loading, setLoading] = useState(true)
   const [collapsed, setCollapsed] = useState({})
 
@@ -85,6 +87,24 @@ export default function SupplierProfilePage() {
 
   useEffect(() => { if (!loading) loadInvoices() }, [loading, loadInvoices])
 
+  useEffect(() => {
+    getTruckLoads({ supplier_id: supplierId, limit: 500 })
+      .then(r => {
+        const loads = r.data || []
+        const byKey = {}
+        loads.forEach(l => {
+          const d = new Date(l.load_date)
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+          if (!byKey[key]) byKey[key] = { year: d.getFullYear(), month: d.getMonth() + 1, loads: [] }
+          byKey[key].loads.push(l)
+        })
+        setTruckLoadGroups(
+          Object.values(byKey).sort((a, b) => b.year - a.year || b.month - a.month)
+        )
+      })
+      .catch(() => {})
+  }, [supplierId])
+
   // Focus first input whenever new row appears or edit row opens
   useEffect(() => {
     if ((showNew || editingId) && firstInputRef.current)
@@ -114,7 +134,8 @@ export default function SupplierProfilePage() {
     setAmountAutoFilled(true)
   }, [newForm.litres, dieselRate])
 
-  const toggleCollapse = (key) => setCollapsed(s => ({ ...s, [key]: !s[key] }))
+  const toggleCollapse      = (key) => setCollapsed(s => ({ ...s, [key]: !s[key] }))
+  const toggleLoadsCollapse = (key) => setLoadsCollapsed(s => ({ ...s, [key]: !s[key] }))
 
   const startEdit = (inv) => {
     if (editingId !== null) return   // intentional exit required (Esc or X) before switching rows
@@ -303,7 +324,84 @@ export default function SupplierProfilePage() {
         {supplier.email && <span><strong>Email:</strong> {supplier.email}</span>}
         {supplier.phone && <span><strong>Phone:</strong> {supplier.phone}</span>}
         {supplier.vat_number && <span><strong>VAT No:</strong> {supplier.vat_number}</span>}
+        {supplier.registration_number && <span><strong>Reg:</strong> {supplier.registration_number}</span>}
       </div>
+
+      {/* Truck loads section — shows loads where this supplier was selected */}
+      {truckLoadGroups.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 8 }}>
+            Truck Loads
+          </div>
+          {truckLoadGroups.map(group => {
+            const key     = `loads-${group.year}-${group.month}`
+            const isOpen  = !loadsCollapsed[key]
+            const totalTonnes = group.loads.reduce((s, l) => s + parseFloat(l.tonnes || 0), 0)
+            const totalAmt    = group.loads.reduce((s, l) => s + parseFloat(l.amount_excl_vat || 0), 0)
+            return (
+              <div key={key} style={{ ...styles.group, marginBottom: 10 }}>
+                <div style={styles.groupHeader} onClick={() => toggleLoadsCollapse(key)}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>{MONTH_NAMES[group.month]} {group.year}</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                      {group.loads.length} load{group.loads.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{totalTonnes.toFixed(3)} t</span>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>{formatCurrency(totalAmt)}</span>
+                  </div>
+                </div>
+                {isOpen && (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: 'var(--bg-surface)' }}>
+                          <th style={styles.th}>Date</th>
+                          <th style={styles.th}>Slip #</th>
+                          <th style={styles.th}>Truck Reg</th>
+                          <th style={styles.th}>Driver</th>
+                          <th style={styles.th}>Mine</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Tonnes</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Excl VAT</th>
+                          <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.loads.map(load => (
+                          <tr key={load.id} style={{ borderBottom: '1px solid var(--border)', opacity: load.is_paid ? 0.65 : 1 }}>
+                            <td style={styles.td}>{formatDate(load.load_date)}</td>
+                            <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 11 }}>{load.slip_number || '—'}</td>
+                            <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 11, fontWeight: 600 }}>{load.truck_registration || '—'}</td>
+                            <td style={styles.td}>{load.driver_name || '—'}</td>
+                            <td style={styles.td}>{load.mine_name || '—'}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', fontFamily: 'monospace' }}>{parseFloat(load.tonnes).toFixed(3)}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600 }}>{formatCurrency(load.amount_excl_vat)}</td>
+                            <td style={{ ...styles.td, textAlign: 'center' }}>
+                              {load.is_paid
+                                ? <span style={{ color: '#16a34a', fontSize: 13 }}>✓</span>
+                                : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
+                          <td colSpan={5} style={{ ...styles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
+                          <td style={{ ...styles.td, fontWeight: 700, textAlign: 'right', fontFamily: 'monospace' }}>{totalTonnes.toFixed(3)} t</td>
+                          <td style={{ ...styles.td, fontWeight: 700, textAlign: 'right' }}>{formatCurrency(totalAmt)}</td>
+                          <td style={styles.td} />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* ── Shared table columns helper ── */}
       {/* ── Statement groups (always rendered, new row injected at top of first group) ── */}

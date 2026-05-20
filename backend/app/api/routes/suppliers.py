@@ -26,6 +26,7 @@ def list_suppliers(
     search: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
     is_diesel_supplier: Optional[bool] = Query(None),
+    truck_registration: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, le=500),
     db: Session = Depends(get_db),
@@ -58,6 +59,9 @@ def list_suppliers(
                 Supplier.email.ilike(search_term),
             )
         )
+
+    if truck_registration:
+        query = query.filter(Supplier.registration_number.ilike(truck_registration))
 
     return query.order_by(Supplier.name).offset(skip).limit(limit).all()
 

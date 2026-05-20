@@ -272,8 +272,6 @@ def update_driver(
     return out
 
 
-# ── Soft delete ───────────────────────────────────────────────────────────────
-
 @router.delete("/{driver_id}")
 def delete_driver(
     driver_id: int,
@@ -285,13 +283,13 @@ def delete_driver(
     driver = db.query(Driver).filter(Driver.id == driver_id).first()
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
-    driver.is_active = False
-    log_action(db, "driver.deactivated", user_id=current_user.id,
+    log_action(db, "driver.deleted", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="driver",
                resource_id=driver_id,
-               description=f"Deactivated driver {driver.first_name} {driver.last_name}")
+               description=f"Deleted driver {driver.first_name} {driver.last_name}")
+    db.delete(driver)
     db.commit()
-    return {"detail": "Driver deactivated"}
+    return {"detail": "Driver deleted"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

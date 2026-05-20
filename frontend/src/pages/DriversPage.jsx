@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, Plus, Search, X } from 'lucide-react'
+import { Users, Plus, Search, X, Trash2 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
+import DeleteModal from '../components/DeleteModal'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -12,7 +13,8 @@ function useApi() {
   const get  = (p)    => fetch(`${API}${p}`, { headers: h() }).then(r => r.ok ? r.json() : Promise.reject(r))
   const post = (p, b) => fetch(`${API}${p}`, { method: 'POST', headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
   const put  = (p, b) => fetch(`${API}${p}`, { method: 'PUT',  headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-  return { get, post, put }
+  const del  = (p)    => fetch(`${API}${p}`, { method: 'DELETE', headers: h() }).then(r => { if (!r.ok) return r.json().then(e => Promise.reject(e)) })
+  return { get, post, put, del }
 }
 
 const TYPE_BADGE = {
@@ -202,6 +204,7 @@ export default function DriversPage() {
   const [filterType, setFilterType]     = useState('permanent')
   const [showInactive, setShowInactive] = useState(false)
   const [modal, setModal]       = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const loadSeqRef = useRef(0)
 
   // Sync with sidebar entity switcher
@@ -374,9 +377,21 @@ export default function DriversPage() {
                     </span>
                   </td>
                   <td onClick={e => e.stopPropagation()}>
-                    <button className="btn-icon btn-ghost btn-sm" onClick={() => setModal({ mode: 'edit', driver: d })}>
-                      Edit
-                    </button>
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <button className="btn-icon btn-ghost btn-sm" onClick={() => setModal({ mode: 'edit', driver: d })}>
+                        Edit
+                      </button>
+                      {isAdmin && (
+                        <button
+                          className="btn-icon btn-ghost btn-sm"
+                          onClick={() => setDeleteTarget(d)}
+                          title="Delete driver"
+                          style={{ color: 'var(--danger)' }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -393,6 +408,25 @@ export default function DriversPage() {
           onClose={() => setModal(null)}
         />
       )}
+
+      <DeleteModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Driver"
+        description={deleteTarget
+          ? `${deleteTarget.first_name} ${deleteTarget.last_name} and all their payroll history, pay cycles, and load records will be permanently removed from the database.`
+          : ''}
+        onDelete={async () => {
+          try {
+            await api.del(`/api/drivers/${deleteTarget.id}`)
+            toast.success(`${deleteTarget.first_name} ${deleteTarget.last_name} deleted`)
+            setDeleteTarget(null)
+            load()
+          } catch (err) {
+            toast.error(err?.detail || 'Failed to delete driver')
+          }
+        }}
+      />
     </div>
   )
 }

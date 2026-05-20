@@ -329,15 +329,15 @@ def delete_invoice(
     _check_entity_access(invoice.entity_id, current_user)
     if invoice.status == "paid":
         raise HTTPException(status_code=400, detail="Cannot delete a paid invoice")
-    invoice.status = "cancelled"
-    cancelled_supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
-    cancelled_supplier_name = cancelled_supplier.name if cancelled_supplier else "Unknown"
-    log_action(db, "invoice.cancelled", user_id=current_user.id,
+    del_supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
+    del_supplier_name = del_supplier.name if del_supplier else "Unknown"
+    log_action(db, "invoice.deleted", user_id=current_user.id,
                entity_id=invoice.entity_id, resource_type="invoice",
                resource_id=invoice_id,
-               description=f"Cancelled {invoice.invoice_number} for {cancelled_supplier_name}")
+               description=f"Deleted {invoice.invoice_number} for {del_supplier_name}")
+    db.delete(invoice)
     db.commit()
-    return {"detail": "Invoice cancelled"}
+    return {"detail": "Invoice deleted"}
 
 
 @router.get("/{invoice_id}/pdf")

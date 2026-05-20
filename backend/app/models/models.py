@@ -714,9 +714,10 @@ class TruckLoad(Base):
     __tablename__ = "truck_loads"
 
     id = Column(Integer, primary_key=True)
-    entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
-    truck_id = Column(Integer, ForeignKey("trucks.id", ondelete="RESTRICT"), nullable=False)
-    mine_id = Column(Integer, ForeignKey("mines.id", ondelete="RESTRICT"), nullable=False)
+    entity_id   = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
+    truck_id    = Column(Integer, ForeignKey("trucks.id", ondelete="RESTRICT"), nullable=False)
+    mine_id     = Column(Integer, ForeignKey("mines.id", ondelete="RESTRICT"), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
 
     load_date = Column(DateTime(timezone=True), nullable=False)
     slip_number = Column(String(50))
@@ -740,9 +741,10 @@ class TruckLoad(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    entity = relationship("BusinessEntity", back_populates="truck_loads")
-    truck = relationship("Truck", back_populates="truck_loads")
-    mine = relationship("Mine", back_populates="truck_loads")
+    entity   = relationship("BusinessEntity", back_populates="truck_loads")
+    truck    = relationship("Truck", back_populates="truck_loads")
+    mine     = relationship("Mine", back_populates="truck_loads")
+    supplier = relationship("Supplier", foreign_keys=[supplier_id])
 
 
 # ── Driver Salary Config ───────────────────────────────────────────────────────

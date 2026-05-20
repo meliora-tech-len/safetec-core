@@ -27,7 +27,7 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 
 const EMPTY_LOAD = {
   load_date: today, slip_number: '', po_number: '', driver_name: '',
-  mine_id: '', tonnes: '', rate_per_ton: '', is_paid: false, notes: '', checked_by: '',
+  mine_id: '', supplier_id: '', tonnes: '', rate_per_ton: '', is_paid: false, notes: '', checked_by: '',
 }
 const EMPTY_DIESEL = {
   fillup_date: today, supplier_id: '', invoice_number: '', litres: '', rate_per_litre: '', notes: '',
@@ -36,7 +36,7 @@ const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: today, notes: '' }
 
 
 // ── Inline edit row (Loads tab) ────────────────────────────────────────────────
-function EditRow({ form, setForm, mines, drivers, vatRate, rateSource, setRateSource,
+function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rateSource, setRateSource,
   saving, onSave, onCancel, firstInputRef, showPo }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -78,6 +78,11 @@ function EditRow({ form, setForm, mines, drivers, vatRate, rateSource, setRateSo
         <SearchableSelect value={String(form.mine_id)} onChange={v => { set('mine_id', v); setRateSource(null) }}
           options={mines.filter(m => m.is_active)} getValue={m => String(m.id)}
           getLabel={m => m.name} placeholder="Mine…" style={{ minWidth: 100 }} />
+      </td>
+      <td style={S.td}>
+        <SearchableSelect value={String(form.supplier_id)} onChange={v => set('supplier_id', v)}
+          options={haulageSuppliers} getValue={s => String(s.id)}
+          getLabel={s => s.name} placeholder="Supplier (optional)…" style={{ minWidth: 130 }} />
       </td>
       <td style={S.td}>
         <input type="number" step="0.001" min="0" placeholder="0.000" value={form.tonnes}
@@ -802,14 +807,16 @@ export default function TruckLoadProfilePage() {
   const [month, setMonth] = useState(now.getMonth() + 1)
 
   const [activeTab, setActiveTab] = useState('loads')
-  const [truck, setTruck]         = useState(null)
-  const [loads, setLoads]         = useState([])
-  const [summary, setSummary]     = useState(null)
-  const [mines, setMines]         = useState([])
-  const [drivers, setDrivers]     = useState([])
-  const [suppliers, setSuppliers] = useState([])
-  const [vatRate, setVatRate]     = useState(0.15)
-  const [loading, setLoading]     = useState(true)
+  const [truck, setTruck]                   = useState(null)
+  const [loads, setLoads]                   = useState([])
+  const [summary, setSummary]               = useState(null)
+  const [mines, setMines]                   = useState([])
+  const [drivers, setDrivers]               = useState([])
+  const [suppliers, setSuppliers]             = useState([])
+  const [haulageSuppliers, setHaulageSuppliers] = useState([])
+  const [linkedSupplier, setLinkedSupplier]   = useState(null)
+  const [vatRate, setVatRate]               = useState(0.15)
+  const [loading, setLoading]               = useState(true)
 
   // Central driver selection (shared across all tabs)
   const [selectedDriverId, setSelectedDriverId] = useState('')
@@ -837,13 +844,20 @@ export default function TruckLoadProfilePage() {
       getDrivers({ entity_id: truck.entity_id, is_active: true, limit: 200 }),
       getSettings(),
       getSuppliers({ is_diesel_supplier: true, entity_id: truck.entity_id, limit: 500 }),
-    ]).then(([minesRes, driversRes, settingsRes, suppliersRes]) => {
+      getSuppliers({ entity_id: truck.entity_id, limit: 500 }),
+    ]).then(([minesRes, driversRes, settingsRes, suppliersRes, haulageRes]) => {
       setMines(minesRes.data)
       setDrivers(driversRes.data)
       setSuppliers(suppliersRes.data)
+      setHaulageSuppliers(haulageRes.data)
       const vat = settingsRes.data.find(s => s.key === 'vat_rate')
       if (vat) setVatRate(parseFloat(vat.value))
     }).catch(() => {})
+
+    // Look up the subcontractor supplier linked to this truck via registration_number
+    getSuppliers({ truck_registration: truck.registration, include_inactive: true, limit: 1 })
+      .then(r => setLinkedSupplier(r.data?.[0] || null))
+      .catch(() => {})
   }, [truck])
 
   // ── Default central driver to permanent driver once data loads ───────────────
@@ -911,6 +925,7 @@ export default function TruckLoadProfilePage() {
       po_number:    load.po_number    || '',
       driver_name:  load.driver_name  || '',
       mine_id:      String(load.mine_id || ''),
+      supplier_id:  load.supplier_id ? String(load.supplier_id) : '',
       tonnes:       load.tonnes    != null ? String(load.tonnes)    : '',
       rate_per_ton: load.rate_per_ton != null ? String(load.rate_per_ton) : '',
       is_paid:      !!load.is_paid,
@@ -925,6 +940,7 @@ export default function TruckLoadProfilePage() {
     entity_id:    truck.entity_id,
     truck_id:     truck.id,
     mine_id:      parseInt(form.mine_id),
+    supplier_id:  form.supplier_id ? parseInt(form.supplier_id) : null,
     load_date:    new Date(form.load_date + 'T12:00:00').toISOString(),
     slip_number:  form.slip_number || null,
     po_number:    form.po_number   || null,
@@ -979,7 +995,7 @@ export default function TruckLoadProfilePage() {
     return acc
   }, {})
   const showPo = truck?.notes?.toLowerCase() === 'intsimbi'
-  const COLS   = showPo ? 12 : 11
+  const COLS   = showPo ? 13 : 12
 
   const TABS = [
     { key: 'loads',  label: 'Loads'         },
@@ -989,7 +1005,7 @@ export default function TruckLoadProfilePage() {
   ]
 
   const editRowProps = {
-    form: editForm, setForm: setEditForm, mines, drivers, vatRate,
+    form: editForm, setForm: setEditForm, mines, drivers, haulageSuppliers, vatRate,
     rateSource, setRateSource, saving, onSave: handleSave,
     onCancel: cancelEdit, firstInputRef, showPo,
   }
@@ -1079,6 +1095,20 @@ export default function TruckLoadProfilePage() {
             {truck.status}
           </span>
         </div>
+
+        {linkedSupplier && (
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 4 }}>Subcontractor</div>
+            <button
+              onClick={() => navigate(`/suppliers/${linkedSupplier.id}`)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', textDecoration: 'underline' }}>
+                {linkedSupplier.name}
+              </span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Month navigator + summary */}
@@ -1147,6 +1177,7 @@ export default function TruckLoadProfilePage() {
                 {showPo && <th>PO #</th>}
                 <th>Driver</th>
                 <th>Mine</th>
+                <th>Supplier</th>
                 <th style={{ textAlign: 'right' }}>Tonnes</th>
                 <th style={{ textAlign: 'right' }}>Rate/t</th>
                 <th style={{ textAlign: 'right' }}>Excl VAT</th>
@@ -1193,6 +1224,7 @@ export default function TruckLoadProfilePage() {
                       ) : '—'}
                     </td>
                     <td style={{ fontSize: 13 }}>{l.mine_name || '—'}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.supplier_name || '—'}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(l.tonnes)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(l.rate_per_ton)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(l.amount_excl_vat)}</td>
@@ -1216,7 +1248,7 @@ export default function TruckLoadProfilePage() {
             {!loading && loads.length > 0 && summary && (
               <tfoot>
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                  <td colSpan={showPo ? 5 : 4} style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>
+                  <td colSpan={showPo ? 6 : 5} style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>
                     {summary.total_loads} loads
                   </td>
                   <td style={{ textAlign: 'right', padding: '10px 12px' }}>{fmtNum(summary.total_tonnes)}</td>

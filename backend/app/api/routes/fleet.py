@@ -81,6 +81,7 @@ def list_trucks(
     extra_context: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     is_subcontractor: Optional[bool] = Query(None),
+    registration: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(200, le=500),
@@ -92,6 +93,8 @@ def list_trucks(
     q = db.query(Truck)
     if accessible is not None:
         q = q.filter(Truck.entity_id.in_(accessible))
+    if registration:
+        q = q.filter(Truck.registration.ilike(registration))
     if entity_id and extra_context:
         # Include trucks from this entity OR trucks from any entity with the given contract context.
         # Used so OBHI's filter also surfaces SFT trucks running on Intsimbi contracts.
