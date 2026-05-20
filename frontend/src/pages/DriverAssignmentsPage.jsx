@@ -463,7 +463,6 @@ export default function DriverAssignmentsPage() {
 
   const ownTrucks = useMemo(() =>
     trucks
-      .filter(t => !t.is_subcontractor)
       .sort((a, b) => {
         const fa = parseInt(a.fleet_number) || 9999
         const fb = parseInt(b.fleet_number) || 9999
