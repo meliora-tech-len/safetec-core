@@ -31,6 +31,7 @@ const NAV = [
   { to: '/dashboard',         icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/suppliers',         icon: Users,           label: 'Suppliers',    module: 'suppliers' },
   { to: '/fleet',             icon: Truck,           label: 'Fleet',        module: 'fleet',        end: true },
+  { to: '/subcontractors',    icon: Building2,       label: 'Subcontractors', module: 'fleet' },
   { to: '/drivers',           icon: Users,           label: 'Drivers',      module: 'drivers' },
   { to: '/fleet/assignments', icon: Link2,           label: 'Assignments',  module: 'drivers' },
   { to: '/truck-loads',       icon: Package,         label: 'Truck Loads',  module: 'truck_loads' },
@@ -50,11 +51,11 @@ const ADMIN_NAV = [
 ]
 
 const SETTINGS_NAV = [
-  { to: '/settings',              icon: Settings,  label: 'Settings' },
+  { to: '/settings/mines',        icon: MapPin,    label: 'Mines' },
   { to: '/reports',               icon: BarChart2, label: 'Reports' },
   { to: '/settings/payroll',      icon: Settings,  label: 'Payroll Rates' },
-  { to: '/settings/mines',        icon: MapPin,    label: 'Mines' },
   { to: '/settings/diesel-rates', icon: Fuel,      label: 'Diesel Rates' },
+  { to: '/settings',              icon: Settings,  label: 'Settings' },
 ]
 
 export default function Sidebar() {

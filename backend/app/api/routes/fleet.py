@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
     PersonalVehicleCreate, PersonalVehicleUpdate, PersonalVehicleOut,
@@ -30,6 +30,16 @@ def _accessible_entity_ids(user: User) -> Optional[List[int]]:
     if user.role == "admin":
         return None
     return [a.entity_id for a in user.entity_access]
+
+
+def _enrich_truck(truck: Truck) -> Truck:
+    """Compute subcontractor_display_name from FK → free-text → operator fallback."""
+    truck.subcontractor_display_name = (
+        (truck.subcontractor.name if truck.subcontractor else None)
+        or truck.subcontractor_name
+        or truck.operator
+    )
+    return truck
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -119,12 +129,13 @@ def list_trucks(
             )
         )
 
-    return (
+    trucks = (
         q.order_by(Truck.entity_id, Truck.fleet_number, Truck.registration)
         .offset(skip)
         .limit(limit)
         .all()
     )
+    return [_enrich_truck(t) for t in trucks]
 
 
 # ── Single truck ──────────────────────────────────────────────────────────────
@@ -139,7 +150,7 @@ def get_truck(
     if not truck:
         raise HTTPException(status_code=404, detail="Truck not found")
     _check_entity_access(truck.entity_id, current_user)
-    return truck
+    return _enrich_truck(truck)
 
 
 # ── Create truck ──────────────────────────────────────────────────────────────
@@ -177,7 +188,7 @@ def create_truck(
         )
         db.commit()
         db.refresh(truck)
-        return truck
+        return _enrich_truck(truck)
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(status_code=500, detail="Failed to create truck")
@@ -222,7 +233,7 @@ def update_truck(
         )
         db.commit()
         db.refresh(truck)
-        return truck
+        return _enrich_truck(truck)
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(status_code=500, detail="Failed to update truck")

@@ -104,7 +104,8 @@ class BusinessEntity(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    suppliers = relationship("Supplier", back_populates="entity")
+    suppliers       = relationship("Supplier",       back_populates="entity")
+    subcontractors  = relationship("Subcontractor",  back_populates="entity")
     invoices = relationship("Invoice", back_populates="entity")
     user_access = relationship("UserEntityAccess", back_populates="entity")
     trucks = relationship("Truck", back_populates="entity")
@@ -201,6 +202,29 @@ class Supplier(Base):
     entity = relationship("BusinessEntity", back_populates="suppliers")
     invoices = relationship("Invoice", back_populates="supplier")
     supplier_invoices = relationship("SupplierInvoice", back_populates="supplier", cascade="all, delete-orphan")
+
+
+# ── Subcontractors ────────────────────────────────────────────────────────────
+
+class Subcontractor(Base):
+    __tablename__ = "subcontractors"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    entity_id           = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    name                = Column(String(300), nullable=False)
+    trading_name        = Column(String(300))
+    contact_person      = Column(String(200))
+    email               = Column(String(200))
+    phone               = Column(String(50))
+    registration_number = Column(String(100))
+    vat_number          = Column(String(50))
+    notes               = Column(Text)
+    is_active           = Column(Boolean, default=True)
+    created_at          = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at          = Column(DateTime(timezone=True), onupdate=func.now())
+
+    entity = relationship("BusinessEntity", back_populates="subcontractors")
+    trucks = relationship("Truck", back_populates="subcontractor")
 
 
 # ── Invoices & Line Items ─────────────────────────────────────────────────────
@@ -340,7 +364,9 @@ class Truck(Base):
 
     finance_institution = Column(String(200))
 
-    is_subcontractor = Column(Boolean, default=False, nullable=False)
+    is_subcontractor    = Column(Boolean, default=False, nullable=False)
+    subcontractor_name  = Column(String(200))
+    subcontractor_id    = Column(Integer, ForeignKey("subcontractors.id", ondelete="SET NULL"), nullable=True)
 
     # Grouping / ownership fields (see migration 022)
     # operator: who operates the truck — None = entity-owned fleet
@@ -360,10 +386,11 @@ class Truck(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    entity = relationship("BusinessEntity", back_populates="trucks")
-    trailers = relationship("Trailer", back_populates="truck", cascade="all, delete-orphan", order_by="Trailer.slot")
-    drivers = relationship("Driver", back_populates="truck")
-    truck_loads = relationship("TruckLoad", back_populates="truck")
+    entity        = relationship("BusinessEntity", back_populates="trucks")
+    subcontractor = relationship("Subcontractor",  back_populates="trucks", foreign_keys=[subcontractor_id])
+    trailers      = relationship("Trailer",         back_populates="truck", cascade="all, delete-orphan", order_by="Trailer.slot")
+    drivers       = relationship("Driver",          back_populates="truck")
+    truck_loads   = relationship("TruckLoad",       back_populates="truck")
 
 
 class Trailer(Base):

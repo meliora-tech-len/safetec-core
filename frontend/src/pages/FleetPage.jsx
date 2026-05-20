@@ -300,6 +300,8 @@ const BLANK_TRUCK = {
   licence_expiry: '',
   finance_institution: '',
   is_subcontractor: false,
+  subcontractor_name: '',
+  subcontractor_id: null,
   status: 'active',
   notes: '',
   trailers: [
@@ -336,6 +338,8 @@ function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
       licence_expiry:      truck.licence_expiry ? truck.licence_expiry.slice(0, 10) : '',
       finance_institution: truck.finance_institution || '',
       is_subcontractor:    truck.is_subcontractor || false,
+      subcontractor_name:  truck.subcontractor_name || '',
+      subcontractor_id:    truck.subcontractor_id || null,
       status:              truck.status || 'active',
       notes:               truck.notes || '',
       trailers,
@@ -344,7 +348,19 @@ function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
 
   const [selectedDriverId, setSelectedDriverId] = useState(currentDriverId)
   const [saving, setSaving] = useState(false)
+  const [subcontractors, setSubcontractors] = useState([])
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  useEffect(() => {
+    if (!form.entity_id || !form.is_subcontractor) { setSubcontractors([]); return }
+    const token = localStorage.getItem('token')
+    fetch(`${API}/api/subcontractors/?entity_id=${form.entity_id}&limit=200`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then(setSubcontractors)
+      .catch(() => setSubcontractors([]))
+  }, [form.entity_id, form.is_subcontractor])
 
   const entityDrivers = allDrivers.filter(
     d => String(d.entity_id) === String(form.entity_id) && d.is_active
@@ -462,6 +478,24 @@ function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
                 Subcontractor (Subbie) — this truck belongs to an external party
               </label>
             </div>
+
+            {form.is_subcontractor && (
+              <div className="form-group">
+                <label>Subcontractor</label>
+                <select
+                  value={form.subcontractor_id ?? ''}
+                  onChange={e => set('subcontractor_id', e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">— Select subcontractor —</option>
+                  {subcontractors.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                {subcontractors.length === 0 && form.entity_id && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                    No subcontractors for this entity. <a href="/subcontractors">Add one first.</a>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div>
               <div style={sectionLabel}>Truck Licence</div>
@@ -687,7 +721,9 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
         </td>
         <td>
           {truck.is_subcontractor
-            ? <span className="badge badge-quote" style={{ fontSize: 11 }}>Yes</span>
+            ? <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                {truck.subcontractor_display_name || <span className="badge badge-quote" style={{ fontSize: 11 }}>Subbie</span>}
+              </span>
             : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
         </td>
         <td><span className={`badge ${s.badge}`}>{s.label}</span></td>
@@ -825,14 +861,18 @@ export default function FleetPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [filterStatus, setFilterStatus]                 = useState('')
-  const [filterSubcontractor, setFilterSubcontractor]   = useState('false')
+  const isObhi = activeEntity?.code === 'OBHI'
+  const [filterSubcontractor, setFilterSubcontractor]   = useState(isObhi ? 'true' : 'false')
   const [pvFilterStatus, setPvFilterStatus]             = useState('active')
   const [modal, setModal]       = useState(null)
   const [selected, setSelected] = useState(null)
   const loadSeqRef = useRef(0)
   const alertsShownRef = useRef(false)
 
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
+  useEffect(() => {
+    setFilterEntity(activeEntity?.id?.toString() || '')
+    setFilterSubcontractor(activeEntity?.code === 'OBHI' ? 'true' : 'false')
+  }, [activeEntity])
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 400)
     return () => clearTimeout(t)
@@ -1067,23 +1107,25 @@ export default function FleetPage() {
       {/* Stats */}
       <StatCards stats={stats} alertCount={expiredAlerts.length + soonAlerts.length} />
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 3, gap: 2, marginBottom: 16, width: 'fit-content' }}>
-        {[['trucks', 'Fleet Trucks', Truck], ['personal', 'Personal Vehicles', Car]].map(([val, label, Icon]) => (
-          <button
-            key={val}
-            onClick={() => setTab(val)}
-            style={{
-              padding: '5px 16px', fontSize: 13, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-              background: tab === val ? 'var(--accent)' : 'transparent',
-              color: tab === val ? '#fff' : 'var(--text-muted)',
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}
-          >
-            <Icon size={13} /> {label}
-          </button>
-        ))}
-      </div>
+      {/* Tabs — Personal Vehicles hidden for OBHI (subcontractor-only entity) */}
+      {!isObhi && (
+        <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 3, gap: 2, marginBottom: 16, width: 'fit-content' }}>
+          {[['trucks', 'Fleet Trucks', Truck], ['personal', 'Personal Vehicles', Car]].map(([val, label, Icon]) => (
+            <button
+              key={val}
+              onClick={() => setTab(val)}
+              style={{
+                padding: '5px 16px', fontSize: 13, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                background: tab === val ? 'var(--accent)' : 'transparent',
+                color: tab === val ? '#fff' : 'var(--text-muted)',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}
+            >
+              <Icon size={13} /> {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── Trucks tab ── */}
       {tab === 'trucks' && (
@@ -1108,19 +1150,21 @@ export default function FleetPage() {
               <option value="inactive">Inactive</option>
             </select>
             <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 3, gap: 2 }}>
-              {[['false', 'Own Fleet'], ['true', 'Subcontractors']].map(([val, label]) => (
-                <button
-                  key={val}
-                  onClick={() => setFilterSubcontractor(f => f === val ? '' : val)}
-                  style={{
-                    padding: '4px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-                    background: filterSubcontractor === val ? 'var(--accent)' : 'transparent',
-                    color: filterSubcontractor === val ? '#fff' : 'var(--text-muted)',
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
+              {[['false', 'Own Fleet'], ['true', 'Subcontractors']]
+                .filter(([val]) => !isObhi || val === 'true')
+                .map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setFilterSubcontractor(f => f === val ? (isObhi ? val : '') : val)}
+                    style={{
+                      padding: '4px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                      background: filterSubcontractor === val ? 'var(--accent)' : 'transparent',
+                      color: filterSubcontractor === val ? '#fff' : 'var(--text-muted)',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
             </div>
           </div>
 
@@ -1142,7 +1186,7 @@ export default function FleetPage() {
                     <th>Registration</th>
                     <th>Licence Expiry</th>
                     <th>Trailers</th>
-                    <th>Subbie</th>
+                    <th>Subcontractor</th>
                     <th>Status</th>
                     <th></th>
                   </tr>

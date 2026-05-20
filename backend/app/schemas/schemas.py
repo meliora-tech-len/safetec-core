@@ -272,6 +272,58 @@ class SupplierSummary(BaseModel):
         from_attributes = True
 
 
+# ── Subcontractors ────────────────────────────────────────────────────────────
+
+class SubcontractorBase(BaseModel):
+    entity_id:           int
+    name:                str
+    trading_name:        Optional[str] = None
+    contact_person:      Optional[str] = None
+    email:               Optional[str] = None
+    phone:               Optional[str] = None
+    registration_number: Optional[str] = None
+    vat_number:          Optional[str] = None
+    notes:               Optional[str] = None
+
+
+class SubcontractorCreate(SubcontractorBase):
+    pass
+
+
+class SubcontractorBulkCreate(BaseModel):
+    entity_ids:          List[int]
+    name:                str
+    trading_name:        Optional[str] = None
+    contact_person:      Optional[str] = None
+    email:               Optional[str] = None
+    phone:               Optional[str] = None
+    registration_number: Optional[str] = None
+    vat_number:          Optional[str] = None
+    notes:               Optional[str] = None
+
+
+class SubcontractorUpdate(BaseModel):
+    name:                Optional[str]  = None
+    trading_name:        Optional[str]  = None
+    contact_person:      Optional[str]  = None
+    email:               Optional[str]  = None
+    phone:               Optional[str]  = None
+    registration_number: Optional[str]  = None
+    vat_number:          Optional[str]  = None
+    notes:               Optional[str]  = None
+    is_active:           Optional[bool] = None
+
+
+class SubcontractorOut(SubcontractorBase):
+    id:         int
+    is_active:  bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ── Invoice Line Items ────────────────────────────────────────────────────────
 
 class LineItemBase(BaseModel):
@@ -459,7 +511,9 @@ class TruckBase(BaseModel):
     licence_number: Optional[str] = None
     licence_expiry: Optional[datetime] = None
     finance_institution: Optional[str] = None
-    is_subcontractor: bool = False
+    is_subcontractor:   bool = False
+    subcontractor_name: Optional[str] = None
+    subcontractor_id:   Optional[int] = None
     status: TruckStatus = TruckStatus.active
     notes: Optional[str] = None
     operator: Optional[str] = None
@@ -481,7 +535,9 @@ class TruckUpdate(BaseModel):
     licence_number: Optional[str] = None
     licence_expiry: Optional[datetime] = None
     finance_institution: Optional[str] = None
-    is_subcontractor: Optional[bool] = None
+    is_subcontractor:   Optional[bool] = None
+    subcontractor_name: Optional[str]  = None
+    subcontractor_id:   Optional[int]  = None
     status: Optional[TruckStatus] = None
     notes: Optional[str] = None
     operator: Optional[str] = None
@@ -493,6 +549,7 @@ class TruckUpdate(BaseModel):
 class TruckOut(TruckBase):
     id: int
     trailers: List[TrailerOut] = []
+    subcontractor_display_name: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

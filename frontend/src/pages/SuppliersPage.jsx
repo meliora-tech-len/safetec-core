@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { getSuppliers, getEntities, createSupplierBulk, updateSupplier, deleteSupplier } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { Plus, Search, Edit2, Trash2, User, X } from 'lucide-react'
+import { Plus, Search, Edit2, Trash2, User, X, Copy } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 import DeleteModal from '../components/DeleteModal'
@@ -50,8 +50,14 @@ export default function SuppliersPage() {
         const count = formData.entity_ids.length
         toast.success(`Supplier created for ${count} entit${count === 1 ? 'y' : 'ies'}`)
       } else {
-        await updateSupplier(modal.supplier.id, formData)
-        toast.success('Supplier updated')
+        const { copyEntityIds, ...updateData } = formData
+        await updateSupplier(modal.supplier.id, updateData)
+        if (copyEntityIds?.length > 0) {
+          await createSupplierBulk({ entity_ids: copyEntityIds, ...updateData })
+          toast.success(`Supplier updated and copied to ${copyEntityIds.length} entit${copyEntityIds.length === 1 ? 'y' : 'ies'}`)
+        } else {
+          toast.success('Supplier updated')
+        }
       }
       closeModal()
       load()
@@ -336,8 +342,11 @@ function MultiEntitySelect({ entities, selected, onChange }) {
 }
 
 function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
+  const [copyMode, setCopyMode] = useState(false)
+  const [copyEntityIds, setCopyEntityIds] = useState([])
+
   const [form, setForm] = useState({
-    entity_ids: entities.map(e => e.id),
+    entity_ids: [],
     entity_id: supplier?.entity_id || (entities[0]?.id || ''),
     name: supplier?.name || '',
     trading_name: supplier?.trading_name || '',
@@ -360,6 +369,10 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (mode === 'create' && form.entity_ids.length === 0) {
+      toast.error('Select at least one entity')
+      return
+    }
     setSaving(true)
     // Clear reg number when supplier doesn't require one
     const cleanedForm = {
@@ -371,7 +384,7 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
       await onSave({ entity_ids, ...fields })
     } else {
       const { entity_id, entity_ids, ...fields } = cleanedForm
-      await onSave({ ...fields, entity_id: parseInt(entity_id) })
+      await onSave({ ...fields, entity_id: parseInt(entity_id), copyEntityIds: copyMode ? copyEntityIds : [] })
     }
     setSaving(false)
   }
@@ -394,9 +407,51 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
                   onChange={ids => set('entity_ids', ids)}
                 />
               ) : (
-                <select value={form.entity_id} onChange={e => set('entity_id', e.target.value)} required>
-                  {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
+                <>
+                  <select value={form.entity_id} onChange={e => set('entity_id', e.target.value)} required>
+                    {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  </select>
+
+                  {/* Copy to other entities */}
+                  {entities.filter(e => e.id !== parseInt(form.entity_id)).length > 0 && (
+                    <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                      <div
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => { setCopyMode(m => !m); setCopyEntityIds([]) }}
+                      >
+                        <span style={{
+                          width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                          border: `1.5px solid ${copyMode ? 'var(--accent)' : 'var(--border)'}`,
+                          background: copyMode ? 'var(--accent)' : 'transparent',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 10, color: '#fff',
+                        }}>
+                          {copyMode && '✓'}
+                        </span>
+                        <Copy size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>Copy this supplier to other entities</span>
+                      </div>
+
+                      {copyMode && (
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+                            Select which entities to copy to:
+                          </div>
+                          <MultiEntitySelect
+                            entities={entities.filter(e => e.id !== parseInt(form.entity_id))}
+                            selected={copyEntityIds}
+                            onChange={setCopyEntityIds}
+                          />
+                          {copyEntityIds.length > 0 && (
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, padding: '6px 10px', background: 'var(--accent-dim)', borderRadius: 6, color: 'var(--accent)' }}>
+                              A copy of this supplier will be created for {copyEntityIds.length} entit{copyEntityIds.length === 1 ? 'y' : 'ies'} when you save.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
             <div className="form-row">

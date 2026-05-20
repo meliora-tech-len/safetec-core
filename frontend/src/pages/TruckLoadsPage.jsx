@@ -47,18 +47,16 @@ export default function TruckLoadsPage() {
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
   const entityName = (id) => entities.find(e => e.id === id)?.name || entityCode(id)
 
-  // Julian trucks are displayed under Alex Maintenance
-  const displayGroup = (t) => {
-    const op = t.operator === 'Julian' ? 'Alex Maintenance' : t.operator
-    return op || t.contract_context || 'Unknown'
-  }
+  const displayGroup = (t) =>
+    t.subcontractor_display_name || t.contract_context || 'Unknown'
 
   const sorted = useMemo(() => {
     const base = search
       ? trucks.filter(t =>
           t.registration.toLowerCase().includes(search.toLowerCase()) ||
           (t.make || '').toLowerCase().includes(search.toLowerCase()) ||
-          (t.operator || '').toLowerCase().includes(search.toLowerCase())
+          (t.operator || '').toLowerCase().includes(search.toLowerCase()) ||
+          (t.subcontractor_display_name || '').toLowerCase().includes(search.toLowerCase())
         )
       : trucks
 
@@ -149,16 +147,6 @@ export default function TruckLoadsPage() {
                     >
                       <td style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 14, paddingLeft: 28 }}>
                         {truck.registration}
-                        {truck.contract_context === 'Intsimbi' && (
-                          <span style={{
-                            marginLeft: 7, fontSize: 10, fontWeight: 700,
-                            color: 'var(--accent)', background: 'var(--accent-dim)',
-                            padding: '2px 6px', borderRadius: 4,
-                            verticalAlign: 'middle', letterSpacing: '0.04em',
-                          }}>
-                            Intsimbi
-                          </span>
-                        )}
                       </td>
                       <td style={{ color: 'var(--text-secondary)', paddingLeft: 28 }}>
                         {truck.make}{truck.model ? ` ${truck.model}` : ''}

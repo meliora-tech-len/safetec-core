@@ -28,6 +28,7 @@ import MinesSettingsPage from './pages/MinesSettingsPage'
 import DieselFillUpsPage from './pages/DieselFillUpsPage'
 import DieselRatesPage from './pages/DieselRatesPage'
 import ReportsPage from './pages/ReportsPage'
+import SubcontractorsPage from './pages/SubcontractorsPage'
 import './styles/globals.css'
 
 function PrivateRoute({ children }) {
@@ -62,6 +63,9 @@ export default function App() {
 
             {/* Fleet */}
             <Route path="/fleet" element={<FleetPage />} />
+
+            {/* Subcontractors */}
+            <Route path="/subcontractors" element={<SubcontractorsPage />} />
 
             {/* Clients */}
             <Route path="/clients" element={<ClientsPage />} />
