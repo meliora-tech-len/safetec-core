@@ -23,6 +23,12 @@ const PV_STATUS_COLOURS = {
 
 const MAKES = ['SCANIA', 'DAF', 'FAW', 'MERC', 'FOTON AUMAN', 'OTHER']
 const PV_OWNERS = ['SAFETEC', 'THEMBIS', 'OBHI', 'OTHER']
+const FINANCE_INSTITUTIONS = [
+  'WesBank (FNB)', 'MFC (Nedbank)', 'ABSA Vehicle Finance',
+  'Standard Bank Vehicle Finance', 'Nedbank Vehicle Finance', 'FNB Vehicle Finance',
+  'Capitec Bank', 'Investec', 'Bidvest Bank', 'African Bank',
+  'Discovery Bank', 'Mercantile Bank', 'Old Mutual Finance', 'Sasfin Bank',
+]
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 
@@ -244,10 +250,11 @@ function TrailerFields({ trailers, onChange }) {
           <div className="form-row">
             <div className="form-group">
               <label>Finance Institution</label>
-              <input
+              <ComboBox
                 value={t.finance_institution}
-                onChange={e => update(t.slot, 'finance_institution', e.target.value)}
-                placeholder="e.g. WesBank (FNB)"
+                onChange={v => update(t.slot, 'finance_institution', v)}
+                placeholder="Select or type institution…"
+                options={FINANCE_INSTITUTIONS}
               />
             </div>
             <div className="form-group">
@@ -571,7 +578,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
               </div>
             )}
 
-            <div>
+            <div style={{ marginTop: 16 }}>
               <div style={sectionLabel}>Truck Licence</div>
               <div style={{ padding: 12, background: 'var(--bg-base)', borderRadius: 6, border: '1px solid var(--border)' }}>
                 <div className="form-row">
@@ -587,7 +594,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
               </div>
             </div>
 
-            <div>
+            <div style={{ marginTop: 16 }}>
               <div style={sectionLabel}>Financial Institution</div>
               <div style={{ padding: 12, background: 'var(--bg-base)', borderRadius: 6, border: '1px solid var(--border)' }}>
                 <div className="form-group">
@@ -596,7 +603,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
                     value={form.finance_institution}
                     onChange={v => set('finance_institution', v)}
                     placeholder="Select or type institution…"
-                    options={['WesBank (FNB)', 'MFC (Nedbank)', 'ABSA Vehicle Finance', 'Standard Bank Vehicle Finance', 'Nedbank Vehicle Finance', 'FNB Vehicle Finance', 'Capitec Bank', 'Investec', 'Bidvest Bank', 'African Bank', 'Discovery Bank', 'Mercantile Bank', 'Old Mutual Finance', 'Sasfin Bank']}
+                    options={FINANCE_INSTITUTIONS}
                   />
                 </div>
                 <div className="form-row">
@@ -621,12 +628,12 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
               </div>
             </div>
 
-            <div>
+            <div style={{ marginTop: 16 }}>
               <div style={sectionLabel}>Trailers</div>
               <TrailerFields trailers={form.trailers} onChange={trailers => set('trailers', trailers)} />
             </div>
 
-            <div className="form-group">
+            <div className="form-group" style={{ marginTop: 16 }}>
               <label>Notes</label>
               <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} />
             </div>
