@@ -79,10 +79,9 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
     const init = async () => {
       setLoading(true)
       try {
-        const [entsRes, supsRes] = await Promise.all([getEntities(), getSuppliers()])
+        const entsRes = await getEntities()
         if (ignore) return
         setEntities(entsRes.data)
-        setSuppliers(supsRes.data)
 
         if (isEdit) {
           const inv = (await getInvoice(id)).data
@@ -125,6 +124,16 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
     init()
     return () => { ignore = true }
   }, [id])
+
+  // ── Fetch suppliers for selected entity ──────────────────────────
+  useEffect(() => {
+    if (!entityId) { setSuppliers([]); return }
+    let ignore = false
+    getSuppliers({ entity_id: parseInt(entityId), limit: 500 })
+      .then(res => { if (!ignore) setSuppliers(res.data) })
+      .catch(() => {})
+    return () => { ignore = true }
+  }, [entityId])
 
   // ── Fetch next invoice number when entity changes (new only) ──────
   useEffect(() => {
@@ -178,7 +187,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
   const vatAmount = vatBase * vatRate
   const total = subtotal + vatAmount
 
-  const filteredSuppliers = suppliers.filter(s => !entityId || String(s.entity_id) === entityId)
+  const filteredSuppliers = suppliers
 
   // ── Save ──────────────────────────────────────────────────────────
   const handleSave = async (statusOverride = null) => {

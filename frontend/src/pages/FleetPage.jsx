@@ -1,5 +1,5 @@
-import { Fragment, useState, useEffect, useCallback, useRef } from 'react'
-import { Truck, Car, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertTriangle, AlertCircle, Clock } from 'lucide-react'
+import { Fragment, useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Truck, Car, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertTriangle, AlertCircle, Clock, ChevronsUpDown } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
@@ -310,46 +310,75 @@ const BLANK_TRUCK = {
   ],
 }
 
-function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
-  const isEdit = !!truck?.id
+function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks, onSave, onClose }) {
+  const isEdit = !!initialTruck?.id
   const api    = useFleetApi()
 
   const currentDriverId = isEdit
-    ? (allDrivers.find(d => d.truck_id === truck.id)?.id ?? '')
+    ? (allDrivers.find(d => d.truck_id === initialTruck.id)?.id ?? '')
     : ''
 
-  const [form, setForm] = useState(() => {
-    if (!truck) return { ...BLANK_TRUCK }
+  // Build controlled form state from a truck object (used both for initial state and after re-fetch)
+  function buildForm(t) {
+    if (!t) return { ...BLANK_TRUCK }
     const trailers = [1, 2].map(slot => {
-      const t = (truck.trailers || []).find(x => x.slot === slot)
-      return t
-        ? { slot, registration: t.registration || '', vin: t.vin || '', licence_expiry: t.licence_expiry ? t.licence_expiry.slice(0, 10) : '', status: t.status }
+      const tr = (t.trailers || []).find(x => x.slot === slot)
+      return tr
+        ? { slot, registration: tr.registration || '', vin: tr.vin || '', licence_expiry: tr.licence_expiry ? tr.licence_expiry.slice(0, 10) : '', status: tr.status }
         : { slot, registration: '', vin: '', licence_expiry: '', status: 'active' }
     })
     return {
-      entity_id:           truck.entity_id,
-      fleet_number:        truck.fleet_number || '',
-      make:                truck.make || '',
-      model:               truck.model || '',
-      registration:        truck.registration || '',
-      vin:                 truck.vin || '',
-      driver_name:         truck.driver_name || '',
-      licence_number:      truck.licence_number || '',
-      licence_expiry:      truck.licence_expiry ? truck.licence_expiry.slice(0, 10) : '',
-      finance_institution: truck.finance_institution || '',
-      is_subcontractor:    truck.is_subcontractor || false,
-      subcontractor_name:  truck.subcontractor_name || '',
-      subcontractor_id:    truck.subcontractor_id || null,
-      status:              truck.status || 'active',
-      notes:               truck.notes || '',
+      entity_id:           t.entity_id,
+      fleet_number:        (t.fleet_number || '').replace(/^#+/, ''),
+      make:                t.make || '',
+      model:               t.model || '',
+      registration:        t.registration || '',
+      vin:                 t.vin || '',
+      driver_name:         t.driver_name || '',
+      licence_number:      t.licence_number || '',
+      licence_expiry:      t.licence_expiry ? t.licence_expiry.slice(0, 10) : '',
+      finance_institution: t.finance_institution || '',
+      is_subcontractor:    t.is_subcontractor || false,
+      subcontractor_name:  t.subcontractor_name || '',
+      subcontractor_id:    t.subcontractor_id || null,
+      status:              t.status || 'active',
+      notes:               t.notes || '',
       trailers,
     }
-  })
+  }
 
+  const [form, setForm] = useState(() => buildForm(initialTruck))
   const [selectedDriverId, setSelectedDriverId] = useState(currentDriverId)
   const [saving, setSaving] = useState(false)
   const [subcontractors, setSubcontractors] = useState([])
+
+  // Re-fetch the full truck record in edit mode — the list response may omit nullable fields
+  // that were never set, causing the form to appear under-populated on open.
+  useEffect(() => {
+    if (!isEdit) return
+    api.get(`/api/fleet/trucks/${initialTruck.id}`)
+      .then(data => setForm(buildForm(data)))
+      .catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  // Auto-assign next fleet number when entity is selected for a new (own) truck.
+  // Only fires when the entity already has at least one own truck with a numeric
+  // fleet number — entities that use codes (or none) are left blank.
+  useEffect(() => {
+    if (isEdit || !form.entity_id || form.is_subcontractor) return
+    const ownTrucks = (existingTrucks || []).filter(
+      t => t.entity_id === Number(form.entity_id) && !t.is_subcontractor
+    )
+    const toNum = (fn) => {
+      const n = parseInt((fn || '').replace(/^#+/, ''))
+      return Number.isFinite(n) && n > 0 ? n : null
+    }
+    const numericTrucks = ownTrucks.filter(t => toNum(t.fleet_number) !== null)
+    if (numericTrucks.length === 0) return   // entity uses codes or no numbers — don't auto-fill
+    const maxNum = numericTrucks.reduce((m, t) => Math.max(m, toNum(t.fleet_number)), 0)
+    setForm(f => ({ ...f, fleet_number: String(maxNum + 1) }))
+  }, [form.entity_id, form.is_subcontractor, isEdit]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!form.entity_id || !form.is_subcontractor) { setSubcontractors([]); return }
@@ -382,7 +411,7 @@ function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
       }
       let savedTruck
       if (isEdit) {
-        savedTruck = await api.put(`/api/fleet/trucks/${truck.id}`, payload)
+        savedTruck = await api.put(`/api/fleet/trucks/${initialTruck.id}`, payload)
         toast.success('Truck updated')
       } else {
         savedTruck = await api.post('/api/fleet/trucks', payload)
@@ -428,7 +457,7 @@ function TruckModal({ truck, entities, allDrivers, onSave, onClose }) {
                 <label>Make *</label>
                 <select value={form.make} onChange={e => set('make', e.target.value)}>
                   <option value="">Select make…</option>
-                  {MAKES.map(m => <option key={m}>{m}</option>)}
+                  {MAKES.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
               <div className="form-group">
@@ -693,7 +722,7 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
       <tr style={{ cursor: 'pointer' }} onClick={() => setOpen(o => !o)}>
         <td>
           <span style={{ color: 'var(--text-muted)', fontSize: 12, fontFamily: 'monospace' }}>
-            {truck.fleet_number || '—'}
+            {truck.fleet_number ? truck.fleet_number.replace(/^#+/, '') : '—'}
           </span>
         </td>
         <td>
@@ -840,6 +869,24 @@ const labelStyle = { fontSize: 10, fontWeight: 700, textTransform: 'uppercase', 
 const valueStyle = { fontFamily: 'monospace', fontSize: 12, color: 'var(--text-primary)' }
 const sectionLabel = { fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-secondary)', marginBottom: 10 }
 
+// ── Sortable table header ─────────────────────────────────────────────────────
+
+function SortableHeader({ label, col, sort, onSort }) {
+  const active = sort.col === col
+  return (
+    <th style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }} onClick={() => onSort(col)}>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+        {label}
+        <span style={{ display: 'inline-flex', color: active ? 'var(--accent)' : 'var(--text-muted)', opacity: active ? 1 : 0.45 }}>
+          {active
+            ? (sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)
+            : <ChevronsUpDown size={11} />}
+        </span>
+      </div>
+    </th>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function FleetPage() {
@@ -866,6 +913,9 @@ export default function FleetPage() {
   const [pvFilterStatus, setPvFilterStatus]             = useState('active')
   const [modal, setModal]       = useState(null)
   const [selected, setSelected] = useState(null)
+  const [truckSort, setTruckSort]       = useState({ col: null, dir: 'asc' })
+  const [pvSort, setPvSort]             = useState({ col: null, dir: 'asc' })
+  const [truckGroupBy, setTruckGroupBy] = useState('entity')
   const loadSeqRef = useRef(0)
   const alertsShownRef = useRef(false)
 
@@ -983,6 +1033,70 @@ export default function FleetPage() {
   const soonAlerts = alerts
     .filter(a => !a.expired && a.days_until_expiry <= warnDays)
     .sort((a, b) => a.days_until_expiry - b.days_until_expiry) // soonest first
+
+  const handleTruckSort = (col) =>
+    setTruckSort(prev => ({ col, dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc' }))
+
+  const handlePvSort = (col) =>
+    setPvSort(prev => ({ col, dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc' }))
+
+  const sortedTrucks = useMemo(() => {
+    if (!truckSort.col) return trucks
+    const val = (t) => {
+      if (truckSort.col === 'fleet_number')   return parseInt((t.fleet_number || '').replace(/^#+/, '')) || 0
+      if (truckSort.col === 'licence_expiry') return t.licence_expiry ? new Date(t.licence_expiry).getTime() : Infinity
+      if (truckSort.col === 'subcontractor')  return (t.subcontractor_display_name || '').toLowerCase()
+      return (t[truckSort.col] || '').toString().toLowerCase()
+    }
+    return [...trucks].sort((a, b) => {
+      const av = val(a), bv = val(b)
+      if (av < bv) return truckSort.dir === 'asc' ? -1 : 1
+      if (av > bv) return truckSort.dir === 'asc' ? 1 : -1
+      return 0
+    })
+  }, [trucks, truckSort])
+
+  const groupedTrucks = useMemo(() => {
+    const map = {}
+    const order = []
+    if (truckGroupBy === 'subcontractor') {
+      sortedTrucks.forEach(t => {
+        const key = t.is_subcontractor
+          ? (t.subcontractor_display_name || `Sub #${t.subcontractor_id}` || 'Unknown Subcontractor')
+          : '__own__'
+        if (!map[key]) { map[key] = []; order.push(key) }
+        map[key].push(t)
+      })
+      return order
+        .sort((a, b) => a === '__own__' ? -1 : b === '__own__' ? 1 : a.localeCompare(b))
+        .map(key => ({ key, label: key === '__own__' ? 'Own Fleet' : key, labelSub: null, trucks: map[key] }))
+    }
+    // Default: group by entity (preserve order trucks arrive in)
+    sortedTrucks.forEach(t => {
+      if (!map[t.entity_id]) { map[t.entity_id] = []; order.push(t.entity_id) }
+      map[t.entity_id].push(t)
+    })
+    return order.map(id => ({
+      key: id,
+      label: entityMap[id]?.name || `Entity ${id}`,
+      labelSub: entityMap[id]?.code,
+      trucks: map[id],
+    }))
+  }, [sortedTrucks, truckGroupBy, entityMap])
+
+  const sortedPvList = useMemo(() => {
+    if (!pvSort.col) return pvList
+    const val = (p) => {
+      if (pvSort.col === 'licence_expiry') return p.licence_expiry ? new Date(p.licence_expiry).getTime() : Infinity
+      return (p[pvSort.col] || '').toString().toLowerCase()
+    }
+    return [...pvList].sort((a, b) => {
+      const av = val(a), bv = val(b)
+      if (av < bv) return pvSort.dir === 'asc' ? -1 : 1
+      if (av > bv) return pvSort.dir === 'asc' ? 1 : -1
+      return 0
+    })
+  }, [pvList, pvSort])
 
   return (
     <div style={{ padding: '28px 32px', flex: 1 }}>
@@ -1166,6 +1280,24 @@ export default function FleetPage() {
                   </button>
                 ))}
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}>Group</span>
+              <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 3, gap: 2 }}>
+                {[['entity', 'Entity'], ['subcontractor', 'Subcontractor']].map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setTruckGroupBy(val)}
+                    style={{
+                      padding: '4px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                      background: truckGroupBy === val ? 'var(--accent)' : 'transparent',
+                      color: truckGroupBy === val ? '#fff' : 'var(--text-muted)',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           {loading ? (
@@ -1181,43 +1313,39 @@ export default function FleetPage() {
               <table>
                 <thead>
                   <tr>
-                    <th>#</th>
-                    <th>Make / Model</th>
-                    <th>Registration</th>
-                    <th>Licence Expiry</th>
+                    <SortableHeader label="#"              col="fleet_number"   sort={truckSort} onSort={handleTruckSort} />
+                    <SortableHeader label="Make / Model"   col="make"           sort={truckSort} onSort={handleTruckSort} />
+                    <SortableHeader label="Registration"   col="registration"   sort={truckSort} onSort={handleTruckSort} />
+                    <SortableHeader label="Licence Expiry" col="licence_expiry" sort={truckSort} onSort={handleTruckSort} />
                     <th>Trailers</th>
-                    <th>Subcontractor</th>
-                    <th>Status</th>
+                    <SortableHeader label="Subcontractor"  col="subcontractor"  sort={truckSort} onSort={handleTruckSort} />
+                    <SortableHeader label="Status"         col="status"         sort={truckSort} onSort={handleTruckSort} />
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {trucks.map((truck, i) => {
-                    const prev       = i > 0 ? trucks[i - 1] : null
-                    const showDivider = prev && prev.entity_id !== truck.entity_id
-                    const entity     = entityMap[truck.entity_id]
-                    return (
-                      <Fragment key={truck.id}>
-                        {(i === 0 || showDivider) && (
-                          <tr style={{ background: 'var(--bg-surface)' }}>
-                            <td colSpan={8} style={{ padding: '8px 14px' }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--accent)' }}>
-                                {entity?.name || `Entity ${truck.entity_id}`}
-                                <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontWeight: 500 }}>({entity?.code})</span>
-                              </span>
-                            </td>
-                          </tr>
-                        )}
+                  {groupedTrucks.map(group => (
+                    <Fragment key={group.key ?? 'ungrouped'}>
+                      <tr style={{ background: 'var(--bg-surface)' }}>
+                        <td colSpan={8} style={{ padding: '8px 14px' }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--accent)' }}>
+                            {group.label}
+                            {group.labelSub && <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontWeight: 500 }}>({group.labelSub})</span>}
+                          </span>
+                        </td>
+                      </tr>
+                      {group.trucks.map(truck => (
                         <TruckRow
+                          key={truck.id}
                           truck={truck}
                           isAdmin={isAdmin}
                           linkedDriver={allDrivers.find(d => d.truck_id === truck.id) || null}
                           onEdit={t => { setSelected(t); setModal('edit-truck') }}
                           onDelete={t => { setSelected(t); setModal('delete-truck') }}
                         />
-                      </Fragment>
-                    )
-                  })}
+                      ))}
+                    </Fragment>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1259,17 +1387,17 @@ export default function FleetPage() {
               <table>
                 <thead>
                   <tr>
-                    <th>Owner</th>
-                    <th>Vehicle</th>
-                    <th>Registration</th>
-                    <th>Licence Expiry</th>
-                    <th>Status</th>
+                    <SortableHeader label="Owner"          col="owner"          sort={pvSort} onSort={handlePvSort} />
+                    <SortableHeader label="Vehicle"        col="vehicle_type"   sort={pvSort} onSort={handlePvSort} />
+                    <SortableHeader label="Registration"   col="registration"   sort={pvSort} onSort={handlePvSort} />
+                    <SortableHeader label="Licence Expiry" col="licence_expiry" sort={pvSort} onSort={handlePvSort} />
+                    <SortableHeader label="Status"         col="status"         sort={pvSort} onSort={handlePvSort} />
                     <th>Notes</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pvList.map(pv => (
+                  {sortedPvList.map(pv => (
                     <PersonalVehicleRow
                       key={pv.id}
                       pv={pv}
@@ -1291,6 +1419,7 @@ export default function FleetPage() {
           truck={modal === 'edit-truck' ? selected : null}
           entities={entities}
           allDrivers={allDrivers}
+          existingTrucks={trucks}
           onSave={() => {
             setModal(null); setSelected(null); load()
             api.get('/api/drivers?limit=500&is_active=true').then(setAllDrivers).catch(() => {})

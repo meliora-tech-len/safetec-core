@@ -129,13 +129,16 @@ def list_trucks(
             )
         )
 
-    trucks = (
-        q.order_by(Truck.entity_id, Truck.fleet_number, Truck.registration)
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
-    return [_enrich_truck(t) for t in trucks]
+    trucks_raw = q.offset(skip).limit(limit).all()
+
+    def _sort_key(t):
+        try:
+            num = int((t.fleet_number or '').lstrip('#')) if t.fleet_number else 9999
+        except (ValueError, TypeError):
+            num = 9999
+        return (t.entity_id, num, t.registration or '')
+
+    return [_enrich_truck(t) for t in sorted(trucks_raw, key=_sort_key)]
 
 
 # ── Single truck ──────────────────────────────────────────────────────────────
