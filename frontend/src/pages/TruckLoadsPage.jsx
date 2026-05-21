@@ -48,7 +48,9 @@ export default function TruckLoadsPage() {
   const entityName = (id) => entities.find(e => e.id === id)?.name || entityCode(id)
 
   const displayGroup = (t) =>
-    t.subcontractor_display_name || t.contract_context || 'Unknown'
+    t.is_subcontractor
+      ? (t.subcontractor_display_name || t.contract_context || 'Unknown Subcontractor')
+      : (entityCode(t.entity_id) || 'Own Fleet')
 
   const sorted = useMemo(() => {
     const base = search
