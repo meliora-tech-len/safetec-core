@@ -241,6 +241,33 @@ function TrailerFields({ trailers, onChange }) {
               </select>
             </div>
           </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label>Finance Institution</label>
+              <input
+                value={t.finance_institution}
+                onChange={e => update(t.slot, 'finance_institution', e.target.value)}
+                placeholder="e.g. WesBank (FNB)"
+              />
+            </div>
+            <div className="form-group">
+              <label>Account Number</label>
+              <input
+                value={t.finance_account_number}
+                onChange={e => update(t.slot, 'finance_account_number', e.target.value)}
+                placeholder="e.g. 1234567890"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </div>
+            <div className="form-group">
+              <label>Contract End Date</label>
+              <input
+                type="date"
+                value={t.finance_contract_end}
+                onChange={e => update(t.slot, 'finance_contract_end', e.target.value)}
+              />
+            </div>
+          </div>
         </div>
       ))}
     </div>
@@ -304,9 +331,11 @@ const BLANK_TRUCK = {
   subcontractor_id: null,
   status: 'active',
   notes: '',
+  finance_account_number: '',
+  finance_contract_end:   '',
   trailers: [
-    { slot: 1, registration: '', vin: '', licence_expiry: '', status: 'active' },
-    { slot: 2, registration: '', vin: '', licence_expiry: '', status: 'active' },
+    { slot: 1, registration: '', vin: '', licence_expiry: '', finance_institution: '', finance_account_number: '', finance_contract_end: '', status: 'active' },
+    { slot: 2, registration: '', vin: '', licence_expiry: '', finance_institution: '', finance_account_number: '', finance_contract_end: '', status: 'active' },
   ],
 }
 
@@ -324,8 +353,17 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
     const trailers = [1, 2].map(slot => {
       const tr = (t.trailers || []).find(x => x.slot === slot)
       return tr
-        ? { slot, registration: tr.registration || '', vin: tr.vin || '', licence_expiry: tr.licence_expiry ? tr.licence_expiry.slice(0, 10) : '', status: tr.status }
-        : { slot, registration: '', vin: '', licence_expiry: '', status: 'active' }
+        ? {
+            slot,
+            registration:           tr.registration || '',
+            vin:                    tr.vin || '',
+            licence_expiry:         tr.licence_expiry ? tr.licence_expiry.slice(0, 10) : '',
+            finance_institution:    tr.finance_institution || '',
+            finance_account_number: tr.finance_account_number || '',
+            finance_contract_end:   tr.finance_contract_end ? tr.finance_contract_end.slice(0, 10) : '',
+            status: tr.status,
+          }
+        : { slot, registration: '', vin: '', licence_expiry: '', finance_institution: '', finance_account_number: '', finance_contract_end: '', status: 'active' }
     })
     return {
       entity_id:           t.entity_id,
@@ -337,7 +375,9 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
       driver_name:         t.driver_name || '',
       licence_number:      t.licence_number || '',
       licence_expiry:      t.licence_expiry ? t.licence_expiry.slice(0, 10) : '',
-      finance_institution: t.finance_institution || '',
+      finance_institution:    t.finance_institution || '',
+      finance_account_number: t.finance_account_number || '',
+      finance_contract_end:   t.finance_contract_end ? t.finance_contract_end.slice(0, 10) : '',
       is_subcontractor:    t.is_subcontractor || false,
       subcontractor_name:  t.subcontractor_name || '',
       subcontractor_id:    t.subcontractor_id || null,
@@ -404,10 +444,15 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
     try {
       const payload = {
         ...form,
-        licence_expiry: form.licence_expiry || null,
+        licence_expiry:       form.licence_expiry || null,
+        finance_contract_end: form.finance_contract_end || null,
         trailers: form.trailers
           .filter(t => t.registration.trim())
-          .map(t => ({ ...t, licence_expiry: t.licence_expiry || null })),
+          .map(t => ({
+            ...t,
+            licence_expiry:       t.licence_expiry || null,
+            finance_contract_end: t.finance_contract_end || null,
+          })),
       }
       let savedTruck
       if (isEdit) {
@@ -553,6 +598,25 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
                     placeholder="Select or type institution…"
                     options={['WesBank (FNB)', 'MFC (Nedbank)', 'ABSA Vehicle Finance', 'Standard Bank Vehicle Finance', 'Nedbank Vehicle Finance', 'FNB Vehicle Finance', 'Capitec Bank', 'Investec', 'Bidvest Bank', 'African Bank', 'Discovery Bank', 'Mercantile Bank', 'Old Mutual Finance', 'Sasfin Bank']}
                   />
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Account Number</label>
+                    <input
+                      value={form.finance_account_number}
+                      onChange={e => set('finance_account_number', e.target.value)}
+                      placeholder="e.g. 1234567890"
+                      style={{ fontFamily: 'monospace' }}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Contract End Date</label>
+                    <input
+                      type="date"
+                      value={form.finance_contract_end}
+                      onChange={e => set('finance_contract_end', e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -793,6 +857,13 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
                 </div>
               )}
               {truck.finance_institution && <Detail label="Financier" value={truck.finance_institution} />}
+              {truck.finance_account_number && <Detail label="Account No." value={truck.finance_account_number} mono />}
+              {truck.finance_contract_end && (
+                <div>
+                  <div style={labelStyle}>Finance Contract End</div>
+                  <ExpiryBadge expiry={truck.finance_contract_end} />
+                </div>
+              )}
               {(truck.trailers || []).map(t => (
                 <div key={t.id}>
                   <div style={labelStyle}>Trailer {t.slot} — {t.registration || '—'}</div>
@@ -803,6 +874,13 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
                     </span>
                     {t.licence_expiry && <ExpiryBadge expiry={t.licence_expiry} />}
                   </div>
+                  {t.finance_institution && <div style={{ ...valueStyle, fontFamily: 'inherit', marginTop: 4, fontSize: 11, color: 'var(--text-secondary)' }}>{t.finance_institution}{t.finance_account_number ? ` · ${t.finance_account_number}` : ''}</div>}
+                  {t.finance_contract_end && (
+                    <div style={{ marginTop: 2 }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Contract end: </span>
+                      <ExpiryBadge expiry={t.finance_contract_end} />
+                    </div>
+                  )}
                 </div>
               ))}
               {truck.notes && (

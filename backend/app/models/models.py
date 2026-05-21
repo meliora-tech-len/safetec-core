@@ -362,7 +362,9 @@ class Truck(Base):
     licence_number = Column(String(100))
     licence_expiry = Column(DateTime(timezone=True))
 
-    finance_institution = Column(String(200))
+    finance_institution     = Column(String(200))
+    finance_account_number  = Column(String(100))
+    finance_contract_end    = Column(DateTime(timezone=True))
 
     is_subcontractor    = Column(Boolean, default=False, nullable=False)
     subcontractor_name  = Column(String(200))
@@ -405,6 +407,9 @@ class Trailer(Base):
     vin = Column(String(100))
     licence_number = Column(String(100))
     licence_expiry = Column(DateTime(timezone=True))
+    finance_institution    = Column(String(200))
+    finance_account_number = Column(String(100))
+    finance_contract_end   = Column(DateTime(timezone=True))
     status = Column(Enum(TrailerStatus), default=TrailerStatus.active, nullable=False)
     notes = Column(Text)
 

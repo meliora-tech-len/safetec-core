@@ -472,6 +472,9 @@ class TrailerBase(BaseModel):
     vin: Optional[str] = None
     licence_number: Optional[str] = None
     licence_expiry: Optional[datetime] = None
+    finance_institution:    Optional[str]      = None
+    finance_account_number: Optional[str]      = None
+    finance_contract_end:   Optional[datetime] = None
     status: TrailerStatus = TrailerStatus.active
     notes: Optional[str] = None
 
@@ -485,6 +488,9 @@ class TrailerUpdate(BaseModel):
     vin: Optional[str] = None
     licence_number: Optional[str] = None
     licence_expiry: Optional[datetime] = None
+    finance_institution:    Optional[str]      = None
+    finance_account_number: Optional[str]      = None
+    finance_contract_end:   Optional[datetime] = None
     status: Optional[TrailerStatus] = None
     notes: Optional[str] = None
 
@@ -510,7 +516,9 @@ class TruckBase(BaseModel):
     driver_name: Optional[str] = None
     licence_number: Optional[str] = None
     licence_expiry: Optional[datetime] = None
-    finance_institution: Optional[str] = None
+    finance_institution:    Optional[str]      = None
+    finance_account_number: Optional[str]      = None
+    finance_contract_end:   Optional[datetime] = None
     is_subcontractor:   bool = False
     subcontractor_name: Optional[str] = None
     subcontractor_id:   Optional[int] = None
@@ -534,7 +542,9 @@ class TruckUpdate(BaseModel):
     driver_name: Optional[str] = None
     licence_number: Optional[str] = None
     licence_expiry: Optional[datetime] = None
-    finance_institution: Optional[str] = None
+    finance_institution:    Optional[str]      = None
+    finance_account_number: Optional[str]      = None
+    finance_contract_end:   Optional[datetime] = None
     is_subcontractor:   Optional[bool] = None
     subcontractor_name: Optional[str]  = None
     subcontractor_id:   Optional[int]  = None
