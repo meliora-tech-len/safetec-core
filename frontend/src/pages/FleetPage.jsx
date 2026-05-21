@@ -420,8 +420,8 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
       const newDriverId = selectedDriverId ? Number(selectedDriverId) : null
       const oldDriverId = currentDriverId  ? Number(currentDriverId)  : null
       if (newDriverId !== oldDriverId) {
-        if (oldDriverId) await api.put(`/api/drivers/${oldDriverId}`, { truck_id: null })
-        if (newDriverId) await api.put(`/api/drivers/${newDriverId}`, { truck_id: savedTruck.id })
+        if (oldDriverId) await api.put(`/api/drivers/${oldDriverId}`, { truck_id: null, driver_slot: null })
+        if (newDriverId) await api.put(`/api/drivers/${newDriverId}`, { truck_id: savedTruck.id, driver_slot: 1 })
       }
       onSave()
     } catch (err) {
