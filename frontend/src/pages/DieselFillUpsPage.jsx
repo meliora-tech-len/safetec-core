@@ -7,7 +7,7 @@ import {
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
-import { Plus, Search, X, Trash2, AlertCircle, Fuel, Save } from 'lucide-react'
+import { Plus, Search, X, Trash2, Fuel, Save } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import SearchableSelect from '../components/SearchableSelect'
 import VerifyBadge from '../components/VerifyBadge'
@@ -23,7 +23,6 @@ function rawApi(path, opts = {}) {
 }
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const OUKOP_NAMES = ['oukop', 'oukop diesel']
 const today = new Date().toISOString().slice(0, 10)
 
 const BLANK = {
@@ -400,8 +399,6 @@ export default function DieselFillUpsPage() {
 
             {!loading && visible.map(f => {
               const isEditing = editingId === f.id
-              const isOukop = OUKOP_NAMES.some(n => (f.supplier_name || '').toLowerCase().includes(n))
-
               return isEditing ? (
                 <EditRow
                   key={f.id}
@@ -425,11 +422,6 @@ export default function DieselFillUpsPage() {
                   <td style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 600 }}>{f.truck_registration || '—'}</td>
                   <td>
                     <div style={{ fontSize: 13 }}>{f.supplier_name}</div>
-                    {isOukop && (
-                      <div style={{ fontSize: 10, color: '#d97706', display: 'flex', alignItems: 'center', gap: 3 }}>
-                        <AlertCircle size={10} /> Reconcile on statement
-                      </div>
-                    )}
                   </td>
                   <td className="text-right" style={{ fontSize: 13 }}>{parseFloat(f.litres).toFixed(2)}</td>
                   <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>R {parseFloat(f.rate_per_litre).toFixed(2)}</td>
