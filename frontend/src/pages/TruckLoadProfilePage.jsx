@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
@@ -17,6 +17,7 @@ import {
 } from '../services/api'
 import toast from 'react-hot-toast'
 import DeleteModal from '../components/DeleteModal'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 const fmt    = (n) => n == null ? '—' : `R ${parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtNum = (n) => n == null ? '—' : parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
@@ -416,6 +417,9 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
     return acc
   }, {})
 
+  const { sort: addSort, onSort: onAddSort } = useSort('load_date', 'asc')
+  const sortedAdditional = useMemo(() => applySort(entries, addSort), [entries, addSort])
+
   return (
     <div style={{ marginTop: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -479,16 +483,16 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
           <table className="data-table">
             <thead>
               <tr>
-                <th>Driver</th>
-                <th>Description</th>
-                <th>Date</th>
-                <th style={{ textAlign: 'right' }}>Amount</th>
+                <SortableHeader label="Driver" col="driver_name" sort={addSort} onSort={onAddSort} />
+                <SortableHeader label="Description" col="route_name" sort={addSort} onSort={onAddSort} />
+                <SortableHeader label="Date" col="load_date" sort={addSort} onSort={onAddSort} />
+                <SortableHeader label="Amount" col="amount" sort={addSort} onSort={onAddSort} style={{ textAlign: 'right' }} />
                 <th>Notes</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {entries.map(e => (
+              {sortedAdditional.map(e => (
                 <tr key={e.id}>
                   <td style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -603,6 +607,9 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
 
   const total = entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
 
+  const { sort: foodSort, onSort: onFoodSort } = useSort('payment_date', 'asc')
+  const sortedFood = useMemo(() => applySort(entries, foodSort), [entries, foodSort])
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -665,15 +672,15 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
           <table className="data-table">
             <thead>
               <tr>
-                <th>Driver</th>
-                <th>Date</th>
+                <SortableHeader label="Driver" col="driver_name" sort={foodSort} onSort={onFoodSort} />
+                <SortableHeader label="Date" col="payment_date" sort={foodSort} onSort={onFoodSort} />
                 <th>Notes</th>
-                <th style={{ textAlign: 'right' }}>Amount</th>
+                <SortableHeader label="Amount" col="amount" sort={foodSort} onSort={onFoodSort} style={{ textAlign: 'right' }} />
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {entries.map(e => (
+              {sortedFood.map(e => (
                 <tr key={e.id}>
                   <td style={{ fontWeight: 600 }}>{e.driver_name}</td>
                   <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.payment_date)}</td>
@@ -1051,6 +1058,9 @@ export default function TruckLoadProfilePage() {
   const showSub = truck?.is_subcontractor || false
   const COLS    = (showPo ? 11 : 10) + (showSub ? 3 : 0)
 
+  const { sort: loadSort, onSort: onLoadSort } = useSort('load_date', 'asc')
+  const sortedLoads = useMemo(() => applySort(loads, loadSort), [loads, loadSort])
+
   const TABS = [
     { key: 'loads',  label: 'Loads'         },
     { key: 'diesel', label: 'Diesel'         },
@@ -1230,16 +1240,15 @@ export default function TruckLoadProfilePage() {
           <table className="data-table" style={{ minWidth: 900 }}>
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Slip #</th>
+                <SortableHeader label="Date" col="load_date" sort={loadSort} onSort={onLoadSort} />
+                <SortableHeader label="Slip #" col="slip_number" sort={loadSort} onSort={onLoadSort} />
                 {showPo && <th>PO #</th>}
-                <th>Driver</th>
-                <th>Mine</th>
-                {/* <th>Supplier</th> */}
-                <th>Tonnes</th>
-                <th>Rate/t</th>
-                <th style={{ textAlign: 'right' }}>Excl VAT</th>
-                <th style={{ textAlign: 'right' }}>Incl VAT</th>
+                <SortableHeader label="Driver" col="driver_name" sort={loadSort} onSort={onLoadSort} />
+                <SortableHeader label="Mine" col="mine_name" sort={loadSort} onSort={onLoadSort} />
+                <SortableHeader label="Tonnes" col="tonnes" sort={loadSort} onSort={onLoadSort} />
+                <SortableHeader label="Rate/t" col="rate_per_ton" sort={loadSort} onSort={onLoadSort} />
+                <SortableHeader label="Excl VAT" col="amount_excl_vat" sort={loadSort} onSort={onLoadSort} style={{ textAlign: 'right' }} />
+                <SortableHeader label="Incl VAT" col="amount_incl_vat" sort={loadSort} onSort={onLoadSort} style={{ textAlign: 'right' }} />
                 {showSub && <>
                   <th style={{ textAlign: 'right', color: 'var(--accent)', whiteSpace: 'nowrap' }}>Sub Rate/t</th>
                   <th style={{ textAlign: 'right', color: 'var(--accent)', whiteSpace: 'nowrap' }}>Sub Excl VAT</th>
@@ -1261,7 +1270,7 @@ export default function TruckLoadProfilePage() {
                   No loads for {MONTHS[month - 1]} {year} — click "Add Load" to start
                 </td></tr>
               )}
-              {!loading && loads.map(l => {
+              {!loading && sortedLoads.map(l => {
                 const isEditing = editingId === l.id
                 return isEditing ? (
                   <EditRow key={l.id} {...editRowProps} />
