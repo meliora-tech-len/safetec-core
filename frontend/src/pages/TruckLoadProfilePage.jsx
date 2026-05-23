@@ -1056,7 +1056,8 @@ export default function TruckLoadProfilePage() {
   }, {})
   const showPo  = truck?.notes?.toLowerCase() === 'intsimbi'
   const showSub = truck?.is_subcontractor || false
-  const COLS    = (showPo ? 11 : 10) + (showSub ? 3 : 0)
+  const vatRegistered = entities.find(e => e.id === truck?.entity_id)?.vat_registered !== false
+  const COLS    = (showPo ? 11 : 10) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
 
   const { sort: loadSort, onSort: onLoadSort } = useSort('load_date', 'asc')
   const sortedLoads = useMemo(() => applySort(loads, loadSort), [loads, loadSort])
@@ -1195,8 +1196,8 @@ export default function TruckLoadProfilePage() {
               { label: 'Loads',    value: summary.total_loads },
               { label: 'Tonnes',   value: fmtNum(summary.total_tonnes) },
               { label: 'Excl VAT', value: fmt(summary.total_excl_vat) },
-              { label: 'Incl VAT', value: fmt(summary.total_incl_vat), accent: true },
-            ].map(c => (
+              vatRegistered && { label: 'Incl VAT', value: fmt(summary.total_incl_vat), accent: true },
+            ].filter(Boolean).map(c => (
               <div key={c.label} style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)' }}>{c.label}</div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: c.accent ? 'var(--accent)' : 'var(--text-primary)' }}>{c.value}</div>
@@ -1248,7 +1249,7 @@ export default function TruckLoadProfilePage() {
                 <SortableHeader label="Tonnes" col="tonnes" sort={loadSort} onSort={onLoadSort} />
                 <SortableHeader label="Rate/t" col="rate_per_ton" sort={loadSort} onSort={onLoadSort} />
                 <SortableHeader label="Excl VAT" col="amount_excl_vat" sort={loadSort} onSort={onLoadSort} style={{ textAlign: 'right' }} />
-                <SortableHeader label="Incl VAT" col="amount_incl_vat" sort={loadSort} onSort={onLoadSort} style={{ textAlign: 'right' }} />
+                {vatRegistered && <SortableHeader label="Incl VAT" col="amount_incl_vat" sort={loadSort} onSort={onLoadSort} style={{ textAlign: 'right' }} />}
                 {showSub && <>
                   <th style={{ textAlign: 'right', color: 'var(--accent)', whiteSpace: 'nowrap' }}>Sub Rate/t</th>
                   <th style={{ textAlign: 'right', color: 'var(--accent)', whiteSpace: 'nowrap' }}>Sub Excl VAT</th>
@@ -1299,7 +1300,7 @@ export default function TruckLoadProfilePage() {
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(l.tonnes)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(l.rate_per_ton)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(l.amount_excl_vat)}</td>
-                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmt(l.amount_incl_vat)}</td>
+                    {vatRegistered && <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmt(l.amount_incl_vat)}</td>}
                     {showSub && <>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_rate)}</td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_amount_excl_vat)}</td>
@@ -1327,7 +1328,7 @@ export default function TruckLoadProfilePage() {
                   <td style={{ textAlign: 'right', padding: '10px 12px' }}>{fmtNum(summary.total_tonnes)}</td>
                   <td />
                   <td style={{ textAlign: 'right', padding: '10px 12px' }}>{fmt(summary.total_excl_vat)}</td>
-                  <td style={{ textAlign: 'right', padding: '10px 12px', color: 'var(--accent)' }}>{fmt(summary.total_incl_vat)}</td>
+                  {vatRegistered && <td style={{ textAlign: 'right', padding: '10px 12px', color: 'var(--accent)' }}>{fmt(summary.total_incl_vat)}</td>}
                   <td colSpan={2 + (showSub ? 3 : 0)} />
                 </tr>
               </tfoot>

@@ -16,6 +16,7 @@ const DEFAULT_FORM = {
   primary_color: '#2563eb',
   invoice_prefix: '', invoice_counter: 0, quote_prefix: 'QT', quote_counter: 0,
   vat_rate: '0.15',
+  vat_registered: true,
 }
 
 const PRESET_COLORS = [
@@ -82,6 +83,7 @@ export default function EntitiesPage() {
       quote_prefix: entity.quote_prefix || 'QT',
       quote_counter: entity.quote_counter || 0,
       vat_rate: String(entity.vat_rate || '0.15'),
+      vat_registered: entity.vat_registered !== false,
     })
     setLogoFile(null)
     setLogoPreview(entity.logo_url || null)
@@ -113,6 +115,7 @@ export default function EntitiesPage() {
         invoice_counter: parseInt(form.invoice_counter) || 0,
         quote_counter: parseInt(form.quote_counter) || 0,
         vat_rate: parseFloat(form.vat_rate) || 0.15,
+        vat_registered: !!form.vat_registered,
       }
 
       let saved
@@ -267,6 +270,15 @@ export default function EntitiesPage() {
                   <div>
                     <label className="form-label">VAT Number</label>
                     <input className="form-input" value={form.vat_number} onChange={e => setForm(p => ({ ...p, vat_number: e.target.value }))} placeholder="10-digit VAT number" />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, cursor: 'pointer', userSelect: 'none' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!form.vat_registered}
+                        onChange={e => setForm(p => ({ ...p, vat_registered: e.target.checked }))}
+                        style={{ width: 15, height: 15, cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>VAT Registered</span>
+                    </label>
                   </div>
                   <div>
                     <label className="form-label">Email</label>
@@ -518,7 +530,11 @@ function EntityCard({ entity, onEdit, onArchive, onRestore }) {
           {isArchived && <span style={{ fontSize: 11, color: '#f59e0b', background: 'rgba(245,158,11,0.12)', padding: '1px 6px', borderRadius: 4 }}>Archived</span>}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-          {[entity.vat_number && `VAT: ${entity.vat_number}`, `Next invoice: ${nextInv}`].filter(Boolean).join('  ·  ')}
+          {[
+            entity.vat_number && `VAT: ${entity.vat_number}`,
+            entity.vat_registered === false && <span key="novat" style={{ color: '#d97706', fontWeight: 600 }}>Non-VAT</span>,
+            `Next invoice: ${nextInv}`,
+          ].filter(Boolean).reduce((acc, item, i) => i === 0 ? [item] : [...acc, '  ·  ', item], [])}
         </div>
       </div>
 

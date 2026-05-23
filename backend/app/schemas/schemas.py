@@ -44,6 +44,7 @@ class EntityBase(BaseModel):
     invoice_prefix: Optional[str] = None
     quote_prefix: Optional[str] = "QT"
     vat_rate: Optional[Decimal] = Decimal("0.15")
+    vat_registered: bool = True
     primary_color: Optional[str] = "#2563eb"
 
 class EntityCreate(EntityBase):
@@ -67,6 +68,7 @@ class EntityUpdate(BaseModel):
     quote_prefix: Optional[str] = None
     quote_counter: Optional[int] = None
     vat_rate: Optional[Decimal] = None
+    vat_registered: Optional[bool] = None
     primary_color: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -75,6 +77,7 @@ class EntityOut(EntityBase):
     invoice_counter: int
     quote_counter: int
     quote_prefix: Optional[str] = "QT"
+    vat_registered: bool = True
     is_active: bool
     created_at: datetime
     logo_path: Optional[str] = None

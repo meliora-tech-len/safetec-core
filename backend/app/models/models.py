@@ -99,6 +99,7 @@ class BusinessEntity(Base):
 
     # Tax
     vat_rate = Column(Numeric(5, 4), default=0.15)
+    vat_registered = Column(Boolean, default=True, nullable=False)
 
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
