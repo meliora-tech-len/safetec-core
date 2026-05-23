@@ -394,6 +394,8 @@ class LineItemBase(BaseModel):
     is_vat_exempt: bool = False
     sort_order: int = 0
     line_type: str = 'item'
+    loading_number: Optional[str] = None
+    offloading_number: Optional[str] = None
 
     @field_validator('line_type')
     @classmethod

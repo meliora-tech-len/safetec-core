@@ -16,6 +16,7 @@ const emptyLine = (type = 'item') => ({
   description: '', quantity: '', unit_price: '', amount: '',
   is_vat_exempt: false, sort_order: 0,
   line_type: type,
+  loading_number: '', offloading_number: '',
 })
 
 function LineTypeChip({ value, onChange }) {
@@ -114,6 +115,8 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             is_vat_exempt: li.is_vat_exempt || false,
             sort_order: li.sort_order,
             line_type: li.line_type || 'item',
+            loading_number: li.loading_number || '',
+            offloading_number: li.offloading_number || '',
           })))
         } else {
           const defaultEntity = activeEntity || entsRes.data[0]
@@ -244,6 +247,8 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
               is_vat_exempt: l.is_vat_exempt,
               sort_order: i,
               line_type: l.line_type || 'item',
+              loading_number: l.loading_number || null,
+              offloading_number: l.offloading_number || null,
             }
           }),
       }
@@ -419,7 +424,9 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             <div style={{ marginTop: 16 }}>
               {/* Column labels — only relevant for item rows */}
               <div style={{ ...styles.lineHeader, paddingLeft: 62 }}>
-                <span style={{ flex: 4 }}>Description</span>
+                <span style={{ flex: 2.5 }}>Description</span>
+                <span style={{ flex: 1.5, textAlign: 'right' }}>Loading #</span>
+                <span style={{ flex: 1.5, textAlign: 'right' }}>Offloading #</span>
                 <span style={{ flex: 1, textAlign: 'right' }}>Qty</span>
                 <span style={{ flex: 2, textAlign: 'right' }}>Rate</span>
                 <span style={{ flex: 2, textAlign: 'right' }}>Amount</span>
@@ -450,7 +457,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                         <input
                           className="form-input"
                           style={{
-                            flex: isItem ? 4 : 9,
+                            flex: isItem ? 2.5 : 12,
                             fontSize: 13,
                             fontWeight: lt === 'header' ? 700 : 400,
                             fontStyle: lt === 'note' ? 'italic' : 'normal',
@@ -471,6 +478,20 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
 
                       {/* Financial columns — item rows only */}
                       {isItem && (<>
+                        <input
+                          className="form-input"
+                          style={{ flex: 1.5, fontSize: 13, textAlign: 'right' }}
+                          placeholder="—"
+                          value={line.loading_number}
+                          onChange={e => updateLine(idx, 'loading_number', e.target.value)}
+                        />
+                        <input
+                          className="form-input"
+                          style={{ flex: 1.5, fontSize: 13, textAlign: 'right' }}
+                          placeholder="—"
+                          value={line.offloading_number}
+                          onChange={e => updateLine(idx, 'offloading_number', e.target.value)}
+                        />
                         <input
                           className="form-input"
                           type="number"

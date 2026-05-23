@@ -200,7 +200,7 @@ export default function SupplierProfilePage() {
   const validate = (form) => {
     if (!form.invoice_date) return 'Invoice date is required'
     if (!form.invoice_number.trim()) return 'Invoice number is required'
-    if (!form.amount || isNaN(form.amount) || parseFloat(form.amount) <= 0) return 'Valid amount is required'
+    if (form.amount === '' || isNaN(form.amount)) return 'Valid amount is required'
     return null
   }
 
@@ -440,6 +440,7 @@ export default function SupplierProfilePage() {
                 <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
                 <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
                 <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
+                <th style={styles.th}>Notes</th>
                 <th style={styles.th}></th>
               </tr>
             </thead>
@@ -460,7 +461,7 @@ export default function SupplierProfilePage() {
                   />
                 : <tr>
                     <td
-                      colSpan={8 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 1 : 0)}
+                      colSpan={9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 1 : 0)}
                       style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}
                     >
                       No invoices yet — click "Add Invoice" to start
@@ -664,7 +665,7 @@ export default function SupplierProfilePage() {
                           <td style={{ ...styles.td, fontWeight: 600 }}>
                             {isEditing ? (
                               <input
-                                type="number" step="0.01" min="0"
+                                type="number" step="0.01"
                                 value={f.amount}
                                 onChange={e => setEditForm(p => ({ ...p, amount: e.target.value }))}
                                 onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
@@ -736,6 +737,26 @@ export default function SupplierProfilePage() {
                             </button>
                           </td>
 
+                          {/* Notes */}
+                          <td style={{ ...styles.td, maxWidth: 180 }}>
+                            {isEditing ? (
+                              <input
+                                value={f.notes}
+                                onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))}
+                                onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                onClick={e => e.stopPropagation()}
+                                style={{ ...styles.cellInput, minWidth: 120 }}
+                                placeholder="Notes"
+                              />
+                            ) : (
+                              <span style={{ color: 'var(--text-muted)', fontSize: 12 }} title={inv.notes}>
+                                {inv.notes
+                                  ? inv.notes.length > 30 ? inv.notes.slice(0, 30) + '…' : inv.notes
+                                  : '—'}
+                              </span>
+                            )}
+                          </td>
+
                           {/* Actions */}
                           <td style={{ ...styles.td, whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
                             {isEditing ? (
@@ -770,7 +791,7 @@ export default function SupplierProfilePage() {
                         Statement Total:
                       </td>
                       <td style={{ ...styles.td, fontWeight: 700 }}>{formatCurrency(group.subtotal)}</td>
-                      <td colSpan={4 + (isDiesel ? 1 : 0)} style={styles.td} />
+                      <td colSpan={5 + (isDiesel ? 1 : 0)} style={styles.td} />
                     </tr>
                   </tfoot>
                 </table>
@@ -826,7 +847,7 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
       </td>
       <td style={styles.td}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <input type="number" step="0.01" min="0" placeholder="0.00" value={form.amount}
+          <input type="number" step="0.01" placeholder="0.00" value={form.amount}
             onChange={e => { set('amount', e.target.value); onAmountEdit?.() }}
             onKeyDown={e => onKeyDown(e, onSave, onCancel)}
             style={{ ...styles.cellInput, width: 90, textAlign: 'right' }} />
@@ -854,6 +875,12 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
       </td>
       <td style={styles.td} />{/* Verified — n/a for new */}
       <td style={styles.td} />{/* Paid — n/a for new */}
+      <td style={styles.td}>
+        <input value={form.notes} placeholder="Notes"
+          onChange={e => set('notes', e.target.value)}
+          onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+          style={{ ...styles.cellInput, minWidth: 120 }} />
+      </td>
       <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
         <button onClick={onSave} disabled={saving} className="btn btn-icon btn-primary" style={{ marginRight: 4 }} title="Save (Enter)"><Save size={14} /></button>
         <button onClick={onCancel} className="btn btn-icon btn-ghost" title="Cancel (Esc)"><X size={14} /></button>
