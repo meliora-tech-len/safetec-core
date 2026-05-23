@@ -12,7 +12,7 @@ import {
   getMines, getDrivers, getSettings, getSuppliers,
   getDieselFillUps, createDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, getCurrentDieselRate,
   addDriverAdditionalLoad, deleteDriverAdditionalLoad, archiveDriverAdditionalLoad,
-  addDriverFoodPayment, getTruckAdditionalLoads,
+  addDriverFoodPayment, getTruckAdditionalLoads, getTruckFoodPayments, deleteDriverFoodPayment,
   getTruckMonthlyExpenses, upsertTruckMonthlyExpenses,
 } from '../services/api'
 import toast from 'react-hot-toast'
@@ -549,13 +549,26 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
 
 // ── Food Allowance section ─────────────────────────────────────────────────────
 function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId }) {
-  const [form, setForm]              = useState({ ...EMPTY_FOOD })
-  const [saving, setSaving]          = useState(false)
-  const [addingNew, setAddingNew]    = useState(false)
-  const [sessionEntries, setSession] = useState([])
+  const [entries, setEntries]     = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [form, setForm]           = useState({ ...EMPTY_FOOD })
+  const [saving, setSaving]       = useState(false)
+  const [addingNew, setAddingNew] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const formDriver = drivers.find(d => String(d.id) === String(form.driver_id))
+
+  const fetchEntries = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await getTruckFoodPayments(truck.id, { year, month })
+      setEntries(res.data)
+    } catch { /* silently ignore */ }
+    finally { setLoading(false) }
+  }, [truck.id, year, month])
+
+  useEffect(() => { fetchEntries() }, [fetchEntries])
 
   const handleOpenAdd = () => {
     setForm({ ...EMPTY_FOOD, driver_id: selectedDriverId || '' })
@@ -571,7 +584,6 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
     if (!form.driver_id) return toast.error('Select a driver')
     const amount = parseFloat(form.amount) || 0
     if (amount <= 0) return toast.error('Enter an amount')
-
     setSaving(true)
     try {
       await addDriverFoodPayment(form.driver_id, year, month, {
@@ -581,19 +593,26 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
       })
       const driverName = formDriver ? `${formDriver.first_name} ${formDriver.last_name}` : 'Driver'
       toast.success(`Food allowance saved for ${driverName}`)
-      setSession(prev => [...prev, { driver: driverName, amount, date: form.payment_date }])
       setAddingNew(false)
       setForm({ ...EMPTY_FOOD })
+      fetchEntries()
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Failed to save food allowance')
     } finally { setSaving(false) }
   }
 
+  const total = entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        {entries.length > 0 && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            {entries.length} {entries.length === 1 ? 'entry' : 'entries'} · {fmt(total)}
+          </span>
+        )}
         <button className="btn btn-primary" onClick={handleOpenAdd} disabled={addingNew}
-          style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
           <Plus size={14} /> Add Food Allowance
         </button>
       </div>
@@ -634,36 +653,68 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
         </div>
       )}
 
-      {sessionEntries.length > 0 ? (
-        <div className="card" style={{ overflow: 'auto' }}>
-          <div style={{ padding: '10px 16px', fontWeight: 700, fontSize: 13, borderBottom: '1px solid var(--border)' }}>
-            Added this session
+      {loading ? null : entries.length === 0 ? (
+        !addingNew && (
+          <div className="empty-state" style={{ padding: 40 }}>
+            <UtensilsCrossed size={32} />
+            <p>No food allowance entries recorded this month</p>
           </div>
+        )
+      ) : (
+        <div className="card" style={{ overflow: 'auto' }}>
           <table className="data-table">
             <thead>
               <tr>
                 <th>Driver</th>
                 <th>Date</th>
+                <th>Notes</th>
                 <th style={{ textAlign: 'right' }}>Amount</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {sessionEntries.map((e, i) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: 600 }}>{e.driver}</td>
-                  <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{fmtDate(e.date)}</td>
+              {entries.map(e => (
+                <tr key={e.id}>
+                  <td style={{ fontWeight: 600 }}>{e.driver_name}</td>
+                  <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.payment_date)}</td>
+                  <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
                   <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmt(e.amount)}</td>
+                  <td>
+                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                      onClick={() => setDeleteTarget(e)}>
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
+            {entries.length > 0 && (
+              <tfoot>
+                <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
+                  <td colSpan={3} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
+                  <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(total)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
-      ) : !addingNew ? (
-        <div className="empty-state" style={{ padding: 40 }}>
-          <UtensilsCrossed size={32} />
-          <p>No food allowance entries added yet</p>
-        </div>
-      ) : null}
+      )}
+
+      <DeleteModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete Food Allowance"
+        description={deleteTarget ? `${deleteTarget.driver_name} — ${fmt(deleteTarget.amount)} on ${fmtDate(deleteTarget.payment_date)}` : ''}
+        onDelete={async () => {
+          try {
+            await deleteDriverFoodPayment(deleteTarget.driver_id, deleteTarget.pay_year, deleteTarget.pay_month, deleteTarget.id)
+            toast.success('Entry deleted')
+            fetchEntries()
+          } catch { toast.error('Failed to delete') }
+          setDeleteTarget(null)
+        }}
+      />
     </div>
   )
 }

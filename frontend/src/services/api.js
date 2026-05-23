@@ -168,6 +168,10 @@ export const downloadPayslipPdf = async (driverId, year, month, filename) => {
 }
 export const getTruckAdditionalLoads = (truckId, params = {}) =>
   api.get(`/fleet/trucks/${truckId}/additional-loads`, { params })
+export const getTruckFoodPayments = (truckId, params = {}) =>
+  api.get(`/fleet/trucks/${truckId}/food-payments`, { params })
+export const deleteDriverFoodPayment = (driverId, year, month, paymentId) =>
+  api.delete(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}`)
 
 // ── Driver Salary Configs ─────────────────────────────────────────────────────
 export const getDriverSalaryConfigs = (params = {}) => api.get('/driver-salary-configs', { params })

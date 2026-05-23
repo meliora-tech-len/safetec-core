@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
     PersonalVehicleCreate, PersonalVehicleUpdate, PersonalVehicleOut,
@@ -302,6 +302,45 @@ def list_truck_additional_loads(
         d = {c.name: getattr(al, c.name) for c in al.__table__.columns}
         d["driver_id"]   = driver.id
         d["driver_name"] = f"{driver.first_name} {driver.last_name}".strip()
+        result.append(d)
+    return result
+
+
+# ── Food payments for a truck (cross-driver view) ─────────────────────────────
+
+@router.get("/trucks/{truck_id}/food-payments")
+def list_truck_food_payments(
+    truck_id: int,
+    year: int = Query(...),
+    month: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    truck = db.query(Truck).filter(Truck.id == truck_id).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found")
+    _check_entity_access(truck.entity_id, current_user)
+
+    rows = (
+        db.query(DriverFoodPayment, Driver)
+        .join(DriverPayCycle, DriverFoodPayment.pay_cycle_id == DriverPayCycle.id)
+        .join(Driver, DriverPayCycle.driver_id == Driver.id)
+        .filter(
+            Driver.truck_id == truck_id,
+            DriverPayCycle.pay_year == year,
+            DriverPayCycle.pay_month == month,
+        )
+        .order_by(DriverFoodPayment.payment_date)
+        .all()
+    )
+
+    result = []
+    for fp, driver in rows:
+        d = {c.name: getattr(fp, c.name) for c in fp.__table__.columns}
+        d["driver_id"]   = driver.id
+        d["driver_name"] = f"{driver.first_name} {driver.last_name}".strip()
+        d["pay_year"]    = year
+        d["pay_month"]   = month
         result.append(d)
     return result
 
