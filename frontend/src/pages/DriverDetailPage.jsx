@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, X, Edit2, Check } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, X, Edit2, Check, Download } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import VerifyBadge from '../components/VerifyBadge'
@@ -244,6 +244,8 @@ export default function DriverDetailPage() {
   const [entities,    setEntities]    = useState([])
   const [loading,     setLoading]     = useState(true)
 
+  const [pdfLoading, setPdfLoading] = useState(false)
+
   // Modal state
   const [tripModal,   setTripModal]   = useState(false)
   const [alModal,     setAlModal]     = useState(null)   // null | entry (new if no id)
@@ -338,6 +340,23 @@ export default function DriverDetailPage() {
   const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed : 0) + loanDedParsed + cashDedParsed + totalFoodPaid
   const netPayable = liveCalc ? liveCalc.gross - totalDeductions : 0
 
+  const downloadPayslip = async () => {
+    setPdfLoading(true)
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API}/api/drivers/${driverId}/cycles/${year}/${month}/payslip-pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Failed to generate payslip')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const name = driver ? `payslip_${driver.last_name}_${driver.first_name}_${year}_${String(month).padStart(2,'0')}.pdf` : `payslip_${year}_${String(month).padStart(2,'0')}.pdf`
+      a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url)
+    } catch { toast.error('Failed to generate payslip PDF') }
+    finally { setPdfLoading(false) }
+  }
+
   // Save loads
   const saveLoads = async () => {
     setSavingLoads(true)
@@ -396,7 +415,10 @@ export default function DriverDetailPage() {
           <button className="btn-icon" onClick={prevMonth}><ChevronLeft size={16} /></button>
           <span style={{ fontWeight: 600, fontSize: 14, minWidth: 130, textAlign: 'center' }}>{MONTHS[month - 1]} {year}</span>
           <button className="btn-icon" onClick={nextMonth}><ChevronRight size={16} /></button>
-          <button className="btn-secondary" style={{ marginLeft: 12 }} onClick={() => setEditModal(true)}><Edit2 size={13} /> Edit driver</button>
+          <button className="btn-secondary" onClick={downloadPayslip} disabled={pdfLoading} title="Download payslip PDF">
+            <Download size={13} /> {pdfLoading ? 'Generating…' : 'Payslip PDF'}
+          </button>
+          <button className="btn-secondary" style={{ marginLeft: 4 }} onClick={() => setEditModal(true)}><Edit2 size={13} /> Edit driver</button>
         </div>
       </div>
 

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import calendar
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from typing import List, Optional
@@ -23,6 +24,7 @@ from app.schemas.schemas import (
 )
 from app.services.audit import log_action
 from app.services.payroll_calculator import calculate_pay_cycle
+from app.services.payslip_generator import generate_payslip_pdf
 from app.services.verification import apply_verify_step, get_verification_display
 from app.api.routes.payroll_settings import _get_current as _get_payroll_settings
 
@@ -707,3 +709,34 @@ def verify_food_payment(
     d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}
     d.update(get_verification_display(db, entry))
     return d
+
+
+# ─── Payslip PDF ────────────────────────────────────────────────────────────
+
+@router.get("/{driver_id}/cycles/{year}/{month}/payslip-pdf")
+def download_payslip_pdf(
+    driver_id: int, year: int, month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    _check_access(driver.entity_id, current_user)
+
+    cycle = _get_or_create_cycle(driver_id, year, month, db)
+    settings = _get_payroll_settings(db)
+    driver_type = driver.driver_type.value if driver.driver_type else "permanent"
+    calc = calculate_pay_cycle(cycle, settings, driver_type=driver_type)
+    calc_f = {k: float(v) if isinstance(v, Decimal) else v for k, v in calc.items()}
+
+    entity = driver.entity
+    pdf_bytes = generate_payslip_pdf(driver, cycle, calc_f, entity)
+
+    from calendar import month_abbr
+    filename = f"payslip_{driver.last_name}_{driver.first_name}_{year}_{month:02d}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

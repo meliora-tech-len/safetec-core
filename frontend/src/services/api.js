@@ -159,6 +159,13 @@ export const archiveDriverAdditionalLoad = (driverId, year, month, loadId) =>
   api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/archive`)
 export const addDriverFoodPayment = (driverId, year, month, data) =>
   api.post(`/drivers/${driverId}/cycles/${year}/${month}/food-payments`, data)
+export const downloadPayslipPdf = async (driverId, year, month, filename) => {
+  const res = await api.get(`/drivers/${driverId}/cycles/${year}/${month}/payslip-pdf`, { responseType: 'blob' })
+  const url = URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename || `payslip_${year}_${String(month).padStart(2, '0')}.pdf`
+  a.click(); URL.revokeObjectURL(url)
+}
 export const getTruckAdditionalLoads = (truckId, params = {}) =>
   api.get(`/fleet/trucks/${truckId}/additional-loads`, { params })
 
