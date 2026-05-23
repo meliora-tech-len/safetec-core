@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Plus, Trash2, AlertCircle, ArrowLeft, Save } from 'lucide-react'
+import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
-import { getEntities, getSuppliers, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
+import { getEntities, getSuppliers, getCustomers, createCustomer, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
 
 const LINE_TYPES = [
   { value: 'item',   label: 'Item',   color: 'var(--accent)' },
@@ -57,12 +57,16 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
 
   const [entities, setEntities] = useState([])
   const [suppliers, setSuppliers] = useState([])
+  const [customers, setCustomers] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   const [entityId, setEntityId] = useState('')
+  const [recipientType, setRecipientType] = useState('supplier') // 'supplier' | 'customer'
   const [supplierId, setSupplierId] = useState('')
+  const [customerId, setCustomerId] = useState('')
+  const [quickAddOpen, setQuickAddOpen] = useState(false)
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [invoiceNumberEdited, setInvoiceNumberEdited] = useState(false) // track if user manually edited
   const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10))
@@ -87,7 +91,13 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           const inv = (await getInvoice(id)).data
           if (ignore) return
           setEntityId(String(inv.entity_id))
-          setSupplierId(String(inv.supplier_id))
+          if (inv.customer_id) {
+            setRecipientType('customer')
+            setCustomerId(String(inv.customer_id))
+          } else {
+            setRecipientType('supplier')
+            setSupplierId(String(inv.supplier_id || ''))
+          }
           setInvoiceNumber(inv.invoice_number)
           setIssueDate(inv.issue_date?.slice(0, 10) || new Date().toISOString().slice(0, 10))
           setDueDate(inv.due_date?.slice(0, 10) || '')
@@ -125,12 +135,15 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
     return () => { ignore = true }
   }, [id])
 
-  // ── Fetch suppliers for selected entity ──────────────────────────
+  // ── Fetch suppliers and customers for selected entity ────────────
   useEffect(() => {
-    if (!entityId) { setSuppliers([]); return }
+    if (!entityId) { setSuppliers([]); setCustomers([]); return }
     let ignore = false
     getSuppliers({ entity_id: parseInt(entityId), limit: 500 })
       .then(res => { if (!ignore) setSuppliers(res.data) })
+      .catch(() => {})
+    getCustomers({ entity_id: parseInt(entityId), limit: 500 })
+      .then(res => { if (!ignore) setCustomers(res.data) })
       .catch(() => {})
     return () => { ignore = true }
   }, [entityId])
@@ -187,12 +200,11 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
   const vatAmount = vatBase * vatRate
   const total = subtotal + vatAmount
 
-  const filteredSuppliers = suppliers
-
   // ── Save ──────────────────────────────────────────────────────────
   const handleSave = async (statusOverride = null) => {
-    if (!entityId || !supplierId || !invoiceNumber) {
-      setError('Entity, supplier, and invoice number are required')
+    const hasRecipient = recipientType === 'supplier' ? !!supplierId : !!customerId
+    if (!entityId || !hasRecipient || !invoiceNumber) {
+      setError(`Entity, ${recipientType}, and invoice number are required`)
       return
     }
     const hasContent = lines.some(l =>
@@ -209,7 +221,8 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
     try {
       const payload = {
         entity_id: parseInt(entityId),
-        supplier_id: parseInt(supplierId),
+        supplier_id: recipientType === 'supplier' && supplierId ? parseInt(supplierId) : null,
+        customer_id: recipientType === 'customer' && customerId ? parseInt(customerId) : null,
         document_type: docType,
         invoice_number: invoiceNumber,
         is_vat_exempt: isVatExempt,
@@ -288,11 +301,51 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                 </select>
               </div>
               <div>
-                <label className="form-label">Supplier *</label>
-                <select className="form-input" value={supplierId} onChange={e => setSupplierId(e.target.value)}>
-                  <option value="">Select supplier...</option>
-                  {filteredSuppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+                <label className="form-label">Bill To *</label>
+                {/* Toggle */}
+                <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+                  {['supplier', 'customer'].map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setRecipientType(t)}
+                      style={{
+                        padding: '4px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                        cursor: 'pointer', border: '1px solid var(--border)',
+                        background: recipientType === t ? 'var(--accent)' : 'var(--bg-secondary)',
+                        color: recipientType === t ? '#fff' : 'var(--text-secondary)',
+                        textTransform: 'capitalize',
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+
+                {recipientType === 'supplier' ? (
+                  <select className="form-input" value={supplierId} onChange={e => setSupplierId(e.target.value)}>
+                    <option value="">Select supplier...</option>
+                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                ) : (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <select className="form-input" style={{ flex: 1 }} value={customerId} onChange={e => setCustomerId(e.target.value)}>
+                      <option value="">Select customer...</option>
+                      {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setQuickAddOpen(true)}
+                      title="Quick-add customer"
+                      style={{
+                        padding: '0 12px', border: '1px solid var(--border)', borderRadius: 6,
+                        background: 'var(--bg-secondary)', color: 'var(--accent)',
+                        cursor: 'pointer', fontSize: 18, lineHeight: 1, fontWeight: 700,
+                        display: 'flex', alignItems: 'center',
+                      }}
+                    >+</button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -542,6 +595,85 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
               Cancel
             </button>
           </div>
+        </div>
+      </div>
+
+      {quickAddOpen && (
+        <QuickAddCustomerModal
+          entityId={entityId}
+          onCreated={(newCustomer) => {
+            setCustomers(prev => [...prev, newCustomer])
+            setCustomerId(String(newCustomer.id))
+            setQuickAddOpen(false)
+          }}
+          onClose={() => setQuickAddOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function QuickAddCustomerModal({ entityId, onCreated, onClose }) {
+  const [form, setForm] = useState({ name: '', trading_name: '', contact_person: '', email: '', phone: '' })
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleSubmit = async () => {
+    if (!form.name.trim()) { setErr('Name is required'); return }
+    setSaving(true)
+    setErr('')
+    try {
+      const res = await createCustomer({ ...form, entity_id: parseInt(entityId) })
+      onCreated(res.data)
+    } catch (e) {
+      setErr(e.response?.data?.detail || 'Failed to create customer')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={onClose}>
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: '24px 28px', width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>Quick-Add Customer</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}><X size={17} /></button>
+        </div>
+
+        {err && <div style={{ fontSize: 12, color: '#dc2626', marginBottom: 12 }}>{err}</div>}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div>
+            <label className="form-label">Name *</label>
+            <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Customer name" autoFocus />
+          </div>
+          <div>
+            <label className="form-label">Trading Name</label>
+            <input className="form-input" value={form.trading_name} onChange={e => set('trading_name', e.target.value)} />
+          </div>
+          <div>
+            <label className="form-label">Contact Person</label>
+            <input className="form-input" value={form.contact_person} onChange={e => set('contact_person', e.target.value)} />
+          </div>
+          <div className="form-row">
+            <div>
+              <label className="form-label">Email</label>
+              <input className="form-input" type="email" value={form.email} onChange={e => set('email', e.target.value)} />
+            </div>
+            <div>
+              <label className="form-label">Phone</label>
+              <input className="form-input" value={form.phone} onChange={e => set('phone', e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+          <button className="btn-ghost btn-sm" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn-primary btn-sm" onClick={handleSubmit} disabled={saving || !form.name.trim()}>
+            {saving ? 'Creating…' : 'Create & Select'}
+          </button>
         </div>
       </div>
     </div>

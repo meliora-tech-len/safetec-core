@@ -86,9 +86,9 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
     const docLabel = invoice.document_type === 'invoice' ? 'Invoice' : 'Quote'
     const subject = encodeURIComponent(`${docLabel} ${invoice.invoice_number}`)
     const body = encodeURIComponent(
-      `Dear ${invoice.supplier?.name || 'Client'},\n\nPlease find attached ${docLabel.toLowerCase()} ${invoice.invoice_number}.\n\nKind regards`
+      `Dear ${(invoice.supplier || invoice.customer)?.name || 'Client'},\n\nPlease find attached ${docLabel.toLowerCase()} ${invoice.invoice_number}.\n\nKind regards`
     )
-    const to = invoice.supplier?.email || ''
+    const to = (invoice.supplier || invoice.customer)?.email || ''
     window.location.href = `mailto:${to}?subject=${subject}&body=${body}`
   }
 
@@ -203,10 +203,17 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
           {/* Bill To */}
           <div style={styles.billTo}>
             <div style={styles.metaLabel}>Bill To</div>
-            <div style={{ fontWeight: 700, marginTop: 6 }}>{invoice.supplier?.name}</div>
-            {invoice.supplier?.address && <div style={styles.invSub}>{invoice.supplier.address}</div>}
-            {invoice.supplier?.email && <div style={styles.invSub}>{invoice.supplier.email}</div>}
-            {invoice.supplier?.phone && <div style={styles.invSub}>{invoice.supplier.phone}</div>}
+            {(() => {
+              const r = invoice.supplier || invoice.customer
+              return r ? (
+                <>
+                  <div style={{ fontWeight: 700, marginTop: 6 }}>{r.name}</div>
+                  {r.address && <div style={styles.invSub}>{r.address}</div>}
+                  {r.email && <div style={styles.invSub}>{r.email}</div>}
+                  {r.phone && <div style={styles.invSub}>{r.phone}</div>}
+                </>
+              ) : <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>—</div>
+            })()}
           </div>
 
           {/* Line items */}
@@ -369,7 +376,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
         isOpen={showDeleteModal}
         onClose={() => setShowDeleteModal(false)}
         title={`Cancel ${invoice.invoice_number}`}
-        description={`${invoice.supplier?.name ? `${invoice.supplier.name} · ` : ''}${formatCurrency(invoice.total)}`}
+        description={`${(invoice.supplier || invoice.customer)?.name ? `${(invoice.supplier || invoice.customer).name} · ` : ''}${formatCurrency(invoice.total)}`}
         onArchive={async () => {
           try { await deleteInvoice(id); toast.success('Invoice cancelled'); navigate(-1) }
           catch (err) { toast.error(errorMessage(err)) }

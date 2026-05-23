@@ -106,6 +106,7 @@ class BusinessEntity(Base):
     # Relationships
     suppliers       = relationship("Supplier",       back_populates="entity")
     subcontractors  = relationship("Subcontractor",  back_populates="entity")
+    customers       = relationship("Customer",       back_populates="entity")
     invoices = relationship("Invoice", back_populates="entity")
     user_access = relationship("UserEntityAccess", back_populates="entity")
     trucks = relationship("Truck", back_populates="entity")
@@ -204,6 +205,31 @@ class Supplier(Base):
     supplier_invoices = relationship("SupplierInvoice", back_populates="supplier", cascade="all, delete-orphan")
 
 
+# ── Customers ─────────────────────────────────────────────────────────────────
+
+class Customer(Base):
+    __tablename__ = "customers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(300), nullable=False)
+    trading_name = Column(String(300))
+    contact_person = Column(String(200))
+    email = Column(String(200))
+    phone = Column(String(50))
+    address = Column(Text)
+    city = Column(String(100))
+    postal_code = Column(String(20))
+    vat_number = Column(String(50))
+    registration_number = Column(String(100))
+    notes = Column(Text)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    entity = relationship("BusinessEntity", back_populates="customers")
+    invoices = relationship("Invoice", back_populates="customer")
+
+
 # ── Subcontractors ────────────────────────────────────────────────────────────
 
 class Subcontractor(Base):
@@ -234,7 +260,8 @@ class Invoice(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
-    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=True)
+    customer_id = Column(Integer, ForeignKey("customers.id", ondelete="RESTRICT"), nullable=True)
 
     document_type = Column(Enum(DocumentType), default=DocumentType.invoice, nullable=False)
     invoice_number = Column(String(50), unique=True, nullable=False, index=True)
@@ -260,7 +287,8 @@ class Invoice(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     entity = relationship("BusinessEntity", back_populates="invoices")
-    supplier = relationship("Supplier", back_populates="invoices")
+    supplier = relationship("Supplier", back_populates="invoices", foreign_keys=[supplier_id])
+    customer = relationship("Customer", back_populates="invoices", foreign_keys=[customer_id])
     line_items = relationship("InvoiceLineItem", back_populates="invoice",
                               cascade="all, delete-orphan", order_by="InvoiceLineItem.sort_order")
 

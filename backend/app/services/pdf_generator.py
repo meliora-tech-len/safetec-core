@@ -138,7 +138,7 @@ def _compute_totals(invoice, line_items):
 
 # ── Main generator ────────────────────────────────────────────────────────────
 
-def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> bytes:
+def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str = "light") -> bytes:
     """
     Generate a professional PDF matching the Safetec letterhead style.
     theme: "light" (default, for printing) | "dark"
@@ -290,19 +290,20 @@ def generate_invoice_pdf(invoice, entity, supplier, theme: str = "light") -> byt
         doc_title = "INVOICE TO"  # Non-VAT invoices shouldn't say TAX INVOICE
 
     # ── Bill To + Inv details ─────────────────────────────────────────────────
-    supplier_name = supplier.name if supplier else "—"
-    bill_lines = [Paragraph(doc_title, s_section_label), Paragraph(supplier_name, s_client_name)]
+    bill_to = supplier or customer
+    bill_to_name = bill_to.name if bill_to else "—"
+    bill_lines = [Paragraph(doc_title, s_section_label), Paragraph(bill_to_name, s_client_name)]
 
-    if supplier:
-        if supplier.address:
-            for addr_line in supplier.address.split("\n"):
+    if bill_to:
+        if bill_to.address:
+            for addr_line in bill_to.address.split("\n"):
                 if addr_line.strip():
                     bill_lines.append(Paragraph(addr_line.strip(), s_client_detail))
-        if supplier.city:
-            postal = f"{supplier.city}, {supplier.postal_code}" if supplier.postal_code else supplier.city
+        if bill_to.city:
+            postal = f"{bill_to.city}, {bill_to.postal_code}" if bill_to.postal_code else bill_to.city
             bill_lines.append(Paragraph(postal, s_client_detail))
-        if supplier.vat_number:
-            bill_lines.append(Paragraph(f"VAT NO:  {supplier.vat_number}", s_client_detail))
+        if bill_to.vat_number:
+            bill_lines.append(Paragraph(f"VAT NO:  {bill_to.vat_number}", s_client_detail))
 
     inv_details = [
         [Paragraph("Inv No", s_inv_label), Paragraph(invoice.invoice_number, s_inv_value)],

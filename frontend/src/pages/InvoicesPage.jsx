@@ -105,7 +105,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
             data={displayedInvoices}
             columns={[
               { header: 'Number',      key: 'invoice_number' },
-              { header: 'Supplier',    value: r => r.supplier?.name || '' },
+              { header: 'Bill To',     value: r => r.supplier?.name || r.customer?.name || '' },
               { header: 'Entity',      value: r => r.entity?.code || '' },
               { header: 'Status',      key: 'status' },
               { header: 'Issue Date',  value: r => formatDate(r.issue_date) },
@@ -202,7 +202,10 @@ export default function InvoicesPage({ docType = 'invoice' }) {
             ) : displayedInvoices.map(inv => (
               <tr key={inv.id} onClick={() => navigate(`/${docPath}/${inv.id}`)} style={{ cursor: 'pointer' }}>
                 <td className="font-mono text-accent" style={{ fontSize: 12 }}>{inv.invoice_number}</td>
-                <td style={{ fontWeight: 500 }}>{inv.supplier?.name || '—'}</td>
+                <td style={{ fontWeight: 500 }}>
+                  {inv.supplier?.name || inv.customer?.name || '—'}
+                  {inv.customer && <span style={{ fontSize: 10, marginLeft: 5, color: 'var(--accent)', fontWeight: 600 }}>CUST</span>}
+                </td>
                 <td><span style={styles.chip}>{inv.entity?.code || '—'}</span></td>
                 <td className="text-muted" style={{ fontSize: 12 }}>{formatDate(inv.issue_date)}</td>
                 <td className="text-muted" style={{ fontSize: 12 }}>

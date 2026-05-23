@@ -272,6 +272,63 @@ class SupplierSummary(BaseModel):
         from_attributes = True
 
 
+# ── Customers ─────────────────────────────────────────────────────────────────
+
+class CustomerBase(BaseModel):
+    entity_id: int
+    name: str
+    trading_name: Optional[str] = None
+    contact_person: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    postal_code: Optional[str] = None
+    vat_number: Optional[str] = None
+    registration_number: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: bool = True
+
+
+class CustomerCreate(CustomerBase):
+    pass
+
+
+class CustomerUpdate(BaseModel):
+    name: Optional[str] = None
+    trading_name: Optional[str] = None
+    contact_person: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    postal_code: Optional[str] = None
+    vat_number: Optional[str] = None
+    registration_number: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class CustomerOut(CustomerBase):
+    id: int
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CustomerSummary(BaseModel):
+    id: int
+    name: str
+    trading_name: Optional[str] = None
+    contact_person: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ── Subcontractors ────────────────────────────────────────────────────────────
 
 class SubcontractorBase(BaseModel):
@@ -357,7 +414,8 @@ class LineItemOut(LineItemBase):
 
 class InvoiceBase(BaseModel):
     entity_id: int
-    supplier_id: int
+    supplier_id: Optional[int] = None
+    customer_id: Optional[int] = None
     document_type: DocumentType = DocumentType.invoice
     invoice_number: Optional[str] = None
     status: InvoiceStatus = InvoiceStatus.draft
@@ -374,6 +432,7 @@ class InvoiceCreate(InvoiceBase):
 
 class InvoiceUpdate(BaseModel):
     supplier_id: Optional[int] = None
+    customer_id: Optional[int] = None
     status: Optional[InvoiceStatus] = None
     invoice_number: Optional[str] = None
     is_vat_exempt: Optional[bool] = None
@@ -400,6 +459,7 @@ class InvoiceOut(InvoiceBase):
     updated_at: Optional[datetime] = None
     line_items: List[LineItemOut] = []
     supplier: Optional[SupplierSummary] = None
+    customer: Optional[CustomerSummary] = None
     entity: Optional[EntityOut] = None
 
     class Config:
@@ -411,6 +471,7 @@ class InvoiceSummary(BaseModel):
     document_type: DocumentType
     status: InvoiceStatus
     supplier_name: Optional[str] = None
+    customer_name: Optional[str] = None
     entity_code: Optional[str] = None
     total: Decimal
     issue_date: Optional[datetime] = None

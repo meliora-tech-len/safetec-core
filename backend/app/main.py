@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.limiter import limiter
 from app.db.database import engine, SessionLocal
 from app.models.models import Base, Role
-from app.api.routes import auth, users, entities, suppliers, invoices, audit, roles, fleet, drivers, payroll_settings, payroll_mine_groups, mines, truck_loads, driver_salary_configs, supplier_invoices, diesel, payroll_entries, reports, feedback, subcontractors
+from app.api.routes import auth, users, entities, suppliers, invoices, audit, roles, fleet, drivers, payroll_settings, payroll_mine_groups, mines, truck_loads, driver_salary_configs, supplier_invoices, diesel, payroll_entries, reports, feedback, subcontractors, customers
 from app.api.routes import settings as settings_router
 
 Base.metadata.create_all(bind=engine)
@@ -85,6 +85,7 @@ app.include_router(users.router)
 app.include_router(entities.router)
 app.include_router(suppliers.router)
 app.include_router(subcontractors.router)
+app.include_router(customers.router)
 app.include_router(invoices.router)
 app.include_router(audit.router)
 app.include_router(settings_router.router)

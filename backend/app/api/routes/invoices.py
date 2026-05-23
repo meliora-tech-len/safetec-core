@@ -9,7 +9,7 @@ from decimal import Decimal
 from datetime import datetime, timezone
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Supplier
+from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Supplier, Customer
 from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, DashboardStats, InvoiceSummary
 from app.services.audit import log_action
 from app.services.invoice_numbering import generate_invoice_number
@@ -70,6 +70,7 @@ def list_invoices(
     query = db.query(Invoice).options(
         joinedload(Invoice.line_items),
         joinedload(Invoice.supplier),
+        joinedload(Invoice.customer),
         joinedload(Invoice.entity),
     )
 
@@ -88,8 +89,15 @@ def list_invoices(
         query = query.filter(Invoice.status == status)
     if search:
         s = f"%{search}%"
-        query = query.join(Supplier, isouter=True).filter(
-            or_(Invoice.invoice_number.ilike(s), Supplier.name.ilike(s))
+        query = (
+            query
+            .outerjoin(Supplier, Invoice.supplier_id == Supplier.id)
+            .outerjoin(Customer, Invoice.customer_id == Customer.id)
+            .filter(or_(
+                Invoice.invoice_number.ilike(s),
+                Supplier.name.ilike(s),
+                Customer.name.ilike(s),
+            ))
         )
 
     return query.order_by(Invoice.created_at.desc()).offset(skip).limit(limit).all()
@@ -111,7 +119,9 @@ def dashboard_stats(
     if entity_id:
         base_query = base_query.filter(Invoice.entity_id == entity_id)
 
-    invoices = base_query.options(joinedload(Invoice.supplier), joinedload(Invoice.entity)).all()
+    invoices = base_query.options(
+        joinedload(Invoice.supplier), joinedload(Invoice.customer), joinedload(Invoice.entity)
+    ).all()
 
     now = datetime.now(timezone.utc)
     outstanding = sum(
@@ -139,7 +149,8 @@ def dashboard_stats(
             invoice_number=inv.invoice_number,
             document_type=inv.document_type,
             status=inv.status,
-            supplier_name=inv.supplier.name if inv.supplier else None,
+            supplier_name=(inv.supplier.name if inv.supplier else (inv.customer.name if inv.customer else None)),
+            customer_name=(inv.customer.name if inv.customer else None),
             entity_code=inv.entity.code if inv.entity else None,
             total=inv.total,
             issue_date=inv.issue_date,
@@ -182,6 +193,7 @@ def get_invoice(
     invoice = db.query(Invoice).options(
         joinedload(Invoice.line_items),
         joinedload(Invoice.supplier),
+        joinedload(Invoice.customer),
         joinedload(Invoice.entity),
     ).filter(Invoice.id == invoice_id).first()
     if not invoice:
@@ -198,13 +210,24 @@ def create_invoice(
 ):
     _check_entity_access(payload.entity_id, current_user)
 
+    if not payload.supplier_id and not payload.customer_id:
+        raise HTTPException(status_code=422, detail="Either supplier_id or customer_id is required")
+
     entity = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
 
-    supplier = db.query(Supplier).filter(Supplier.id == payload.supplier_id).first()
-    if not supplier:
-        raise HTTPException(status_code=404, detail="Supplier not found")
+    recipient_name = "Unknown"
+    if payload.supplier_id:
+        supplier = db.query(Supplier).filter(Supplier.id == payload.supplier_id).first()
+        if not supplier:
+            raise HTTPException(status_code=404, detail="Supplier not found")
+        recipient_name = supplier.name
+    if payload.customer_id:
+        customer = db.query(Customer).filter(Customer.id == payload.customer_id).first()
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        recipient_name = customer.name
 
     vat_rate = payload.vat_rate if payload.vat_rate is not None else (entity.vat_rate or Decimal("0.15"))
 
@@ -215,6 +238,7 @@ def create_invoice(
         invoice = Invoice(
             entity_id=payload.entity_id,
             supplier_id=payload.supplier_id,
+            customer_id=payload.customer_id,
             document_type=payload.document_type,
             invoice_number=invoice_number,
             status=payload.status,
@@ -249,12 +273,15 @@ def create_invoice(
             db, f"{payload.document_type}.created", user_id=current_user.id,
             entity_id=payload.entity_id, resource_type="invoice",
             resource_id=invoice.id,
-            description=f"{doc_label} {invoice_number} created for {supplier.name} — R {total:,.2f}",
+            description=f"{doc_label} {invoice_number} created for {recipient_name} — R {total:,.2f}",
         )
         db.commit()
         db.refresh(invoice)
         return db.query(Invoice).options(
-            joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
+            joinedload(Invoice.line_items),
+            joinedload(Invoice.supplier),
+            joinedload(Invoice.customer),
+            joinedload(Invoice.entity),
         ).filter(Invoice.id == invoice.id).first()
     except SQLAlchemyError as e:
         db.rollback()
@@ -302,16 +329,25 @@ def update_invoice(
             invoice.vat_amount = vat_amount
             invoice.total = total
 
-        inv_supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
-        inv_supplier_name = inv_supplier.name if inv_supplier else "Unknown"
+        if invoice.supplier_id:
+            inv_rec = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
+            inv_rec_name = inv_rec.name if inv_rec else "Unknown"
+        elif invoice.customer_id:
+            inv_rec = db.query(Customer).filter(Customer.id == invoice.customer_id).first()
+            inv_rec_name = inv_rec.name if inv_rec else "Unknown"
+        else:
+            inv_rec_name = "Unknown"
         status_note = f" — status changed to '{invoice.status}'" if payload.status and payload.status != old_status else ""
         log_action(db, "invoice.updated", user_id=current_user.id,
                    entity_id=invoice.entity_id, resource_type="invoice",
                    resource_id=invoice_id,
-                   description=f"Updated {invoice.invoice_number} for {inv_supplier_name}{status_note}")
+                   description=f"Updated {invoice.invoice_number} for {inv_rec_name}{status_note}")
         db.commit()
         return db.query(Invoice).options(
-            joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
+            joinedload(Invoice.line_items),
+            joinedload(Invoice.supplier),
+            joinedload(Invoice.customer),
+            joinedload(Invoice.entity),
         ).filter(Invoice.id == invoice.id).first()
     except SQLAlchemyError:
         db.rollback()
@@ -330,12 +366,18 @@ def delete_invoice(
     _check_entity_access(invoice.entity_id, current_user)
     if invoice.status == "paid":
         raise HTTPException(status_code=400, detail="Cannot delete a paid invoice")
-    del_supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
-    del_supplier_name = del_supplier.name if del_supplier else "Unknown"
+    if invoice.supplier_id:
+        del_rec = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
+        del_rec_name = del_rec.name if del_rec else "Unknown"
+    elif invoice.customer_id:
+        del_rec = db.query(Customer).filter(Customer.id == invoice.customer_id).first()
+        del_rec_name = del_rec.name if del_rec else "Unknown"
+    else:
+        del_rec_name = "Unknown"
     log_action(db, "invoice.deleted", user_id=current_user.id,
                entity_id=invoice.entity_id, resource_type="invoice",
                resource_id=invoice_id,
-               description=f"Deleted {invoice.invoice_number} for {del_supplier_name}")
+               description=f"Deleted {invoice.invoice_number} for {del_rec_name}")
     db.delete(invoice)
     db.commit()
     return {"detail": "Invoice deleted"}
@@ -349,14 +391,18 @@ async def download_invoice_pdf(
     current_user: User = Depends(get_current_user),
 ):
     invoice = db.query(Invoice).options(
-        joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
+        joinedload(Invoice.line_items),
+        joinedload(Invoice.supplier),
+        joinedload(Invoice.customer),
+        joinedload(Invoice.entity),
     ).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(invoice.entity_id, current_user)
 
     pdf_bytes = await asyncio.to_thread(
-        generate_invoice_pdf, invoice, invoice.entity, invoice.supplier, theme=theme
+        generate_invoice_pdf, invoice, invoice.entity, invoice.supplier,
+        customer=invoice.customer, theme=theme
     )
 
     # Advance draft → ready on first PDF generation
@@ -384,23 +430,28 @@ async def send_invoice_email_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     invoice = db.query(Invoice).options(
-        joinedload(Invoice.line_items), joinedload(Invoice.supplier), joinedload(Invoice.entity)
+        joinedload(Invoice.line_items),
+        joinedload(Invoice.supplier),
+        joinedload(Invoice.customer),
+        joinedload(Invoice.entity),
     ).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(invoice.entity_id, current_user)
 
-    if not invoice.supplier or not invoice.supplier.email:
-        raise HTTPException(status_code=422, detail="Supplier has no email address")
+    recipient = invoice.supplier or invoice.customer
+    if not recipient or not recipient.email:
+        raise HTTPException(status_code=422, detail="Supplier/customer has no email address")
 
     pdf_bytes = await asyncio.to_thread(
-        generate_invoice_pdf, invoice, invoice.entity, invoice.supplier, theme=theme
+        generate_invoice_pdf, invoice, invoice.entity, invoice.supplier,
+        customer=invoice.customer, theme=theme
     )
     send_invoice_email(
-        to=invoice.supplier.email,
+        to=recipient.email,
         invoice_number=invoice.invoice_number,
         document_type=invoice.document_type,
-        supplier_name=invoice.supplier.name,
+        supplier_name=recipient.name,
         pdf_bytes=pdf_bytes,
     )
     doc_label = "Invoice" if invoice.document_type == "invoice" else "Quote"
@@ -412,6 +463,6 @@ async def send_invoice_email_endpoint(
     log_action(db, "invoice.emailed", user_id=current_user.id,
                entity_id=invoice.entity_id, resource_type="invoice",
                resource_id=invoice_id,
-               description=f"{doc_label} {invoice.invoice_number} emailed to {invoice.supplier.name} ({invoice.supplier.email})")
+               description=f"{doc_label} {invoice.invoice_number} emailed to {recipient.name} ({recipient.email})")
     db.commit()
     return {"detail": "Email sent"}

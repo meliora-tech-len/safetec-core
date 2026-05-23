@@ -30,6 +30,7 @@ import DieselRatesPage from './pages/DieselRatesPage'
 import ReportsPage from './pages/ReportsPage'
 import SubcontractorsPage from './pages/SubcontractorsPage'
 import SubcontractorProfilePage from './pages/SubcontractorProfilePage'
+import CustomersPage from './pages/CustomersPage'
 import './styles/globals.css'
 
 function PrivateRoute({ children }) {
@@ -71,6 +72,9 @@ export default function App() {
 
             {/* Clients */}
             <Route path="/clients" element={<ClientsPage />} />
+
+            {/* Customers */}
+            <Route path="/customers" element={<CustomersPage />} />
 
             {/* Drivers */}
             <Route path="/drivers" element={<DriversPage />} />

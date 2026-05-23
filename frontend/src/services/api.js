@@ -118,6 +118,13 @@ export const deleteMine = (id) => api.delete(`/mines/${id}`)
 export const getMineRates = (mineId, params = {}) => api.get(`/mines/${mineId}/rates`, { params })
 export const addMineRate = (mineId, data) => api.post(`/mines/${mineId}/rates`, data)
 
+// ── Customers ─────────────────────────────────────────────────────────────────
+export const getCustomers = (params = {}) => api.get('/customers/', { params })
+export const getCustomer = (id) => api.get(`/customers/${id}`)
+export const createCustomer = (data) => api.post('/customers/', data)
+export const updateCustomer = (id, data) => api.put(`/customers/${id}`, data)
+export const deleteCustomer = (id) => api.delete(`/customers/${id}`)
+
 // ── Subcontractors ────────────────────────────────────────────────────────────
 export const getSubcontractors        = (params = {}) => api.get('/subcontractors/', { params })
 export const getSubcontractor         = (id)          => api.get(`/subcontractors/${id}`)

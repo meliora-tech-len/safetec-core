@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Users, Building2, FileText,
   LogOut, Shield, Sun, Moon, Settings, ChevronDown, Truck,
   FileCheck, FilePlus, ShoppingCart, Package, MapPin, Fuel, BarChart2, Link2,
-  Key, Eye, EyeOff, X,
+  Key, Eye, EyeOff, X, UserCheck,
 } from 'lucide-react'
 
 function hexToRgb(hex) {
@@ -30,6 +30,7 @@ function darkenHex(hex, factor) {
 const NAV = [
   { to: '/dashboard',         icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/suppliers',         icon: Users,           label: 'Suppliers',    module: 'suppliers' },
+  { to: '/customers',         icon: UserCheck,       label: 'Customers',    module: 'invoices' },
   { to: '/fleet',             icon: Truck,           label: 'Fleet',        module: 'fleet',        end: true },
   { to: '/subcontractors',    icon: Building2,       label: 'Subcontractors', module: 'fleet' },
   { to: '/drivers',           icon: Users,           label: 'Drivers',      module: 'drivers' },
