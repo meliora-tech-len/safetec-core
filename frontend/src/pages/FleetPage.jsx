@@ -1053,6 +1053,10 @@ export default function FleetPage() {
   }, [pvFilterStatus])
 
   const loadAlerts = useCallback(async () => {
+    if (activeEntity?.code !== 'SFT') {
+      setAlerts([])
+      return
+    }
     try {
       const data = await api.get(`/api/fleet/licence-alerts?days=${ALERT_DAYS}`)
       setAlerts(data.items || [])
@@ -1066,7 +1070,7 @@ export default function FleetPage() {
     } catch {
       // silent — alerts are non-critical
     }
-  }, [warnDays])
+  }, [warnDays, activeEntity])
 
   useEffect(() => {
     let ignore = false
