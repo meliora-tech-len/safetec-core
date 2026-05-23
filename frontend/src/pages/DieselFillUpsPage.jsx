@@ -32,7 +32,7 @@ const BLANK = {
 }
 
 export default function DieselFillUpsPage() {
-  const { activeEntity, isAdmin, entities: authEntities } = useAuth()
+  const { activeEntity, isAdmin, entities: authEntities, user } = useAuth()
   const now = new Date()
 
   const [fillups, setFillups]     = useState([])
@@ -420,7 +420,7 @@ export default function DieselFillUpsPage() {
               ) : (
                 <tr key={f.id}
                   onClick={() => startEdit(f)}
-                  style={{ opacity: f.verified ? 0.75 : 1, cursor: editingId !== null ? 'default' : 'pointer' }}>
+                  style={{ cursor: editingId !== null ? 'default' : 'pointer' }}>
                   {multiEntity && (
                     <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                       {entities.find(e => e.id === f.entity_id)?.code || '—'}
@@ -437,7 +437,10 @@ export default function DieselFillUpsPage() {
                   <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {parseFloat(f.admin_fee_amount) > 0 ? formatCurrency(f.admin_fee_amount) : '—'}
                   </td>
-                  <td className="text-right" style={{ fontWeight: 700 }}>{formatCurrency(f.total_amount)}</td>
+                  <td className="text-right" style={{
+                    fontWeight: 700,
+                    ...(f.verified2_by ? { background: 'rgba(34,197,94,0.15)', color: '#16a34a' } : {}),
+                  }}>{formatCurrency(f.total_amount)}</td>
                   <td>
                     <span style={{
                       padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700,
@@ -450,7 +453,7 @@ export default function DieselFillUpsPage() {
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.invoice_number || '—'}</td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.slip_number || '—'}</td>
                   <td>
-                    <VerifyBadge item={f} onVerify={handleVerify} />
+                    <VerifyBadge item={f} onVerify={handleVerify} currentUserId={user?.id} isAdmin={isAdmin} />
                   </td>
                   <td onClick={e => e.stopPropagation()}>
                     <button className="btn-icon btn-ghost" onClick={e => handleDelete(f, e)} title="Delete">

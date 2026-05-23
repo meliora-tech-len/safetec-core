@@ -51,7 +51,7 @@ function PaymentTermBadge({ term }) {
 export default function SupplierProfilePage() {
   const { supplierId } = useParams()
   const navigate = useNavigate()
-  const { activeEntity } = useAuth()
+  const { activeEntity, user, isAdmin } = useAuth()
 
   const [supplier, setSupplier] = useState(null)
   const [entities, setEntities] = useState([])
@@ -662,7 +662,10 @@ export default function SupplierProfilePage() {
                           </td>
 
                           {/* Amount */}
-                          <td style={{ ...styles.td, fontWeight: 600 }}>
+                          <td style={{
+                            ...styles.td, fontWeight: 600,
+                            ...(inv.verified2_by ? { background: 'rgba(34,197,94,0.15)', color: '#16a34a' } : {}),
+                          }}>
                             {isEditing ? (
                               <input
                                 type="number" step="0.01"
@@ -723,7 +726,7 @@ export default function SupplierProfilePage() {
 
                           {/* Verified */}
                           <td style={styles.td}>
-                            <VerifyBadge item={inv} onVerify={handleVerify} />
+                            <VerifyBadge item={inv} onVerify={handleVerify} currentUserId={user?.id} isAdmin={isAdmin} />
                           </td>
 
                           {/* Paid */}

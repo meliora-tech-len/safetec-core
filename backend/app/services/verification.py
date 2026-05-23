@@ -58,6 +58,11 @@ def apply_verify_step(obj, current_user: User, is_admin: bool):
 
     The object must have: is_verified (or verified), verified_by,
     verified_at, verified2_by, verified2_at columns.
+
+    Ownership rules:
+    - Step 1 can only be undone by the person who did it.
+    - Step 2 requires a different admin; can only be undone by the person who did it.
+    - Nobody else can alter another person's verification step.
     """
     now = datetime.now(tz=timezone.utc)
 
@@ -68,7 +73,7 @@ def apply_verify_step(obj, current_user: User, is_admin: bool):
     step2_done = bool(getattr(obj, "verified2_by", None))
 
     if not step1_done:
-        # → do step 1
+        # → do step 1 (any user)
         setattr(obj, _flag_attr, True)
         obj.verified_by = current_user.id
         obj.verified_at = now
@@ -76,29 +81,28 @@ def apply_verify_step(obj, current_user: User, is_admin: bool):
         obj.verified2_at = None
 
     elif not step2_done:
-        if not is_admin:
+        if obj.verified_by == current_user.id:
+            # Same person: undo their own step 1
+            setattr(obj, _flag_attr, False)
+            obj.verified_by = None
+            obj.verified_at = None
+        elif is_admin:
+            # Different admin: do step 2
+            obj.verified2_by = current_user.id
+            obj.verified2_at = now
+        else:
             raise HTTPException(
                 status_code=403,
-                detail="Step 2 approval requires administrator access.",
+                detail="This verification was done by someone else and cannot be changed.",
             )
-        if obj.verified_by == current_user.id:
-            raise HTTPException(
-                status_code=400,
-                detail="The same person cannot complete both verification steps.",
-            )
-        # → do step 2
-        obj.verified2_by = current_user.id
-        obj.verified2_at = now
 
     else:
-        # Both steps done — only admin can reset
-        if not is_admin:
+        if obj.verified2_by == current_user.id:
+            # Same admin who did step 2: undo step 2 only (back to step 1)
+            obj.verified2_by = None
+            obj.verified2_at = None
+        else:
             raise HTTPException(
                 status_code=403,
-                detail="Only an admin can remove a completed 2-step verification.",
+                detail="This verification is locked. Only the person who completed it can reverse it.",
             )
-        setattr(obj, _flag_attr, False)
-        obj.verified_by  = None
-        obj.verified_at  = None
-        obj.verified2_by = None
-        obj.verified2_at = None

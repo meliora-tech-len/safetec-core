@@ -230,7 +230,7 @@ export default function DriverDetailPage() {
   const { driverId } = useParams()
   const navigate = useNavigate()
   const api = useApi()
-  const { isAdmin } = useAuth()
+  const { isAdmin, user } = useAuth()
 
   const now = new Date()
   const [year,  setYear]  = useState(now.getFullYear())
@@ -684,9 +684,12 @@ export default function DriverDetailPage() {
                         <tr key={al.id}>
                           <td style={{ fontSize: 12 }}>{fmtDate(al.load_date)}</td>
                           <td style={{ fontSize: 12 }}>{al.route_name}{al.truck_registration && <span style={{ color: 'var(--text-muted)' }}> · {al.truck_registration}</span>}</td>
-                          <td style={{ fontSize: 12 }}>{fmt(al.amount)}</td>
+                          <td style={{
+                            fontSize: 12,
+                            ...(al.verified2_by ? { background: 'rgba(34,197,94,0.15)', color: '#16a34a', fontWeight: 700 } : {}),
+                          }}>{fmt(al.amount)}</td>
                           <td>
-                            <VerifyBadge item={al} onVerify={async (item) => {
+                            <VerifyBadge item={al} currentUserId={user?.id} isAdmin={isAdmin} onVerify={async (item) => {
                               try {
                                 await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/verify`)
                                 loadCycle()
@@ -744,9 +747,12 @@ export default function DriverDetailPage() {
                         <tr key={fp.id}>
                           <td style={{ fontSize: 12 }}>{fmtDate(fp.payment_date)}</td>
                           <td style={{ fontSize: 12 }}>{fp.paid_by || '—'}</td>
-                          <td style={{ fontSize: 12 }}>{fmt(fp.amount)}</td>
+                          <td style={{
+                            fontSize: 12,
+                            ...(fp.verified2_by ? { background: 'rgba(34,197,94,0.15)', color: '#16a34a', fontWeight: 700 } : {}),
+                          }}>{fmt(fp.amount)}</td>
                           <td>
-                            <VerifyBadge item={fp} onVerify={async (item) => {
+                            <VerifyBadge item={fp} currentUserId={user?.id} isAdmin={isAdmin} onVerify={async (item) => {
                               try {
                                 await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/verify`)
                                 loadCycle()

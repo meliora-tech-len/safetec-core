@@ -994,6 +994,12 @@ class DriverAdditionalLoadOut(DriverAdditionalLoadCreate):
     id: int
     pay_cycle_id: int
     created_at: datetime
+    verified_by: Optional[int] = None
+    verified2_by: Optional[int] = None
+    verified_by_initials: Optional[str] = None
+    verified_by_date: Optional[str] = None
+    verified2_by_initials: Optional[str] = None
+    verified2_by_date: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -1019,6 +1025,12 @@ class DriverFoodPaymentOut(DriverFoodPaymentCreate):
     id: int
     pay_cycle_id: int
     created_at: datetime
+    verified_by: Optional[int] = None
+    verified2_by: Optional[int] = None
+    verified_by_initials: Optional[str] = None
+    verified_by_date: Optional[str] = None
+    verified2_by_initials: Optional[str] = None
+    verified2_by_date: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -1303,6 +1315,9 @@ class SupplierInvoiceOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     diesel_fillup_id: Optional[int] = None
+    # Verifier IDs (for frontend lock logic)
+    verified_by: Optional[int] = None
+    verified2_by: Optional[int] = None
     # Verification display (initials + date)
     verified_by_initials: Optional[str] = None
     verified_by_date: Optional[str] = None
@@ -1458,6 +1473,8 @@ class DieselFillUpOut(BaseModel):
     # Enriched
     truck_registration: Optional[str] = None
     supplier_name: Optional[str] = None
+    verified2_by: Optional[int] = None
+    verified2_at: Optional[datetime] = None
     # Verification display (initials + date)
     verified_by_initials: Optional[str] = None
     verified_by_date: Optional[str] = None

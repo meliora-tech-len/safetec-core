@@ -83,6 +83,14 @@ def _cycle_with_calc(
     out = DriverPayCycleOut.model_validate(cycle)
     out.calc = calc_serialisable
     out.was_prefilled = was_prefilled
+    out.additional_loads = [
+        DriverAdditionalLoadOut.model_validate(al).model_copy(update=get_verification_display(db, al))
+        for al in cycle.additional_loads
+    ]
+    out.food_payments = [
+        DriverFoodPaymentOut.model_validate(fp).model_copy(update=get_verification_display(db, fp))
+        for fp in cycle.food_payments
+    ]
     return out
 
 
