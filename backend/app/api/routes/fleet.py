@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
+from sqlalchemy import or_, and_, func
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
@@ -106,10 +106,14 @@ def list_trucks(
     if registration:
         q = q.filter(Truck.registration.ilike(registration))
     if entity_id and extra_context:
-        # Include trucks from this entity OR trucks from any entity with the given contract context.
-        # Used so OBHI's filter also surfaces SFT trucks running on Intsimbi contracts.
+        # Include trucks from this entity OR own-fleet trucks from any entity with the given
+        # contract context. Subcontractor trucks are excluded from the cross-entity portion —
+        # they belong to their entity only and should not bleed into other entities' views.
         _check_entity_access(entity_id, current_user)
-        q = q.filter(or_(Truck.entity_id == entity_id, Truck.contract_context == extra_context))
+        q = q.filter(or_(
+            Truck.entity_id == entity_id,
+            and_(Truck.contract_context == extra_context, Truck.is_subcontractor == False),
+        ))
     elif entity_id:
         _check_entity_access(entity_id, current_user)
         q = q.filter(Truck.entity_id == entity_id)

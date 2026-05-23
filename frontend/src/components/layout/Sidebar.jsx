@@ -55,7 +55,7 @@ const SETTINGS_NAV = [
   { to: '/reports',               icon: BarChart2, label: 'Reports' },
   { to: '/settings/payroll',      icon: Settings,  label: 'Payroll Rates' },
   { to: '/settings/diesel-rates', icon: Fuel,      label: 'Diesel Rates' },
-  { to: '/settings',              icon: Settings,  label: 'Settings' },
+  { to: '/settings',              icon: Settings,  label: 'Settings',     end: true },
 ]
 
 export default function Sidebar() {
@@ -237,8 +237,8 @@ export default function Sidebar() {
         {/* Settings nav */}
         <div>
           <div style={styles.navLabel}>Settings</div>
-          {SETTINGS_NAV.map(({ to, icon: Icon, label }) => (
-            <NavLink key={to} to={to} style={({ isActive }) => ({
+          {SETTINGS_NAV.map(({ to, icon: Icon, label, end }) => (
+            <NavLink key={to} to={to} end={!!end} style={({ isActive }) => ({
               ...styles.navItem,
               ...(isActive ? styles.navItemActive : {}),
             })}>

@@ -287,7 +287,8 @@ class SupplierInvoice(Base):
     __tablename__ = "supplier_invoices"
 
     id = Column(Integer, primary_key=True, index=True)
-    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=True)
+    subcontractor_id = Column(Integer, ForeignKey("subcontractors.id", ondelete="CASCADE"), nullable=True)
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
 
     invoice_date = Column(DateTime(timezone=True), nullable=False)
@@ -318,6 +319,7 @@ class SupplierInvoice(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     supplier = relationship("Supplier", back_populates="supplier_invoices")
+    subcontractor = relationship("Subcontractor", foreign_keys=[subcontractor_id])
     entity = relationship("BusinessEntity")
     created_by = relationship("User", foreign_keys=[created_by_id])
     diesel_fillups = relationship("DieselFillUp", back_populates="supplier_invoice")
@@ -765,6 +767,11 @@ class TruckLoad(Base):
     diesel_invoice = Column(String(50))
     diesel_rate = Column(Numeric(10, 4))
 
+    subcontractor_admin_fee_per_ton = Column(Numeric(10, 2), nullable=True)
+    subcontractor_rate              = Column(Numeric(10, 2), nullable=True)
+    subcontractor_amount_excl_vat   = Column(Numeric(12, 2), nullable=True)
+    subcontractor_amount_incl_vat   = Column(Numeric(12, 2), nullable=True)
+
     date_paid = Column(DateTime(timezone=True))
     is_paid = Column(Boolean, default=False)
     is_archived = Column(Boolean, nullable=False, default=False)
@@ -783,7 +790,7 @@ class TruckLoad(Base):
 # ── Driver Salary Config ───────────────────────────────────────────────────────
 
 class DriverSalaryConfig(Base):
-    """Base salary config for a driver assigned to a truck. Stored in settings."""
+    """Versioned salary config per driver. Each update creates a new row; the old one is deactivated."""
     __tablename__ = "driver_salary_configs"
 
     id = Column(Integer, primary_key=True)
@@ -796,8 +803,10 @@ class DriverSalaryConfig(Base):
     deduction_near = Column(Numeric(10, 2))
     effective_from = Column(DateTime(timezone=True))
     effective_to = Column(DateTime(timezone=True))
+    is_active = Column(Boolean, default=True, nullable=False)
     notes = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     entity = relationship("BusinessEntity")
     truck = relationship("Truck")

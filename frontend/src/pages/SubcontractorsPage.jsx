@@ -144,7 +144,9 @@ export default function SubcontractorsPage() {
             ) : subcontractors.map(sub => (
               <tr key={sub.id}>
                 <td>
-                  <div style={{ fontWeight: 600 }}>{sub.name}</div>
+                  <Link to={`/subcontractors/${sub.id}`} style={{ fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>
+                    {sub.name}
+                  </Link>
                   {sub.trading_name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sub.trading_name}</div>}
                 </td>
                 <td>{sub.contact_person || '—'}</td>

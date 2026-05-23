@@ -236,11 +236,13 @@ export default function DriverDetailPage() {
   const [year,  setYear]  = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
 
-  const [driver,   setDriver]   = useState(null)
-  const [cycle,    setCycle]    = useState(null)
-  const [settings, setSettings] = useState(null)
-  const [entities, setEntities] = useState([])
-  const [loading,  setLoading]  = useState(true)
+  const [driver,      setDriver]      = useState(null)
+  const [cycle,       setCycle]       = useState(null)
+  const [settings,    setSettings]    = useState(null)
+  const [mineGroups,  setMineGroups]  = useState([])
+  const [salaryHistory, setSalaryHistory] = useState([])
+  const [entities,    setEntities]    = useState([])
+  const [loading,     setLoading]     = useState(true)
 
   // Modal state
   const [tripModal,   setTripModal]   = useState(false)
@@ -264,11 +266,18 @@ export default function DriverDetailPage() {
     Promise.all([
       api.get(`/api/drivers/${driverId}`),
       api.get('/api/payroll-settings'),
+      api.get('/api/payroll-mine-groups'),
       api.get('/api/entities/'),
-    ]).then(([d, s, ents]) => {
+    ]).then(([d, s, groups, ents]) => {
       setDriver(d)
       setSettings(s)
+      setMineGroups(groups)
       setEntities(ents)
+      // Fetch salary config history for this driver once we have driver data
+      const name = `${d.first_name} ${d.last_name}`.trim()
+      api.get(`/api/driver-salary-configs/history?entity_id=${d.entity_id}&driver_name=${encodeURIComponent(name)}`)
+        .then(setSalaryHistory)
+        .catch(() => {})
     }).catch(() => toast.error('Failed to load driver'))
   }, [driverId])
 
@@ -308,10 +317,20 @@ export default function DriverDetailPage() {
     else setMonth(m => m + 1)
   }
 
+  // Merge mine group rates into settings so calcLive always uses current active rates.
+  // PayrollSettings.lohatla_* can lag behind if mine groups were updated separately.
+  const lohatlaGroup = mineGroups.find(g => g.is_active && g.name === 'Lohatla')
+  const effectiveSettings = settings ? {
+    ...settings,
+    lohatla_base_salary:        lohatlaGroup?.base_salary         ?? settings.lohatla_base_salary,
+    lohatla_subs_per_load:      lohatlaGroup?.subs_per_load       ?? settings.lohatla_subs_per_load,
+    lohatla_incentive_per_load: lohatlaGroup?.incentive_per_load  ?? settings.lohatla_incentive_per_load,
+  } : null
+
   // Live calc
-  const liveCalc = calcLive(loads, settings, cycle?.additional_loads, driver?.driver_type)
+  const liveCalc = calcLive(loads, effectiveSettings, cycle?.additional_loads, driver?.driver_type)
   const stat = liveCalc && driver?.driver_type === 'permanent'
-    ? calcStatutory(liveCalc.basicSalary, settings)
+    ? calcStatutory(liveCalc.basicSalary, effectiveSettings)
     : null
   const subsAdvanceParsed = parseFloat(subsAdvance || 0)
   const loanDedParsed = parseFloat(loanDed || 0)
@@ -430,16 +449,16 @@ export default function DriverDetailPage() {
                       <label className="form-label">Base loads (max 7)</label>
                       <input className="form-input" type="number" min="0" max="7" value={loads.lohatla_base_loads}
                         onChange={e => setLoads(l => ({ ...l, lohatla_base_loads: parseInt(e.target.value) || 0 }))} />
-                      {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                        Subs: {fmt(parseFloat(settings.lohatla_subs_per_load) * loads.lohatla_base_loads)} · Base: {fmt(settings.lohatla_base_salary)}
+                      {effectiveSettings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                        Subs: {fmt(parseFloat(effectiveSettings.lohatla_subs_per_load) * loads.lohatla_base_loads)} · Base: {fmt(effectiveSettings.lohatla_base_salary)}
                       </div>}
                     </div>
                     <div>
                       <label className="form-label">Extra loads (&gt;7)</label>
                       <input className="form-input" type="number" min="0" value={loads.lohatla_extra_loads}
                         onChange={e => setLoads(l => ({ ...l, lohatla_extra_loads: parseInt(e.target.value) || 0 }))} />
-                      {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                        Subs: {fmt(parseFloat(settings.lohatla_subs_per_load) * loads.lohatla_extra_loads)} · Inc: {fmt(parseFloat(settings.lohatla_incentive_per_load) * loads.lohatla_extra_loads)}
+                      {effectiveSettings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                        Subs: {fmt(parseFloat(effectiveSettings.lohatla_subs_per_load) * loads.lohatla_extra_loads)} · Inc: {fmt(parseFloat(effectiveSettings.lohatla_incentive_per_load) * loads.lohatla_extra_loads)}
                       </div>}
                     </div>
                   </div>
@@ -451,8 +470,8 @@ export default function DriverDetailPage() {
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8 }}>Mokala · Assmang · Sebilo · Tawana</div>
                     <input className="form-input" type="number" min="0" value={loads.casual_group_a_loads}
                       onChange={e => setLoads(l => ({ ...l, casual_group_a_loads: parseInt(e.target.value) || 0 }))} />
-                    {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      {fmt(settings.casual_rate_group_a)} per load · Earnings: {fmt((parseFloat(settings.casual_rate_group_a) || 0) * loads.casual_group_a_loads)}
+                    {effectiveSettings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      {fmt(effectiveSettings.casual_rate_group_a)} per load · Earnings: {fmt((parseFloat(effectiveSettings.casual_rate_group_a) || 0) * loads.casual_group_a_loads)}
                     </div>}
                   </div>
                   <div style={{ background: 'rgba(59,130,246,0.06)', borderRadius: 8, padding: '12px 16px' }}>
@@ -460,8 +479,8 @@ export default function DriverDetailPage() {
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8 }}>Glosam · Driehoek · Future · Afrimat · Boskop</div>
                     <input className="form-input" type="number" min="0" value={loads.casual_group_b_loads}
                       onChange={e => setLoads(l => ({ ...l, casual_group_b_loads: parseInt(e.target.value) || 0 }))} />
-                    {settings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      {fmt(settings.casual_rate_group_b)} per load · Earnings: {fmt((parseFloat(settings.casual_rate_group_b) || 0) * loads.casual_group_b_loads)}
+                    {effectiveSettings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      {fmt(effectiveSettings.casual_rate_group_b)} per load · Earnings: {fmt((parseFloat(effectiveSettings.casual_rate_group_b) || 0) * loads.casual_group_b_loads)}
                     </div>}
                   </div>
                 </div>
@@ -767,6 +786,42 @@ export default function DriverDetailPage() {
                 </div>
               ) : <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No trips recorded.</div>}
             </div>
+
+            {/* Salary config history */}
+            {salaryHistory.length > 0 && (
+              <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
+                <h3 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 700 }}>Salary Config</h3>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Effective from</th>
+                        <th style={{ textAlign: 'right' }}>Near route</th>
+                        <th style={{ textAlign: 'right' }}>Far route</th>
+                        <th style={{ textAlign: 'right' }}>Extra/load</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salaryHistory.map(c => (
+                        <tr key={c.id} style={{ opacity: c.is_active ? 1 : 0.55 }}>
+                          <td style={{ fontSize: 12 }}>
+                            {fmtDate(c.effective_from || c.created_at)}
+                            {c.is_active && (
+                              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: 'var(--success)', background: 'rgba(22,163,74,0.1)', padding: '1px 5px', borderRadius: 4 }}>current</span>
+                            )}
+                          </td>
+                          <td style={{ fontSize: 12, textAlign: 'right' }}>{c.base_salary_near_route != null ? fmt(c.base_salary_near_route) : '—'}</td>
+                          <td style={{ fontSize: 12, textAlign: 'right' }}>{c.base_salary_far_route != null ? fmt(c.base_salary_far_route) : '—'}</td>
+                          <td style={{ fontSize: 12, textAlign: 'right' }}>{c.extra_per_load_far != null ? fmt(c.extra_per_load_far) : '—'}</td>
+                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.notes || ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Driver info card */}
             <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>

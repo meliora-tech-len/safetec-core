@@ -10,6 +10,7 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, TruckLoad, Mine, MineRate, Truck, Supplier,
     Driver, DriverType, DriverPayCycle, DriverTripLog, PayrollSettings,
+    DieselSettings,
 )
 from app.schemas.schemas import (
     TruckLoadCreate, TruckLoadUpdate, TruckLoadOut,
@@ -43,6 +44,45 @@ def _compute_amounts(load: TruckLoad):
         excl = Decimal(str(load.tonnes)) * Decimal(str(load.rate_per_ton))
         load.amount_excl_vat = excl.quantize(Decimal("0.01"))
         load.amount_incl_vat = (excl * VAT_RATE).quantize(Decimal("0.01"))
+
+
+def _compute_subcontractor_amounts(load: TruckLoad, db: Optional[Session] = None):
+    """
+    Compute the four subcontractor rate columns.
+
+    Pass db=session on CREATE to look up the truck's is_subcontractor flag and snapshot
+    DieselSettings.additional_charge_per_ton for this entity. The snapshot is stored in
+    subcontractor_admin_fee_per_ton so that future DieselSettings changes do not alter
+    historical records.
+
+    On UPDATE omit db (or pass it only when truck_id changed) — the existing snapshot is
+    reused and only the three derived fields are recomputed.
+    """
+    if db is not None:
+        truck = db.query(Truck).filter(Truck.id == load.truck_id).first()
+        if not truck or not truck.is_subcontractor:
+            load.subcontractor_admin_fee_per_ton = None
+            load.subcontractor_rate              = None
+            load.subcontractor_amount_excl_vat   = None
+            load.subcontractor_amount_incl_vat   = None
+            return
+        settings = db.query(DieselSettings).filter(
+            DieselSettings.entity_id == load.entity_id
+        ).first()
+        load.subcontractor_admin_fee_per_ton = (
+            Decimal(str(settings.additional_charge_per_ton)) if settings else Decimal("0")
+        )
+
+    fee = load.subcontractor_admin_fee_per_ton
+    if fee is None:
+        return  # non-subcontractor truck — nothing to derive
+
+    if load.tonnes is not None and load.rate_per_ton is not None:
+        sub_rate = Decimal(str(load.rate_per_ton)) - Decimal(str(fee))
+        excl     = Decimal(str(load.tonnes)) * sub_rate
+        load.subcontractor_rate            = sub_rate.quantize(Decimal("0.01"))
+        load.subcontractor_amount_excl_vat = excl.quantize(Decimal("0.01"))
+        load.subcontractor_amount_incl_vat = (excl * VAT_RATE).quantize(Decimal("0.01"))
 
 
 def _resolve_rate(db: Session, mine_id: int, entity_id: int) -> Optional[Decimal]:
@@ -285,6 +325,7 @@ def create_truck_load(
 
     load = TruckLoad(**payload.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
     _compute_amounts(load)
+    _compute_subcontractor_amounts(load, db)
     db.add(load)
     db.flush()  # get load.id before syncing
 
@@ -315,6 +356,10 @@ def bulk_create_truck_loads(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Cache DieselSettings and truck subcontractor flags to avoid per-row queries
+    _diesel_settings_cache: dict = {}
+    _truck_is_sub_cache: dict = {}
+
     created = []
     for item in payload.loads:
         _check_entity_access(item.entity_id, current_user)
@@ -330,6 +375,25 @@ def bulk_create_truck_loads(
 
         load = TruckLoad(**item.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
         _compute_amounts(load)
+
+        # Resolve subcontractor flag and diesel settings from cache
+        if item.truck_id not in _truck_is_sub_cache:
+            t = db.query(Truck).filter(Truck.id == item.truck_id).first()
+            _truck_is_sub_cache[item.truck_id] = (t.is_subcontractor if t else False)
+        if _truck_is_sub_cache[item.truck_id]:
+            if item.entity_id not in _diesel_settings_cache:
+                s = db.query(DieselSettings).filter(DieselSettings.entity_id == item.entity_id).first()
+                _diesel_settings_cache[item.entity_id] = (
+                    Decimal(str(s.additional_charge_per_ton)) if s else Decimal("0")
+                )
+            load.subcontractor_admin_fee_per_ton = _diesel_settings_cache[item.entity_id]
+            _compute_subcontractor_amounts(load)  # reuse snapshot (no db)
+        else:
+            load.subcontractor_admin_fee_per_ton = None
+            load.subcontractor_rate              = None
+            load.subcontractor_amount_excl_vat   = None
+            load.subcontractor_amount_incl_vat   = None
+
         db.add(load)
         db.flush()
         created.append(load)
@@ -375,10 +439,13 @@ def update_truck_load(
     old_truck_id  = load.truck_id
     old_load_date = load.load_date
 
-    for field, value in payload.model_dump(exclude_none=True).items():
+    updated_fields = payload.model_dump(exclude_none=True)
+    for field, value in updated_fields.items():
         setattr(load, field, value)
 
     _compute_amounts(load)
+    # Re-snapshot only when truck changes; otherwise preserve historical snapshot
+    _compute_subcontractor_amounts(load, db if "truck_id" in updated_fields else None)
 
     # If truck or date changed, re-sync both the old and new month
     new_truck_id  = load.truck_id

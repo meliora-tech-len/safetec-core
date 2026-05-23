@@ -109,9 +109,10 @@ function GroupForm({ group, onSave, onCancel }) {
 
 // ── Mine group card ───────────────────────────────────────────────────────────
 
-function GroupCard({ group, onRefresh }) {
+function GroupCard({ group, history, onRefresh }) {
   const api = useApi()
   const [editing, setEditing] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
 
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const handleDeactivate = () => setShowDeleteModal(true)
@@ -155,6 +156,40 @@ function GroupCard({ group, onRefresh }) {
               <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{row.value}</span>
             </div>
           ))}
+
+          {history.length > 0 && (
+            <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ fontSize: 11, padding: '2px 8px', marginBottom: showHistory ? 8 : 0 }}
+                onClick={() => setShowHistory(h => !h)}
+              >
+                {showHistory ? 'Hide history' : `Show history (${history.length})`}
+              </button>
+              {showHistory && (
+                <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ color: 'var(--text-muted)' }}>
+                      <th style={{ textAlign: 'left', paddingBottom: 4 }}>Since</th>
+                      <th style={{ textAlign: 'right', paddingBottom: 4 }}>Base</th>
+                      <th style={{ textAlign: 'right', paddingBottom: 4 }}>Inc/load</th>
+                      <th style={{ textAlign: 'right', paddingBottom: 4 }}>Subs/load</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map(h => (
+                      <tr key={h.id} style={{ opacity: 0.6 }}>
+                        <td style={{ paddingBottom: 3 }}>{new Date(h.created_at).toLocaleDateString('en-ZA')}</td>
+                        <td style={{ textAlign: 'right', paddingBottom: 3 }}>{fmt(h.base_salary)}</td>
+                        <td style={{ textAlign: 'right', paddingBottom: 3 }}>{fmt(h.incentive_per_load)}</td>
+                        <td style={{ textAlign: 'right', paddingBottom: 3 }}>{fmt(h.subs_per_load)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
         </>
       )}
 
@@ -314,9 +349,10 @@ export default function PayrollSettingsPage() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
-          {activeGroups.map(g => (
-            <GroupCard key={g.id} group={g} onRefresh={loadAll} />
-          ))}
+          {activeGroups.map(g => {
+            const hist = groups.filter(h => h.name === g.name && !h.is_active)
+            return <GroupCard key={g.id} group={g} history={hist} onRefresh={loadAll} />
+          })}
 
           {showAddGroup && (
             <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>

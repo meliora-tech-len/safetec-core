@@ -37,7 +37,7 @@ const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: today, notes: '' }
 
 // ── Inline edit row (Loads tab) ────────────────────────────────────────────────
 function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rateSource, setRateSource,
-  saving, onSave, onCancel, firstInputRef, showPo }) {
+  saving, onSave, onCancel, firstInputRef, showPo, showSub }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const exclVat = form.tonnes && form.rate_per_ton
@@ -105,6 +105,7 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
       <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, fontSize: 12 }}>
         {inclVat ? `R ${parseFloat(inclVat).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}
       </td>
+      {showSub && <><td /><td /><td /></>}
       <td style={S.td}>
         <input value={form.notes} placeholder="Notes"
           onChange={e => set('notes', e.target.value)} onKeyDown={handleKey}
@@ -995,8 +996,9 @@ export default function TruckLoadProfilePage() {
     acc[`${d.first_name} ${d.last_name}`.trim()] = d.driver_type
     return acc
   }, {})
-  const showPo = truck?.notes?.toLowerCase() === 'intsimbi'
-  const COLS   = showPo ? 11 : 10
+  const showPo  = truck?.notes?.toLowerCase() === 'intsimbi'
+  const showSub = truck?.is_subcontractor || false
+  const COLS    = (showPo ? 11 : 10) + (showSub ? 3 : 0)
 
   const TABS = [
     { key: 'loads',  label: 'Loads'         },
@@ -1008,7 +1010,7 @@ export default function TruckLoadProfilePage() {
   const editRowProps = {
     form: editForm, setForm: setEditForm, mines, drivers, haulageSuppliers, vatRate,
     rateSource, setRateSource, saving, onSave: handleSave,
-    onCancel: cancelEdit, firstInputRef, showPo,
+    onCancel: cancelEdit, firstInputRef, showPo, showSub,
   }
 
   if (!truck) return (
@@ -1187,6 +1189,11 @@ export default function TruckLoadProfilePage() {
                 <th>Rate/t</th>
                 <th style={{ textAlign: 'right' }}>Excl VAT</th>
                 <th style={{ textAlign: 'right' }}>Incl VAT</th>
+                {showSub && <>
+                  <th style={{ textAlign: 'right', color: 'var(--accent)', whiteSpace: 'nowrap' }}>Sub Rate/t</th>
+                  <th style={{ textAlign: 'right', color: 'var(--accent)', whiteSpace: 'nowrap' }}>Sub Excl VAT</th>
+                  <th style={{ textAlign: 'right', color: 'var(--accent)', whiteSpace: 'nowrap' }}>Sub Incl VAT</th>
+                </>}
                 <th>Notes</th>
                 <th></th>
               </tr>
@@ -1233,6 +1240,11 @@ export default function TruckLoadProfilePage() {
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(l.rate_per_ton)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(l.amount_excl_vat)}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmt(l.amount_incl_vat)}</td>
+                    {showSub && <>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_rate)}</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_amount_excl_vat)}</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: 'var(--accent)' }}>{fmt(l.subcontractor_amount_incl_vat)}</td>
+                    </>}
                     <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {l.notes || '—'}
                     </td>
@@ -1256,7 +1268,7 @@ export default function TruckLoadProfilePage() {
                   <td />
                   <td style={{ textAlign: 'right', padding: '10px 12px' }}>{fmt(summary.total_excl_vat)}</td>
                   <td style={{ textAlign: 'right', padding: '10px 12px', color: 'var(--accent)' }}>{fmt(summary.total_incl_vat)}</td>
-                  <td colSpan={2} />
+                  <td colSpan={2 + (showSub ? 3 : 0)} />
                 </tr>
               </tfoot>
             )}

@@ -1094,6 +1094,10 @@ class TruckLoadOut(TruckLoadBase):
     rate_per_ton: Decimal
     amount_excl_vat: Optional[Decimal] = None
     amount_incl_vat: Optional[Decimal] = None
+    subcontractor_admin_fee_per_ton: Optional[Decimal] = None
+    subcontractor_rate:              Optional[Decimal] = None
+    subcontractor_amount_excl_vat:   Optional[Decimal] = None
+    subcontractor_amount_incl_vat:   Optional[Decimal] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     truck_registration: Optional[str] = None
@@ -1149,6 +1153,7 @@ class DriverSalaryConfigUpdate(BaseModel):
 
 class DriverSalaryConfigOut(DriverSalaryConfigBase):
     id: int
+    is_active: bool
     created_at: datetime
     truck_registration: Optional[str] = None
 
@@ -1159,12 +1164,23 @@ class DriverSalaryConfigOut(DriverSalaryConfigBase):
 # ── Supplier Invoice Schemas ──────────────────────────────────────────────────
 
 class SupplierInvoiceCreate(BaseModel):
-    supplier_id: int
+    supplier_id: Optional[int] = None
+    subcontractor_id: Optional[int] = None
     entity_id: int
     invoice_date: datetime
     invoice_number: str
     amount: Decimal
     litres: Optional[Decimal] = None
+    vat_applicable: bool = True
+    vehicle_reg: Optional[str] = None
+    description: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SubcontractorInvoiceCreate(BaseModel):
+    invoice_date: datetime
+    invoice_number: str
+    amount: Decimal
     vat_applicable: bool = True
     vehicle_reg: Optional[str] = None
     description: Optional[str] = None
@@ -1188,7 +1204,9 @@ class SupplierInvoiceUpdate(BaseModel):
 
 class SupplierInvoiceOut(BaseModel):
     id: int
-    supplier_id: int
+    supplier_id: Optional[int] = None
+    supplier_name: Optional[str] = None
+    subcontractor_id: Optional[int] = None
     entity_id: int
     invoice_date: datetime
     invoice_number: str
@@ -1489,3 +1507,33 @@ class PayrollEntryUpdate(BaseModel):
 class PayrollEntryStatusTransition(BaseModel):
     """Advance or revert the status of a payroll entry."""
     status: PayrollStatus
+
+
+# ── Subcontractor Costing Schemas ─────────────────────────────────────────────
+
+class SubcontractorTruckCostingOut(BaseModel):
+    truck: TruckOut
+    loads: List[TruckLoadOut]
+    income_excl_vat: Decimal
+    income_incl_vat: Decimal
+    admin_fee: Decimal
+    supplier_invoices: List[SupplierInvoiceOut]
+    total_expenses_excl_vat: Decimal
+    total_expenses_incl_vat: Decimal
+    net_payable: Decimal
+
+
+class SubcontractorCostingSummary(BaseModel):
+    income_excl_vat: Decimal
+    income_incl_vat: Decimal
+    total_expenses_excl_vat: Decimal
+    total_expenses_incl_vat: Decimal
+    net_payable: Decimal
+
+
+class SubcontractorCostingOut(BaseModel):
+    subcontractor: SubcontractorOut
+    month: int
+    year: int
+    trucks: List[SubcontractorTruckCostingOut]
+    summary: SubcontractorCostingSummary

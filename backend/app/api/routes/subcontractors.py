@@ -1,16 +1,23 @@
+import calendar
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, extract
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
+from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
+    TruckLoadOut, TruckOut, SupplierInvoiceOut,
+    SubcontractorCostingOut, SubcontractorCostingSummary, SubcontractorTruckCostingOut,
+    SupplierStatementGroup, SubcontractorInvoiceCreate,
 )
 from app.services.audit import log_action
+from app.services.verification import get_verification_display
 
 router = APIRouter(prefix="/api/subcontractors", tags=["subcontractors"])
 
@@ -148,6 +155,225 @@ def update_subcontractor(
     db.commit()
     db.refresh(sub)
     return sub
+
+
+# ── Per-subcontractor invoices ────────────────────────────────────────────────
+
+def _invoice_to_out(db: Session, inv: SupplierInvoice) -> SupplierInvoiceOut:
+    out = SupplierInvoiceOut.model_validate(inv)
+    return out.model_copy(update={
+        "supplier_name": inv.supplier.name if inv.supplier else None,
+        **get_verification_display(db, inv),
+    })
+
+
+@router.get("/{subcontractor_id}/invoices", response_model=List[SupplierStatementGroup])
+def get_subcontractor_invoices(
+    subcontractor_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    invoices = (
+        db.query(SupplierInvoice)
+        .filter(
+            SupplierInvoice.subcontractor_id == subcontractor_id,
+            SupplierInvoice.is_archived == False,
+        )
+        .order_by(
+            SupplierInvoice.statement_year.desc(),
+            SupplierInvoice.statement_month.desc(),
+            SupplierInvoice.invoice_date.desc(),
+        )
+        .all()
+    )
+
+    # Group by (statement_year, statement_month)
+    from collections import defaultdict
+    grouped: dict = defaultdict(list)
+    for inv in invoices:
+        key = (inv.statement_year or 0, inv.statement_month or 0)
+        grouped[key].append(inv)
+
+    result = []
+    for (yr, mo) in sorted(grouped.keys(), reverse=True):
+        invs = grouped[(yr, mo)]
+        inv_outs = [_invoice_to_out(db, i) for i in invs]
+        subtotal = sum(i.amount for i in invs)
+        last_day = calendar.monthrange(yr, mo)[1] if yr and mo else None
+        due_date = (
+            datetime(yr, mo, last_day, 23, 59, 59, tzinfo=timezone.utc)
+            if yr and mo else None
+        )
+        result.append(SupplierStatementGroup(
+            statement_month=mo,
+            statement_year=yr,
+            invoices=inv_outs,
+            subtotal=subtotal,
+            payment_due_date=due_date,
+            is_fully_paid=all(i.is_paid for i in invs),
+        ))
+    return result
+
+
+@router.post("/{subcontractor_id}/invoices", response_model=SupplierInvoiceOut)
+def create_subcontractor_invoice(
+    subcontractor_id: int,
+    payload: SubcontractorInvoiceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    inv_date = payload.invoice_date
+    if inv_date.tzinfo is None:
+        inv_date = inv_date.replace(tzinfo=timezone.utc)
+
+    last_day = calendar.monthrange(inv_date.year, inv_date.month)[1]
+    due_date = inv_date.replace(day=last_day, hour=23, minute=59, second=59, microsecond=0)
+
+    inv = SupplierInvoice(
+        subcontractor_id=subcontractor_id,
+        supplier_id=None,
+        entity_id=sub.entity_id,
+        invoice_date=inv_date,
+        invoice_number=payload.invoice_number.strip(),
+        amount=payload.amount,
+        vat_applicable=payload.vat_applicable,
+        vehicle_reg=payload.vehicle_reg.strip() if payload.vehicle_reg else None,
+        description=payload.description.strip() if payload.description else None,
+        notes=payload.notes.strip() if payload.notes else None,
+        statement_month=inv_date.month,
+        statement_year=inv_date.year,
+        payment_due_date=due_date,
+        created_by_id=current_user.id,
+    )
+    db.add(inv)
+    log_action(
+        db, "subcontractor_invoice.created", user_id=current_user.id,
+        entity_id=sub.entity_id, resource_type="supplier_invoice",
+        description=f"Created invoice {inv.invoice_number} for subcontractor {sub.name}",
+    )
+    db.commit()
+    db.refresh(inv)
+    return _invoice_to_out(db, inv)
+
+
+# ── Costing breakdown ─────────────────────────────────────────────────────────
+
+def _enrich_load(load: TruckLoad) -> TruckLoadOut:
+    d = TruckLoadOut.model_validate(load).model_dump()
+    d["truck_registration"] = load.truck.registration if load.truck else None
+    d["mine_name"]           = load.mine.name if load.mine else None
+    d["supplier_name"]       = load.supplier.name if load.supplier else None
+    return TruckLoadOut(**d)
+
+
+def _enrich_invoice(db: Session, inv: SupplierInvoice) -> SupplierInvoiceOut:
+    out = SupplierInvoiceOut.model_validate(inv)
+    return out.model_copy(update={
+        "supplier_name": inv.supplier.name if inv.supplier else None,
+        **get_verification_display(db, inv),
+    })
+
+
+@router.get("/{subcontractor_id}/costing", response_model=SubcontractorCostingOut)
+def get_subcontractor_costing(
+    subcontractor_id: int,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    trucks = db.query(Truck).filter(Truck.subcontractor_id == subcontractor_id).all()
+    D0 = Decimal("0")
+    truck_results = []
+
+    for truck in trucks:
+        loads = (
+            db.query(TruckLoad)
+            .filter(
+                TruckLoad.truck_id == truck.id,
+                extract("month", TruckLoad.load_date) == month,
+                extract("year",  TruckLoad.load_date) == year,
+                TruckLoad.is_archived == False,
+            )
+            .order_by(TruckLoad.load_date)
+            .all()
+        )
+        if not loads:
+            continue
+
+        income_excl = sum(
+            (Decimal(str(l.subcontractor_amount_excl_vat)) for l in loads if l.subcontractor_amount_excl_vat is not None),
+            D0,
+        )
+        income_incl = sum(
+            (Decimal(str(l.subcontractor_amount_incl_vat)) for l in loads if l.subcontractor_amount_incl_vat is not None),
+            D0,
+        )
+        admin_fee = sum(
+            (Decimal(str(l.tonnes)) * Decimal(str(l.subcontractor_admin_fee_per_ton))
+             for l in loads if l.tonnes is not None and l.subcontractor_admin_fee_per_ton is not None),
+            D0,
+        )
+
+        inv_list = (
+            db.query(SupplierInvoice)
+            .filter(
+                SupplierInvoice.vehicle_reg == truck.registration,
+                SupplierInvoice.statement_month == month,
+                SupplierInvoice.statement_year == year,
+                SupplierInvoice.is_archived == False,
+            )
+            .all()
+            if truck.registration else []
+        )
+
+        exp_excl = sum((Decimal(str(i.amount)) for i in inv_list if i.vat_applicable), D0)
+        exp_incl = admin_fee + sum((Decimal(str(i.amount)) for i in inv_list if not i.vat_applicable), D0)
+        net_payable = income_incl - exp_excl - exp_incl
+
+        truck.subcontractor_display_name = sub.name
+        truck_results.append(SubcontractorTruckCostingOut(
+            truck=TruckOut.model_validate(truck),
+            loads=[_enrich_load(l) for l in loads],
+            income_excl_vat=income_excl,
+            income_incl_vat=income_incl,
+            admin_fee=admin_fee,
+            supplier_invoices=[_enrich_invoice(db, i) for i in inv_list],
+            total_expenses_excl_vat=exp_excl,
+            total_expenses_incl_vat=exp_incl,
+            net_payable=net_payable,
+        ))
+
+    summary = SubcontractorCostingSummary(
+        income_excl_vat=sum((t.income_excl_vat for t in truck_results), D0),
+        income_incl_vat=sum((t.income_incl_vat for t in truck_results), D0),
+        total_expenses_excl_vat=sum((t.total_expenses_excl_vat for t in truck_results), D0),
+        total_expenses_incl_vat=sum((t.total_expenses_incl_vat for t in truck_results), D0),
+        net_payable=sum((t.net_payable for t in truck_results), D0),
+    )
+
+    return SubcontractorCostingOut(
+        subcontractor=SubcontractorOut.model_validate(sub),
+        month=month,
+        year=year,
+        trucks=truck_results,
+        summary=summary,
+    )
 
 
 @router.delete("/{subcontractor_id}")

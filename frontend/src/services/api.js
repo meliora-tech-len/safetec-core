@@ -119,11 +119,14 @@ export const getMineRates = (mineId, params = {}) => api.get(`/mines/${mineId}/r
 export const addMineRate = (mineId, data) => api.post(`/mines/${mineId}/rates`, data)
 
 // ── Subcontractors ────────────────────────────────────────────────────────────
-export const getSubcontractors      = (params = {}) => api.get('/subcontractors/', { params })
-export const getSubcontractor       = (id)          => api.get(`/subcontractors/${id}`)
-export const createSubcontractorBulk = (data)       => api.post('/subcontractors/bulk', data)
-export const updateSubcontractor    = (id, data)    => api.put(`/subcontractors/${id}`, data)
-export const deleteSubcontractor    = (id)          => api.delete(`/subcontractors/${id}`)
+export const getSubcontractors        = (params = {}) => api.get('/subcontractors/', { params })
+export const getSubcontractor         = (id)          => api.get(`/subcontractors/${id}`)
+export const createSubcontractorBulk  = (data)        => api.post('/subcontractors/bulk', data)
+export const updateSubcontractor      = (id, data)    => api.put(`/subcontractors/${id}`, data)
+export const deleteSubcontractor      = (id)          => api.delete(`/subcontractors/${id}`)
+export const getSubcontractorInvoices   = (id, params = {}) => api.get(`/subcontractors/${id}/invoices`, { params })
+export const createSubcontractorInvoice = (id, data)        => api.post(`/subcontractors/${id}/invoices`, data)
+export const getSubcontractorCosting    = (id, params = {}) => api.get(`/subcontractors/${id}/costing`, { params })
 
 // ── Fleet (single truck) ──────────────────────────────────────────────────────
 export const getTruck = (id) => api.get(`/fleet/trucks/${id}`)
