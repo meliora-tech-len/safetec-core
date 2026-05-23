@@ -29,6 +29,7 @@ const blankForm = (entityId) => ({
   invoice_number: '',
   amount: '',
   litres: '',
+  _rate: '',
   vehicle_reg: '',
   description: '',
   vat_applicable: true,
@@ -154,20 +155,24 @@ export default function SupplierProfilePage() {
     }
     const date = (showNew ? newForm.invoice_date : null) || today
     getCurrentDieselRate(supplier.id, { entity_id: supplier.entity_id, on_date: date })
-      .then(r => setDieselRate(r.data || null))
+      .then(r => {
+        setDieselRate(r.data || null)
+        if (r.data && showNew)
+          setNewForm(f => ({ ...f, _rate: String(parseFloat(r.data.rate_per_litre)) }))
+      })
       .catch(() => setDieselRate(null))
   }, [supplier?.id, supplier?.entity_id, supplier?.is_diesel_supplier, newForm.invoice_date, showNew])
 
-  // Auto-fill amount when litres change and a diesel rate has been loaded
+  // Auto-fill amount when litres or rate change
   useEffect(() => {
-    if (!dieselRate || !newForm.litres) return
+    if (!showNew || !newForm.litres || !newForm._rate) return
     const litres = parseFloat(newForm.litres)
-    if (isNaN(litres) || litres <= 0) return
+    const rate = parseFloat(newForm._rate)
+    if (!litres || !rate) return
     if (newForm.amount && !amountAutoFilled) return
-    const calculated = (litres * parseFloat(dieselRate.rate_per_litre)).toFixed(2)
-    setNewForm(f => ({ ...f, amount: calculated }))
+    setNewForm(f => ({ ...f, amount: (litres * rate).toFixed(2) }))
     setAmountAutoFilled(true)
-  }, [newForm.litres, dieselRate])
+  }, [newForm.litres, newForm._rate, showNew])
 
   const toggleCollapse      = (key) => setCollapsed(s => ({ ...s, [key]: !s[key] }))
   const toggleLoadsCollapse = (key) => setLoadsCollapsed(s => ({ ...s, [key]: !s[key] }))
@@ -182,6 +187,7 @@ export default function SupplierProfilePage() {
       invoice_number: inv.invoice_number || '',
       amount: String(inv.amount || ''),
       litres: inv.litres ? String(inv.litres) : '',
+      _rate: inv.litres && inv.amount ? String(Math.round(parseFloat(inv.amount) / parseFloat(inv.litres) * 10000) / 10000) : '',
       vehicle_reg: inv.vehicle_reg || '',
       description: inv.description || '',
       vat_applicable: inv.vat_applicable !== false,
@@ -513,6 +519,7 @@ export default function SupplierProfilePage() {
                 <th style={styles.th}>Description</th>
                 <th style={styles.th}>Amount</th>
                 {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Litres</th>}
+                {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
                 <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
                 <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
                 <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
@@ -537,7 +544,7 @@ export default function SupplierProfilePage() {
                   />
                 : <tr>
                     <td
-                      colSpan={9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 1 : 0)}
+                      colSpan={9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 2 : 0)}
                       style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}
                     >
                       No invoices yet — click "Add Invoice" to start
@@ -620,6 +627,7 @@ export default function SupplierProfilePage() {
                       <th style={styles.th}>Description</th>
                       <th style={styles.th}>Amount</th>
                       {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Litres</th>}
+                {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
                       <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
@@ -646,7 +654,7 @@ export default function SupplierProfilePage() {
                       const isEditing = editingId === inv.id
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
-                      const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 1 : 0)
+                      const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 2 : 0)
 
                       return (
                         <Fragment key={inv.id}>
@@ -771,7 +779,14 @@ export default function SupplierProfilePage() {
                                   <input
                                     type="number" step="0.001" min="0" placeholder="0.000"
                                     value={f.litres || ''}
-                                    onChange={e => setEditForm(p => ({ ...p, litres: e.target.value }))}
+                                    onChange={e => {
+                                      const litres = e.target.value
+                                      setEditForm(p => {
+                                        const rate = parseFloat(p._rate) || 0
+                                        const l = parseFloat(litres) || 0
+                                        return { ...p, litres, ...(rate && l ? { amount: (l * rate).toFixed(2) } : {}) }
+                                      })
+                                    }}
                                     onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
                                     onClick={e => e.stopPropagation()}
                                     style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
@@ -785,6 +800,35 @@ export default function SupplierProfilePage() {
                                   inv.diesel_fillup_id
                                     ? <Fuel size={12} color="#16a34a" title="Linked to diesel log" />
                                     : <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                )}
+                              </td>
+                            )}
+
+                            {/* Rate/L — diesel suppliers only */}
+                            {isDiesel && (
+                              <td style={{ ...styles.td, textAlign: 'right' }}>
+                                {isEditing ? (
+                                  <input
+                                    type="number" step="0.0001" min="0" placeholder="0.0000"
+                                    value={f._rate || ''}
+                                    onChange={e => {
+                                      const rate = e.target.value
+                                      setEditForm(p => {
+                                        const l = parseFloat(p.litres) || 0
+                                        const r = parseFloat(rate) || 0
+                                        return { ...p, _rate: rate, ...(l && r ? { amount: (l * r).toFixed(2) } : {}) }
+                                      })
+                                    }}
+                                    onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
+                                  />
+                                ) : inv.litres && inv.amount ? (
+                                  <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                                    {(parseFloat(inv.amount) / parseFloat(inv.litres)).toFixed(4)}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: 'var(--text-muted)' }}>—</span>
                                 )}
                               </td>
                             )}
@@ -904,7 +948,7 @@ export default function SupplierProfilePage() {
                         Statement Total:
                       </td>
                       <td style={{ ...styles.td, fontWeight: 700 }}>{formatCurrency(group.subtotal)}</td>
-                      <td colSpan={5 + (isDiesel ? 1 : 0)} style={styles.td} />
+                      <td colSpan={5 + (isDiesel ? 2 : 0)} style={styles.td} />
                     </tr>
                   </tfoot>
                 </table>
@@ -921,7 +965,7 @@ export default function SupplierProfilePage() {
 function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit, trucks = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
-  const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 1 : 0)
+  const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 2 : 0)
   const lineTotal = (form.line_items || []).reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
 
   const formRow = (
@@ -978,20 +1022,23 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
         )}
       </td>
       {isDiesel && (
-        <td style={styles.td}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <input type="number" step="0.001" min="0" placeholder="0.000"
-              value={form.litres}
-              onChange={e => set('litres', e.target.value)}
-              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-              style={{ ...styles.cellInput, width: 68, textAlign: 'right' }}
-            />
-            {dieselRate && (
-              <span style={{ fontSize: 10, color: 'var(--accent)', whiteSpace: 'nowrap', fontWeight: 600 }}>
-                @R{parseFloat(dieselRate.rate_per_litre).toFixed(4)}
-              </span>
-            )}
-          </div>
+        <td style={{ ...styles.td, textAlign: 'right' }}>
+          <input type="number" step="0.001" min="0" placeholder="0.000"
+            value={form.litres}
+            onChange={e => set('litres', e.target.value)}
+            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
+          />
+        </td>
+      )}
+      {isDiesel && (
+        <td style={{ ...styles.td, textAlign: 'right' }}>
+          <input type="number" step="0.0001" min="0" placeholder="0.0000"
+            value={form._rate || ''}
+            onChange={e => { set('_rate', e.target.value); setAmountAutoFilled(false) }}
+            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
+          />
         </td>
       )}
       <td style={{ ...styles.td, textAlign: 'center' }}>
