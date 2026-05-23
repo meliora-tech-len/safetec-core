@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { getSuppliers, getEntities, createSupplierBulk, updateSupplier } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Users, X } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 /**
  * Clients — a billing-focused view of the suppliers table.
@@ -44,6 +45,9 @@ export default function ClientsPage() {
 
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
   const entityName = (id) => entities.find(e => e.id === id)?.name || '—'
+
+  const { sort, onSort } = useSort('name', 'asc')
+  const sortedClients = useMemo(() => applySort(clients, sort), [clients, sort])
 
   const handleSave = async (formData) => {
     try {
@@ -116,23 +120,23 @@ export default function ClientsPage() {
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Contact Person</th>
-              <th>Email</th>
+              <SortableHeader label="Name" col="name" sort={sort} onSort={onSort} />
+              <SortableHeader label="Contact Person" col="contact_person" sort={sort} onSort={onSort} />
+              <SortableHeader label="Email" col="email" sort={sort} onSort={onSort} />
               <th>Phone</th>
-              <th>Entity</th>
-              <th>Created</th>
+              <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
+              <SortableHeader label="Created" col="created_at" sort={sort} onSort={onSort} />
               <th style={{ width: 60 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
-            ) : clients.length === 0 ? (
+            ) : sortedClients.length === 0 ? (
               <tr><td colSpan={7}>
                 <div className="empty-state"><Users size={32} /><p>No clients found</p></div>
               </td></tr>
-            ) : clients.map(client => (
+            ) : sortedClients.map(client => (
               <tr key={client.id}>
                 <td>
                   <div style={{ fontWeight: 600 }}>{client.name}</div>

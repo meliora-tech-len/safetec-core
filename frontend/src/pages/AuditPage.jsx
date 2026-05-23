@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { getAuditLogs, getEntities } from '../services/api'
 import { formatDateTime } from '../utils/helpers'
 import { Shield, RefreshCw, Search } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 const ACTION_LABELS = {
   // Auth
@@ -113,18 +114,26 @@ export default function AuditPage() {
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
   useEffect(() => { load() }, [filterEntity, filterResource])
 
-  const filtered = logs.filter(log => {
-    if (filterAction && !log.action.startsWith(filterAction)) return false
-    if (search) {
-      const q = search.toLowerCase()
-      return (
-        (log.description || '').toLowerCase().includes(q) ||
-        (log.user?.full_name || '').toLowerCase().includes(q) ||
-        (log.action || '').toLowerCase().includes(q)
-      )
-    }
-    return true
-  })
+  const { sort, onSort } = useSort('created_at', 'desc')
+
+  const filtered = useMemo(() => {
+    const base = logs.filter(log => {
+      if (filterAction && !log.action.startsWith(filterAction)) return false
+      if (search) {
+        const q = search.toLowerCase()
+        return (
+          (log.description || '').toLowerCase().includes(q) ||
+          (log.user?.full_name || '').toLowerCase().includes(q) ||
+          (log.action || '').toLowerCase().includes(q)
+        )
+      }
+      return true
+    })
+    return applySort(base, sort, (item, col) => {
+      if (col === 'user_name') return item.user?.full_name || ''
+      return item[col]
+    })
+  }, [logs, filterAction, search, sort])
 
   const actionLabel = (action) => ACTION_LABELS[action] || action
   const actionColor = (action) => ACTION_COLORS[action] || 'var(--text-secondary)'
@@ -182,10 +191,10 @@ export default function AuditPage() {
         <table>
           <thead>
             <tr>
-              <th>Timestamp</th>
-              <th>User</th>
-              <th>Action</th>
-              <th>Entity</th>
+              <SortableHeader label="Timestamp" col="created_at" sort={sort} onSort={onSort} />
+              <SortableHeader label="User" col="user_name" sort={sort} onSort={onSort} />
+              <SortableHeader label="Action" col="action" sort={sort} onSort={onSort} />
+              <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
               <th>Description</th>
               <th>IP Address</th>
             </tr>

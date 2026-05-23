@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { getCustomers, getEntities, createCustomer, updateCustomer, deleteCustomer } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
@@ -6,6 +6,7 @@ import { Plus, Search, Edit2, Trash2, UserCheck, X } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 import DeleteModal from '../components/DeleteModal'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 const BLANK = {
   entity_id: '',
@@ -55,6 +56,9 @@ export default function CustomersPage() {
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
+
+  const { sort, onSort } = useSort('name', 'asc')
+  const sortedCustomers = useMemo(() => applySort(customers, sort), [customers, sort])
 
   const handleSave = async (formData) => {
     try {
@@ -125,24 +129,24 @@ export default function CustomersPage() {
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Contact Person</th>
-              <th>Email</th>
+              <SortableHeader label="Name" col="name" sort={sort} onSort={onSort} />
+              <SortableHeader label="Contact Person" col="contact_person" sort={sort} onSort={onSort} />
+              <SortableHeader label="Email" col="email" sort={sort} onSort={onSort} />
               <th>Phone</th>
-              <th>City</th>
-              <th>Entity</th>
-              <th>Created</th>
+              <SortableHeader label="City" col="city" sort={sort} onSort={onSort} />
+              <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
+              <SortableHeader label="Created" col="created_at" sort={sort} onSort={onSort} />
               <th style={{ width: 80 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
-            ) : customers.length === 0 ? (
+            ) : sortedCustomers.length === 0 ? (
               <tr><td colSpan={8}>
                 <div className="empty-state"><UserCheck size={32} /><p>No customers found</p></div>
               </td></tr>
-            ) : customers.map(customer => (
+            ) : sortedCustomers.map(customer => (
               <tr key={customer.id}>
                 <td>
                   <div style={{ fontWeight: 600 }}>{customer.name}</div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   getDieselFillUps, getDieselFillUpSummary, createDieselFillUp,
   updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp,
@@ -12,6 +12,7 @@ import ExportButton from '../components/ExportButton'
 import SearchableSelect from '../components/SearchableSelect'
 import VerifyBadge from '../components/VerifyBadge'
 import DeleteModal from '../components/DeleteModal'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 const API = import.meta.env.VITE_API_URL || ''
 function rawApi(path, opts = {}) {
@@ -62,6 +63,7 @@ export default function DieselFillUpsPage() {
   const [saving,       setSaving]       = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const firstInputRef = useRef(null)
+  const { sort, onSort } = useSort('truck_registration', 'asc')
 
   useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
 
@@ -227,14 +229,17 @@ export default function DieselFillUpsPage() {
   const years = []
   for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) years.push(y)
 
-  const visible = search
-    ? fillups.filter(f =>
-        (f.truck_registration || '').toLowerCase().includes(search.toLowerCase()) ||
-        (f.supplier_name      || '').toLowerCase().includes(search.toLowerCase()) ||
-        (f.invoice_number     || '').toLowerCase().includes(search.toLowerCase()) ||
-        (f.slip_number        || '').toLowerCase().includes(search.toLowerCase())
-      )
-    : fillups
+  const visible = useMemo(() => {
+    const base = search
+      ? fillups.filter(f =>
+          (f.truck_registration || '').toLowerCase().includes(search.toLowerCase()) ||
+          (f.supplier_name      || '').toLowerCase().includes(search.toLowerCase()) ||
+          (f.invoice_number     || '').toLowerCase().includes(search.toLowerCase()) ||
+          (f.slip_number        || '').toLowerCase().includes(search.toLowerCase())
+        )
+      : fillups
+    return applySort(base, sort)
+  }, [fillups, search, sort])
 
   const multiEntity = entities.length > 1
   const COLS = multiEntity ? 13 : 12
@@ -357,15 +362,15 @@ export default function DieselFillUpsPage() {
         <table style={{ minWidth: 1100 }}>
           <thead>
             <tr>
-              {multiEntity && <th>Entity</th>}
-              <th>Date</th>
-              <th>Truck</th>
-              <th>Supplier</th>
+              {multiEntity && <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />}
+              <SortableHeader label="Date" col="fillup_date" sort={sort} onSort={onSort} />
+              <SortableHeader label="Truck" col="truck_registration" sort={sort} onSort={onSort} />
+              <SortableHeader label="Supplier" col="supplier_name" sort={sort} onSort={onSort} />
               <th className="text-right">Litres</th>
               <th className="text-right">Rate/L</th>
               <th className="text-right">Amount</th>
               <th className="text-right">Admin Fee</th>
-              <th className="text-right">Total</th>
+              <SortableHeader label="Total" col="total_amount" sort={sort} onSort={onSort} className="text-right" />
               <th>Invoice #</th>
               <th>Slip #</th>
               <th>Verified</th>

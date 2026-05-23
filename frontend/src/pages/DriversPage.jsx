@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Users, Plus, Search, X, Trash2, Edit2 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -255,6 +256,16 @@ export default function DriversPage() {
 
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
 
+  const { sort, onSort } = useSort('last_name', 'asc')
+  const sortedDrivers = useMemo(() =>
+    applySort(drivers, sort, (d, col) => {
+      if (col === 'name') return `${d.last_name} ${d.first_name}`
+      if (col === 'entity_code') return entityCode(d.entity_id)
+      return d[col]
+    }),
+    [drivers, sort, entities]
+  )
+
   return (
     <div style={{ padding: '28px 32px', flex: 1 }}>
       <div className="page-header">
@@ -342,19 +353,19 @@ export default function DriversPage() {
           <table>
             <thead>
               <tr>
-                <th>Employee #</th>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Entity</th>
-                <th>Truck</th>
+                <SortableHeader label="Employee #" col="employee_number" sort={sort} onSort={onSort} />
+                <SortableHeader label="Name" col="last_name" sort={sort} onSort={onSort} />
+                <SortableHeader label="Type" col="driver_type" sort={sort} onSort={onSort} />
+                <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
+                <SortableHeader label="Truck" col="truck_registration" sort={sort} onSort={onSort} />
                 <th className="text-right">Loads (month)</th>
                 <th className="text-right">Payments (month)</th>
-                <th>Status</th>
+                <SortableHeader label="Status" col="is_active" sort={sort} onSort={onSort} />
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {drivers.map(d => (
+              {sortedDrivers.map(d => (
                 <tr key={d.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/drivers/${d.id}`)}>
                   <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>
                     {d.employee_number || '—'}

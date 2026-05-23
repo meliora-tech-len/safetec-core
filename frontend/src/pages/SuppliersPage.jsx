@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { getSuppliers, getEntities, createSupplierBulk, updateSupplier, deleteSupplier } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
@@ -7,6 +7,7 @@ import { Plus, Search, Edit2, Trash2, User, X, Copy } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 import DeleteModal from '../components/DeleteModal'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 export default function SuppliersPage() {
   const { activeEntity, isAdmin } = useAuth()
@@ -38,6 +39,9 @@ export default function SuppliersPage() {
   useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
+
+  const { sort, onSort } = useSort('name', 'asc')
+  const sortedSuppliers = useMemo(() => applySort(suppliers, sort), [suppliers, sort])
 
   const openCreate = () => setModal({ mode: 'create' })
   const openEdit = (supplier) => setModal({ mode: 'edit', supplier })
@@ -127,24 +131,24 @@ export default function SuppliersPage() {
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Payment Term</th>
-              <th>Contact Person</th>
-              <th>Email</th>
+              <SortableHeader label="Name" col="name" sort={sort} onSort={onSort} />
+              <SortableHeader label="Payment Term" col="payment_term" sort={sort} onSort={onSort} />
+              <SortableHeader label="Contact Person" col="contact_person" sort={sort} onSort={onSort} />
+              <SortableHeader label="Email" col="email" sort={sort} onSort={onSort} />
               <th>Phone</th>
-              <th>Entity</th>
-              <th>Created</th>
+              <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
+              <SortableHeader label="Created" col="created_at" sort={sort} onSort={onSort} />
               <th style={{ width: 80 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
-            ) : suppliers.length === 0 ? (
+            ) : sortedSuppliers.length === 0 ? (
               <tr><td colSpan={8}>
                 <div className="empty-state"><User size={32} /><p>No suppliers found</p></div>
               </td></tr>
-            ) : suppliers.map(supplier => (
+            ) : sortedSuppliers.map(supplier => (
               <tr key={supplier.id}>
                 <td>
                   <Link to={`/suppliers/${supplier.id}`} style={{ fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>

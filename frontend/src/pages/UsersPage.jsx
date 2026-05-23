@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Users, Plus, Edit2, Key, Shield, UserX, UserCheck, X, Check, Eye, EyeOff } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
@@ -7,6 +7,7 @@ import {
   updateUserPermissions, resetUserPassword, reactivateUser,
 } from '../services/api'
 import DeleteModal from '../components/DeleteModal'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 const ALL_MODULES = [
   { key: 'suppliers',   label: 'Suppliers',             description: 'Supplier records & management' },
@@ -41,6 +42,9 @@ export default function UsersPage() {
   const [permissions, setPermissions] = useState([]) // [{ entity_id, enabled, modules[], can_create, can_edit, can_delete }]
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const { sort, onSort } = useSort('full_name', 'asc')
+  const sortedUsers = useMemo(() => applySort(users, sort), [users, sort])
 
   const load = async () => {
     setLoading(true)
@@ -218,13 +222,15 @@ export default function UsersPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['User', 'Role', 'Entity Access', 'Status', 'Actions'].map(h => (
+                <SortableHeader label="User" col="full_name" sort={sort} onSort={onSort} style={{ padding: '11px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }} />
+                <SortableHeader label="Role" col="role" sort={sort} onSort={onSort} style={{ padding: '11px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }} />
+                {['Entity Access', 'Status', 'Actions'].map(h => (
                   <th key={h} style={{ padding: '11px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {users.map(user => (
+              {sortedUsers.map(user => (
                 <tr key={user.id} style={{ borderTop: '1px solid var(--border)' }}>
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ fontWeight: 600, fontSize: 14 }}>{user.full_name}</div>

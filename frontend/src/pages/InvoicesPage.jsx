@@ -8,6 +8,7 @@ import DeleteModal from '../components/DeleteModal'
 import { useTheme } from '../hooks/useTheme'
 import toast from 'react-hot-toast'
 import { useAuth } from '../hooks/useAuth'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 export default function InvoicesPage({ docType = 'invoice' }) {
   const { activeEntity, isAdmin } = useAuth()
@@ -59,13 +60,20 @@ export default function InvoicesPage({ docType = 'invoice' }) {
     return s
   }, [allInvoices])
 
+  const { sort, onSort } = useSort('issue_date', 'desc')
+
   const displayedInvoices = useMemo(() => {
-    return allInvoices.filter(inv => {
+    const filtered = allInvoices.filter(inv => {
       if (!showCancelled && inv.status === 'cancelled') return false
       if (filterStatus && inv.status !== filterStatus) return false
       return true
     })
-  }, [allInvoices, showCancelled, filterStatus])
+    return applySort(filtered, sort, (item, col) => {
+      if (col === 'recipient') return item.supplier?.name || item.customer?.name || ''
+      if (col === 'entity_code') return item.entity?.code || ''
+      return item[col]
+    })
+  }, [allInvoices, showCancelled, filterStatus, sort])
 
   const handlePdf = async (e, inv) => {
     e.stopPropagation()
@@ -182,13 +190,13 @@ export default function InvoicesPage({ docType = 'invoice' }) {
         <table>
           <thead>
             <tr>
-              <th>Number</th>
-              <th>Supplier</th>
-              <th>Entity</th>
-              <th>Issue Date</th>
-              <th>Due Date</th>
-              <th>Status</th>
-              <th className="text-right">Total</th>
+              <SortableHeader label="Number" col="invoice_number" sort={sort} onSort={onSort} />
+              <SortableHeader label="Supplier / Customer" col="recipient" sort={sort} onSort={onSort} />
+              <SortableHeader label="Entity" col="entity_code" sort={sort} onSort={onSort} />
+              <SortableHeader label="Issue Date" col="issue_date" sort={sort} onSort={onSort} />
+              <SortableHeader label="Due Date" col="due_date" sort={sort} onSort={onSort} />
+              <SortableHeader label="Status" col="status" sort={sort} onSort={onSort} />
+              <SortableHeader label="Total" col="total" sort={sort} onSort={onSort} className="text-right" />
               <th style={{ width: 90 }}></th>
             </tr>
           </thead>

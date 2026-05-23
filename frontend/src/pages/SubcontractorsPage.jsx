@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { getSubcontractors, getEntities, createSubcontractorBulk, updateSubcontractor, deleteSubcontractor } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
@@ -7,6 +7,7 @@ import { Plus, Search, Edit2, Trash2, Building2, X, Copy } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 import DeleteModal from '../components/DeleteModal'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 export default function SubcontractorsPage() {
   const { activeEntity, isAdmin } = useAuth()
@@ -38,6 +39,9 @@ export default function SubcontractorsPage() {
   useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
+
+  const { sort, onSort } = useSort('name', 'asc')
+  const sortedSubs = useMemo(() => applySort(subcontractors, sort), [subcontractors, sort])
 
   const openCreate = () => setModal({ mode: 'create' })
   const openEdit   = (sub) => setModal({ mode: 'edit', sub })
@@ -126,22 +130,22 @@ export default function SubcontractorsPage() {
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Contact Person</th>
-              <th>Email</th>
+              <SortableHeader label="Name" col="name" sort={sort} onSort={onSort} />
+              <SortableHeader label="Contact Person" col="contact_person" sort={sort} onSort={onSort} />
+              <SortableHeader label="Email" col="email" sort={sort} onSort={onSort} />
               <th>Phone</th>
-              <th>Entity</th>
+              <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
-            ) : subcontractors.length === 0 ? (
+            ) : sortedSubs.length === 0 ? (
               <tr><td colSpan={6}>
                 <div className="empty-state"><Building2 size={32} /><p>No subcontractors found</p></div>
               </td></tr>
-            ) : subcontractors.map(sub => (
+            ) : sortedSubs.map(sub => (
               <tr key={sub.id}>
                 <td>
                   <Link to={`/subcontractors/${sub.id}`} style={{ fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>
