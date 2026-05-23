@@ -294,7 +294,7 @@ function TruckReport({ data }) {
     <table style={styles.table}>
       <thead>
         <tr>
-          {['Truck', 'Fill-ups', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Grand Total', 'Avg Rate (R/L)'].map(h => (
+          {['Truck', 'Logs', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Grand Total', 'Avg Rate (R/L)'].map(h => (
             <th key={h} style={styles.th}>{h}</th>
           ))}
         </tr>
@@ -347,7 +347,7 @@ function SupplierReport({ data }) {
       <table style={styles.table}>
         <thead>
           <tr>
-            {['Supplier', 'Fill-ups', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Grand Total'].map(h => (
+            {['Supplier', 'Logs', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Grand Total'].map(h => (
               <th key={h} style={styles.th}>{h}</th>
             ))}
           </tr>
@@ -394,7 +394,7 @@ function AnnualReport({ data, year }) {
       <table style={styles.table}>
         <thead>
           <tr>
-            {['Month', 'Fill-ups', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Grand Total'].map(h => (
+            {['Month', 'Logs', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Grand Total'].map(h => (
               <th key={h} style={styles.th}>{h}</th>
             ))}
           </tr>

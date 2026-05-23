@@ -31,7 +31,7 @@ const EMPTY_LOAD = {
   mine_id: '', supplier_id: '', tonnes: '', rate_per_ton: '', is_paid: false, notes: '', checked_by: '',
 }
 const EMPTY_DIESEL = {
-  fillup_date: today, supplier_id: '', invoice_number: '', litres: '', rate_per_litre: '', notes: '',
+  fillup_date: today, supplier_id: '', invoice_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
 }
 const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: today, notes: '' }
 
@@ -180,6 +180,7 @@ function DieselSection({ truck, year, month, suppliers }) {
         rate_per_litre: rateNum,
         invoice_number: form.invoice_number || null,
         notes:          form.notes || null,
+        diesel_type:    form.diesel_type || 'fillup',
       })
       toast.success('Diesel entry added')
       setForm({ ...EMPTY_DIESEL })
@@ -229,7 +230,7 @@ function DieselSection({ truck, year, month, suppliers }) {
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
         <button className="btn btn-primary" onClick={() => setAddingNew(v => !v)}
           style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Plus size={14} /> Add Fill-up
+          <Plus size={14} /> Log Diesel
         </button>
       </div>
 
@@ -249,6 +250,21 @@ function DieselSection({ truck, year, month, suppliers }) {
             <div>
               <label className="form-label">Invoice #</label>
               <input className="form-input" value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" />
+            </div>
+            <div>
+              <label className="form-label">Type</label>
+              <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                {[['fillup', 'Fill-up'], ['topup', 'Top-up']].map(([val, label]) => (
+                  <button key={val} type="button" onClick={() => set('diesel_type', val)}
+                    style={{
+                      padding: '6px 12px', fontSize: 12, border: 'none', cursor: 'pointer',
+                      background: form.diesel_type === val ? 'var(--accent)' : 'transparent',
+                      color: form.diesel_type === val ? '#fff' : 'var(--text-secondary)',
+                    }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div>
               <label className="form-label">Litres *</label>
@@ -327,6 +343,7 @@ function DieselSection({ truck, year, month, suppliers }) {
                   <thead>
                     <tr>
                       <th>Date</th>
+                      <th>Type</th>
                       <th>Invoice #</th>
                       <th style={{ textAlign: 'right' }}>Litres</th>
                       <th style={{ textAlign: 'right' }}>Rate/L</th>
@@ -341,6 +358,15 @@ function DieselSection({ truck, year, month, suppliers }) {
                     {entries.map(f => (
                       <tr key={f.id} style={{ height: 48 }}>
                         <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(f.fillup_date)}</td>
+                        <td>
+                          <span style={{
+                            padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                            background: f.diesel_type === 'topup' ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)',
+                            color: f.diesel_type === 'topup' ? '#d97706' : '#16a34a',
+                          }}>
+                            {f.diesel_type === 'topup' ? 'Top-up' : 'Fill-up'}
+                          </span>
+                        </td>
                         <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{f.invoice_number || '—'}</td>
                         <td style={{ textAlign: 'right' }}>{parseFloat(f.litres).toFixed(1)}</td>
                         <td style={{ textAlign: 'right', fontSize: 12 }}>R {parseFloat(f.rate_per_litre).toFixed(2)}</td>
@@ -358,7 +384,7 @@ function DieselSection({ truck, year, month, suppliers }) {
                   </tbody>
                   <tfoot>
                     <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                      <td colSpan={2} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
+                      <td colSpan={3} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
                       <td style={{ textAlign: 'right', padding: '8px 12px' }}>{subLitres.toFixed(1)} L</td>
                       <td colSpan={3} />
                       <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(subTotal)}</td>

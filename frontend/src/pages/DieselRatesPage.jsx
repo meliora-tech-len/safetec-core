@@ -176,7 +176,7 @@ export default function DieselRatesPage() {
       <div style={styles.header}>
         <div>
           <h1 style={styles.title}>Diesel Rate Management</h1>
-          <p style={styles.subtitle}>Versioned rates per supplier — current rate auto-applied to new fill-ups</p>
+          <p style={styles.subtitle}>Versioned rates per supplier — current rate auto-applied to new entries</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {isAdmin && (
@@ -335,7 +335,7 @@ export default function DieselRatesPage() {
         </div>
         <div className="card" style={{ padding: '20px 22px' }}>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Fuel size={13} /> Rate entered as a percentage (e.g. enter <strong>1</strong> for 1%). Snapshots onto each fill-up at entry time — historical records are not affected by future changes.
+            <Fuel size={13} /> Rate entered as a percentage (e.g. enter <strong>1</strong> for 1%). Snapshots onto each entry at entry time — historical records are not affected by future changes.
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>

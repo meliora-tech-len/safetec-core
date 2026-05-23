@@ -1412,6 +1412,7 @@ class DieselFillUpCreate(BaseModel):
     slip_number: Optional[str] = None
     truckload_id: Optional[int] = None
     supplier_invoice_id: Optional[int] = None
+    diesel_type: str = 'fillup'
     notes: Optional[str] = None
 
 
@@ -1425,6 +1426,7 @@ class DieselFillUpUpdate(BaseModel):
     slip_number: Optional[str] = None
     truckload_id: Optional[int] = None
     supplier_invoice_id: Optional[int] = None
+    diesel_type: Optional[str] = None
     verified: Optional[bool] = None
     notes: Optional[str] = None
 
@@ -1445,6 +1447,7 @@ class DieselFillUpOut(BaseModel):
     slip_number: Optional[str] = None
     truckload_id: Optional[int] = None
     supplier_invoice_id: Optional[int] = None
+    diesel_type: str = 'fillup'
     verified: bool
     verified_by: Optional[int] = None
     verified_at: Optional[datetime] = None

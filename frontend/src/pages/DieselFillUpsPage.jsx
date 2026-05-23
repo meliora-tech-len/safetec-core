@@ -28,7 +28,7 @@ const today = new Date().toISOString().slice(0, 10)
 
 const BLANK = {
   entity_id: '', truck_id: '', supplier_id: '', fillup_date: today,
-  litres: '', rate_per_litre: '', invoice_number: '', slip_number: '', notes: '',
+  litres: '', rate_per_litre: '', invoice_number: '', slip_number: '', notes: '', diesel_type: 'fillup',
 }
 
 export default function DieselFillUpsPage() {
@@ -162,6 +162,7 @@ export default function DieselFillUpsPage() {
       invoice_number: f.invoice_number || '',
       slip_number:   f.slip_number    || '',
       notes:         f.notes          || '',
+      diesel_type:   f.diesel_type    || 'fillup',
     })
     setAutoRate(null); setRateEdited(true) // treat existing rate as manual
     setEditingId(f.id)
@@ -187,15 +188,16 @@ export default function DieselFillUpsPage() {
       rate_per_litre: parseFloat(f.rate_per_litre),
       invoice_number: f.invoice_number || null,
       slip_number:   f.slip_number    || null,
+      diesel_type:   f.diesel_type    || 'fillup',
       notes:         f.notes          || null,
     }
     try {
       if (editingId === 'new') {
         await createDieselFillUp(payload)
-        toast.success('Fill-up added')
+        toast.success('Entry added')
       } else {
         await updateDieselFillUp(editingId, payload)
-        toast.success('Fill-up updated')
+        toast.success('Entry updated')
       }
       setEditingId(null)
       load()
@@ -242,7 +244,7 @@ export default function DieselFillUpsPage() {
   }, [fillups, search, sort])
 
   const multiEntity = entities.length > 1
-  const COLS = multiEntity ? 13 : 12
+  const COLS = multiEntity ? 14 : 13
 
   return (
     <div style={styles.page}>
@@ -273,7 +275,7 @@ export default function DieselFillUpsPage() {
             ]}
           />
           <button className="btn-primary" onClick={startNew} disabled={editingId !== null}>
-            <Plus size={15} /> Add Fill-Up
+            <Plus size={15} /> Log Diesel
           </button>
         </div>
       </div>
@@ -350,7 +352,7 @@ export default function DieselFillUpsPage() {
       {/* Summary cards */}
       {summary && (
         <div className="grid-4" style={{ marginBottom: 16 }}>
-          <SummaryCard label="Fill-Ups" value={summary.total_fillups} />
+          <SummaryCard label="Logs" value={summary.total_fillups} />
           <SummaryCard label="Total Litres" value={`${parseFloat(summary.total_litres).toLocaleString('en-ZA', { minimumFractionDigits: 2 })} L`} />
           <SummaryCard label="Excl. Admin Fee" value={formatCurrency(summary.total_amount)} />
           <SummaryCard label="Grand Total (incl. fee)" value={formatCurrency(summary.grand_total)} accent />
@@ -371,6 +373,7 @@ export default function DieselFillUpsPage() {
               <th className="text-right">Amount</th>
               <th className="text-right">Admin Fee</th>
               <SortableHeader label="Total" col="total_amount" sort={sort} onSort={onSort} className="text-right" />
+              <th>Type</th>
               <th>Invoice #</th>
               <th>Slip #</th>
               <th>Verified</th>
@@ -398,7 +401,7 @@ export default function DieselFillUpsPage() {
 
             {!loading && visible.length === 0 && editingId !== 'new' && (
               <tr><td colSpan={COLS}>
-                <div className="empty-state"><Fuel size={32} /><p>No fill-ups found — click "Add Fill-Up" to start</p></div>
+                <div className="empty-state"><Fuel size={32} /><p>No diesel logs found — click "Log Diesel" to start</p></div>
               </td></tr>
             )}
 
@@ -435,6 +438,15 @@ export default function DieselFillUpsPage() {
                     {parseFloat(f.admin_fee_amount) > 0 ? formatCurrency(f.admin_fee_amount) : '—'}
                   </td>
                   <td className="text-right" style={{ fontWeight: 700 }}>{formatCurrency(f.total_amount)}</td>
+                  <td>
+                    <span style={{
+                      padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                      background: f.diesel_type === 'topup' ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)',
+                      color: f.diesel_type === 'topup' ? '#d97706' : '#16a34a',
+                    }}>
+                      {f.diesel_type === 'topup' ? 'Top-up' : 'Fill-up'}
+                    </span>
+                  </td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.invoice_number || '—'}</td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.slip_number || '—'}</td>
                   <td>
@@ -459,7 +471,7 @@ export default function DieselFillUpsPage() {
                 <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(summary.total_amount)}</td>
                 <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(summary.total_admin_fee)}</td>
                 <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(summary.grand_total)}</td>
-                <td colSpan={4} />
+                <td colSpan={5} />
               </tr>
             </tfoot>
           )}
@@ -469,15 +481,15 @@ export default function DieselFillUpsPage() {
       <DeleteModal
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title="Delete Diesel Fill-Up"
+        title="Delete Diesel Log"
         description={deleteTarget ? `${parseFloat(deleteTarget.litres).toFixed(2)} L on ${formatDate(deleteTarget.fillup_date)}${deleteTarget.supplier_name ? ` — ${deleteTarget.supplier_name}` : ''}` : ''}
         onArchive={async () => {
-          try { await archiveDieselFillUp(deleteTarget.id); toast.success('Fill-up archived'); load() }
+          try { await archiveDieselFillUp(deleteTarget.id); toast.success('Entry archived'); load() }
           catch (err) { toast.error(errorMessage(err)) }
           setDeleteTarget(null)
         }}
         onDelete={async () => {
-          try { await deleteDieselFillUp(deleteTarget.id); toast.success('Fill-up deleted'); load() }
+          try { await deleteDieselFillUp(deleteTarget.id); toast.success('Entry deleted'); load() }
           catch (err) { toast.error(errorMessage(err)) }
           setDeleteTarget(null)
         }}
@@ -569,6 +581,22 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
       {/* Total (calc) */}
       <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', color: 'var(--accent)' }}>
         {preview.total ? formatCurrency(preview.total) : '—'}
+      </td>
+
+      {/* Type toggle */}
+      <td style={S.td}>
+        <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
+          {[['fillup', 'Fill-up'], ['topup', 'Top-up']].map(([val, label]) => (
+            <button key={val} type="button" onClick={() => set('diesel_type', val)}
+              style={{
+                padding: '3px 9px', fontSize: 11, border: 'none', cursor: 'pointer',
+                background: form.diesel_type === val ? 'var(--accent)' : 'transparent',
+                color: form.diesel_type === val ? '#fff' : 'var(--text-secondary)',
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
       </td>
 
       {/* Invoice # */}

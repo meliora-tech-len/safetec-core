@@ -15,7 +15,7 @@ const ALL_MODULES = [
   { key: 'fleet',       label: 'Fleet & Vehicles',      description: 'Trucks, trailers & personal vehicles' },
   { key: 'drivers',     label: 'Drivers & Assignments', description: 'Driver records & truck assignments' },
   { key: 'truck_loads', label: 'Truck Loads',           description: 'Truck load records & route management' },
-  { key: 'diesel',      label: 'Diesel',                description: 'Diesel fill-ups, consumption & rates' },
+  { key: 'diesel',      label: 'Diesel',                description: 'Diesel logs, consumption & rates' },
 ]
 
 const TABS_USER = ['Details', 'Password', 'Permissions']

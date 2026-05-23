@@ -911,6 +911,7 @@ class DieselFillUp(Base):
     verified2_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     verified2_at = Column(DateTime(timezone=True))
 
+    diesel_type = Column(String(10), nullable=False, default='fillup', server_default='fillup')
     notes = Column(Text)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
