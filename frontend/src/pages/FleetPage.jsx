@@ -352,6 +352,7 @@ const BLANK_TRUCK = {
   is_subcontractor: false,
   subcontractor_name: '',
   subcontractor_id: null,
+  is_temp_registration: false,
   status: 'active',
   notes: '',
   finance_account_number: '',
@@ -401,11 +402,12 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
       finance_institution:    t.finance_institution || '',
       finance_account_number: t.finance_account_number || '',
       finance_contract_end:   t.finance_contract_end ? t.finance_contract_end.slice(0, 10) : '',
-      is_subcontractor:    t.is_subcontractor || false,
-      subcontractor_name:  t.subcontractor_name || '',
-      subcontractor_id:    t.subcontractor_id || null,
-      status:              t.status || 'active',
-      notes:               t.notes || '',
+      is_subcontractor:     t.is_subcontractor || false,
+      subcontractor_name:   t.subcontractor_name || '',
+      subcontractor_id:     t.subcontractor_id || null,
+      is_temp_registration: t.is_temp_registration || false,
+      status:               t.status || 'active',
+      notes:                t.notes || '',
       trailers,
     }
   }
@@ -538,6 +540,15 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
               <div className="form-group">
                 <label>Registration *</label>
                 <input value={form.registration} onChange={e => set('registration', e.target.value.toUpperCase())} placeholder="e.g. KXH514MP" style={{ fontFamily: 'monospace' }} />
+                <label style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 6, cursor: 'pointer', userSelect: 'none', fontSize: 13, color: 'var(--text-secondary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={form.is_temp_registration}
+                    onChange={e => set('is_temp_registration', e.target.checked)}
+                    style={{ width: 14, height: 14, cursor: 'pointer' }}
+                  />
+                  Temporary registration plate
+                </label>
               </div>
               <div className="form-group">
                 <label>VIN / Chassis</label>
@@ -817,7 +828,16 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, truckDrivers = [] }) {
           {truck.model && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{truck.model}</div>}
         </td>
         <td>
-          <span style={{ fontFamily: 'monospace', fontWeight: 600, letterSpacing: 0.5 }}>{truck.registration}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontFamily: 'monospace', fontWeight: 600, letterSpacing: 0.5 }}>{truck.registration}</span>
+            {truck.is_temp_registration && (
+              <span style={{
+                fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.6,
+                background: 'var(--warning-dim, rgba(234,179,8,0.12))', color: 'var(--warning)',
+                border: '1px solid var(--warning)', borderRadius: 3, padding: '1px 5px',
+              }}>TEMP</span>
+            )}
+          </div>
         </td>
         <td><ExpiryBadge expiry={truck.licence_expiry} /></td>
         <td>

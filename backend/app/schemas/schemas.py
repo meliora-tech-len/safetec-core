@@ -519,9 +519,10 @@ class TruckBase(BaseModel):
     finance_institution:    Optional[str]      = None
     finance_account_number: Optional[str]      = None
     finance_contract_end:   Optional[datetime] = None
-    is_subcontractor:   bool = False
-    subcontractor_name: Optional[str] = None
-    subcontractor_id:   Optional[int] = None
+    is_subcontractor:    bool = False
+    subcontractor_name:  Optional[str] = None
+    subcontractor_id:    Optional[int] = None
+    is_temp_registration: bool = False
     status: TruckStatus = TruckStatus.active
     notes: Optional[str] = None
     operator: Optional[str] = None

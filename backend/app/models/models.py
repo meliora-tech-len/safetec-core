@@ -382,7 +382,8 @@ class Truck(Base):
     # temp_registration: old or temporary plate (e.g. GP reg before EC transfer)
     # TECH-DEBT: existing TruckLoad.driver_name links to driver by name string,
     # not by driver FK. Should be migrated to FK when driver-load linking is implemented.
-    temp_registration = Column(String(50))
+    temp_registration    = Column(String(50))
+    is_temp_registration = Column(Boolean, default=False, nullable=False)
 
     status = Column(Enum(TruckStatus), default=TruckStatus.active, nullable=False)
     notes = Column(Text)
