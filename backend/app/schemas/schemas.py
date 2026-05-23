@@ -658,6 +658,14 @@ class TruckMonthlyExpensesOut(TruckMonthlyExpensesBase):
         from_attributes = True
 
 
+# ── Licence Alert Acknowledgment Schemas ─────────────────────────────────────
+
+class LicenceAlertAckIn(BaseModel):
+    resource_type: str          # 'truck' | 'trailer' | 'personal_vehicle'
+    resource_id: int
+    acknowledged_expiry: datetime
+
+
 # ── Driver Schemas ────────────────────────────────────────────────────────────
 
 from app.models.models import DriverType  # noqa: E402

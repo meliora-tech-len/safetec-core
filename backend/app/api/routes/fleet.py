@@ -6,11 +6,11 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
     PersonalVehicleCreate, PersonalVehicleUpdate, PersonalVehicleOut,
-    TruckMonthlyExpensesBase, TruckMonthlyExpensesOut,
+    TruckMonthlyExpensesBase, TruckMonthlyExpensesOut, LicenceAlertAckIn,
 )
 from app.services.audit import log_action
 
@@ -482,8 +482,53 @@ def get_licence_alerts(
                 "entity_id": pv.entity_id,
             })
 
+    # Filter out acknowledged items
+    acks = db.query(LicenceAlertAck).all()
+    ack_set = set()
+    for a in acks:
+        exp = a.acknowledged_expiry
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        ack_set.add((a.resource_type, a.resource_id, exp.isoformat()))
+
+    def _norm_expiry(iso: str) -> str:
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+
+    items = [i for i in items if (i["type"], i["id"], _norm_expiry(i["licence_expiry"])) not in ack_set]
+
     items.sort(key=lambda x: x["days_until_expiry"])
     return {"items": items, "count": len(items)}
+
+
+# ── Acknowledge licence alert ─────────────────────────────────────────────────
+
+@router.post("/licence-alerts/acknowledge")
+def acknowledge_licence_alert(
+    payload: LicenceAlertAckIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy import insert as sa_insert
+
+    existing = db.query(LicenceAlertAck).filter(
+        LicenceAlertAck.resource_type == payload.resource_type,
+        LicenceAlertAck.resource_id == payload.resource_id,
+        LicenceAlertAck.acknowledged_expiry == payload.acknowledged_expiry,
+    ).first()
+    if not existing:
+        ack = LicenceAlertAck(
+            resource_type=payload.resource_type,
+            resource_id=payload.resource_id,
+            acknowledged_expiry=payload.acknowledged_expiry,
+            acknowledged_by=current_user.id,
+        )
+        db.add(ack)
+        db.commit()
+    return {"ok": True}
 
 
 # ── Truck Monthly Expenses (Profit Sheet) ────────────────────────────────────

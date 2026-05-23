@@ -977,3 +977,18 @@ class PayrollEntry(Base):
     payroll_settings        = relationship("PayrollSettings")
     reviewer                = relationship("User", foreign_keys=[reviewed_by])
     verifier                = relationship("User", foreign_keys=[verified_by])
+
+
+# ── Licence Alert Acknowledgments ─────────────────────────────────────────────
+
+class LicenceAlertAck(Base):
+    __tablename__ = "licence_alert_acks"
+
+    id                  = Column(Integer, primary_key=True)
+    resource_type       = Column(String(30), nullable=False)   # truck | trailer | personal_vehicle
+    resource_id         = Column(Integer, nullable=False)
+    acknowledged_expiry = Column(DateTime(timezone=True), nullable=False)
+    acknowledged_by     = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    acknowledged_at     = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("resource_type", "resource_id", "acknowledged_expiry"),)

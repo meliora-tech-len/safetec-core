@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Truck, Car, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertTriangle, AlertCircle, Clock, ChevronsUpDown } from 'lucide-react'
+import { Truck, Car, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertTriangle, AlertCircle, Clock, ChevronsUpDown, Check } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
@@ -126,7 +126,7 @@ function StatCards({ stats, alertCount }) {
 
 const TYPE_LABEL = { truck: 'Truck', trailer: 'Trailer', personal_vehicle: 'Personal' }
 
-function LicencePopover({ items, title, color, icon: Icon, onClose }) {
+function LicencePopover({ items, title, color, icon: Icon, onClose, onAcknowledge }) {
   const ref = useRef(null)
 
   useEffect(() => {
@@ -189,6 +189,22 @@ function LicencePopover({ items, title, color, icon: Icon, onClose }) {
                 : <span>{a.days_until_expiry}d</span>
               }
             </div>
+            {onAcknowledge && (
+              <button
+                onClick={() => onAcknowledge(a)}
+                title="Mark as handled"
+                style={{
+                  background: 'none', border: '1px solid var(--border)', cursor: 'pointer',
+                  borderRadius: 4, padding: '2px 5px', color: 'var(--text-muted)',
+                  display: 'flex', alignItems: 'center', flexShrink: 0,
+                  transition: 'color 0.15s, border-color 0.15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'var(--success)'; e.currentTarget.style.borderColor = 'var(--success)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)' }}
+              >
+                <Check size={11} />
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -784,7 +800,7 @@ function PersonalVehicleModal({ pv, entities, onSave, onClose }) {
 
 // ── Expandable truck row ──────────────────────────────────────────────────────
 
-function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
+function TruckRow({ truck, onEdit, onDelete, isAdmin, truckDrivers = [] }) {
   const [open, setOpen] = useState(false)
   const s = STATUS_COLOURS[truck.status] || STATUS_COLOURS.active
 
@@ -840,18 +856,30 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, linkedDriver }) {
       {open && (
         <tr style={{ background: 'var(--bg-base)' }}>
           <td colSpan={8} style={{ padding: '12px 16px' }}>
-            <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', minWidth: 52 }}>Driver</div>
-              {linkedDriver ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>{linkedDriver.first_name} {linkedDriver.last_name}</span>
-                  {linkedDriver.employee_number && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>#{linkedDriver.employee_number}</span>}
-                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: 'var(--accent-dim)', color: 'var(--accent)', letterSpacing: 0.4 }}>Permanent</span>
+            <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', minWidth: 52, paddingTop: 2 }}>Drivers</div>
+              {truckDrivers.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {[...truckDrivers]
+                    .sort((a, b) => (a.driver_slot ?? 9) - (b.driver_slot ?? 9))
+                    .map(d => (
+                      <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>{d.first_name} {d.last_name}</span>
+                        {d.employee_number && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>#{d.employee_number}</span>}
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, letterSpacing: 0.4,
+                          background: d.driver_type === 'permanent' ? 'var(--accent-dim)' : 'var(--bg-surface)',
+                          color: d.driver_type === 'permanent' ? 'var(--accent)' : 'var(--text-secondary)',
+                          border: d.driver_type === 'permanent' ? 'none' : '1px solid var(--border)',
+                        }}>
+                          {d.driver_type === 'permanent' ? 'Permanent' : 'Casual'}
+                        </span>
+                      </div>
+                    ))}
                 </div>
               ) : (
-                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>No permanent driver assigned</span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>No drivers assigned</span>
               )}
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>Casual drivers may also operate this vehicle</span>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
@@ -1072,6 +1100,19 @@ export default function FleetPage() {
     }
   }, [warnDays, activeEntity])
 
+  const handleAcknowledge = useCallback(async (item) => {
+    try {
+      await api.post('/api/fleet/licence-alerts/acknowledge', {
+        resource_type: item.type,
+        resource_id: item.id,
+        acknowledged_expiry: item.licence_expiry,
+      })
+      setAlerts(prev => prev.filter(a => !(a.type === item.type && a.id === item.id && a.licence_expiry === item.licence_expiry)))
+    } catch {
+      toast.error('Failed to mark alert as handled')
+    }
+  }, [api])
+
   useEffect(() => {
     let ignore = false
     api.get('/api/entities/').then(e => { if (!ignore) setEntities(e) }).catch(() => {})
@@ -1220,6 +1261,7 @@ export default function FleetPage() {
                     color="var(--danger)"
                     icon={AlertCircle}
                     onClose={() => setOpenPopover(null)}
+                    onAcknowledge={handleAcknowledge}
                   />
                 )}
               </div>
@@ -1249,6 +1291,7 @@ export default function FleetPage() {
                     color="var(--warning)"
                     icon={Clock}
                     onClose={() => setOpenPopover(null)}
+                    onAcknowledge={handleAcknowledge}
                   />
                 )}
               </div>
@@ -1428,7 +1471,7 @@ export default function FleetPage() {
                           key={truck.id}
                           truck={truck}
                           isAdmin={isAdmin}
-                          linkedDriver={allDrivers.find(d => d.truck_id === truck.id) || null}
+                          truckDrivers={allDrivers.filter(d => d.truck_id === truck.id)}
                           onEdit={t => { setSelected(t); setModal('edit-truck') }}
                           onDelete={t => { setSelected(t); setModal('delete-truck') }}
                         />
