@@ -146,13 +146,13 @@ export default function SupplierProfilePage() {
       firstInputRef.current.focus()
   }, [showNew, editingId])
 
-  // Fetch the diesel rate for this supplier's entity when the form opens or date changes
+  // Fetch the diesel rate for this supplier's entity (always, not just when form is open)
   useEffect(() => {
-    if (!supplier?.is_diesel_supplier || !showNew || !supplier?.entity_id) {
+    if (!supplier?.is_diesel_supplier || !supplier?.entity_id) {
       setDieselRate(null)
       return
     }
-    const date = newForm.invoice_date || today
+    const date = (showNew ? newForm.invoice_date : null) || today
     getCurrentDieselRate(supplier.id, { entity_id: supplier.entity_id, on_date: date })
       .then(r => setDieselRate(r.data || null))
       .catch(() => setDieselRate(null))
@@ -369,6 +369,22 @@ export default function SupplierProfilePage() {
             <p className="page-subtitle" style={{ marginTop: 2 }}>
               {supplier.trading_name || supplier.contact_person || 'Supplier profile'}
             </p>
+            {isDiesel && dieselRate && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
+                <Fuel size={12} color="var(--accent)" />
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  Current rate:&nbsp;
+                  <strong style={{ color: 'var(--text)', fontFamily: 'monospace' }}>
+                    R {parseFloat(dieselRate.rate_per_litre).toFixed(4)}/L
+                  </strong>
+                  {dieselRate.effective_date && (
+                    <span style={{ marginLeft: 6, fontSize: 11 }}>
+                      (eff. {formatDate(dieselRate.effective_date)})
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -955,23 +971,27 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
               onChange={e => { set('amount', e.target.value); onAmountEdit?.() }}
               onKeyDown={e => onKeyDown(e, onSave, onCancel)}
               style={{ ...styles.cellInput, width: 90, textAlign: 'right' }} />
-            {amountAutoFilled && dieselRate && (
-              <span style={{ fontSize: 9, fontWeight: 700, color: '#16a34a', whiteSpace: 'nowrap' }} title={`Auto-calculated: R${parseFloat(dieselRate.rate_per_litre).toFixed(2)}/L`}>
-                auto
-              </span>
+            {amountAutoFilled && (
+              <span style={{ fontSize: 9, fontWeight: 700, color: '#16a34a', whiteSpace: 'nowrap' }}>auto</span>
             )}
           </div>
         )}
       </td>
       {isDiesel && (
         <td style={styles.td}>
-          <input type="number" step="0.001" min="0" placeholder="0.000"
-            value={form.litres}
-            onChange={e => set('litres', e.target.value)}
-            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-            style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
-            title="Litres of diesel"
-          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input type="number" step="0.001" min="0" placeholder="0.000"
+              value={form.litres}
+              onChange={e => set('litres', e.target.value)}
+              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              style={{ ...styles.cellInput, width: 68, textAlign: 'right' }}
+            />
+            {dieselRate && (
+              <span style={{ fontSize: 10, color: 'var(--accent)', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                @R{parseFloat(dieselRate.rate_per_litre).toFixed(4)}
+              </span>
+            )}
+          </div>
         </td>
       )}
       <td style={{ ...styles.td, textAlign: 'center' }}>
