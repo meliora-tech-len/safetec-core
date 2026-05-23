@@ -23,8 +23,11 @@ router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
 
 
 def _recalc_invoice_total(db: Session, invoice: SupplierInvoice) -> None:
-    total = sum(li.amount_incl_vat or Decimal('0') for li in invoice.line_items)
-    invoice.amount = total
+    from sqlalchemy import func as sa_func
+    result = db.query(
+        sa_func.coalesce(sa_func.sum(SupplierInvoiceLineItem.amount_incl_vat), 0)
+    ).filter(SupplierInvoiceLineItem.invoice_id == invoice.id).scalar()
+    invoice.amount = Decimal(str(result))
     db.commit()
     db.refresh(invoice)
 

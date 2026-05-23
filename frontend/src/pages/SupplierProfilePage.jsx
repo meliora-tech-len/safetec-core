@@ -1080,12 +1080,12 @@ function LineItemsEditor({ items, onChange }) {
                   style={{ ...liStyles.input, width: '100%' }} />
               </td>
               <td style={liStyles.td}>
-                <input type="number" step="0.01" value={li.amount_excl_vat ?? ''} placeholder="0.00"
+                <input type="number" step="0.01" value={li.amount_excl_vat || ''} placeholder="0.00"
                   onChange={e => updateLine(idx, 'amount_excl_vat', e.target.value)}
                   style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
               </td>
               <td style={liStyles.td}>
-                <input type="number" step="0.01" value={li.amount_incl_vat ?? ''} placeholder="0.00"
+                <input type="number" step="0.01" value={li.amount_incl_vat || ''} placeholder="0.00"
                   onChange={e => updateLine(idx, 'amount_incl_vat', e.target.value)}
                   style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
               </td>
@@ -1195,6 +1195,7 @@ const liStyles = {
     background: 'var(--bg-input, var(--bg-card))',
     border: '1px solid var(--border)', borderRadius: 4,
     color: 'var(--text-primary)', outline: 'none',
+    boxSizing: 'border-box',
   },
 }
 
