@@ -335,7 +335,7 @@ export default function DriverDetailPage() {
   const subsAdvanceParsed = parseFloat(subsAdvance || 0)
   const loanDedParsed = parseFloat(loanDed || 0)
   const cashDedParsed = parseFloat(cashDed || 0)
-  const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed : 0) + loanDedParsed + cashDedParsed
+  const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed : 0) + loanDedParsed + cashDedParsed + totalFoodPaid
   const netPayable = liveCalc ? liveCalc.gross - totalDeductions : 0
 
   // Save loads
@@ -601,10 +601,11 @@ export default function DriverDetailPage() {
                       </div>
                     ))}
                     {[
-                      ['PAYE',          fmt(stat.paye)],
-                      ['Subs advance',  fmt(subsAdvanceParsed)],
-                      ['Staff loan',    fmt(loanDedParsed)],
-                      ['Cash advance',  fmt(cashDedParsed)],
+                      ['PAYE',             fmt(stat.paye)],
+                      ['Subs advance',     fmt(subsAdvanceParsed)],
+                      ['Staff loan',       fmt(loanDedParsed)],
+                      ['Cash advance',     fmt(cashDedParsed)],
+                      ...(totalFoodPaid > 0 ? [['Food allowance', fmt(totalFoodPaid)]] : []),
                     ].map(([l, v]) => (
                       <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
                         <span style={{ color: 'var(--text-secondary)' }}>{l}</span><span style={{ color: 'var(--danger)' }}>({v})</span>
@@ -616,12 +617,13 @@ export default function DriverDetailPage() {
                   </>
                 )}
 
-                {!isPermanent && (loanDedParsed > 0 || cashDedParsed > 0) && (
+                {!isPermanent && (loanDedParsed > 0 || cashDedParsed > 0 || totalFoodPaid > 0) && (
                   <>
                     <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 6px' }}>Deductions</div>
                     {[
-                      ['Staff loan',   fmt(loanDedParsed)],
-                      ['Cash advance', fmt(cashDedParsed)],
+                      ['Staff loan',      fmt(loanDedParsed)],
+                      ['Cash advance',    fmt(cashDedParsed)],
+                      ['Food allowance',  fmt(totalFoodPaid)],
                     ].filter(([, v]) => parseFloat(v.replace(/[^0-9.]/g, '')) > 0).map(([l, v]) => (
                       <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
                         <span style={{ color: 'var(--text-secondary)' }}>{l}</span><span style={{ color: 'var(--danger)' }}>({v})</span>

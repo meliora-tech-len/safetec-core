@@ -30,6 +30,7 @@ def calculate_pay_cycle(
 
     loan_deduction = d(cycle.staff_loan_deduction)
     cash_deduction = d(cycle.cash_advance_deduction)
+    food_deduction = sum((d(fp.amount) for fp in (cycle.food_payments or [])), Decimal(0))
 
     if driver_type == "casual":
         # ── Casual: flat per-load rate, no basic salary, no BC deductions ──────
@@ -37,7 +38,7 @@ def calculate_pay_cycle(
         load_earnings = casual_rate * lohatla_total
         gross = load_earnings + additional_total
 
-        total_deductions = loan_deduction + cash_deduction
+        total_deductions = loan_deduction + cash_deduction + food_deduction
         net_payable = gross - total_deductions
 
         return {
@@ -69,6 +70,7 @@ def calculate_pay_cycle(
             "subsistence_variance":        Decimal("0.00"),
             "loan_deduction":              r(loan_deduction),
             "cash_deduction":              r(cash_deduction),
+            "food_deduction":              r(food_deduction),
             "total_deductions":            r(total_deductions),
             "net_payable":                 r(net_payable),
         }
@@ -107,7 +109,7 @@ def calculate_pay_cycle(
     subs_advance  = d(cycle.subsistence_advance_paid)
     subs_variance = subs_advance - total_subs
 
-    total_deductions = total_statutory + subs_advance + loan_deduction + cash_deduction
+    total_deductions = total_statutory + subs_advance + loan_deduction + cash_deduction + food_deduction
     net_payable      = gross - total_deductions
 
     return {
@@ -139,6 +141,7 @@ def calculate_pay_cycle(
         "subsistence_variance":        r(subs_variance),
         "loan_deduction":              r(loan_deduction),
         "cash_deduction":              r(cash_deduction),
+        "food_deduction":              r(food_deduction),
         "total_deductions":            r(total_deductions),
         "net_payable":                 r(net_payable),
     }
