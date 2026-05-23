@@ -863,6 +863,7 @@ export default function SupplierProfilePage() {
                                   <LineItemsEditor
                                     items={editForm.line_items || []}
                                     onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
+                                    vatApplicable={editForm.vat_applicable !== false}
                                   />
                                 ) : (
                                   <LineItemsViewer items={inv.line_items || []} total={inv.amount} />
@@ -1015,6 +1016,7 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
           <LineItemsEditor
             items={form.line_items || []}
             onChange={items => setForm(f => ({ ...f, line_items: items }))}
+            vatApplicable={form.vat_applicable !== false}
           />
         </td>
       </tr>
@@ -1023,11 +1025,20 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
 }
 
 
-function LineItemsEditor({ items, onChange }) {
+function LineItemsEditor({ items, onChange, vatApplicable = true }) {
+  const vatMult = vatApplicable ? 1.15 : 1
   const addLine = () => onChange([...items, blankLineItem()])
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
   const updateLine = (idx, field, value) => {
-    onChange(items.map((li, i) => i === idx ? { ...li, [field]: value } : li))
+    const updated = { ...items[idx], [field]: value }
+    if (field === 'amount_excl_vat') {
+      const excl = parseFloat(value) || 0
+      updated.amount_incl_vat = excl ? String(Math.round(excl * vatMult * 100) / 100) : ''
+    } else if (field === 'amount_incl_vat') {
+      const incl = parseFloat(value) || 0
+      updated.amount_excl_vat = incl ? String(Math.round(incl / vatMult * 100) / 100) : ''
+    }
+    onChange(items.map((li, i) => i === idx ? updated : li))
   }
 
   const totalExcl = items.reduce((s, li) => s + (parseFloat(li.amount_excl_vat) || 0), 0)
