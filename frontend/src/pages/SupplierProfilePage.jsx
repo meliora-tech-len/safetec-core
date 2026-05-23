@@ -42,7 +42,6 @@ const blankLineItem = () => ({
   item_code: '',
   item_description: '',
   quantity: '',
-  unit: '',
   _rate: '',
   amount_excl_vat: '',
   amount_incl_vat: '',
@@ -1055,11 +1054,10 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
         <colgroup>
           <col style={{ width: 80 }} />
           <col />
-          <col style={{ width: 60 }} />
-          <col style={{ width: 60 }} />
-          <col style={{ width: 100 }} />
-          <col style={{ width: 90 }} />
-          <col style={{ width: 90 }} />
+          <col style={{ width: 65 }} />
+          <col style={{ width: 105 }} />
+          <col style={{ width: 95 }} />
+          <col style={{ width: 95 }} />
           <col style={{ width: 28 }} />
         </colgroup>
         <thead>
@@ -1067,7 +1065,6 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
             <th style={liStyles.th}>Item Code</th>
             <th style={liStyles.th}>Description</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
-            <th style={liStyles.th}>Unit</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
@@ -1093,11 +1090,6 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
                   style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
               </td>
               <td style={liStyles.td}>
-                <input value={li.unit ?? ''} placeholder="each"
-                  onChange={e => updateLine(idx, 'unit', e.target.value)}
-                  style={{ ...liStyles.input, width: '100%' }} />
-              </td>
-              <td style={liStyles.td}>
                 <input type="number" step="0.0001" value={li._rate || ''} placeholder="0.00"
                   onChange={e => updateLine(idx, '_rate', e.target.value)}
                   style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
@@ -1119,7 +1111,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={4} style={{ padding: '8px 6px' }}>
+            <td colSpan={3} style={{ padding: '8px 6px' }}>
               <button onClick={addLine}
                 style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none',
                   cursor: 'pointer', color: 'var(--accent)', fontWeight: 600, fontSize: 12, padding: 0 }}>
@@ -1153,18 +1145,16 @@ function LineItemsViewer({ items, total }) {
         <colgroup>
           <col style={{ width: 80 }} />
           <col />
-          <col style={{ width: 60 }} />
-          <col style={{ width: 60 }} />
-          <col style={{ width: 100 }} />
-          <col style={{ width: 90 }} />
-          <col style={{ width: 90 }} />
+          <col style={{ width: 65 }} />
+          <col style={{ width: 105 }} />
+          <col style={{ width: 95 }} />
+          <col style={{ width: 95 }} />
         </colgroup>
         <thead>
           <tr style={{ background: 'var(--bg-surface)' }}>
             <th style={liStyles.th}>Item Code</th>
             <th style={liStyles.th}>Description</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
-            <th style={liStyles.th}>Unit</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
@@ -1180,7 +1170,6 @@ function LineItemsViewer({ items, total }) {
                 <td style={liStyles.td}>{li.item_code || '—'}</td>
                 <td style={liStyles.td}>{li.item_description || '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>
-                <td style={liStyles.td}>{li.unit || '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
                   {rate != null ? rate.toFixed(4) : '—'}
                 </td>
@@ -1196,7 +1185,7 @@ function LineItemsViewer({ items, total }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={4} style={liStyles.td} />
+            <td colSpan={3} style={liStyles.td} />
             <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
               R {totalExcl.toFixed(2)}
