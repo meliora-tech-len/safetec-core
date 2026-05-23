@@ -664,7 +664,7 @@ export default function SupplierProfilePage() {
                           {/* Amount */}
                           <td style={{
                             ...styles.td, fontWeight: 600,
-                            ...(inv.verified2_by ? { background: 'rgba(34,197,94,0.15)', color: '#16a34a' } : {}),
+                            ...(inv.verified2_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
                           }}>
                             {isEditing ? (
                               <input

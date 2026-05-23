@@ -439,7 +439,7 @@ export default function DieselFillUpsPage() {
                   </td>
                   <td className="text-right" style={{
                     fontWeight: 700,
-                    ...(f.verified2_by ? { background: 'rgba(34,197,94,0.15)', color: '#16a34a' } : {}),
+                    ...(f.verified2_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
                   }}>{formatCurrency(f.total_amount)}</td>
                   <td>
                     <span style={{

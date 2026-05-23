@@ -686,7 +686,7 @@ export default function DriverDetailPage() {
                           <td style={{ fontSize: 12 }}>{al.route_name}{al.truck_registration && <span style={{ color: 'var(--text-muted)' }}> · {al.truck_registration}</span>}</td>
                           <td style={{
                             fontSize: 12,
-                            ...(al.verified2_by ? { background: 'rgba(34,197,94,0.15)', color: '#16a34a', fontWeight: 700 } : {}),
+                            ...(al.verified2_by ? { background: 'rgba(253,224,71,0.55)', fontWeight: 700 } : {}),
                           }}>{fmt(al.amount)}</td>
                           <td>
                             <VerifyBadge item={al} currentUserId={user?.id} isAdmin={isAdmin} onVerify={async (item) => {
@@ -749,7 +749,7 @@ export default function DriverDetailPage() {
                           <td style={{ fontSize: 12 }}>{fp.paid_by || '—'}</td>
                           <td style={{
                             fontSize: 12,
-                            ...(fp.verified2_by ? { background: 'rgba(34,197,94,0.15)', color: '#16a34a', fontWeight: 700 } : {}),
+                            ...(fp.verified2_by ? { background: 'rgba(253,224,71,0.55)', fontWeight: 700 } : {}),
                           }}>{fmt(fp.amount)}</td>
                           <td>
                             <VerifyBadge item={fp} currentUserId={user?.id} isAdmin={isAdmin} onVerify={async (item) => {
