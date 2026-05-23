@@ -51,9 +51,13 @@ export default function VerifyBadge({ item, onVerify, disabled = false, currentU
         ? 'Undo your step 2 approval'
         : `Fully verified — locked`
 
+  const isUndo = isOwnStep1 || isOwnStep2
+
   const handleClick = (e) => {
     e.stopPropagation()
-    if (!isLocked) onVerify(item)
+    if (isLocked) return
+    if (isUndo && !window.confirm('Are you sure you want to remove this verification?')) return
+    onVerify(item)
   }
 
   return (
