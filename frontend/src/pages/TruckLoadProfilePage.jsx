@@ -135,6 +135,7 @@ function DieselSection({ truck, year, month, suppliers }) {
   const [form, setForm]           = useState({ ...EMPTY_DIESEL })
   const [autoRate, setAutoRate]   = useState(null)
   const [rateEdited, setRateEdited] = useState(false)
+  const [dupWarning, setDupWarning] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const litresNum = parseFloat(form.litres) || 0
@@ -167,11 +168,7 @@ function DieselSection({ truck, year, month, suppliers }) {
 
   useEffect(() => { fetchFillups() }, [fetchFillups])
 
-  const handleAdd = async () => {
-    if (!form.supplier_id)  return toast.error('Select a supplier')
-    if (!form.fillup_date)  return toast.error('Date required')
-    if (litresNum <= 0)     return toast.error('Enter litres')
-    if (rateNum <= 0)       return toast.error('Enter rate per litre')
+  const doAdd = async () => {
     setSaving(true)
     try {
       await createDieselFillUp({
@@ -187,10 +184,31 @@ function DieselSection({ truck, year, month, suppliers }) {
       toast.success('Diesel entry added')
       setForm({ ...EMPTY_DIESEL })
       setAddingNew(false)
+      setDupWarning(null)
       fetchFillups()
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Failed to save diesel entry')
     } finally { setSaving(false) }
+  }
+
+  const handleAdd = async () => {
+    if (!form.supplier_id)  return toast.error('Select a supplier')
+    if (!form.fillup_date)  return toast.error('Date required')
+    if (litresNum <= 0)     return toast.error('Enter litres')
+    if (rateNum <= 0)       return toast.error('Enter rate per litre')
+    if (form.invoice_number?.trim()) {
+      const inv = form.invoice_number.trim().toLowerCase()
+      const dup = fillups.find(f =>
+        f.invoice_number?.trim().toLowerCase() === inv &&
+        f.fillup_date?.slice(0, 10) === form.fillup_date
+      )
+      if (dup) {
+        setDupWarning({ invoice_number: form.invoice_number.trim(), fillup_date: form.fillup_date })
+        return
+      }
+    }
+    setDupWarning(null)
+    doAdd()
   }
 
   const handleDelete = (f) => setDeleteTarget(f)
@@ -261,8 +279,23 @@ function DieselSection({ truck, year, month, suppliers }) {
             <label className="form-label">Mine / Notes</label>
             <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
           </div>
+          {dupWarning && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              gap: 12, marginTop: 14, padding: '10px 16px', borderRadius: 8,
+              background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.4)',
+            }}>
+              <span style={{ fontSize: 13, color: '#d97706' }}>
+                ⚠ Invoice <strong>{dupWarning.invoice_number}</strong> on <strong>{dupWarning.fillup_date}</strong> has already been captured. Save anyway?
+              </span>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <button className="btn-ghost btn-sm" onClick={() => setDupWarning(null)}>Dismiss</button>
+                <button className="btn-primary btn-sm" onClick={doAdd} disabled={saving}>Save Anyway</button>
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
-            <button className="btn btn-ghost" onClick={() => { setAddingNew(false); setForm({ ...EMPTY_DIESEL }) }}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => { setAddingNew(false); setForm({ ...EMPTY_DIESEL }); setDupWarning(null) }}>Cancel</button>
             <button className="btn btn-primary" onClick={handleAdd} disabled={saving}>
               {saving ? 'Saving…' : 'Save Entry'}
             </button>
@@ -883,6 +916,7 @@ export default function TruckLoadProfilePage() {
   const [editForm, setEditForm]     = useState({ ...EMPTY_LOAD })
   const [rateSource, setRateSource] = useState(null)
   const [saving, setSaving]         = useState(false)
+  const [dupWarning, setDupWarning] = useState(null)
   const firstInputRef = useRef(null)
 
   // ── Load truck meta ──────────────────────────────────────────────────────────
@@ -974,7 +1008,7 @@ export default function TruckLoadProfilePage() {
     setRateSource(null)
     setEditingId('new')
   }
-  const cancelEdit = () => { setEditingId(null); setEditForm({ ...EMPTY_LOAD }) }
+  const cancelEdit = () => { setEditingId(null); setEditForm({ ...EMPTY_LOAD }); setDupWarning(null) }
 
   const startEdit = (load) => {
     if (editingId !== null) return
@@ -1011,10 +1045,7 @@ export default function TruckLoadProfilePage() {
     checked_by:   form.checked_by  || null,
   })
 
-  const handleSave = async () => {
-    if (!editForm.mine_id)  return toast.error('Select a mine')
-    if (!editForm.load_date) return toast.error('Load date required')
-    if (!editForm.tonnes || isNaN(editForm.tonnes)) return toast.error('Valid tonnes required')
+  const doSave = async () => {
     setSaving(true)
     try {
       if (editingId === 'new') {
@@ -1025,10 +1056,30 @@ export default function TruckLoadProfilePage() {
         toast.success('Load updated')
       }
       setEditingId(null)
+      setDupWarning(null)
       fetchLoads()
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Failed to save')
     } finally { setSaving(false) }
+  }
+
+  const handleSave = async () => {
+    if (!editForm.mine_id)  return toast.error('Select a mine')
+    if (!editForm.load_date) return toast.error('Load date required')
+    if (!editForm.tonnes || isNaN(editForm.tonnes)) return toast.error('Valid tonnes required')
+    if (editingId === 'new' && editForm.slip_number?.trim()) {
+      const slip = editForm.slip_number.trim().toLowerCase()
+      const dup = loads.find(l =>
+        l.slip_number?.trim().toLowerCase() === slip &&
+        l.load_date?.slice(0, 10) === editForm.load_date
+      )
+      if (dup) {
+        setDupWarning({ slip_number: editForm.slip_number.trim(), load_date: editForm.load_date })
+        return
+      }
+    }
+    setDupWarning(null)
+    doSave()
   }
 
   const handleTogglePaid = async (load, e) => {
@@ -1236,6 +1287,22 @@ export default function TruckLoadProfilePage() {
       </div>
 
       {/* ── Loads tab ──────────────────────────────────────────────────────────── */}
+      {activeTab === 'loads' && dupWarning && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: 12, marginBottom: 12, padding: '10px 16px', borderRadius: 8,
+          background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.4)',
+        }}>
+          <span style={{ fontSize: 13, color: '#d97706' }}>
+            ⚠ A load with slip <strong>{dupWarning.slip_number}</strong> on <strong>{dupWarning.load_date}</strong> has already been captured for this truck. Save anyway?
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button className="btn-ghost btn-sm" onClick={() => setDupWarning(null)}>Dismiss</button>
+            <button className="btn-primary btn-sm" onClick={doSave} disabled={saving}>Save Anyway</button>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'loads' && (
         <div className="card" style={{ overflow: 'auto' }}>
           <table className="data-table" style={{ minWidth: 900 }}>
