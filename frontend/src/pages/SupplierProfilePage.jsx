@@ -43,6 +43,7 @@ const blankLineItem = () => ({
   item_description: '',
   quantity: '',
   unit: '',
+  _rate: '',
   amount_excl_vat: '',
   amount_incl_vat: '',
   sort_order: 0,
@@ -187,7 +188,11 @@ export default function SupplierProfilePage() {
       vat_applicable: inv.vat_applicable !== false,
       notes: inv.notes || '',
       is_multi_line: inv.is_multi_line || false,
-      line_items: inv.line_items ? inv.line_items.map(li => ({ ...li, _key: li.id })) : [],
+      line_items: inv.line_items ? inv.line_items.map(li => {
+        const qty = parseFloat(li.quantity) || 0
+        const excl = parseFloat(li.amount_excl_vat) || 0
+        return { ...li, _key: li.id, _rate: qty > 0 ? String(Math.round(excl / qty * 10000) / 10000) : '' }
+      }) : [],
     })
     if (inv.is_multi_line) {
       setOpenInvoiceIds(s => { const n = new Set(s); n.add(inv.id); return n })
@@ -1031,12 +1036,12 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
   const updateLine = (idx, field, value) => {
     const updated = { ...items[idx], [field]: value }
-    if (field === 'amount_excl_vat') {
-      const excl = parseFloat(value) || 0
+    const qty = parseFloat(field === 'quantity' ? value : updated.quantity) || 0
+    const rate = parseFloat(field === '_rate' ? value : updated._rate) || 0
+    if (field === 'quantity' || field === '_rate') {
+      const excl = qty && rate ? Math.round(qty * rate * 100) / 100 : 0
+      updated.amount_excl_vat = excl || ''
       updated.amount_incl_vat = excl ? String(Math.round(excl * vatMult * 100) / 100) : ''
-    } else if (field === 'amount_incl_vat') {
-      const incl = parseFloat(value) || 0
-      updated.amount_excl_vat = incl ? String(Math.round(incl / vatMult * 100) / 100) : ''
     }
     onChange(items.map((li, i) => i === idx ? updated : li))
   }
@@ -1048,13 +1053,14 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
     <div style={{ marginTop: 8, overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, tableLayout: 'fixed' }}>
         <colgroup>
-          <col style={{ width: 90 }} />
+          <col style={{ width: 80 }} />
           <col />
-          <col style={{ width: 70 }} />
-          <col style={{ width: 72 }} />
-          <col style={{ width: 110 }} />
-          <col style={{ width: 110 }} />
-          <col style={{ width: 32 }} />
+          <col style={{ width: 60 }} />
+          <col style={{ width: 60 }} />
+          <col style={{ width: 100 }} />
+          <col style={{ width: 90 }} />
+          <col style={{ width: 90 }} />
+          <col style={{ width: 28 }} />
         </colgroup>
         <thead>
           <tr style={{ background: 'var(--bg-surface)' }}>
@@ -1062,6 +1068,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
             <th style={liStyles.th}>Description</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
             <th style={liStyles.th}>Unit</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
             <th style={liStyles.th} />
@@ -1091,14 +1098,15 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
                   style={{ ...liStyles.input, width: '100%' }} />
               </td>
               <td style={liStyles.td}>
-                <input type="number" step="0.01" value={li.amount_excl_vat || ''} placeholder="0.00"
-                  onChange={e => updateLine(idx, 'amount_excl_vat', e.target.value)}
+                <input type="number" step="0.0001" value={li._rate || ''} placeholder="0.00"
+                  onChange={e => updateLine(idx, '_rate', e.target.value)}
                   style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
               </td>
-              <td style={liStyles.td}>
-                <input type="number" step="0.01" value={li.amount_incl_vat || ''} placeholder="0.00"
-                  onChange={e => updateLine(idx, 'amount_incl_vat', e.target.value)}
-                  style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
+              <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)', fontSize: 11 }}>
+                {parseFloat(li.amount_excl_vat) ? parseFloat(li.amount_excl_vat).toFixed(2) : '—'}
+              </td>
+              <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', fontSize: 11, fontWeight: 600 }}>
+                {parseFloat(li.amount_incl_vat) ? parseFloat(li.amount_incl_vat).toFixed(2) : '—'}
               </td>
               <td style={{ ...liStyles.td, textAlign: 'center' }}>
                 <button onClick={() => removeLine(idx)}
@@ -1111,7 +1119,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={3} style={{ padding: '8px 6px' }}>
+            <td colSpan={4} style={{ padding: '8px 6px' }}>
               <button onClick={addLine}
                 style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none',
                   cursor: 'pointer', color: 'var(--accent)', fontWeight: 600, fontSize: 12, padding: 0 }}>
@@ -1143,12 +1151,13 @@ function LineItemsViewer({ items, total }) {
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, tableLayout: 'fixed' }}>
         <colgroup>
-          <col style={{ width: 90 }} />
+          <col style={{ width: 80 }} />
           <col />
-          <col style={{ width: 70 }} />
-          <col style={{ width: 72 }} />
-          <col style={{ width: 110 }} />
-          <col style={{ width: 110 }} />
+          <col style={{ width: 60 }} />
+          <col style={{ width: 60 }} />
+          <col style={{ width: 100 }} />
+          <col style={{ width: 90 }} />
+          <col style={{ width: 90 }} />
         </colgroup>
         <thead>
           <tr style={{ background: 'var(--bg-surface)' }}>
@@ -1156,29 +1165,38 @@ function LineItemsViewer({ items, total }) {
             <th style={liStyles.th}>Description</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
             <th style={liStyles.th}>Unit</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
           </tr>
         </thead>
         <tbody>
-          {items.map(li => (
-            <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
-              <td style={liStyles.td}>{li.item_code || '—'}</td>
-              <td style={liStyles.td}>{li.item_description || '—'}</td>
-              <td style={{ ...liStyles.td, textAlign: 'right' }}>{li.quantity != null ? li.quantity : '—'}</td>
-              <td style={liStyles.td}>{li.unit || '—'}</td>
-              <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
-                R {parseFloat(li.amount_excl_vat ?? 0).toFixed(2)}
-              </td>
-              <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
-                R {parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}
-              </td>
-            </tr>
-          ))}
+          {items.map(li => {
+            const qty = parseFloat(li.quantity) || 0
+            const excl = parseFloat(li.amount_excl_vat) || 0
+            const rate = qty > 0 ? excl / qty : null
+            return (
+              <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={liStyles.td}>{li.item_code || '—'}</td>
+                <td style={liStyles.td}>{li.item_description || '—'}</td>
+                <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>
+                <td style={liStyles.td}>{li.unit || '—'}</td>
+                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
+                  {rate != null ? rate.toFixed(4) : '—'}
+                </td>
+                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                  R {excl.toFixed(2)}
+                </td>
+                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
+                  R {parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={3} style={liStyles.td} />
+            <td colSpan={4} style={liStyles.td} />
             <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
               R {totalExcl.toFixed(2)}
