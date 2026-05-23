@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getInvoice, updateInvoice, deleteInvoice, downloadInvoicePdf } from '../services/api'
+import { getInvoice, updateInvoice, deleteInvoice, downloadInvoicePdf, downloadInvoiceEml } from '../services/api'
 import { useTheme } from '../hooks/useTheme'
 import { formatCurrency, formatDate, statusBadgeClass, statusLabel, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
@@ -80,16 +80,12 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   }
 
   const handleEmail = async () => {
-    try { await downloadInvoicePdf(invoice.id, invoice.invoice_number, theme) }
-    catch { toast.error('PDF generation failed'); return }
-
-    const docLabel = invoice.document_type === 'invoice' ? 'Invoice' : 'Quote'
-    const subject = encodeURIComponent(`${docLabel} ${invoice.invoice_number}`)
-    const body = encodeURIComponent(
-      `Dear ${invoice.supplier?.name || 'Client'},\n\nPlease find attached ${docLabel.toLowerCase()} ${invoice.invoice_number}.\n\nKind regards`
-    )
-    const to = invoice.supplier?.email || ''
-    window.location.href = `mailto:${to}?subject=${subject}&body=${body}`
+    try {
+      await downloadInvoiceEml(invoice.id, invoice.invoice_number, theme)
+      toast.success('Email file downloaded — open it to send with your email client')
+    } catch {
+      toast.error('Failed to generate email file')
+    }
   }
 
   if (loading) return <div className="loading-center"><div className="spinner" /></div>
@@ -376,6 +372,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
           setShowDeleteModal(false)
         }}
       />
+
     </div>
   )
 }

@@ -1,4 +1,8 @@
 import asyncio
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
@@ -372,6 +376,56 @@ async def download_invoice_pdf(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{invoice_id}/download-eml")
+async def download_invoice_eml(
+    invoice_id: int,
+    theme: str = Query("dark", pattern="^(dark|light)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    invoice = db.query(Invoice).options(
+        joinedload(Invoice.line_items),
+        joinedload(Invoice.supplier),
+        joinedload(Invoice.customer),
+        joinedload(Invoice.entity),
+    ).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(invoice.entity_id, current_user)
+
+    recipient = invoice.supplier or invoice.customer
+    doc_label = "Invoice" if invoice.document_type == "invoice" else ("Purchase Order" if invoice.document_type == "purchase_order" else "Quote")
+
+    pdf_bytes = await asyncio.to_thread(
+        generate_invoice_pdf, invoice, invoice.entity, invoice.supplier,
+        customer=invoice.customer, theme=theme
+    )
+
+    msg = MIMEMultipart()
+    msg["To"] = recipient.email if recipient and recipient.email else ""
+    msg["Subject"] = f"{doc_label} {invoice.invoice_number}"
+    body_text = (
+        f"Dear {recipient.name if recipient else 'Client'},\n\n"
+        f"Please find attached {doc_label.lower()} {invoice.invoice_number}.\n\n"
+        f"Kind regards,\n{invoice.entity.name if invoice.entity else ''}"
+    )
+    msg.attach(MIMEText(body_text, "plain"))
+
+    part = MIMEBase("application", "pdf")
+    part.set_payload(pdf_bytes)
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f'attachment; filename="{invoice.invoice_number}.pdf"')
+    msg.attach(part)
+
+    eml_bytes = msg.as_bytes()
+    safe_number = invoice.invoice_number.replace("/", "-").replace("\\", "-")
+    return Response(
+        content=eml_bytes,
+        media_type="message/rfc822",
+        headers={"Content-Disposition": f'attachment; filename="{safe_number}.eml"'},
     )
 
 

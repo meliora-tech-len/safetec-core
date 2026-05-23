@@ -62,6 +62,22 @@ export const getDashboardStats = (entity_id) =>
 export const sendInvoiceEmail = (id, theme = 'dark') =>
   api.post(`/invoices/${id}/send-email`, null, { params: { theme } })
 
+export const downloadInvoiceEml = async (id, invoiceNumber, theme = 'dark') => {
+  const res = await api.get(`/invoices/${id}/download-eml`, {
+    params: { theme },
+    responseType: 'blob',
+  })
+  const url = window.URL.createObjectURL(new Blob([res.data], { type: 'message/rfc822' }))
+  const link = document.createElement('a')
+  link.href = url
+  const safe = invoiceNumber.replace(/[/\\]/g, '-')
+  link.setAttribute('download', `${safe}.eml`)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
+
 export const downloadInvoicePdf = async (id, invoiceNumber, theme = 'dark') => {
   const res = await api.get(`/invoices/${id}/pdf`, {
     params: { theme },
