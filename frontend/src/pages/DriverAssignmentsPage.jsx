@@ -197,7 +197,7 @@ function DriverSlotRow({ slot, driver, isActive, onToggle }) {
         </>
       ) : (
         <span style={{ fontSize: 11, color: slot === 1 ? 'var(--warning)' : 'var(--text-muted)', fontStyle: 'italic', flex: 1 }}>
-          {slot === 1 ? 'No driver — click to assign' : 'Optional second driver'}
+          {slot === 1 ? 'No driver — click to assign' : slot === 2 ? 'Casual driver 1 — click to assign' : 'Casual driver 2 — click to assign'}
         </span>
       )}
     </div>
@@ -205,8 +205,8 @@ function DriverSlotRow({ slot, driver, isActive, onToggle }) {
 }
 
 // ── Truck card ────────────────────────────────────────────────────────────────
-function TruckCard({ truck, driver1, driver2, entityName, activeSlot, onToggleSlot, popoverProps }) {
-  const hasAny = !!(driver1 || driver2)
+function TruckCard({ truck, driver1, driver2, driver3, entityName, activeSlot, onToggleSlot, popoverProps }) {
+  const hasAny = !!(driver1 || driver2 || driver3)
   const sc = STATUS_COLOURS[truck.status] || STATUS_COLOURS.active
 
   return (
@@ -248,18 +248,9 @@ function TruckCard({ truck, driver1, driver2, entityName, activeSlot, onToggleSl
       <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0 2px' }} />
 
       {/* Driver slot rows */}
-      <DriverSlotRow
-        slot={1}
-        driver={driver1}
-        isActive={activeSlot === 1}
-        onToggle={() => onToggleSlot(1)}
-      />
-      <DriverSlotRow
-        slot={2}
-        driver={driver2}
-        isActive={activeSlot === 2}
-        onToggle={() => onToggleSlot(2)}
-      />
+      <DriverSlotRow slot={1} driver={driver1} isActive={activeSlot === 1} onToggle={() => onToggleSlot(1)} />
+      <DriverSlotRow slot={2} driver={driver2} isActive={activeSlot === 2} onToggle={() => onToggleSlot(2)} />
+      <DriverSlotRow slot={3} driver={driver3} isActive={activeSlot === 3} onToggle={() => onToggleSlot(3)} />
 
       {/* Bottom row: entity chip + hint */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
@@ -273,8 +264,8 @@ function TruckCard({ truck, driver1, driver2, entityName, activeSlot, onToggleSl
         <AssignmentPopover
           {...popoverProps}
           slot={activeSlot}
-          currentDriver={activeSlot === 1 ? driver1 : driver2}
-          onUnassign={() => popoverProps.onUnassign(activeSlot === 1 ? driver1 : driver2)}
+          currentDriver={activeSlot === 1 ? driver1 : activeSlot === 2 ? driver2 : driver3}
+          onUnassign={() => popoverProps.onUnassign(activeSlot === 1 ? driver1 : activeSlot === 2 ? driver2 : driver3)}
           onClose={() => onToggleSlot(null)}
         />
       )}
@@ -461,6 +452,12 @@ export default function DriverAssignmentsPage() {
     return m
   }, [drivers])
 
+  const driver3ByTruckId = useMemo(() => {
+    const m = {}
+    drivers.filter(d => d.driver_slot === 3 && d.truck_id).forEach(d => { m[d.truck_id] = d })
+    return m
+  }, [drivers])
+
   const ownTrucks = useMemo(() =>
     trucks
       .sort((a, b) => {
@@ -473,25 +470,25 @@ export default function DriverAssignmentsPage() {
   const filteredTrucks = useMemo(() => {
     let list = ownTrucks
     if (filterStatus) list = list.filter(t => t.status === filterStatus)
-    if (filterAssigned === 'assigned')   list = list.filter(t => driver1ByTruckId[t.id] || driver2ByTruckId[t.id])
-    if (filterAssigned === 'unassigned') list = list.filter(t => !driver1ByTruckId[t.id] && !driver2ByTruckId[t.id])
+    if (filterAssigned === 'assigned')   list = list.filter(t => driver1ByTruckId[t.id] || driver2ByTruckId[t.id] || driver3ByTruckId[t.id])
+    if (filterAssigned === 'unassigned') list = list.filter(t => !driver1ByTruckId[t.id] && !driver2ByTruckId[t.id] && !driver3ByTruckId[t.id])
     if (search.trim()) {
       const q = search.toLowerCase()
       list = list.filter(t =>
         t.registration.toLowerCase().includes(q) ||
         t.make.toLowerCase().includes(q) ||
         (t.fleet_number || '').toLowerCase().includes(q) ||
-        [driver1ByTruckId[t.id], driver2ByTruckId[t.id]].some(d =>
+        [driver1ByTruckId[t.id], driver2ByTruckId[t.id], driver3ByTruckId[t.id]].some(d =>
           d && `${d.first_name} ${d.last_name}`.toLowerCase().includes(q)
         )
       )
     }
     return list
-  }, [ownTrucks, filterStatus, filterAssigned, search, driver1ByTruckId, driver2ByTruckId])
+  }, [ownTrucks, filterStatus, filterAssigned, search, driver1ByTruckId, driver2ByTruckId, driver3ByTruckId])
 
-  const assignedTrucks   = ownTrucks.filter(t => driver1ByTruckId[t.id] || driver2ByTruckId[t.id])
-  const unassignedTrucks = ownTrucks.filter(t => !driver1ByTruckId[t.id] && !driver2ByTruckId[t.id])
-  const fullyStaffed     = ownTrucks.filter(t => driver1ByTruckId[t.id] && driver2ByTruckId[t.id])
+  const assignedTrucks   = ownTrucks.filter(t => driver1ByTruckId[t.id] || driver2ByTruckId[t.id] || driver3ByTruckId[t.id])
+  const unassignedTrucks = ownTrucks.filter(t => !driver1ByTruckId[t.id] && !driver2ByTruckId[t.id] && !driver3ByTruckId[t.id])
+  const fullyStaffed     = ownTrucks.filter(t => driver1ByTruckId[t.id] && driver2ByTruckId[t.id] && driver3ByTruckId[t.id])
   const orphanedDrivers  = drivers.filter(d => d.driver_type === 'permanent' && !d.truck_id)
   const casualPool       = drivers.filter(d => d.driver_type === 'casual' && !d.truck_id)
   const unassignedDrivers = useMemo(
@@ -517,7 +514,7 @@ export default function DriverAssignmentsPage() {
             <Link2 size={22} style={{ color: 'var(--accent)' }} />
             Driver Assignments
           </div>
-          <div className="page-subtitle">Click a driver row on a truck card to assign Driver 1 or Driver 2</div>
+          <div className="page-subtitle">Click a driver row on a truck card to assign Driver 1, 2 or 3</div>
         </div>
         <select
           value={filterEntity}
@@ -531,8 +528,8 @@ export default function DriverAssignmentsPage() {
 
       {/* ── Stats ──────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-        <Stat label="Trucks with D1"      value={assignedTrucks.length}   colour="var(--success)" />
-        <Stat label="Fully staffed (D1+D2)" value={fullyStaffed.length}   colour="var(--accent)" />
+        <Stat label="Trucks with D1"         value={assignedTrucks.length}  colour="var(--success)" />
+        <Stat label="Fully staffed (D1+D2+D3)" value={fullyStaffed.length} colour="var(--accent)" />
         <Stat label="No drivers"          value={unassignedTrucks.length} colour={unassignedTrucks.length ? 'var(--warning)' : 'var(--text-muted)'} />
         <Stat label="Casual pool"         value={casualPool.length}       colour="var(--text-secondary)" />
       </div>
@@ -576,6 +573,7 @@ export default function DriverAssignmentsPage() {
               truck={truck}
               driver1={driver1ByTruckId[truck.id] || null}
               driver2={driver2ByTruckId[truck.id] || null}
+              driver3={driver3ByTruckId[truck.id] || null}
               entityName={entityName}
               activeSlot={popoverTruckId === truck.id ? popoverSlot : null}
               onToggleSlot={(slot) => {
