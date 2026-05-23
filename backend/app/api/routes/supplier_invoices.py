@@ -8,9 +8,10 @@ from typing import List, Optional
 
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Supplier, SupplierInvoice, PaymentTermType, Truck, DieselFillUp
+from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, PaymentTermType, Truck, DieselFillUp
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
+    SupplierInvoiceLineItemCreate, SupplierInvoiceLineItemOut,
     SupplierStatementGroup, SupplierPayablesDashboard,
     SupplierCurrentPayable, Supplier30DaysPayable,
 )
@@ -19,6 +20,13 @@ from app.services.verification import apply_verify_step, get_verification_displa
 from app.services.diesel_service import DieselCalculationService
 
 router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
+
+
+def _recalc_invoice_total(db: Session, invoice: SupplierInvoice) -> None:
+    total = sum(li.amount_incl_vat or Decimal('0') for li in invoice.line_items)
+    invoice.amount = total
+    db.commit()
+    db.refresh(invoice)
 
 
 def _auto_create_diesel_fillup(
@@ -249,6 +257,8 @@ def list_supplier_invoices(
         out = SupplierInvoiceOut.model_validate(inv)
         return out.model_copy(update={
             "diesel_fillup_id": fillup_id_by_inv.get(inv.id),
+            "is_multi_line": inv.is_multi_line,
+            "line_items": [SupplierInvoiceLineItemOut.model_validate(li) for li in inv.line_items],
             **get_verification_display(db, inv),
         })
 
@@ -497,3 +507,69 @@ def mark_statement_paid(
     )
     db.commit()
     return {"detail": f"{len(unpaid)} invoice(s) marked as paid"}
+
+
+# ── Line item endpoints ───────────────────────────────────────────────────────
+
+@router.post("/{invoice_id}/line-items", response_model=SupplierInvoiceLineItemOut)
+def add_line_item(
+    invoice_id: int,
+    data: SupplierInvoiceLineItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+
+    li = SupplierInvoiceLineItem(invoice_id=invoice_id, **data.model_dump())
+    db.add(li)
+    db.flush()
+    _recalc_invoice_total(db, inv)
+    db.refresh(li)
+    return SupplierInvoiceLineItemOut.model_validate(li)
+
+
+@router.put("/{invoice_id}/line-items/{line_id}", response_model=SupplierInvoiceLineItemOut)
+def update_line_item(
+    invoice_id: int,
+    line_id: int,
+    data: SupplierInvoiceLineItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    li = db.query(SupplierInvoiceLineItem).filter(
+        SupplierInvoiceLineItem.id == line_id,
+        SupplierInvoiceLineItem.invoice_id == invoice_id,
+    ).first()
+    if not li:
+        raise HTTPException(status_code=404, detail="Line item not found")
+    _check_entity_access(li.invoice.entity_id, current_user)
+
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(li, k, v)
+    db.flush()
+    _recalc_invoice_total(db, li.invoice)
+    db.refresh(li)
+    return SupplierInvoiceLineItemOut.model_validate(li)
+
+
+@router.delete("/{invoice_id}/line-items/{line_id}", status_code=204)
+def delete_line_item(
+    invoice_id: int,
+    line_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    li = db.query(SupplierInvoiceLineItem).filter(
+        SupplierInvoiceLineItem.id == line_id,
+        SupplierInvoiceLineItem.invoice_id == invoice_id,
+    ).first()
+    if not li:
+        raise HTTPException(status_code=404, detail="Line item not found")
+    inv = li.invoice
+    _check_entity_access(inv.entity_id, current_user)
+    db.delete(li)
+    db.flush()
+    _recalc_invoice_total(db, inv)

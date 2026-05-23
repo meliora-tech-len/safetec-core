@@ -228,6 +228,12 @@ export const markStatementPaid = (supplierId, year, month) =>
   api.post(`/supplier-invoices/statements/${supplierId}/${year}/${month}/mark-paid`)
 export const getSupplierPayablesDashboard = (params = {}) =>
   api.get('/supplier-invoices/dashboard-summary', { params })
+export const addInvoiceLineItem = (invoiceId, data) =>
+  api.post(`/supplier-invoices/${invoiceId}/line-items`, data)
+export const updateInvoiceLineItem = (invoiceId, lineId, data) =>
+  api.put(`/supplier-invoices/${invoiceId}/line-items/${lineId}`, data)
+export const deleteInvoiceLineItem = (invoiceId, lineId) =>
+  api.delete(`/supplier-invoices/${invoiceId}/line-items/${lineId}`)
 
 // ── Truck Monthly Expenses (Profit Sheet) ─────────────────────────────────────
 export const getTruckMonthlyExpenses = (truckId, params) =>

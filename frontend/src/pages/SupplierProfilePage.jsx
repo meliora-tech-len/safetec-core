@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   getSupplier, getEntities,
   getSupplierInvoices, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
   verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
+  addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
@@ -32,6 +33,19 @@ const blankForm = (entityId) => ({
   description: '',
   vat_applicable: true,
   notes: '',
+  is_multi_line: false,
+  line_items: [],
+})
+
+const blankLineItem = () => ({
+  _key: Math.random(),
+  item_code: '',
+  item_description: '',
+  quantity: '',
+  unit: '',
+  amount_excl_vat: '',
+  amount_incl_vat: '',
+  sort_order: 0,
 })
 
 function PaymentTermBadge({ term }) {
@@ -69,6 +83,7 @@ export default function SupplierProfilePage() {
   const [newForm, setNewForm] = useState(blankForm(''))
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)  // invoice pending deletion
+  const [openInvoiceIds, setOpenInvoiceIds] = useState(new Set())
   const firstInputRef = useRef(null)
 
   // Diesel rate auto-fill state (for diesel suppliers)
@@ -171,7 +186,12 @@ export default function SupplierProfilePage() {
       description: inv.description || '',
       vat_applicable: inv.vat_applicable !== false,
       notes: inv.notes || '',
+      is_multi_line: inv.is_multi_line || false,
+      line_items: inv.line_items ? inv.line_items.map(li => ({ ...li, _key: li.id })) : [],
     })
+    if (inv.is_multi_line) {
+      setOpenInvoiceIds(s => { const n = new Set(s); n.add(inv.id); return n })
+    }
   }
 
   const cancelEdit = () => { setEditingId(null); setEditForm({}) }
@@ -189,18 +209,29 @@ export default function SupplierProfilePage() {
     entity_id: parseInt(form.entity_id),
     invoice_date: new Date(form.invoice_date + 'T12:00:00').toISOString(),
     invoice_number: form.invoice_number.trim(),
-    amount: parseFloat(form.amount),
+    amount: form.is_multi_line ? 0 : parseFloat(form.amount),
     litres: form.litres ? parseFloat(form.litres) : null,
     vat_applicable: form.vat_applicable,
     vehicle_reg: form.vehicle_reg.trim() || null,
     description: form.description.trim() || null,
     notes: form.notes.trim() || null,
+    is_multi_line: form.is_multi_line,
+  })
+
+  const buildLineItemPayload = (li, idx) => ({
+    item_code: li.item_code?.trim() || null,
+    item_description: li.item_description?.trim() || null,
+    quantity: li.quantity !== '' && li.quantity != null ? parseFloat(li.quantity) : null,
+    unit: li.unit?.trim() || null,
+    amount_excl_vat: parseFloat(li.amount_excl_vat) || 0,
+    amount_incl_vat: parseFloat(li.amount_incl_vat) || 0,
+    sort_order: idx,
   })
 
   const validate = (form) => {
     if (!form.invoice_date) return 'Invoice date is required'
     if (!form.invoice_number.trim()) return 'Invoice number is required'
-    if (form.amount === '' || isNaN(form.amount)) return 'Valid amount is required'
+    if (!form.is_multi_line && (form.amount === '' || isNaN(form.amount))) return 'Valid amount is required'
     return null
   }
 
@@ -210,6 +241,12 @@ export default function SupplierProfilePage() {
     setSaving(true)
     try {
       const r = await createSupplierInvoice({ ...buildPayload(newForm), supplier_id: parseInt(supplierId) })
+      const newInvId = r.data.id
+      if (newForm.is_multi_line && newForm.line_items.length > 0) {
+        for (let i = 0; i < newForm.line_items.length; i++) {
+          await addInvoiceLineItem(newInvId, buildLineItemPayload(newForm.line_items[i], i))
+        }
+      }
       const fillupCreated = r.data?.diesel_fillup_id
       if (fillupCreated && newForm.vehicle_reg) {
         toast.success(`Invoice added · Diesel log created for ${newForm.vehicle_reg.toUpperCase()}`)
@@ -232,6 +269,21 @@ export default function SupplierProfilePage() {
     setSaving(true)
     try {
       await updateSupplierInvoice(editingId, buildPayload(editForm))
+      if (editForm.is_multi_line) {
+        const origInv = groups.flatMap(g => g.invoices).find(i => i.id === editingId)
+        const origItems = origInv?.line_items || []
+        const editItems = editForm.line_items || []
+        const editIds = new Set(editItems.filter(li => li.id).map(li => li.id))
+        for (const li of origItems) {
+          if (!editIds.has(li.id)) await deleteInvoiceLineItem(editingId, li.id)
+        }
+        for (let i = 0; i < editItems.length; i++) {
+          const li = editItems[i]
+          const payload = buildLineItemPayload(li, i)
+          if (li.id) await updateInvoiceLineItem(editingId, li.id, payload)
+          else await addInvoiceLineItem(editingId, payload)
+        }
+      }
       toast.success('Saved')
       setEditingId(null)
       await loadInvoices()
@@ -285,6 +337,10 @@ export default function SupplierProfilePage() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveFn() }
     if (e.key === 'Escape') cancelFn()
   }
+
+  const toggleInvoiceExpand = (id) => setOpenInvoiceIds(s => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
+  })
 
   const allInvoices = groups.flatMap(g => g.invoices)
   const multiEntity = entities.length > 1
@@ -569,219 +625,252 @@ export default function SupplierProfilePage() {
                     {group.invoices.map(inv => {
                       const isEditing = editingId === inv.id
                       const f = editForm
+                      const isExpanded = openInvoiceIds.has(inv.id)
+                      const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 1 : 0)
 
                       return (
-                        <tr
-                          key={inv.id}
-                          onClick={() => !isEditing && startEdit(inv)}
-                          style={{
-                            borderBottom: '1px solid var(--border)',
-                            background: isEditing ? 'var(--accent-subtle)' : 'transparent',
-                            opacity: inv.is_paid && !isEditing ? 0.6 : 1,
-                            cursor: isEditing ? 'default' : 'pointer',
-                            transition: 'background 0.1s',
-                          }}
-                        >
-                          {/* Entity cell — always read-only; entity is fixed to the supplier profile */}
-                          {multiEntity && (
-                            <td style={styles.td}>
-                              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
-                                {entities.find(e => e.id === inv.entity_id)?.code || '—'}
-                              </span>
-                            </td>
-                          )}
-
-                          {/* Date */}
-                          <td style={styles.td}>
-                            {isEditing ? (
-                              <input
-                                ref={firstInputRef}
-                                type="date" value={f.invoice_date}
-                                onChange={e => setEditForm(p => ({ ...p, invoice_date: e.target.value }))}
-                                onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
-                                onClick={e => e.stopPropagation()}
-                                style={styles.cellInput}
-                              />
-                            ) : formatDate(inv.invoice_date)}
-                          </td>
-
-                          {/* Invoice # */}
-                          <td style={{ ...styles.td, fontWeight: isEditing ? 400 : 600 }}>
-                            {isEditing ? (
-                              <input
-                                value={f.invoice_number}
-                                onChange={e => setEditForm(p => ({ ...p, invoice_number: e.target.value }))}
-                                onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
-                                onClick={e => e.stopPropagation()}
-                                style={{ ...styles.cellInput, minWidth: 90 }}
-                              />
-                            ) : inv.invoice_number}
-                          </td>
-
-                          {/* Vehicle Reg */}
-                          {showVehicleReg && (
-                            <td style={styles.td}>
-                              {isEditing ? (
-                                <div onClick={e => e.stopPropagation()}>
-                                  <SearchableSelect
-                                    value={f.vehicle_reg}
-                                    onChange={v => setEditForm(p => ({ ...p, vehicle_reg: v }))}
-                                    options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
-                                    getValue={t => t.registration}
-                                    getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
-                                    placeholder="Vehicle reg…"
-                                    style={{ width: 150 }}
-                                  />
-                                </div>
-                              ) : (
-                                <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                                  {inv.vehicle_reg || '—'}
+                        <Fragment key={inv.id}>
+                          <tr
+                            onClick={() => !isEditing && startEdit(inv)}
+                            style={{
+                              borderBottom: isExpanded ? 'none' : '1px solid var(--border)',
+                              background: isEditing ? 'var(--accent-subtle)' : 'transparent',
+                              opacity: inv.is_paid && !isEditing ? 0.6 : 1,
+                              cursor: isEditing ? 'default' : 'pointer',
+                              transition: 'background 0.1s',
+                            }}
+                          >
+                            {/* Entity cell */}
+                            {multiEntity && (
+                              <td style={styles.td}>
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
+                                  {entities.find(e => e.id === inv.entity_id)?.code || '—'}
                                 </span>
-                              )}
-                            </td>
-                          )}
-
-                          {/* Description */}
-                          <td style={{ ...styles.td, maxWidth: 200 }}>
-                            {isEditing ? (
-                              <input
-                                value={f.description}
-                                onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
-                                onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
-                                onClick={e => e.stopPropagation()}
-                                style={{ ...styles.cellInput, minWidth: 140 }}
-                                placeholder="Description"
-                              />
-                            ) : (
-                              <span style={{ color: 'var(--text-muted)', fontSize: 12 }} title={inv.description}>
-                                {inv.description
-                                  ? inv.description.length > 40 ? inv.description.slice(0, 40) + '…' : inv.description
-                                  : '—'}
-                              </span>
+                              </td>
                             )}
-                          </td>
 
-                          {/* Amount */}
-                          <td style={{
-                            ...styles.td, fontWeight: 600,
-                            ...(inv.verified2_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
-                          }}>
-                            {isEditing ? (
-                              <input
-                                type="number" step="0.01"
-                                value={f.amount}
-                                onChange={e => setEditForm(p => ({ ...p, amount: e.target.value }))}
-                                onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
-                                onClick={e => e.stopPropagation()}
-                                style={{ ...styles.cellInput, width: 90, textAlign: 'right' }}
-                              />
-                            ) : (
-                              <>
-                                {formatCurrency(inv.amount)}
-                                {!inv.vat_applicable && <span style={styles.noVatTag}>NON VAT</span>}
-                              </>
-                            )}
-                          </td>
-
-                          {/* Litres — diesel suppliers only */}
-                          {isDiesel && (
-                            <td style={{ ...styles.td, textAlign: 'right' }}>
+                            {/* Date */}
+                            <td style={styles.td}>
                               {isEditing ? (
                                 <input
-                                  type="number" step="0.001" min="0" placeholder="0.000"
-                                  value={f.litres || ''}
-                                  onChange={e => setEditForm(p => ({ ...p, litres: e.target.value }))}
+                                  ref={firstInputRef}
+                                  type="date" value={f.invoice_date}
+                                  onChange={e => setEditForm(p => ({ ...p, invoice_date: e.target.value }))}
                                   onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
                                   onClick={e => e.stopPropagation()}
-                                  style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
+                                  style={styles.cellInput}
                                 />
-                              ) : inv.litres ? (
-                                <span style={{ fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-                                  {inv.diesel_fillup_id && <Fuel size={11} color="#16a34a" title="Diesel log created" />}
-                                  {parseFloat(inv.litres).toFixed(1)}L
-                                </span>
+                              ) : formatDate(inv.invoice_date)}
+                            </td>
+
+                            {/* Invoice # */}
+                            <td style={{ ...styles.td, fontWeight: isEditing ? 400 : 600 }}>
+                              {isEditing ? (
+                                <input
+                                  value={f.invoice_number}
+                                  onChange={e => setEditForm(p => ({ ...p, invoice_number: e.target.value }))}
+                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ ...styles.cellInput, minWidth: 90 }}
+                                />
+                              ) : inv.invoice_number}
+                            </td>
+
+                            {/* Vehicle Reg */}
+                            {showVehicleReg && (
+                              <td style={styles.td}>
+                                {isEditing ? (
+                                  <div onClick={e => e.stopPropagation()}>
+                                    <SearchableSelect
+                                      value={f.vehicle_reg}
+                                      onChange={v => setEditForm(p => ({ ...p, vehicle_reg: v }))}
+                                      options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
+                                      getValue={t => t.registration}
+                                      getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
+                                      placeholder="Vehicle reg…"
+                                      style={{ width: 150 }}
+                                    />
+                                  </div>
+                                ) : (
+                                  <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                                    {inv.vehicle_reg || '—'}
+                                  </span>
+                                )}
+                              </td>
+                            )}
+
+                            {/* Description */}
+                            <td style={{ ...styles.td, maxWidth: 200 }}>
+                              {isEditing ? (
+                                <input
+                                  value={f.description}
+                                  onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
+                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ ...styles.cellInput, minWidth: 140 }}
+                                  placeholder="Description"
+                                />
                               ) : (
-                                inv.diesel_fillup_id
-                                  ? <Fuel size={12} color="#16a34a" title="Linked to diesel log" />
-                                  : <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                <span style={{ color: 'var(--text-muted)', fontSize: 12 }} title={inv.description}>
+                                  {inv.description
+                                    ? inv.description.length > 40 ? inv.description.slice(0, 40) + '…' : inv.description
+                                    : '—'}
+                                </span>
                               )}
                             </td>
-                          )}
 
-                          {/* VAT */}
-                          <td style={{ ...styles.td, textAlign: 'center' }}>
-                            {isEditing ? (
-                              <input
-                                type="checkbox" checked={f.vat_applicable}
-                                onChange={e => setEditForm(p => ({ ...p, vat_applicable: e.target.checked }))}
-                                onClick={e => e.stopPropagation()}
-                                style={{ cursor: 'pointer' }}
-                              />
-                            ) : (
-                              inv.vat_applicable
-                                ? <span style={{ color: '#16a34a', fontSize: 13 }}>✓</span>
-                                : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>
+                            {/* Amount */}
+                            <td style={{
+                              ...styles.td, fontWeight: 600,
+                              ...(inv.verified2_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
+                            }}>
+                              {isEditing && !f.is_multi_line ? (
+                                <input
+                                  type="number" step="0.01"
+                                  value={f.amount}
+                                  onChange={e => setEditForm(p => ({ ...p, amount: e.target.value }))}
+                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ ...styles.cellInput, width: 90, textAlign: 'right' }}
+                                />
+                              ) : (
+                                <>
+                                  {formatCurrency(inv.amount)}
+                                  {!inv.vat_applicable && <span style={styles.noVatTag}>NON VAT</span>}
+                                  {inv.is_multi_line && !isEditing && (
+                                    <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-muted)', fontWeight: 700 }}>ML</span>
+                                  )}
+                                </>
+                              )}
+                            </td>
+
+                            {/* Litres — diesel suppliers only */}
+                            {isDiesel && (
+                              <td style={{ ...styles.td, textAlign: 'right' }}>
+                                {isEditing ? (
+                                  <input
+                                    type="number" step="0.001" min="0" placeholder="0.000"
+                                    value={f.litres || ''}
+                                    onChange={e => setEditForm(p => ({ ...p, litres: e.target.value }))}
+                                    onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
+                                  />
+                                ) : inv.litres ? (
+                                  <span style={{ fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                                    {inv.diesel_fillup_id && <Fuel size={11} color="#16a34a" title="Diesel log created" />}
+                                    {parseFloat(inv.litres).toFixed(1)}L
+                                  </span>
+                                ) : (
+                                  inv.diesel_fillup_id
+                                    ? <Fuel size={12} color="#16a34a" title="Linked to diesel log" />
+                                    : <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                )}
+                              </td>
                             )}
-                          </td>
 
-                          {/* Verified */}
-                          <td style={styles.td}>
-                            <VerifyBadge item={inv} onVerify={handleVerify} currentUserId={user?.id} isAdmin={isAdmin} />
-                          </td>
+                            {/* VAT */}
+                            <td style={{ ...styles.td, textAlign: 'center' }}>
+                              {isEditing ? (
+                                <input
+                                  type="checkbox" checked={f.vat_applicable}
+                                  onChange={e => setEditForm(p => ({ ...p, vat_applicable: e.target.checked }))}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ cursor: 'pointer' }}
+                                />
+                              ) : (
+                                inv.vat_applicable
+                                  ? <span style={{ color: '#16a34a', fontSize: 13 }}>✓</span>
+                                  : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>
+                              )}
+                            </td>
 
-                          {/* Paid */}
-                          <td style={{ ...styles.td, textAlign: 'center' }}>
-                            <button
-                              onClick={e => handleMarkPaid(inv, e)}
-                              title={inv.is_paid ? `Paid${inv.paid_date ? ' ' + formatDate(inv.paid_date) : ''}` : 'Mark paid'}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: inv.is_paid ? '#16a34a' : 'var(--border)' }}
-                            >
-                              <CheckCircle size={16} />
-                            </button>
-                          </td>
+                            {/* Verified */}
+                            <td style={styles.td}>
+                              <VerifyBadge item={inv} onVerify={handleVerify} currentUserId={user?.id} isAdmin={isAdmin} />
+                            </td>
 
-                          {/* Notes */}
-                          <td style={{ ...styles.td, maxWidth: 180 }}>
-                            {isEditing ? (
-                              <input
-                                value={f.notes}
-                                onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))}
-                                onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
-                                onClick={e => e.stopPropagation()}
-                                style={{ ...styles.cellInput, minWidth: 120 }}
-                                placeholder="Notes"
-                              />
-                            ) : (
-                              <span style={{ color: 'var(--text-muted)', fontSize: 12 }} title={inv.notes}>
-                                {inv.notes
-                                  ? inv.notes.length > 30 ? inv.notes.slice(0, 30) + '…' : inv.notes
-                                  : '—'}
-                              </span>
-                            )}
-                          </td>
-
-                          {/* Actions */}
-                          <td style={{ ...styles.td, whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
-                            {isEditing ? (
-                              <>
-                                <button onClick={saveEdit} disabled={saving} className="btn btn-icon btn-primary" style={{ marginRight: 4 }} title="Save (Enter)">
-                                  <Save size={14} />
-                                </button>
-                                <button onClick={cancelEdit} className="btn btn-icon btn-ghost" title="Cancel (Esc)">
-                                  <X size={14} />
-                                </button>
-                              </>
-                            ) : (
+                            {/* Paid */}
+                            <td style={{ ...styles.td, textAlign: 'center' }}>
                               <button
-                                className="btn-icon btn-ghost"
-                                onClick={() => handleDelete(inv)}
-                                title="Delete"
+                                onClick={e => handleMarkPaid(inv, e)}
+                                title={inv.is_paid ? `Paid${inv.paid_date ? ' ' + formatDate(inv.paid_date) : ''}` : 'Mark paid'}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: inv.is_paid ? '#16a34a' : 'var(--border)' }}
                               >
-                                <Trash2 size={13} color="var(--danger)" />
+                                <CheckCircle size={16} />
                               </button>
-                            )}
-                          </td>
-                        </tr>
+                            </td>
+
+                            {/* Notes */}
+                            <td style={{ ...styles.td, maxWidth: 180 }}>
+                              {isEditing ? (
+                                <input
+                                  value={f.notes}
+                                  onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))}
+                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ ...styles.cellInput, minWidth: 120 }}
+                                  placeholder="Notes"
+                                />
+                              ) : (
+                                <span style={{ color: 'var(--text-muted)', fontSize: 12 }} title={inv.notes}>
+                                  {inv.notes
+                                    ? inv.notes.length > 30 ? inv.notes.slice(0, 30) + '…' : inv.notes
+                                    : '—'}
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Actions */}
+                            <td style={{ ...styles.td, whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+                              {isEditing ? (
+                                <>
+                                  <button onClick={saveEdit} disabled={saving} className="btn btn-icon btn-primary" style={{ marginRight: 4 }} title="Save (Enter)">
+                                    <Save size={14} />
+                                  </button>
+                                  <button onClick={cancelEdit} className="btn btn-icon btn-ghost" title="Cancel (Esc)">
+                                    <X size={14} />
+                                  </button>
+                                </>
+                              ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  {inv.is_multi_line && (
+                                    <button
+                                      className="btn-icon btn-ghost"
+                                      onClick={e => { e.stopPropagation(); toggleInvoiceExpand(inv.id) }}
+                                      title={isExpanded ? 'Collapse lines' : 'Expand lines'}
+                                    >
+                                      {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                                    </button>
+                                  )}
+                                  <button
+                                    className="btn-icon btn-ghost"
+                                    onClick={() => handleDelete(inv)}
+                                    title="Delete"
+                                  >
+                                    <Trash2 size={13} color="var(--danger)" />
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+
+                          {/* Expanded line items row */}
+                          {inv.is_multi_line && isExpanded && (
+                            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td colSpan={totalCols} style={{ padding: '0 0 12px 0', background: 'var(--bg-base)' }}>
+                                {isEditing ? (
+                                  <LineItemsEditor
+                                    items={editForm.line_items || []}
+                                    onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
+                                  />
+                                ) : (
+                                  <LineItemsViewer items={inv.line_items || []} total={inv.amount} />
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       )
                     })}
                   </tbody>
@@ -811,8 +900,11 @@ export default function SupplierProfilePage() {
 function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit, trucks = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
-  return (
-    <tr style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border-accent)' }}>
+  const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 1 : 0)
+  const lineTotal = (form.line_items || []).reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
+
+  const formRow = (
+    <tr style={{ background: 'var(--accent-subtle)', borderBottom: form.is_multi_line ? 'none' : '1px solid var(--border-accent)' }}>
       {multiEntity && (
         <td style={styles.td}>
           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{entityCode}</span>
@@ -848,18 +940,23 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
           onKeyDown={e => onKeyDown(e, onSave, onCancel)}
           style={{ ...styles.cellInput, minWidth: 140 }} />
       </td>
+      {/* Amount */}
       <td style={styles.td}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <input type="number" step="0.01" placeholder="0.00" value={form.amount}
-            onChange={e => { set('amount', e.target.value); onAmountEdit?.() }}
-            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-            style={{ ...styles.cellInput, width: 90, textAlign: 'right' }} />
-          {amountAutoFilled && dieselRate && (
-            <span style={{ fontSize: 9, fontWeight: 700, color: '#16a34a', whiteSpace: 'nowrap' }} title={`Auto-calculated: R${parseFloat(dieselRate.rate_per_litre).toFixed(2)}/L`}>
-              auto
-            </span>
-          )}
-        </div>
+        {form.is_multi_line ? (
+          <span style={{ fontWeight: 700, fontSize: 13 }}>{lineTotal > 0 ? `R ${lineTotal.toFixed(2)}` : '—'}</span>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <input type="number" step="0.01" placeholder="0.00" value={form.amount}
+              onChange={e => { set('amount', e.target.value); onAmountEdit?.() }}
+              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              style={{ ...styles.cellInput, width: 90, textAlign: 'right' }} />
+            {amountAutoFilled && dieselRate && (
+              <span style={{ fontSize: 9, fontWeight: 700, color: '#16a34a', whiteSpace: 'nowrap' }} title={`Auto-calculated: R${parseFloat(dieselRate.rate_per_litre).toFixed(2)}/L`}>
+                auto
+              </span>
+            )}
+          </div>
+        )}
       </td>
       {isDiesel && (
         <td style={styles.td}>
@@ -868,7 +965,7 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
             onChange={e => set('litres', e.target.value)}
             onKeyDown={e => onKeyDown(e, onSave, onCancel)}
             style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
-            title="Litres of diesel — auto-creates a diesel log entry for this truck"
+            title="Litres of diesel"
           />
         </td>
       )}
@@ -876,20 +973,203 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
         <input type="checkbox" checked={form.vat_applicable}
           onChange={e => set('vat_applicable', e.target.checked)} style={{ cursor: 'pointer' }} />
       </td>
-      <td style={styles.td} />{/* Verified — n/a for new */}
-      <td style={styles.td} />{/* Paid — n/a for new */}
+      <td style={styles.td} />
+      <td style={styles.td} />
       <td style={styles.td}>
         <input value={form.notes} placeholder="Notes"
           onChange={e => set('notes', e.target.value)}
           onKeyDown={e => onKeyDown(e, onSave, onCancel)}
           style={{ ...styles.cellInput, minWidth: 120 }} />
       </td>
-      <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
-        <button onClick={onSave} disabled={saving} className="btn btn-icon btn-primary" style={{ marginRight: 4 }} title="Save (Enter)"><Save size={14} /></button>
-        <button onClick={onCancel} className="btn btn-icon btn-ghost" title="Cancel (Esc)"><X size={14} /></button>
+      <td style={{ ...styles.td, whiteSpace: 'nowrap', verticalAlign: 'top', paddingTop: 10 }}>
+        {/* Single/Multi toggle */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+          {['single', 'multi'].map(v => (
+            <button key={v}
+              onClick={() => setForm(f => ({ ...f, is_multi_line: v === 'multi', line_items: [] }))}
+              style={{
+                padding: '2px 8px', borderRadius: 12, border: '1px solid var(--border)',
+                background: (form.is_multi_line ? v === 'multi' : v === 'single') ? 'var(--accent)' : 'var(--bg-card)',
+                color: (form.is_multi_line ? v === 'multi' : v === 'single') ? '#fff' : 'var(--text)',
+                fontWeight: 600, fontSize: 10, cursor: 'pointer', whiteSpace: 'nowrap',
+              }}>
+              {v === 'single' ? 'Single' : 'Multi'}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={onSave} disabled={saving} className="btn btn-icon btn-primary" title="Save (Enter)"><Save size={14} /></button>
+          <button onClick={onCancel} className="btn btn-icon btn-ghost" title="Cancel (Esc)"><X size={14} /></button>
+        </div>
       </td>
     </tr>
   )
+
+  if (!form.is_multi_line) return formRow
+
+  return (
+    <>
+      {formRow}
+      <tr style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border-accent)' }}>
+        <td colSpan={totalCols} style={{ padding: '0 12px 12px 12px' }}>
+          <LineItemsEditor
+            items={form.line_items || []}
+            onChange={items => setForm(f => ({ ...f, line_items: items }))}
+          />
+        </td>
+      </tr>
+    </>
+  )
+}
+
+
+function LineItemsEditor({ items, onChange }) {
+  const addLine = () => onChange([...items, blankLineItem()])
+  const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
+  const updateLine = (idx, field, value) => {
+    const next = items.map((li, i) => i === idx ? { ...li, [field]: value } : li)
+    onChange(next)
+  }
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr style={{ background: 'var(--bg-surface)' }}>
+            <th style={liStyles.th}>Item Code</th>
+            <th style={liStyles.th}>Description</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
+            <th style={liStyles.th}>Unit</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
+            <th style={liStyles.th} />
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((li, idx) => (
+            <tr key={li._key ?? li.id ?? idx} style={{ borderBottom: '1px solid var(--border)' }}>
+              <td style={liStyles.td}>
+                <input value={li.item_code || ''} placeholder="Code"
+                  onChange={e => updateLine(idx, 'item_code', e.target.value)}
+                  style={{ ...liStyles.input, width: 70 }} />
+              </td>
+              <td style={liStyles.td}>
+                <input value={li.item_description || ''} placeholder="Description"
+                  onChange={e => updateLine(idx, 'item_description', e.target.value)}
+                  style={{ ...liStyles.input, minWidth: 160 }} />
+              </td>
+              <td style={liStyles.td}>
+                <input type="number" step="0.001" value={li.quantity || ''} placeholder="0"
+                  onChange={e => updateLine(idx, 'quantity', e.target.value)}
+                  style={{ ...liStyles.input, width: 60, textAlign: 'right' }} />
+              </td>
+              <td style={liStyles.td}>
+                <input value={li.unit || ''} placeholder="each"
+                  onChange={e => updateLine(idx, 'unit', e.target.value)}
+                  style={{ ...liStyles.input, width: 60 }} />
+              </td>
+              <td style={liStyles.td}>
+                <input type="number" step="0.01" value={li.amount_excl_vat || ''} placeholder="0.00"
+                  onChange={e => updateLine(idx, 'amount_excl_vat', e.target.value)}
+                  style={{ ...liStyles.input, width: 90, textAlign: 'right' }} />
+              </td>
+              <td style={liStyles.td}>
+                <input type="number" step="0.01" value={li.amount_incl_vat || ''} placeholder="0.00"
+                  onChange={e => updateLine(idx, 'amount_incl_vat', e.target.value)}
+                  style={{ ...liStyles.input, width: 90, textAlign: 'right' }} />
+              </td>
+              <td style={liStyles.td}>
+                <button onClick={() => removeLine(idx)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}>
+                  <X size={12} color="var(--danger)" />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={4} style={{ padding: '8px 4px' }}>
+              <button onClick={addLine}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none',
+                  cursor: 'pointer', color: 'var(--accent)', fontWeight: 600, fontSize: 12, padding: 0 }}>
+                <Plus size={13} /> Add line
+              </button>
+            </td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700 }}>
+              {items.reduce((s, li) => s + (parseFloat(li.amount_excl_vat) || 0), 0).toFixed(2)}
+            </td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700 }}>
+              {items.reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0).toFixed(2)}
+            </td>
+            <td />
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+
+function LineItemsViewer({ items, total }) {
+  if (!items || items.length === 0) {
+    return <p style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>No line items.</p>
+  }
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <thead>
+        <tr style={{ background: 'var(--bg-surface)' }}>
+          <th style={liStyles.th}>Item Code</th>
+          <th style={liStyles.th}>Description</th>
+          <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
+          <th style={liStyles.th}>Unit</th>
+          <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
+          <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map(li => (
+          <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
+            <td style={liStyles.td}>{li.item_code || '—'}</td>
+            <td style={liStyles.td}>{li.item_description || '—'}</td>
+            <td style={{ ...liStyles.td, textAlign: 'right' }}>{li.quantity != null ? li.quantity : '—'}</td>
+            <td style={liStyles.td}>{li.unit || '—'}</td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
+              R {parseFloat(li.amount_excl_vat).toFixed(2)}
+            </td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
+              R {parseFloat(li.amount_incl_vat).toFixed(2)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
+          <td colSpan={4} style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total (incl. VAT)</td>
+          <td style={liStyles.td} />
+          <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
+            R {parseFloat(total || 0).toFixed(2)}
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  )
+}
+
+
+const liStyles = {
+  th: {
+    padding: '6px 8px', textAlign: 'left', fontSize: 10, fontWeight: 700,
+    color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5,
+    borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap',
+  },
+  td: { padding: '5px 8px', verticalAlign: 'middle' },
+  input: {
+    padding: '3px 6px', fontSize: 12,
+    background: 'var(--bg-input, var(--bg-card))',
+    border: '1px solid var(--border)', borderRadius: 4,
+    color: 'var(--text-primary)', outline: 'none',
+  },
 }
 
 

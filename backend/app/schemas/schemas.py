@@ -1250,18 +1250,41 @@ class DriverSalaryConfigOut(DriverSalaryConfigBase):
 
 # ── Supplier Invoice Schemas ──────────────────────────────────────────────────
 
+class SupplierInvoiceLineItemBase(BaseModel):
+    item_code: Optional[str] = None
+    item_description: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    amount_excl_vat: Decimal = Decimal('0')
+    amount_incl_vat: Decimal = Decimal('0')
+    sort_order: int = 0
+
+
+class SupplierInvoiceLineItemCreate(SupplierInvoiceLineItemBase):
+    pass
+
+
+class SupplierInvoiceLineItemOut(SupplierInvoiceLineItemBase):
+    id: int
+    invoice_id: int
+
+    class Config:
+        from_attributes = True
+
+
 class SupplierInvoiceCreate(BaseModel):
     supplier_id: Optional[int] = None
     subcontractor_id: Optional[int] = None
     entity_id: int
     invoice_date: datetime
     invoice_number: str
-    amount: Decimal
+    amount: Decimal = Decimal('0')
     litres: Optional[Decimal] = None
     vat_applicable: bool = True
     vehicle_reg: Optional[str] = None
     description: Optional[str] = None
     notes: Optional[str] = None
+    is_multi_line: bool = False
 
 
 class SubcontractorInvoiceCreate(BaseModel):
@@ -1323,6 +1346,8 @@ class SupplierInvoiceOut(BaseModel):
     verified_by_date: Optional[str] = None
     verified2_by_initials: Optional[str] = None
     verified2_by_date: Optional[str] = None
+    is_multi_line: bool = False
+    line_items: List[SupplierInvoiceLineItemOut] = []
 
     class Config:
         from_attributes = True

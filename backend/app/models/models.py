@@ -345,6 +345,7 @@ class SupplierInvoice(Base):
     payment_reference = Column(String(200))
 
     notes = Column(Text)
+    is_multi_line = Column(Boolean, default=False, nullable=False, server_default='false')
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -354,6 +355,28 @@ class SupplierInvoice(Base):
     entity = relationship("BusinessEntity")
     created_by = relationship("User", foreign_keys=[created_by_id])
     diesel_fillups = relationship("DieselFillUp", back_populates="supplier_invoice")
+    line_items = relationship(
+        "SupplierInvoiceLineItem", back_populates="invoice",
+        order_by="SupplierInvoiceLineItem.sort_order",
+        cascade="all, delete-orphan",
+    )
+
+
+class SupplierInvoiceLineItem(Base):
+    __tablename__ = "supplier_invoice_line_items"
+
+    id = Column(Integer, primary_key=True)
+    invoice_id = Column(Integer, ForeignKey("supplier_invoices.id", ondelete="CASCADE"), nullable=False)
+    sort_order = Column(Integer, default=0)
+    item_code = Column(String(100))
+    item_description = Column(Text)
+    quantity = Column(Numeric(12, 3))
+    unit = Column(String(50))
+    amount_excl_vat = Column(Numeric(12, 2), nullable=False, default=0)
+    amount_incl_vat = Column(Numeric(12, 2), nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    invoice = relationship("SupplierInvoice", back_populates="line_items")
 
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────
