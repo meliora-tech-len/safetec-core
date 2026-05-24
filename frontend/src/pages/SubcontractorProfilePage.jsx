@@ -915,16 +915,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
               <td style={tdStyle}></td>
             </tr>
 
-            {/* Supplier invoices section heading */}
-            {templateSuppliers.length > 0 && (
-              <tr>
-                <td colSpan={7} style={{ padding: '10px 10px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
-                  Supplier Invoices
-                </td>
-              </tr>
-            )}
-
-            {/* Template supplier rows — always present */}
+            {/* Template supplier rows — greyed, always present, no delete */}
             {templateSuppliers.map(supplierName => {
               const key = supplierName.toUpperCase()
               const group = invBySupplier[key] || { dieselAll: [], feeAll: [] }
@@ -933,59 +924,63 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
               return (
                 <React.Fragment key={supplierName}>
                   <tr>
-                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{key} DIESEL</td>
+                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>{key} DIESEL</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(dieselAmt)}</td>
-                    <td style={tdStyle}>
-                      {group.dieselAll.map(inv => (
-                        <button key={inv.id} className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
-                          <Trash2 size={12} color="var(--danger)" />
-                        </button>
-                      ))}
-                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(dieselAmt)}</td>
+                    <td style={tdStyle}></td>
                   </tr>
                   <tr>
-                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{key} DIESEL ADMIN FEE</td>
+                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>{key} DIESEL ADMIN FEE</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(feeAmt)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(feeAmt)}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                    <td style={tdStyle}>
-                      {group.feeAll.map(inv => (
-                        <button key={inv.id} className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
-                          <Trash2 size={12} color="var(--danger)" />
-                        </button>
-                      ))}
-                    </td>
+                    <td style={tdStyle}></td>
                   </tr>
                 </React.Fragment>
               )
             })}
-            {/* Extra invoices from suppliers not in the template */}
-            {extraInvoices.map(inv => {
-              const label = (inv.supplier_name || `Supplier #${inv.supplier_id}`).toUpperCase()
-              return (
-                <tr key={inv.id}>
-                  <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    {label} {inv.vat_applicable ? 'DIESEL' : 'DIESEL ADMIN FEE'}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{inv.vat_applicable ? dash : fmtC(inv.amount)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{inv.vat_applicable ? fmtC(inv.amount) : dash}</td>
-                  <td style={tdStyle}>
-                    <button className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
-                      <Trash2 size={12} color="var(--danger)" />
-                    </button>
-                  </td>
-                </tr>
-              )
-            })}
+
+            {/* Supplier Invoices heading */}
+            <tr>
+              <td colSpan={7} style={{ padding: '10px 10px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
+                Supplier Invoices
+              </td>
+            </tr>
+
+            {/* Actual linked supplier invoices — all of them, with delete */}
+            {supplier_invoices.length === 0 ? (
+              <tr>
+                <td colSpan={7} style={{ ...tdStyle, color: 'var(--text-muted)', fontStyle: 'italic', fontSize: 12 }}>No invoices linked</td>
+              </tr>
+            ) : (
+              supplier_invoices.map(inv => {
+                const label = (inv.supplier_name || `Supplier #${inv.supplier_id}`)
+                return (
+                  <tr key={inv.id}>
+                    <td style={{ ...tdStyle, fontSize: 12 }}>{label}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>
+                      {inv.vat_applicable ? dash : fmtC(inv.amount)}
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>
+                      {inv.vat_applicable ? fmtC(inv.amount) : dash}
+                    </td>
+                    <td style={tdStyle}>
+                      <button className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
+                        <Trash2 size={12} color="var(--danger)" />
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })
+            )}
           </tbody>
           <tfoot>
             <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
