@@ -220,6 +220,41 @@ def get_dashboard_summary(
     )
 
 
+# ── List invoices by vehicle reg + month/year (for Profit Sheet) ─────────────
+
+@router.get("/by-vehicle")
+def list_invoices_by_vehicle(
+    vehicle_reg: str = Query(...),
+    month: int = Query(...),
+    year: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    invoices = (
+        db.query(SupplierInvoice)
+        .filter(
+            SupplierInvoice.vehicle_reg.ilike(vehicle_reg),
+            SupplierInvoice.statement_month == month,
+            SupplierInvoice.statement_year == year,
+            SupplierInvoice.is_archived != True,
+        )
+        .order_by(SupplierInvoice.invoice_date.asc(), SupplierInvoice.id.asc())
+        .all()
+    )
+    return [
+        {
+            "id": inv.id,
+            "supplier_name": inv.supplier.name if inv.supplier else None,
+            "invoice_number": inv.invoice_number,
+            "invoice_date": str(inv.invoice_date) if inv.invoice_date else None,
+            "amount": float(inv.amount),
+            "vat_applicable": inv.vat_applicable,
+            "description": inv.description,
+        }
+        for inv in invoices
+    ]
+
+
 # ── List invoices grouped by statement ───────────────────────────────────────
 
 @router.get("/", response_model=List[SupplierStatementGroup])

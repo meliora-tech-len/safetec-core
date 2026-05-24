@@ -176,11 +176,12 @@ def create_truck(
     if truck_fields.get("registration"):
         truck_fields["registration"] = truck_fields["registration"].strip().replace(" ", "")
 
-    # Auto-link to the subcontractor when creating a truck for a subcontractor entity
+    # Auto-link and mark as subcontractor when creating a truck for a subcontractor entity
     if not truck_fields.get("subcontractor_id"):
         entity = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
         if entity and entity.is_subcontractor_entity and entity.linked_subcontractor_id:
             truck_fields["subcontractor_id"] = entity.linked_subcontractor_id
+            truck_fields["is_subcontractor"] = True
 
     try:
         truck = Truck(**truck_fields)

@@ -527,6 +527,9 @@ class TruckMonthlyExpenses(Base):
     tyre_maintenance    = Column(Numeric(12, 2), nullable=True)
     other_suppliers     = Column(Numeric(12, 2), nullable=True)
 
+    # Freeform additional expense lines: [{"id": str, "description": str, "amount": float}]
+    custom_lines        = Column(JSON, nullable=True)
+
     notes               = Column(Text, nullable=True)
 
     created_at          = Column(DateTime(timezone=True), server_default=func.now())

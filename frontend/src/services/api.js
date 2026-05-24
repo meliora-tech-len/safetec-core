@@ -221,6 +221,7 @@ export const getDieselAnnualSummary = (params) => api.get('/diesel/reports/annua
 
 // ── Supplier Invoices ─────────────────────────────────────────────────────────
 export const getSupplierInvoices = (params = {}) => api.get('/supplier-invoices/', { params })
+export const getSupplierInvoicesByVehicle = (params = {}) => api.get('/supplier-invoices/by-vehicle', { params })
 export const getSupplierInvoice = (id) => api.get(`/supplier-invoices/${id}`)
 export const createSupplierInvoice = (data) => api.post('/supplier-invoices/', data)
 export const updateSupplierInvoice = (id, data) => api.put(`/supplier-invoices/${id}`, data)

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List, Any
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 from enum import Enum
 
@@ -714,6 +714,7 @@ class TruckMonthlyExpensesBase(BaseModel):
     diesel:               Optional[Decimal] = None
     tyre_maintenance:     Optional[Decimal] = None
     other_suppliers:      Optional[Decimal] = None
+    custom_lines:         Optional[List[dict]] = None
     notes:                Optional[str] = None
 
 
@@ -1655,6 +1656,28 @@ class PayrollEntryStatusTransition(BaseModel):
 
 # ── Subcontractor Costing Schemas ─────────────────────────────────────────────
 
+class DieselFillUpCostingRow(BaseModel):
+    fillup_date: date
+    slip_number: Optional[str] = None
+    invoice_number: Optional[str] = None
+    supplier_name: Optional[str] = None
+    litres: Decimal
+    rate_per_litre: Decimal
+    amount_excl: Decimal
+    admin_fee_excl: Decimal
+    admin_fee_vat: Decimal
+    admin_fee_incl: Decimal
+    grand_total: Decimal
+
+
+class DieselSupplierGroup(BaseModel):
+    supplier_name: str
+    rows: List[DieselFillUpCostingRow]
+    tot_admin_fee_incl: Decimal
+    tot_excl_admin_fee: Decimal
+    tot_grand_total: Decimal
+
+
 class SubcontractorTruckCostingOut(BaseModel):
     truck: TruckOut
     loads: List[TruckLoadOut]
@@ -1665,6 +1688,7 @@ class SubcontractorTruckCostingOut(BaseModel):
     total_expenses_excl_vat: Decimal
     total_expenses_incl_vat: Decimal
     net_payable: Decimal
+    diesel_groups: List[DieselSupplierGroup] = []
 
 
 class SubcontractorCostingSummary(BaseModel):

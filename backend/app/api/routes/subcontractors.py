@@ -8,13 +8,14 @@ from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity, DieselSettings, DieselRate, Supplier
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
     TruckLoadOut, TruckOut, SupplierInvoiceOut,
     SubcontractorCostingOut, SubcontractorCostingSummary, SubcontractorTruckCostingOut,
     SupplierStatementGroup, SubcontractorInvoiceCreate,
+    DieselFillUpCostingRow, DieselSupplierGroup,
 )
 from app.services.audit import log_action
 from app.services.verification import get_verification_display
@@ -345,6 +346,58 @@ def get_subcontractor_costing(
 
         exp_incl = admin_fee + sum((Decimal(str(i.amount)) for i in inv_list if i.vat_applicable), D0)
         exp_excl = sum((Decimal(str(i.amount)) for i in inv_list if not i.vat_applicable), D0)
+
+        # Diesel fill-ups for this truck/month — grouped by supplier
+        fillups = (
+            db.query(DieselFillUp)
+            .filter(
+                DieselFillUp.truck_id == truck.id,
+                extract("month", DieselFillUp.fillup_date) == month,
+                extract("year",  DieselFillUp.fillup_date) == year,
+                DieselFillUp.is_archived == False,
+            )
+            .order_by(DieselFillUp.fillup_date)
+            .all()
+        )
+        by_supplier: dict = {}
+        for f in fillups:
+            by_supplier.setdefault(f.supplier_id, []).append(f)
+
+        diesel_groups = []
+        for sup_id, fups in by_supplier.items():
+            sup_name = fups[0].supplier.name if fups[0].supplier else f"Supplier #{sup_id}"
+            rows = []
+            for f in fups:
+                amt    = Decimal(str(f.amount))
+                fee_ex = Decimal(str(f.admin_fee_amount))
+                fee_vt = (fee_ex * Decimal("0.15")).quantize(Decimal("0.01"))
+                fee_in = (fee_ex * Decimal("1.15")).quantize(Decimal("0.01"))
+                rows.append(DieselFillUpCostingRow(
+                    fillup_date=f.fillup_date,
+                    slip_number=f.slip_number,
+                    invoice_number=f.invoice_number,
+                    supplier_name=sup_name,
+                    litres=Decimal(str(f.litres)),
+                    rate_per_litre=Decimal(str(f.rate_per_litre)),
+                    amount_excl=amt,
+                    admin_fee_excl=fee_ex,
+                    admin_fee_vat=fee_vt,
+                    admin_fee_incl=fee_in,
+                    grand_total=(amt + fee_in).quantize(Decimal("0.01")),
+                ))
+            diesel_groups.append(DieselSupplierGroup(
+                supplier_name=sup_name,
+                rows=rows,
+                tot_admin_fee_incl=sum((r.admin_fee_incl for r in rows), D0),
+                tot_excl_admin_fee=sum((r.amount_excl for r in rows), D0),
+                tot_grand_total=sum((r.grand_total for r in rows), D0),
+            ))
+
+        # Add diesel fill-up totals into the expense columns:
+        # zero-rated diesel amount → Expenses Excl VAT
+        # 1% admin fee (incl VAT)  → Expenses Incl VAT
+        exp_excl += sum((g.tot_excl_admin_fee for g in diesel_groups), D0)
+        exp_incl += sum((g.tot_admin_fee_incl  for g in diesel_groups), D0)
         net_payable = income_incl - exp_excl - exp_incl
 
         truck.subcontractor_display_name = sub.name
@@ -358,6 +411,7 @@ def get_subcontractor_costing(
             total_expenses_excl_vat=exp_excl,
             total_expenses_incl_vat=exp_incl,
             net_payable=net_payable,
+            diesel_groups=diesel_groups,
         ))
 
     summary = SubcontractorCostingSummary(

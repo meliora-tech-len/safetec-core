@@ -14,6 +14,7 @@ import {
   addDriverAdditionalLoad, deleteDriverAdditionalLoad, archiveDriverAdditionalLoad,
   addDriverFoodPayment, getTruckAdditionalLoads, getTruckFoodPayments, deleteDriverFoodPayment,
   getTruckMonthlyExpenses, upsertTruckMonthlyExpenses,
+  getSupplierInvoicesByVehicle,
 } from '../services/api'
 import toast from 'react-hot-toast'
 import DeleteModal from '../components/DeleteModal'
@@ -797,10 +798,6 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
 }
 
 
-const INCOME_ROWS = [
-  { key: 'income_excl_vat', label: 'Income Excl. VAT' },
-  { key: 'income_incl_vat', label: 'Income Incl. VAT' },
-]
 const EXPENSE_ROWS = [
   { key: 'drivers_salary',       label: "Driver's Salary" },
   { key: 'insurance_trailer',    label: 'Insurance Trailer' },
@@ -809,36 +806,47 @@ const EXPENSE_ROWS = [
   { key: 'loss_of_use',          label: 'Loss of Use' },
   { key: 'personal_accident',    label: 'Personal Accident' },
   { key: 'communication_device', label: 'Communication Device' },
-  { key: 'sauma',                label: 'SAUMA' },
+  { key: 'sauma',                label: 'SAUMA / SASRIA' },
   { key: 'diesel',               label: 'Diesel' },
   { key: 'tyre_maintenance',     label: 'Tyre Maintenance' },
   { key: 'other_suppliers',      label: 'Other Suppliers' },
 ]
 
-const inputStyle = {
-  width: '100%', textAlign: 'right', padding: '3px 7px',
+const psInput = {
+  width: '100%', textAlign: 'right', padding: '4px 8px',
   borderRadius: 4, border: '1px solid var(--border)',
   background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 13,
 }
 
-// ── Profit Sheet (SFT only) ───────────────────────────────────────────────────
-function ProfitSheetSection({ truck, year, month }) {
-  const [data, setData]     = useState({})
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [dirty, setDirty]   = useState(false)
+const psRow = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 16px', borderBottom: '1px solid var(--border)' }
+const psLabel = { fontSize: 13, color: 'var(--text-secondary)' }
+const psAmt = { fontWeight: 600, fontSize: 13, minWidth: 130, textAlign: 'right' }
 
-  const set = (k, v) => { setData(d => ({ ...d, [k]: v })); setDirty(true) }
+// ── Profit Sheet (SFT only) ───────────────────────────────────────────────────
+function ProfitSheetSection({ truck, year, month, summary }) {
+  const [data, setData]         = useState({})
+  const [supplierInvs, setSupplierInvs] = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [saving, setSaving]     = useState(false)
+  const [dirty, setDirty]       = useState(false)
+  const [addingLine, setAddingLine] = useState(false)
+  const [newLine, setNewLine]   = useState({ description: '', amount: '' })
+
+  const setField = (k, v) => { setData(d => ({ ...d, [k]: v })); setDirty(true) }
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await getTruckMonthlyExpenses(truck.id, { year, month })
-      setData(res.data)
+      const [expRes, invRes] = await Promise.all([
+        getTruckMonthlyExpenses(truck.id, { year, month }),
+        truck.registration ? getSupplierInvoicesByVehicle({ vehicle_reg: truck.registration, month, year }) : Promise.resolve({ data: [] }),
+      ])
+      setData(expRes.data)
+      setSupplierInvs(invRes.data)
       setDirty(false)
     } catch { toast.error('Failed to load profit sheet') }
     finally { setLoading(false) }
-  }, [truck.id, year, month])
+  }, [truck.id, truck.registration, year, month])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -852,69 +860,154 @@ function ProfitSheetSection({ truck, year, month }) {
     finally { setSaving(false) }
   }
 
-  const incInclVat     = parseFloat(data.income_incl_vat) || 0
-  const totalExpenses  = EXPENSE_ROWS.reduce((s, r) => s + (parseFloat(data[r.key]) || 0), 0)
-  const netProfit      = incInclVat - totalExpenses
-  const hasValues      = incInclVat > 0 || totalExpenses > 0
+  const addCustomLine = () => {
+    const amt = parseFloat(newLine.amount) || 0
+    if (!newLine.description.trim()) return toast.error('Enter a description')
+    if (amt <= 0) return toast.error('Enter an amount')
+    const lines = [...(data.custom_lines || []), { id: crypto.randomUUID(), description: newLine.description.trim(), amount: amt }]
+    setField('custom_lines', lines)
+    setNewLine({ description: '', amount: '' })
+    setAddingLine(false)
+  }
+
+  const removeCustomLine = (id) => {
+    setField('custom_lines', (data.custom_lines || []).filter(l => l.id !== id))
+  }
+
+  // Income from loads (read-only)
+  const incomeExcl = parseFloat(summary?.total_excl_vat) || 0
+  const incomeIncl = parseFloat(summary?.total_incl_vat) || 0
+
+  // Fixed expenses
+  const fixedTotal = EXPENSE_ROWS.reduce((s, r) => s + (parseFloat(data[r.key]) || 0), 0)
+
+  // Supplier invoices total
+  const supplierTotal = supplierInvs.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+
+  // Custom lines total
+  const customTotal = (data.custom_lines || []).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0)
+
+  const totalExpenses = fixedTotal + supplierTotal + customTotal
+  const netProfit = incomeIncl - totalExpenses
+
+  const SectionHead = ({ children }) => (
+    <div style={{ padding: '8px 16px', fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', background: 'var(--bg-surface)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
+      {children}
+    </div>
+  )
+
+  const hasData = incomeIncl > 0 || totalExpenses > 0
 
   if (loading) return <div className="loading-center"><div className="spinner" /></div>
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 10, alignItems: 'center' }}>
-        {dirty && <span style={{ fontSize: 12, color: '#d97706' }}>Unsaved changes</span>}
-        <button className="btn btn-primary" onClick={handleSave} disabled={saving || !dirty}
-          style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Save size={14} /> {saving ? 'Saving…' : 'Save'}
-        </button>
+      {/* ── Top bar: save + summary stats ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 0, borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden' }}>
+          {[
+            { label: 'Income Excl VAT', value: fmt(incomeExcl), color: 'var(--text-muted)' },
+            { label: 'Income Incl VAT', value: fmt(incomeIncl), color: 'var(--accent)' },
+            { label: 'Total Expenses',  value: fmt(totalExpenses), color: 'var(--danger)' },
+            { label: 'Net Profit',      value: hasData ? fmt(netProfit) : '—', color: !hasData ? 'var(--text-muted)' : netProfit >= 0 ? '#16a34a' : 'var(--danger)' },
+          ].map((s, i, arr) => (
+            <div key={s.label} style={{ padding: '10px 24px', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: s.color }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          {dirty && <span style={{ fontSize: 12, color: '#d97706' }}>Unsaved changes</span>}
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving || !dirty}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Save size={14} /> {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+      {/* ── Two-column body ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+
+        {/* Left: Standard editable expense rows + custom lines */}
         <div className="card" style={{ overflow: 'hidden' }}>
-          <div style={{ padding: '10px 16px', fontWeight: 700, fontSize: 13, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-            Income
+          <SectionHead>Standard Expenses</SectionHead>
+          {EXPENSE_ROWS.map(r => (
+            <div key={r.key} style={psRow}>
+              <span style={psLabel}>{r.label}</span>
+              <input type="number" step="0.01" min="0" style={{ ...psInput, width: 150 }}
+                value={data[r.key] ?? ''} placeholder="—"
+                onChange={e => setField(r.key, e.target.value || null)} />
+            </div>
+          ))}
+
+          {/* Custom lines under same card */}
+          <SectionHead>Additional Expenses</SectionHead>
+          {(data.custom_lines || []).map(l => (
+            <div key={l.id} style={psRow}>
+              <span style={psLabel}>{l.description}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={psAmt}>{fmt(l.amount)}</span>
+                <button onClick={() => removeCustomLine(l.id)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: '2px 4px', lineHeight: 1 }}>
+                  <X size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {addingLine && (
+            <div style={{ display: 'flex', gap: 8, padding: '8px 16px', borderTop: '1px solid var(--border)', alignItems: 'center' }}>
+              <input autoFocus style={{ ...psInput, flex: 1, textAlign: 'left' }} placeholder="Description"
+                value={newLine.description} onChange={e => setNewLine(l => ({ ...l, description: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter') addCustomLine(); if (e.key === 'Escape') setAddingLine(false) }} />
+              <input type="number" step="0.01" min="0" style={{ ...psInput, width: 120 }} placeholder="Amount"
+                value={newLine.amount} onChange={e => setNewLine(l => ({ ...l, amount: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter') addCustomLine(); if (e.key === 'Escape') setAddingLine(false) }} />
+              <button className="btn btn-primary btn-sm" onClick={addCustomLine}><Save size={13} /></button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setAddingLine(false); setNewLine({ description: '', amount: '' }) }}><X size={13} /></button>
+            </div>
+          )}
+          <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setAddingLine(true)} disabled={addingLine}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12 }}>
+              <Plus size={12} /> Add Expense Line
+            </button>
           </div>
-          <table className="data-table">
-            <tbody>
-              {INCOME_ROWS.map(r => (
-                <tr key={r.key}>
-                  <td style={{ color: 'var(--text-secondary)' }}>{r.label}</td>
-                  <td style={{ width: 140 }}>
-                    <input type="number" step="0.01" min="0" style={inputStyle}
-                      value={data[r.key] ?? ''} placeholder="—"
-                      onChange={e => set(r.key, e.target.value || null)} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+          {/* Fixed expense sub-total */}
+          <div style={{ ...psRow, borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
+            <span style={{ ...psLabel, fontWeight: 700 }}>Sub-total</span>
+            <span style={{ ...psAmt, color: 'var(--danger)' }}>{fmt(fixedTotal + customTotal)}</span>
+          </div>
         </div>
 
+        {/* Right: Supplier invoices (auto-fetched) */}
         <div className="card" style={{ overflow: 'hidden' }}>
-          <div style={{ padding: '10px 16px', fontWeight: 700, fontSize: 13, background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
-            Expenses
-          </div>
-          <table className="data-table">
-            <tbody>
-              {EXPENSE_ROWS.map(r => (
-                <tr key={r.key}>
-                  <td style={{ color: 'var(--text-secondary)' }}>{r.label}</td>
-                  <td style={{ width: 140 }}>
-                    <input type="number" step="0.01" min="0" style={inputStyle}
-                      value={data[r.key] ?? ''} placeholder="—"
-                      onChange={e => set(r.key, e.target.value || null)} />
-                  </td>
-                </tr>
+          <SectionHead>Supplier Invoices</SectionHead>
+          {supplierInvs.length === 0 ? (
+            <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, fontStyle: 'italic' }}>
+              No supplier invoices linked to {truck.registration} for this month
+            </div>
+          ) : (
+            <>
+              {supplierInvs.map(inv => (
+                <div key={inv.id} style={psRow}>
+                  <span style={{ ...psLabel, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <span style={{ fontWeight: 500 }}>{inv.supplier_name || '—'}</span>
+                    {inv.invoice_number && (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
+                    )}
+                  </span>
+                  <span style={psAmt}>{fmt(inv.amount)}</span>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="card" style={{ gridColumn: '1 / -1', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>Net Profit</span>
-          <span style={{ fontWeight: 700, fontSize: 16, color: hasValues ? (netProfit >= 0 ? '#16a34a' : 'var(--danger)') : 'var(--text-muted)', fontStyle: hasValues ? 'normal' : 'italic' }}>
-            {hasValues ? fmt(netProfit) : '—'}
-          </span>
+              <div style={{ ...psRow, borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
+                <span style={{ ...psLabel, fontWeight: 700 }}>Sub-total</span>
+                <span style={{ ...psAmt, color: 'var(--danger)' }}>{fmt(supplierTotal)}</span>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -1640,7 +1733,7 @@ export default function TruckLoadProfilePage() {
 
       {/* ── Profit Sheet tab (SFT only) ─────────────────────────────────────────── */}
       {activeTab === 'profit' && (
-        <ProfitSheetSection truck={truck} year={year} month={month} />
+        <ProfitSheetSection truck={truck} year={year} month={month} summary={summary} />
       )}
 
       {/* ── Split Load Modal ──────────────────────────────────────────────────── */}

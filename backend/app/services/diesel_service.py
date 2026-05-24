@@ -51,7 +51,7 @@ class DieselCalculationService:
         amount = (litres * rate_per_litre).quantize(TWO_DP, rounding=ROUND_HALF_UP)
 
         if apply_admin_fee and admin_fee_pct > 0:
-            admin_fee_amount = (amount * (admin_fee_pct / Decimal("100"))).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+            admin_fee_amount = (amount * admin_fee_pct).quantize(TWO_DP, rounding=ROUND_HALF_UP)
         else:
             admin_fee_amount = Decimal("0.00")
 

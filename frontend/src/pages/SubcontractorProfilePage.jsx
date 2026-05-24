@@ -11,7 +11,7 @@ import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, Plus, Trash2, ChevronLeft, ChevronRight,
-  Building2, X, Save, CheckCircle, ChevronDown, ChevronUp,
+  Building2, X, Save, CheckCircle, ChevronDown, ChevronUp, FileSpreadsheet,
 } from 'lucide-react'
 import SearchableSelect from '../components/SearchableSelect'
 import DeleteModal from '../components/DeleteModal'
@@ -58,7 +58,7 @@ export default function SubcontractorProfilePage() {
   const { entities } = useAuth()
 
   const [subcontractor, setSubcontractor] = useState(null)
-  const [activeTab, setActiveTab]         = useState('invoices')
+  const [activeTab, setActiveTab]         = useState('costing')
   const [month, setMonth]                 = useState(now.getMonth() + 1)
   const [year, setYear]                   = useState(now.getFullYear())
 
@@ -315,7 +315,7 @@ export default function SubcontractorProfilePage() {
 
       {/* ── Tabs ── */}
       <div style={{ display: 'flex', borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
-        {[['invoices', 'Invoices'], ['costing', 'Costing']].map(([key, label]) => (
+        {[/* ['invoices', 'Invoices'], */ ['costing', 'Costing']].map(([key, label]) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
@@ -819,17 +819,118 @@ function NewInvoiceRow({ form, setForm, saving, onSave, onCancel, firstInputRef,
   )
 }
 
+// ── Diesel Group Table ─────────────────────────────────────────────────────────
+
+function DieselGroupTable({ group, truckReg }) {
+  const dTh = (label, right = false) => (
+    <th key={label} style={{ ...thStyle, textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap' }}>{label}</th>
+  )
+  return (
+    <div style={{ overflowX: 'auto', marginTop: 8 }}>
+      <table style={{ ...tblStyle, minWidth: 900 }}>
+        <thead>
+          <tr style={{ background: 'var(--bg-surface)' }}>
+            {dTh('Reg')}
+            {dTh('Date')}
+            {dTh('Trans ID')}
+            {dTh('Delivery Note')}
+            {dTh('Depot')}
+            {dTh('Litres', true)}
+            {dTh('R/Lt', true)}
+            {dTh('Amt Excl', true)}
+            {dTh('Amt Incl', true)}
+            {dTh('1% Fee Excl', true)}
+            {dTh('Fee VAT', true)}
+            {dTh('1% Fee Incl', true)}
+            {dTh('Grand Total', true)}
+          </tr>
+        </thead>
+        <tbody>
+          {group.rows.map((r, i) => (
+            <tr key={i}>
+              <td style={tdStyle}>{truckReg}</td>
+              <td style={tdStyle}>{r.fillup_date}</td>
+              <td style={tdStyle}>{r.slip_number || '—'}</td>
+              <td style={tdStyle}>{r.invoice_number || '—'}</td>
+              <td style={tdStyle}>{r.supplier_name || '—'}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtT(r.litres)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.rate_per_litre)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.amount_excl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.amount_excl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.admin_fee_excl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.admin_fee_vat)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.admin_fee_incl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmtC(r.grand_total)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
+            <td style={tdStyle} colSpan={11} align="right">TOT ADMIN FEE</td>
+            <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(group.tot_admin_fee_incl)}</td>
+            <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{fmtC(group.tot_grand_total)}</td>
+          </tr>
+          <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
+            <td style={tdStyle} colSpan={12} align="right">TOT EXCL ADMIN FEE</td>
+            <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(group.tot_excl_admin_fee)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDieselTab }) {
+  const effectiveTab = activeDieselTab ?? (groups[0]?.supplier_name ?? null)
+  const activeGroup = groups.find(g => g.supplier_name === effectiveTab) ?? groups[0] ?? null
+
+  const pillBase = {
+    padding: '4px 14px',
+    borderRadius: 20,
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    border: '1px solid var(--border)',
+    transition: 'background 0.15s, color 0.15s',
+  }
+  const pillActive = { background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent)' }
+  const pillInactive = { background: 'transparent', color: 'var(--text-muted)' }
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 10, borderBottom: '1px solid var(--border)', paddingBottom: 6 }}>Diesel</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+        {groups.map(g => {
+          const isActive = g.supplier_name === effectiveTab
+          return (
+            <button
+              key={g.supplier_name}
+              onClick={() => setActiveDieselTab(g.supplier_name)}
+              style={{ ...pillBase, ...(isActive ? pillActive : pillInactive) }}
+            >
+              {g.supplier_name}
+            </button>
+          )
+        })}
+      </div>
+      {activeGroup && <DieselGroupTable group={activeGroup} truckReg={truckReg} />}
+    </div>
+  )
+}
+
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
 function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice }) {
   const [expanded, setExpanded] = useState(false)
   const [showLoadDetail, setShowLoadDetail] = useState(false)
+  const [activeDieselTab, setActiveDieselTab] = useState(null)
   const {
     truck, loads,
     income_excl_vat, income_incl_vat,
     admin_fee, supplier_invoices,
     total_expenses_excl_vat, total_expenses_incl_vat,
     net_payable,
+    diesel_groups = [],
   } = truckData
 
   const loadCount   = loads.length
@@ -846,6 +947,12 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
     if (!invBySupplier[key]) invBySupplier[key] = { diesel: null, fee: null, dieselAll: [], feeAll: [] }
     if (!inv.vat_applicable) invBySupplier[key].dieselAll.push(inv)
     else invBySupplier[key].feeAll.push(inv)
+  }
+
+  // Build lookup: supplier_name (upper) → diesel_group totals
+  const dieselGroupMap = {}
+  for (const g of diesel_groups) {
+    dieselGroupMap[g.supplier_name.toUpperCase()] = g
   }
   // Any invoices from suppliers not in the template (custom additions)
   const extraInvoices = supplier_invoices.filter(inv => {
@@ -899,10 +1006,17 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
               <td style={tdStyle}>
                 <button
                   onClick={e => { e.stopPropagation(); setShowLoadDetail(v => !v) }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6 }}
                 >
-                  See Spreadsheet with Loads
-                  <span style={{ fontSize: 9 }}>{showLoadDetail ? '▲' : '▼'}</span>
+                  <FileSpreadsheet size={13} style={{ color: showLoadDetail ? 'var(--accent)' : 'var(--text-muted)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: showLoadDetail ? 'var(--accent)' : 'var(--text-primary)', letterSpacing: '0.02em', textDecoration: showLoadDetail ? 'none' : 'underline dotted', textUnderlineOffset: 3 }}>
+                    See Spreadsheet with Loads
+                  </span>
+                  {diesel_groups.length > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, background: showLoadDetail ? 'var(--accent)' : 'rgba(59,130,246,0.12)', color: showLoadDetail ? '#fff' : 'var(--accent)', borderRadius: 10, padding: '1px 6px' }}>
+                      {diesel_groups.length} supplier{diesel_groups.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
                 </button>
               </td>
               <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(incomeExcl)}</td>
@@ -927,9 +1041,11 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
             {/* Template supplier rows — greyed, always present, no delete */}
             {templateSuppliers.map(supplierName => {
               const key = supplierName.toUpperCase()
-              const group = invBySupplier[key] || { dieselAll: [], feeAll: [] }
-              const dieselAmt = group.dieselAll.reduce((s, i) => s + parseFloat(i.amount || 0), 0)
-              const feeAmt = group.feeAll.reduce((s, i) => s + parseFloat(i.amount || 0), 0)
+              const dg = dieselGroupMap[key]
+              const dieselExcl = dg ? parseFloat(dg.tot_excl_admin_fee) : 0
+              const feeIncl   = dg ? parseFloat(dg.tot_admin_fee_incl)  : 0
+              const hasDiesel = dieselExcl !== 0
+              const hasFee    = feeIncl !== 0
               return (
                 <React.Fragment key={supplierName}>
                   <tr>
@@ -938,7 +1054,9 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(dieselAmt)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: hasDiesel ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: hasDiesel ? 600 : 400 }}>
+                      {hasDiesel ? fmtC(dieselExcl) : dash}
+                    </td>
                     <td style={tdStyle}></td>
                   </tr>
                   <tr>
@@ -946,7 +1064,9 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(feeAmt)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: hasFee ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: hasFee ? 600 : 400 }}>
+                      {hasFee ? fmtC(feeIncl) : dash}
+                    </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={tdStyle}></td>
                   </tr>
@@ -1028,7 +1148,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
         {/* Add Expense */}
         <button
           className="btn-ghost"
-          style={{ fontSize: 12, marginTop: 10, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+          style={{ fontSize: 12, marginTop: 12, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
           onClick={onAddExpense}
         >
           <Plus size={13} /> Add Expense
@@ -1037,7 +1157,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
         {/* Collapsible loads detail */}
         {showLoadDetail && (
           <div style={{ marginTop: 20 }}>
-            <SectionLabel>Load Detail</SectionLabel>
+            <div style={{ fontSize: 14, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 10, borderBottom: '1px solid var(--border)', paddingBottom: 6 }}>Load Detail</div>
             <table style={tblStyle}>
               <thead>
                 <tr style={{ background: 'var(--bg-surface)' }}>
@@ -1071,6 +1191,16 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                 </tr>
               </tfoot>
             </table>
+
+            {/* Diesel supplier tabs */}
+            {diesel_groups.length > 0 && (
+              <DieselGroupSection
+                groups={diesel_groups}
+                truckReg={truck.registration}
+                activeDieselTab={activeDieselTab}
+                setActiveDieselTab={setActiveDieselTab}
+              />
+            )}
           </div>
         )}
       </div>}

@@ -343,14 +343,15 @@ export default function DieselRatesPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
               <colgroup>
                 <col style={{ width: 160 }} />
-                <col style={{ width: 140 }} />
-                <col style={{ width: 190 }} />
                 <col style={{ width: 130 }} />
-                <col style={{ width: 130 }} />
+                <col style={{ width: 180 }} />
+                <col style={{ width: 160 }} />
+                <col style={{ width: 120 }} />
+                <col style={{ width: 90 }} />
               </colgroup>
               <thead>
                 <tr style={{ background: 'var(--bg-secondary)' }}>
-                  {['Entity', 'Admin Fee %', 'Additional Charge (R/ton)', 'Sub Admin Fee (R/truck/month)', 'Apply Fee', ''].map(h => (
+                  {['Entity', 'Admin Fee %', 'Additional Charge (R/ton)', 'Sub Admin Fee', 'Apply Fee', ''].map(h => (
                     <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
                   ))}
                 </tr>
@@ -401,9 +402,8 @@ export default function DieselRatesPage() {
                             type="number" min="0" step="0.01"
                             value={edit.subcontractor_monthly_admin_fee}
                             onChange={e => setDieselEdits(p => ({ ...p, [entity.id]: { ...edit, subcontractor_monthly_admin_fee: e.target.value } }))}
-                            style={feeInputStyle}
+                            style={{ ...feeInputStyle, width: 120 }}
                           />
-                          <span style={{ color: 'var(--text-muted)', fontSize: 12, flexShrink: 0 }}>/truck/month</span>
                         </div>
                       </td>
                       <td style={{ padding: '8px 10px' }}>
