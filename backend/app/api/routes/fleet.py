@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck, BusinessEntity
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
     PersonalVehicleCreate, PersonalVehicleUpdate, PersonalVehicleOut,
@@ -175,6 +175,12 @@ def create_truck(
     truck_fields = payload.model_dump(exclude={"trailers"})
     if truck_fields.get("registration"):
         truck_fields["registration"] = truck_fields["registration"].strip().replace(" ", "")
+
+    # Auto-link to the subcontractor when creating a truck for a subcontractor entity
+    if not truck_fields.get("subcontractor_id"):
+        entity = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
+        if entity and entity.is_subcontractor_entity and entity.linked_subcontractor_id:
+            truck_fields["subcontractor_id"] = entity.linked_subcontractor_id
 
     try:
         truck = Truck(**truck_fields)

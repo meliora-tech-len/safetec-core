@@ -301,16 +301,7 @@ def get_subcontractor_costing(
         raise HTTPException(status_code=404, detail="Subcontractor not found")
     _check_entity_access(sub.entity_id, current_user)
 
-    # If this subcontractor has a linked BusinessEntity (e.g. Re Ama), find trucks
-    # by entity_id — those trucks are managed via Fleet and don't have subcontractor_id set.
-    # Fall back to subcontractor_id for traditional sub-linked trucks.
-    linked_entity = db.query(BusinessEntity).filter(
-        BusinessEntity.linked_subcontractor_id == subcontractor_id
-    ).first()
-    if linked_entity:
-        trucks = db.query(Truck).filter(Truck.entity_id == linked_entity.id).all()
-    else:
-        trucks = db.query(Truck).filter(Truck.subcontractor_id == subcontractor_id).all()
+    trucks = db.query(Truck).filter(Truck.subcontractor_id == subcontractor_id).all()
 
     D0 = Decimal("0")
     truck_results = []
