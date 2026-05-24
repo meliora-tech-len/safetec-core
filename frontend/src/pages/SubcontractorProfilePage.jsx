@@ -812,6 +812,7 @@ function NewInvoiceRow({ form, setForm, saving, onSave, onCancel, firstInputRef,
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
 function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
+  const [showLoads, setShowLoads] = useState(false)
   const {
     truck, loads,
     income_excl_vat, income_incl_vat,
@@ -823,22 +824,30 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
   const loadCount   = loads.length
   const totalTonnes = loads.reduce((s, l) => s + (l.tonnes ? parseFloat(l.tonnes) : 0), 0)
   const netNum      = parseFloat(net_payable)
+  const incomeExcl  = parseFloat(income_excl_vat) || 0
+  const incomeIncl  = parseFloat(income_incl_vat) || 0
+  const vat         = incomeIncl - incomeExcl
+
+  // Sort invoices: by supplier name, then diesel (vat_applicable=true) before admin fee
+  const sortedInvoices = [...supplier_invoices].sort((a, b) => {
+    const na = (a.supplier_name || '').toLowerCase()
+    const nb = (b.supplier_name || '').toLowerCase()
+    if (na < nb) return -1
+    if (na > nb) return 1
+    return (b.vat_applicable ? 1 : 0) - (a.vat_applicable ? 1 : 0)
+  })
+
+  const colHdr = (label, right = false) => (
+    <th key={label} style={{ ...thStyle, textAlign: right ? 'right' : 'left' }}>{label}</th>
+  )
+  const dash = <span style={{ color: 'var(--text-muted)' }}>—</span>
 
   return (
-    <div style={{
-      background: 'var(--bg-card)', border: '1px solid var(--border)',
-      borderRadius: 10, marginBottom: 24, overflow: 'hidden',
-    }}>
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 24, overflow: 'hidden' }}>
       {/* Truck header */}
-      <div style={{
-        padding: '12px 20px', background: 'var(--bg-surface)',
-        borderBottom: '1px solid var(--border)',
-        display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-      }}>
+      <div style={{ padding: '12px 20px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>{truck.registration}</span>
-        {truck.fleet_number && (
-          <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{truck.fleet_number}</span>
-        )}
+        {truck.fleet_number && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{truck.fleet_number}</span>}
         <span style={{ color: 'var(--border)', fontSize: 12 }}>|</span>
         <span style={{ fontSize: 13 }}>{loadCount} load{loadCount !== 1 ? 's' : ''}</span>
         <span style={{ color: 'var(--border)', fontSize: 12 }}>|</span>
@@ -846,89 +855,89 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
       </div>
 
       <div style={{ padding: '16px 20px' }}>
-
-        {/* Income table */}
-        <SectionLabel>Income</SectionLabel>
-        <table style={tblStyle}>
+        {/* 6-column costing template */}
+        <table style={{ ...tblStyle, tableLayout: 'auto' }}>
           <thead>
             <tr style={{ background: 'var(--bg-surface)' }}>
-              <th style={thStyle}>Date</th>
-              <th style={thStyle}>Slip #</th>
-              <th style={thStyle}>Mine</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Tonnes</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Sub Rate/t</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Sub Excl VAT</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Sub Incl VAT</th>
+              {colHdr('')}
+              {colHdr('Income Excl VAT', true)}
+              {colHdr('VAT', true)}
+              {colHdr('Income Incl VAT', true)}
+              {colHdr('Expenses Incl VAT', true)}
+              {colHdr('Expenses Excl VAT', true)}
+              <th style={{ ...thStyle, width: 32 }}></th>
             </tr>
           </thead>
           <tbody>
-            {loads.map(l => (
-              <tr key={l.id}>
-                <td style={tdStyle}>{formatDate(l.load_date)}</td>
-                <td style={tdStyle}>{l.slip_number || '—'}</td>
-                <td style={tdStyle}>{l.mine_name || '—'}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtT(l.tonnes)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(l.subcontractor_rate)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(l.subcontractor_amount_excl_vat)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontWeight: 600 }}>
-                  {fmtC(l.subcontractor_amount_incl_vat)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
-              <td style={tdStyle} colSpan={5}>Total</td>
-              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(income_excl_vat)}</td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{fmtC(income_incl_vat)}</td>
-            </tr>
-          </tfoot>
-        </table>
-
-        {/* Expenses table */}
-        <SectionLabel style={{ marginTop: 20 }}>Expenses</SectionLabel>
-        <table style={tblStyle}>
-          <thead>
-            <tr style={{ background: 'var(--bg-surface)' }}>
-              <th style={thStyle}>Description</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Excl VAT</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}>Incl VAT</th>
-              <th style={{ ...thStyle, width: 40 }}></th>
-            </tr>
-          </thead>
-          <tbody>
+            {/* Income / loads row */}
             <tr>
-              <td style={{ ...tdStyle, color: 'var(--accent)', fontWeight: 600 }}>Admin Fee</td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>—</td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontWeight: 600 }}>{fmtC(admin_fee)}</td>
+              <td style={tdStyle}>
+                <button
+                  onClick={() => setShowLoads(v => !v)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 5 }}
+                >
+                  See Spreadsheet with Loads
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{showLoads ? '▲' : '▼'}</span>
+                </button>
+              </td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(incomeExcl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(vat)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmtC(incomeIncl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={tdStyle}></td>
             </tr>
-            {supplier_invoices.map(inv => (
-              <tr key={inv.id}>
-                <td style={tdStyle}>{inv.supplier_name || `Supplier #${inv.supplier_id}`}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>
-                  {inv.vat_applicable ? fmtC(inv.amount) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                </td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>
-                  {!inv.vat_applicable ? fmtC(inv.amount) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                </td>
-                <td style={tdStyle}>
-                  <button className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
-                    <Trash2 size={12} color="var(--danger)" />
-                  </button>
-                </td>
-              </tr>
-            ))}
+
+            {/* Admin Fee */}
+            <tr>
+              <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, color: 'var(--accent)' }}>Admin Fee</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600, color: 'var(--accent)' }}>{fmtC(admin_fee)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+              <td style={tdStyle}></td>
+            </tr>
+
+            {/* Per-invoice rows */}
+            {sortedInvoices.map(inv => {
+              const supplierLabel = (inv.supplier_name || `Supplier #${inv.supplier_id}`).toUpperCase()
+              const rowLabel = inv.vat_applicable ? `${supplierLabel} DIESEL` : `${supplierLabel} DIESEL ADMIN FEE`
+              return (
+                <tr key={inv.id}>
+                  <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{rowLabel}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>
+                    {inv.vat_applicable ? dash : fmtC(inv.amount)}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>
+                    {inv.vat_applicable ? fmtC(inv.amount) : dash}
+                  </td>
+                  <td style={tdStyle}>
+                    <button className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
+                      <Trash2 size={12} color="var(--danger)" />
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
           <tfoot>
             <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
-              <td style={tdStyle}>Total Expenses</td>
-              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(total_expenses_excl_vat)}</td>
-              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(total_expenses_incl_vat)}</td>
+              <td style={tdStyle}>Totals</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(incomeExcl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(vat)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{fmtC(incomeIncl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--danger)' }}>{fmtC(total_expenses_incl_vat)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--danger)' }}>{fmtC(total_expenses_excl_vat)}</td>
               <td style={tdStyle}></td>
             </tr>
           </tfoot>
         </table>
+
+        {/* Add Expense */}
         <button
           className="btn-ghost"
           style={{ fontSize: 12, marginTop: 8, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
@@ -938,20 +947,52 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
         </button>
 
         {/* Net Payable */}
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 16,
-          marginTop: 16, padding: '12px 16px',
-          background: 'var(--bg-surface)', borderRadius: 8,
-          border: '1px solid var(--border)',
-        }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 16, marginTop: 16, padding: '12px 16px', background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
           <span style={{ fontWeight: 700, fontSize: 14 }}>Net Payable</span>
-          <span style={{
-            fontWeight: 700, fontSize: 18,
-            color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)',
-          }}>
+          <span style={{ fontWeight: 700, fontSize: 18, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
             {fmtC(net_payable)}
           </span>
         </div>
+
+        {/* Collapsible loads detail */}
+        {showLoads && (
+          <div style={{ marginTop: 20 }}>
+            <SectionLabel>Load Detail</SectionLabel>
+            <table style={tblStyle}>
+              <thead>
+                <tr style={{ background: 'var(--bg-surface)' }}>
+                  <th style={thStyle}>Date</th>
+                  <th style={thStyle}>Slip #</th>
+                  <th style={thStyle}>Mine</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Tonnes</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Rate/t</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Excl VAT</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Incl VAT</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loads.map(l => (
+                  <tr key={l.id}>
+                    <td style={tdStyle}>{formatDate(l.load_date)}</td>
+                    <td style={tdStyle}>{l.slip_number || '—'}</td>
+                    <td style={tdStyle}>{l.mine_name || '—'}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtT(l.tonnes)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(l.subcontractor_rate)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(l.subcontractor_amount_excl_vat)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontWeight: 600 }}>{fmtC(l.subcontractor_amount_incl_vat)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
+                  <td style={tdStyle} colSpan={5}>Total</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(income_excl_vat)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{fmtC(income_incl_vat)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   )
