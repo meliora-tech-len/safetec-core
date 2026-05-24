@@ -1419,6 +1419,7 @@ class DieselSettingsOut(BaseModel):
     admin_fee_pct: Decimal
     apply_admin_fee: bool
     additional_charge_per_ton: Decimal = Decimal("0")
+    subcontractor_monthly_admin_fee: Decimal = Decimal("0")
     updated_by: Optional[int] = None
     updated_at: Optional[datetime] = None
 
@@ -1430,6 +1431,7 @@ class DieselSettingsUpdate(BaseModel):
     admin_fee_pct: Decimal
     apply_admin_fee: bool
     additional_charge_per_ton: Decimal = Decimal("0")
+    subcontractor_monthly_admin_fee: Decimal = Decimal("0")
 
 
 class DieselRateCreate(BaseModel):

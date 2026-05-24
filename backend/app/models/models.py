@@ -890,6 +890,7 @@ class DieselSettings(Base):
     admin_fee_pct = Column(Numeric(5, 4), nullable=False, default=0)
     apply_admin_fee = Column(Boolean, nullable=False, default=True)
     additional_charge_per_ton = Column(Numeric(10, 2), nullable=False, default=0)
+    subcontractor_monthly_admin_fee = Column(Numeric(10, 2), nullable=False, default=0, server_default='0')
     updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -8,7 +8,7 @@ from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity, DieselSettings
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
@@ -305,6 +305,9 @@ def get_subcontractor_costing(
     D0 = Decimal("0")
     truck_results = []
 
+    ds = db.query(DieselSettings).filter(DieselSettings.entity_id == sub.entity_id).first()
+    fixed_admin_fee = Decimal(str(ds.subcontractor_monthly_admin_fee)) if ds else D0
+
     for truck in trucks:
         loads = (
             db.query(TruckLoad)
@@ -328,11 +331,7 @@ def get_subcontractor_costing(
             (Decimal(str(l.subcontractor_amount_incl_vat)) for l in loads if l.subcontractor_amount_incl_vat is not None),
             D0,
         )
-        admin_fee = sum(
-            (Decimal(str(l.tonnes)) * Decimal(str(l.subcontractor_admin_fee_per_ton))
-             for l in loads if l.tonnes is not None and l.subcontractor_admin_fee_per_ton is not None),
-            D0,
-        )
+        admin_fee = fixed_admin_fee
 
         inv_list = (
             db.query(SupplierInvoice)

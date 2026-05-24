@@ -59,6 +59,7 @@ export default function DieselRatesPage() {
           admin_fee_pct: String(parseFloat(d.admin_fee_pct) * 100),
           apply_admin_fee: d.apply_admin_fee,
           additional_charge_per_ton: String(parseFloat(d.additional_charge_per_ton ?? 0)),
+          subcontractor_monthly_admin_fee: String(parseFloat(d.subcontractor_monthly_admin_fee ?? 0)),
         }
       })
       setDieselEdits(edits)
@@ -153,6 +154,7 @@ export default function DieselRatesPage() {
         admin_fee_pct: (pct / 100).toFixed(4),
         apply_admin_fee: edit.apply_admin_fee,
         additional_charge_per_ton: parseFloat(edit.additional_charge_per_ton) || 0,
+        subcontractor_monthly_admin_fee: parseFloat(edit.subcontractor_monthly_admin_fee) || 0,
       })
       setSavedFee(p => ({ ...p, [key]: true }))
       setTimeout(() => setSavedFee(p => ({ ...p, [key]: false })), 2000)
@@ -348,7 +350,7 @@ export default function DieselRatesPage() {
               </colgroup>
               <thead>
                 <tr style={{ background: 'var(--bg-secondary)' }}>
-                  {['Entity', 'Admin Fee %', 'Additional Charge (R/ton)', 'Apply Fee', ''].map(h => (
+                  {['Entity', 'Admin Fee %', 'Additional Charge (R/ton)', 'Sub Admin Fee (R/truck/month)', 'Apply Fee', ''].map(h => (
                     <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
                   ))}
                 </tr>
@@ -356,7 +358,7 @@ export default function DieselRatesPage() {
               <tbody>
                 {(entities || []).map(entity => {
                   const ds = dieselSettings.find(d => d.entity_id === entity.id)
-                  const edit = dieselEdits[entity.id] || { admin_fee_pct: '0', apply_admin_fee: true, additional_charge_per_ton: '0' }
+                  const edit = dieselEdits[entity.id] || { admin_fee_pct: '0', apply_admin_fee: true, additional_charge_per_ton: '0', subcontractor_monthly_admin_fee: '0' }
                   const key = entity.id
                   return (
                     <tr key={entity.id} style={{ borderTop: '1px solid var(--border)' }}>
@@ -390,6 +392,18 @@ export default function DieselRatesPage() {
                             style={feeInputStyle}
                           />
                           <span style={{ color: 'var(--text-muted)', fontSize: 12, flexShrink: 0 }}>/ton</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ color: 'var(--text-muted)', fontSize: 13, flexShrink: 0 }}>R</span>
+                          <input
+                            type="number" min="0" step="0.01"
+                            value={edit.subcontractor_monthly_admin_fee}
+                            onChange={e => setDieselEdits(p => ({ ...p, [entity.id]: { ...edit, subcontractor_monthly_admin_fee: e.target.value } }))}
+                            style={feeInputStyle}
+                          />
+                          <span style={{ color: 'var(--text-muted)', fontSize: 12, flexShrink: 0 }}>/truck/month</span>
                         </div>
                       </td>
                       <td style={{ padding: '8px 10px' }}>

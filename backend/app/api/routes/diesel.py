@@ -106,6 +106,7 @@ def update_diesel_settings(
     settings.admin_fee_pct = payload.admin_fee_pct
     settings.apply_admin_fee = payload.apply_admin_fee
     settings.additional_charge_per_ton = payload.additional_charge_per_ton
+    settings.subcontractor_monthly_admin_fee = payload.subcontractor_monthly_admin_fee
     settings.updated_by = current_user.id
     settings.updated_at = datetime.now(tz=timezone.utc)
 
