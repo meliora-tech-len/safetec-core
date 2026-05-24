@@ -127,9 +127,10 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     else:
         month_end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
 
-    # Count ALL loads for this truck in this calendar month.
+    # Count ALL loads for this truck in this calendar month, scoped to the driver's entity.
     total_loads = db.query(func.count(TruckLoad.id)).filter(
         TruckLoad.truck_id == truck_id,
+        TruckLoad.entity_id == driver.entity_id,
         TruckLoad.load_date >= month_start,
         TruckLoad.load_date < month_end,
     ).scalar() or 0

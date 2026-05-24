@@ -109,6 +109,7 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
 
     load_count = db.query(TruckLoad).filter(
         TruckLoad.truck_id == driver.truck_id,
+        TruckLoad.entity_id == driver.entity_id,
         TruckLoad.load_date >= first_day,
         TruckLoad.load_date <= last_day,
     ).count()
