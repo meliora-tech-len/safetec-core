@@ -13,7 +13,7 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, Driver, DriverType,
     DriverPayCycle, DriverTripLog, DriverAdditionalLoad, DriverFoodPayment,
-    TruckLoad,
+    TruckLoad, PayrollEntry,
 )
 from app.schemas.schemas import (
     DriverCreate, DriverUpdate, DriverOut, DriverSummary, DriverStats,
@@ -49,7 +49,7 @@ def _current_month_bounds():
     return today.replace(day=1), today
 
 
-def _build_summary(driver: Driver, month_start: date, db: Session) -> dict:
+def _build_summary(driver: Driver, month_start: date, db: Session, payment_map: dict) -> dict:
     if driver.truck_id:
         start_dt = datetime(month_start.year, month_start.month, 1, tzinfo=timezone.utc)
         if month_start.month == 12:
@@ -64,9 +64,6 @@ def _build_summary(driver: Driver, month_start: date, db: Session) -> dict:
         ).scalar() or 0
     else:
         load_count = 0
-    payments_total = sum(
-        (p.amount or Decimal("0")) for p in driver.payments if p.payment_date >= month_start
-    )
     return {
         "id": driver.id,
         "entity_id": driver.entity_id,
@@ -79,7 +76,7 @@ def _build_summary(driver: Driver, month_start: date, db: Session) -> dict:
         "truck_registration": driver.truck.registration if driver.truck else None,
         "is_active": driver.is_active,
         "load_count_this_month": load_count,
-        "total_payments_this_month": payments_total,
+        "total_payments_this_month": payment_map.get(driver.id, Decimal("0")),
     }
 
 
@@ -204,7 +201,14 @@ def list_drivers(
 
     drivers = q.order_by(Driver.last_name, Driver.first_name).offset(skip).limit(limit).all()
     month_start, _ = _current_month_bounds()
-    return [_build_summary(d, month_start, db) for d in drivers]
+    driver_ids = [d.id for d in drivers]
+    entries = db.query(PayrollEntry.driver_id, PayrollEntry.net_payable).filter(
+        PayrollEntry.driver_id.in_(driver_ids),
+        PayrollEntry.pay_month == month_start.month,
+        PayrollEntry.pay_year == month_start.year,
+    ).all()
+    payment_map = {row.driver_id: row.net_payable for row in entries}
+    return [_build_summary(d, month_start, db, payment_map) for d in drivers]
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────
