@@ -338,6 +338,7 @@ export default function DriverDetailPage() {
   const subsAdvanceParsed = parseFloat(subsAdvance || 0)
   const loanDedParsed = parseFloat(loanDed || 0)
   const cashDedParsed = parseFloat(cashDed || 0)
+  const totalFoodPaid = cycle?.food_payments?.reduce((s, p) => s + parseFloat(p.amount || 0), 0) || 0
   const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed : 0) + loanDedParsed + cashDedParsed + totalFoodPaid
   const netPayable = liveCalc ? liveCalc.gross - totalDeductions : 0
 
@@ -393,7 +394,6 @@ export default function DriverDetailPage() {
   if (!driver) return <div style={{ padding: 40 }}><div className="spinner" /></div>
 
   const isPermanent = driver.driver_type === 'permanent'
-  const totalFoodPaid = cycle?.food_payments?.reduce((s, p) => s + parseFloat(p.amount || 0), 0) || 0
 
   return (
     <div style={{ padding: '28px 32px', flex: 1, maxWidth: 1400 }}>
