@@ -306,10 +306,6 @@ export default function SubcontractorProfilePage() {
               Fleet
             </button>
             <button className="btn-ghost btn-sm"
-              onClick={() => navigate(`/drivers?entity_id=${subcontractor.linked_entity_id}`)}>
-              Drivers
-            </button>
-            <button className="btn-ghost btn-sm"
               onClick={() => navigate(`/truck-loads?entity_id=${subcontractor.linked_entity_id}`)}>
               Truck Loads
             </button>

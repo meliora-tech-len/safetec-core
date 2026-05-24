@@ -40,7 +40,7 @@ const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: today, notes: '' }
 
 // ── Inline edit row (Loads tab) ────────────────────────────────────────────────
 function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rateSource, setRateSource,
-  saving, onSave, onCancel, firstInputRef, showPo, showSub }) {
+  saving, onSave, onCancel, firstInputRef, showPo, showSub, isSubcontractorEntity }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const exclVat = form.tonnes && form.rate_per_ton
@@ -71,7 +71,7 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
             style={{ ...S.input, width: 80 }} />
         </td>
       )}
-      <td style={S.td}>
+      {!isSubcontractorEntity && <td style={S.td}>
         <SearchableSelect
           value={form.driver_id ? String(form.driver_id) : ''}
           onChange={v => {
@@ -84,8 +84,8 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
           getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
           placeholder="Driver…"
           style={{ minWidth: 110 }} />
-      </td>
-      <td style={S.td}>—</td>
+      </td>}
+      {!isSubcontractorEntity && <td style={S.td}>—</td>}
       <td style={S.td}>
         <SearchableSelect value={String(form.mine_id)} onChange={v => { set('mine_id', v); setRateSource(null) }}
           options={mines.filter(m => m.is_active)} getValue={m => String(m.id)}
@@ -1166,6 +1166,7 @@ export default function TruckLoadProfilePage() {
   }
 
   // ── Derived ──────────────────────────────────────────────────────────────────
+  const isSubcontractorEntity = truck?.entity_is_subcontractor || false
   const entityCode = truck ? (entities.find(e => e.id === truck.entity_id)?.code || '') : ''
   const isSafetec  = entityCode === 'SFT'
   const permanentDriver = drivers.find(d => d.truck_id === truck?.id && d.driver_slot === 1)
@@ -1175,10 +1176,12 @@ export default function TruckLoadProfilePage() {
     acc[`${d.first_name} ${d.last_name}`.trim()] = d.driver_type
     return acc
   }, {})
-  const showPo  = truck?.notes?.toLowerCase() === 'intsimbi'
-  const showSub = truck?.is_subcontractor || false
+  const showPo  = !isSubcontractorEntity && truck?.notes?.toLowerCase() === 'intsimbi'
+  const showSub = !isSubcontractorEntity && (truck?.is_subcontractor || false)
   const vatRegistered = entities.find(e => e.id === truck?.entity_id)?.vat_registered !== false
-  const COLS    = (showPo ? 12 : 11) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
+  const COLS    = isSubcontractorEntity
+    ? (showPo ? 7 : 6)
+    : (showPo ? 12 : 11) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
 
   const { sort: loadSort, onSort: onLoadSort } = useSort('load_date', 'asc')
   const sortedLoads = useMemo(() => applySort(loads, loadSort), [loads, loadSort])
@@ -1210,17 +1213,19 @@ export default function TruckLoadProfilePage() {
     })
   }, [sortedLoads, loadSort.dir])
 
-  const TABS = [
-    { key: 'loads',  label: 'Loads'         },
-    { key: 'diesel', label: 'Diesel'         },
-    { key: 'food',   label: 'Food Allowance' },
-    ...(isSafetec ? [{ key: 'profit', label: 'Profit Sheet' }] : []),
-  ]
+  const TABS = isSubcontractorEntity
+    ? [{ key: 'loads', label: 'Loads' }, { key: 'diesel', label: 'Diesel' }]
+    : [
+        { key: 'loads',  label: 'Loads'         },
+        { key: 'diesel', label: 'Diesel'         },
+        { key: 'food',   label: 'Food Allowance' },
+        ...(isSafetec ? [{ key: 'profit', label: 'Profit Sheet' }] : []),
+      ]
 
   const editRowProps = {
     form: editForm, setForm: setEditForm, mines, drivers, haulageSuppliers, vatRate,
     rateSource, setRateSource, saving, onSave: handleSave,
-    onCancel: cancelEdit, firstInputRef, showPo, showSub,
+    onCancel: cancelEdit, firstInputRef, showPo, showSub, isSubcontractorEntity,
   }
 
   if (!truck) return (
@@ -1255,7 +1260,7 @@ export default function TruckLoadProfilePage() {
           </div>
         </div>
 
-        <div style={{ minWidth: 200 }}>
+        {!isSubcontractorEntity && <div style={{ minWidth: 200 }}>
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
             Active Driver
             {permanentDriver && selectedDriverId === String(permanentDriver.id) && (
@@ -1289,7 +1294,7 @@ export default function TruckLoadProfilePage() {
           {!permanentDriver && !selectedDriverId && (
             <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 2 }}>No driver assigned</div>
           )}
-        </div>
+        </div>}
 
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 4 }}>Entity</div>
@@ -1355,33 +1360,39 @@ export default function TruckLoadProfilePage() {
         )}
 
         {activeTab === 'loads' && (
-          <div style={{ position: 'relative' }}>
-            <button className="btn btn-primary" disabled={editingId === 'new'}
-              onClick={() => setAddPromptOpen(v => !v)}>
+          isSubcontractorEntity ? (
+            <button className="btn btn-primary" disabled={editingId === 'new'} onClick={startNew}>
               <Plus size={14} /> Add Load
             </button>
-            {addPromptOpen && (
-              <div style={{
-                position: 'absolute', top: '110%', right: 0, zIndex: 60,
-                background: 'var(--bg-card)', border: '1px solid var(--border)',
-                borderRadius: 8, padding: 8, display: 'flex', flexDirection: 'column',
-                gap: 4, minWidth: 148, boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-              }}>
-                <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}
-                  onClick={() => { setAddPromptOpen(false); startNew() }}>
-                  Single load
-                </button>
-                <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}
-                  onClick={() => {
-                    setAddPromptOpen(false)
-                    setSplitForms({ a: { ...EMPTY_LOAD }, b: { ...EMPTY_LOAD } })
-                    setSplitModalOpen(true)
-                  }}>
-                  Split load
-                </button>
-              </div>
-            )}
-          </div>
+          ) : (
+            <div style={{ position: 'relative' }}>
+              <button className="btn btn-primary" disabled={editingId === 'new'}
+                onClick={() => setAddPromptOpen(v => !v)}>
+                <Plus size={14} /> Add Load
+              </button>
+              {addPromptOpen && (
+                <div style={{
+                  position: 'absolute', top: '110%', right: 0, zIndex: 60,
+                  background: 'var(--bg-card)', border: '1px solid var(--border)',
+                  borderRadius: 8, padding: 8, display: 'flex', flexDirection: 'column',
+                  gap: 4, minWidth: 148, boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                }}>
+                  <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}
+                    onClick={() => { setAddPromptOpen(false); startNew() }}>
+                    Single load
+                  </button>
+                  <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}
+                    onClick={() => {
+                      setAddPromptOpen(false)
+                      setSplitForms({ a: { ...EMPTY_LOAD }, b: { ...EMPTY_LOAD } })
+                      setSplitModalOpen(true)
+                    }}>
+                    Split load
+                  </button>
+                </div>
+              )}
+            </div>
+          )
         )}
       </div>
 
@@ -1432,8 +1443,8 @@ export default function TruckLoadProfilePage() {
                 <SortableHeader label="Date" col="load_date" sort={loadSort} onSort={onLoadSort} />
                 <SortableHeader label="Slip #" col="slip_number" sort={loadSort} onSort={onLoadSort} />
                 {showPo && <th>PO #</th>}
-                <SortableHeader label="Driver" col="driver_name" sort={loadSort} onSort={onLoadSort} />
-                <th style={{ whiteSpace: 'nowrap' }}>Split</th>
+                {!isSubcontractorEntity && <SortableHeader label="Driver" col="driver_name" sort={loadSort} onSort={onLoadSort} />}
+                {!isSubcontractorEntity && <th style={{ whiteSpace: 'nowrap' }}>Split</th>}
                 <SortableHeader label="Mine" col="mine_name" sort={loadSort} onSort={onLoadSort} />
                 <SortableHeader label="Tonnes" col="tonnes" sort={loadSort} onSort={onLoadSort} />
                 <SortableHeader label="Rate/t" col="rate_per_ton" sort={loadSort} onSort={onLoadSort} />
@@ -1473,7 +1484,7 @@ export default function TruckLoadProfilePage() {
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(l.load_date)}</td>
                       <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.slip_number || '—'}</td>
                       {showPo && <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.po_number || '—'}</td>}
-                      <td style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                      {!isSubcontractorEntity && <td style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                         {l.driver_name ? (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                             {l.driver_name}
@@ -1485,8 +1496,8 @@ export default function TruckLoadProfilePage() {
                             )}
                           </span>
                         ) : '—'}
-                      </td>
-                      <td style={{ fontSize: 12 }}>—</td>
+                      </td>}
+                      {!isSubcontractorEntity && <td style={{ fontSize: 12 }}>—</td>}
                       <td style={{ fontSize: 13 }}>{l.mine_name || '—'}</td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(l.tonnes)}</td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(l.rate_per_ton)}</td>

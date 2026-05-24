@@ -1232,8 +1232,8 @@ export default function FleetPage() {
     })
     return order.map(id => ({
       key: id,
-      label: entityMap[id]?.name || `Entity ${id}`,
-      labelSub: entityMap[id]?.code,
+      label: entityMap[id]?.name || '',
+      labelSub: entityMap[id]?.code || '',
       trucks: map[id],
     }))
   }, [sortedTrucks, truckGroupBy, entityMap])
@@ -1482,14 +1482,14 @@ export default function FleetPage() {
                 <tbody>
                   {groupedTrucks.map(group => (
                     <Fragment key={group.key ?? 'ungrouped'}>
-                      <tr style={{ background: 'var(--bg-surface)' }}>
+                      {group.label && <tr style={{ background: 'var(--bg-surface)' }}>
                         <td colSpan={8} style={{ padding: '8px 14px' }}>
                           <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--accent)' }}>
                             {group.label}
                             {group.labelSub && <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontWeight: 500 }}>({group.labelSub})</span>}
                           </span>
                         </td>
-                      </tr>
+                      </tr>}
                       {group.trucks.map(truck => (
                         <TruckRow
                           key={truck.id}

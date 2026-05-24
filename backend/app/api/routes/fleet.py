@@ -39,6 +39,7 @@ def _enrich_truck(truck: Truck) -> Truck:
         or truck.subcontractor_name
         or truck.operator
     )
+    truck.entity_is_subcontractor = truck.entity.is_subcontractor_entity if truck.entity else False
     return truck
 
 

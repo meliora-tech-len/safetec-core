@@ -630,6 +630,7 @@ class TruckOut(TruckBase):
     id: int
     trailers: List[TrailerOut] = []
     subcontractor_display_name: Optional[str] = None
+    entity_is_subcontractor: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
 
