@@ -655,14 +655,12 @@ export default function SubcontractorProfilePage() {
                 </div>
                 <div className="form-group">
                   <label>Supplier *</label>
-                  <SearchableSelect
-                    value={String(expenseForm.supplier_id)}
-                    onChange={v => setEF('supplier_id', v)}
-                    options={suppliers}
-                    getValue={o => String(o.id)}
-                    getLabel={o => o.name}
-                    placeholder="Search suppliers…"
-                  />
+                  <select value={expenseForm.supplier_id || ''} onChange={e => setEF('supplier_id', e.target.value)} required>
+                    <option value="">— Select supplier —</option>
+                    {suppliers.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="form-row">
                   <div className="form-group">
@@ -686,14 +684,26 @@ export default function SubcontractorProfilePage() {
                   <input value={expenseForm.description} onChange={e => setEF('description', e.target.value)} placeholder="Optional" />
                 </div>
                 <div className="form-group">
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontWeight: 400 }}>
-                    <input
-                      type="checkbox"
-                      checked={expenseForm.vat_applicable}
-                      onChange={e => setEF('vat_applicable', e.target.checked)}
-                    />
-                    VAT Applicable (amount is VAT-exclusive)
-                  </label>
+                  <label>VAT</label>
+                  <div style={{ display: 'flex', gap: 0, borderRadius: 7, overflow: 'hidden', border: '1px solid var(--border)', width: 'fit-content' }}>
+                    <button
+                      type="button"
+                      onClick={() => setEF('vat_applicable', true)}
+                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', background: expenseForm.vat_applicable ? 'var(--accent)' : 'var(--bg-surface)', color: expenseForm.vat_applicable ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                    >
+                      Excl VAT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEF('vat_applicable', false)}
+                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', background: !expenseForm.vat_applicable ? 'var(--accent)' : 'var(--bg-surface)', color: !expenseForm.vat_applicable ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                    >
+                      Incl VAT
+                    </button>
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                    {expenseForm.vat_applicable ? 'Amount is VAT-exclusive → goes to Expenses Excl VAT' : 'Amount is VAT-inclusive → goes to Expenses Incl VAT'}
+                  </span>
                 </div>
               </div>
               <div className="modal-footer">
