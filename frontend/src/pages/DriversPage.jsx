@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Users, Plus, Search, X, Trash2, Edit2 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
@@ -194,6 +194,8 @@ export default function DriversPage() {
   const { activeEntity, isAdmin } = useAuth()
   const api = useApi()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const urlEntityId = searchParams.get('entity_id') || ''
 
   const [drivers, setDrivers]   = useState([])
   const [stats, setStats]       = useState(null)
@@ -201,17 +203,18 @@ export default function DriversPage() {
   const [loading, setLoading]   = useState(true)
   const [search, setSearch]     = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity] = useState(urlEntityId || activeEntity?.id?.toString() || '')
   const [filterType, setFilterType]     = useState('permanent')
   const [showInactive, setShowInactive] = useState(false)
   const [modal, setModal]       = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const loadSeqRef = useRef(0)
 
-  // Sync with sidebar entity switcher
+  // Sync with sidebar entity switcher (skip if pre-set from URL)
   useEffect(() => {
+    if (urlEntityId) return
     setFilterEntity(activeEntity?.id?.toString() || '')
-  }, [activeEntity])
+  }, [activeEntity, urlEntityId])
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 400)

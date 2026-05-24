@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useAuth } from '../hooks/useAuth'
 import {
   getSubcontractor, getSuppliers, getFleetTrucks,
   createSubcontractorInvoice, createSupplierInvoice,
@@ -54,6 +55,7 @@ const blankExpenseForm = (truckReg = '') => ({
 export default function SubcontractorProfilePage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { entities } = useAuth()
 
   const [subcontractor, setSubcontractor] = useState(null)
   const [activeTab, setActiveTab]         = useState('invoices')
@@ -287,6 +289,33 @@ export default function SubcontractorProfilePage() {
           </button>
         )}
       </div>
+
+      {/* ── Operations card (Re Ama / subcontractor entities) ── */}
+      {subcontractor.linked_entity_id && entities?.find(e => e.id === subcontractor.entity_id)?.code === 'OBHI' && (
+        <div style={{
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '14px 20px', marginBottom: 20,
+          display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Operations
+          </span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn-ghost btn-sm"
+              onClick={() => navigate(`/fleet?entity_id=${subcontractor.linked_entity_id}`)}>
+              Fleet
+            </button>
+            <button className="btn-ghost btn-sm"
+              onClick={() => navigate(`/drivers?entity_id=${subcontractor.linked_entity_id}`)}>
+              Drivers
+            </button>
+            <button className="btn-ghost btn-sm"
+              onClick={() => navigate(`/truck-loads?entity_id=${subcontractor.linked_entity_id}`)}>
+              Truck Loads
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Tabs ── */}
       <div style={{ display: 'flex', borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
@@ -552,11 +581,11 @@ export default function SubcontractorProfilePage() {
       {activeTab === 'costing' && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-            <button className="btn btn-ghost btn-sm" onClick={prevMonth}><ChevronLeft size={15} /></button>
+            <button className="btn-ghost btn-sm" onClick={prevMonth}><ChevronLeft size={15} /></button>
             <span style={{ fontWeight: 700, fontSize: 15, minWidth: 130, textAlign: 'center' }}>
               {MONTHS[month]} {year}
             </span>
-            <button className="btn btn-ghost btn-sm" onClick={nextMonth}><ChevronRight size={15} /></button>
+            <button className="btn-ghost btn-sm" onClick={nextMonth}><ChevronRight size={15} /></button>
           </div>
 
           {costingLoading ? (

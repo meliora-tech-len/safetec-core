@@ -102,17 +102,20 @@ class BusinessEntity(Base):
     vat_registered = Column(Boolean, default=True, nullable=False)
 
     is_active = Column(Boolean, default=True)
+    is_subcontractor_entity = Column(Boolean, default=False, nullable=False, server_default='false')
+    linked_subcontractor_id = Column(Integer, ForeignKey("subcontractors.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     suppliers       = relationship("Supplier",       back_populates="entity")
-    subcontractors  = relationship("Subcontractor",  back_populates="entity")
+    subcontractors  = relationship("Subcontractor",  back_populates="entity", foreign_keys="Subcontractor.entity_id")
     customers       = relationship("Customer",       back_populates="entity")
     invoices = relationship("Invoice", back_populates="entity")
     user_access = relationship("UserEntityAccess", back_populates="entity")
     trucks = relationship("Truck", back_populates="entity")
     drivers = relationship("Driver", back_populates="entity")
     truck_loads = relationship("TruckLoad", back_populates="entity")
+    linked_subcontractor = relationship("Subcontractor", foreign_keys=[linked_subcontractor_id])
 
 
 # ── Users & Access Control ────────────────────────────────────────────────────
@@ -250,7 +253,7 @@ class Subcontractor(Base):
     created_at          = Column(DateTime(timezone=True), server_default=func.now())
     updated_at          = Column(DateTime(timezone=True), onupdate=func.now())
 
-    entity = relationship("BusinessEntity", back_populates="subcontractors")
+    entity = relationship("BusinessEntity", back_populates="subcontractors", foreign_keys=[entity_id])
     trucks = relationship("Truck", back_populates="subcontractor")
 
 

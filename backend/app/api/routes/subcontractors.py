@@ -8,7 +8,7 @@ from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
@@ -75,7 +75,11 @@ def get_subcontractor(
     if not sub:
         raise HTTPException(status_code=404, detail="Subcontractor not found")
     _check_entity_access(sub.entity_id, current_user)
-    return sub
+    linked = db.query(BusinessEntity).filter(
+        BusinessEntity.linked_subcontractor_id == subcontractor_id
+    ).first()
+    out = SubcontractorOut.model_validate(sub)
+    return out.model_copy(update={"linked_entity_id": linked.id if linked else None})
 
 
 @router.post("/", response_model=SubcontractorOut)

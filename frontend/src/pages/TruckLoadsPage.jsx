@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, Fragment, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Package, Search, X, ChevronRight } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { getFleetTrucks } from '../services/api'
@@ -14,14 +14,19 @@ const STATUS_COLOURS = {
 export default function TruckLoadsPage() {
   const { activeEntity, entities, isAdmin } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const urlEntityId = searchParams.get('entity_id') || ''
 
   const [trucks, setTrucks]               = useState([])
   const [loading, setLoading]             = useState(true)
   const [search, setSearch]               = useState('')
-  const [filterEntity, setFilterEntity]   = useState(activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity]   = useState(urlEntityId || activeEntity?.id?.toString() || '')
   const [filterSubcontractor, setFilterSubcontractor] = useState('')
 
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
+  useEffect(() => {
+    if (urlEntityId) return
+    setFilterEntity(activeEntity?.id?.toString() || '')
+  }, [activeEntity, urlEntityId])
 
   const obhiId = useMemo(() => entities.find(e => e.code === 'OBHI')?.id?.toString(), [entities])
 

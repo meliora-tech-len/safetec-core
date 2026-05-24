@@ -67,12 +67,15 @@ def _get_accessible_entity(entity_id: int, user: User, db: Session) -> BusinessE
 @router.get("/", response_model=List[EntityOut])
 def list_entities(
     include_inactive: bool = Query(False),
+    include_subcontractor: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(BusinessEntity)
     if not include_inactive:
         q = q.filter(BusinessEntity.is_active == True)
+    if not include_subcontractor:
+        q = q.filter(BusinessEntity.is_subcontractor_entity != True)
 
     if current_user.role == "admin":
         return q.all()

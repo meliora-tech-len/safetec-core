@@ -79,6 +79,8 @@ class EntityOut(EntityBase):
     quote_prefix: Optional[str] = "QT"
     vat_registered: bool = True
     is_active: bool
+    is_subcontractor_entity: bool = False
+    linked_subcontractor_id: Optional[int] = None
     created_at: datetime
     logo_path: Optional[str] = None
     logo_url: Optional[str] = None
@@ -375,10 +377,11 @@ class SubcontractorUpdate(BaseModel):
 
 
 class SubcontractorOut(SubcontractorBase):
-    id:         int
-    is_active:  bool
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    id:               int
+    is_active:        bool
+    linked_entity_id: Optional[int] = None
+    created_at:       datetime
+    updated_at:       Optional[datetime] = None
 
     class Config:
         from_attributes = True
