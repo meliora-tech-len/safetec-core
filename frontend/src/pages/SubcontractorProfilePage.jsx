@@ -501,7 +501,6 @@ export default function SubcontractorProfilePage() {
                                   ) : (
                                     <>
                                       {formatCurrency(inv.amount)}
-                                      {!inv.vat_applicable && <span style={styles.noVatTag}>NON VAT</span>}
                                     </>
                                   )}
                                 </td>
@@ -517,7 +516,7 @@ export default function SubcontractorProfilePage() {
                                     />
                                   ) : (
                                     inv.vat_applicable
-                                      ? <span style={{ color: '#16a34a', fontSize: 13 }}>✓</span>
+                                      ? <span style={{ color: '#16a34a', fontSize: 15, fontWeight: 700 }}>✓</span>
                                       : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>
                                   )}
                                 </td>
@@ -688,21 +687,21 @@ export default function SubcontractorProfilePage() {
                   <div style={{ display: 'flex', gap: 0, borderRadius: 7, overflow: 'hidden', border: '1px solid var(--border)', width: 'fit-content' }}>
                     <button
                       type="button"
-                      onClick={() => setEF('vat_applicable', true)}
-                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', background: expenseForm.vat_applicable ? 'var(--accent)' : 'var(--bg-surface)', color: expenseForm.vat_applicable ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                      onClick={() => setEF('vat_applicable', false)}
+                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', background: !expenseForm.vat_applicable ? 'var(--accent)' : 'var(--bg-surface)', color: !expenseForm.vat_applicable ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
                     >
                       Excl VAT
                     </button>
                     <button
                       type="button"
-                      onClick={() => setEF('vat_applicable', false)}
-                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', background: !expenseForm.vat_applicable ? 'var(--accent)' : 'var(--bg-surface)', color: !expenseForm.vat_applicable ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                      onClick={() => setEF('vat_applicable', true)}
+                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', background: expenseForm.vat_applicable ? 'var(--accent)' : 'var(--bg-surface)', color: expenseForm.vat_applicable ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
                     >
                       Incl VAT
                     </button>
                   </div>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
-                    {expenseForm.vat_applicable ? 'Amount is VAT-exclusive → goes to Expenses Excl VAT' : 'Amount is VAT-inclusive → goes to Expenses Incl VAT'}
+                    {expenseForm.vat_applicable ? 'Amount is VAT-inclusive → goes to Expenses Incl VAT' : 'Amount is VAT-exclusive → goes to Expenses Excl VAT'}
                   </span>
                 </div>
               </div>
@@ -845,7 +844,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
   for (const inv of supplier_invoices) {
     const key = (inv.supplier_name || `Supplier #${inv.supplier_id}`).toUpperCase()
     if (!invBySupplier[key]) invBySupplier[key] = { diesel: null, fee: null, dieselAll: [], feeAll: [] }
-    if (inv.vat_applicable) invBySupplier[key].dieselAll.push(inv)
+    if (!inv.vat_applicable) invBySupplier[key].dieselAll.push(inv)
     else invBySupplier[key].feeAll.push(inv)
   }
   // Any invoices from suppliers not in the template (custom additions)
@@ -977,10 +976,10 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      {inv.vat_applicable ? dash : fmtC(inv.amount)}
+                      {inv.vat_applicable ? fmtC(inv.amount) : dash}
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      {inv.vat_applicable ? fmtC(inv.amount) : dash}
+                      {inv.vat_applicable ? dash : fmtC(inv.amount)}
                     </td>
                     <td style={tdStyle}>
                       <button className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
@@ -1005,22 +1004,35 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
           </tfoot>
         </table>
 
+        {/* Calculations */}
+        {(() => {
+          const totalExp = (parseFloat(total_expenses_incl_vat) || 0) + (parseFloat(total_expenses_excl_vat) || 0)
+          return (
+            <div style={{ display: 'flex', gap: 0, marginTop: 12, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <div style={{ flex: 1, padding: '10px 16px', borderRight: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>To Be Invoiced</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>{fmtC(incomeIncl)}</div>
+              </div>
+              <div style={{ flex: 1, padding: '10px 16px', borderRight: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>Total Expenses</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--danger)' }}>{fmtC(totalExp)}</div>
+              </div>
+              <div style={{ flex: 1, padding: '10px 16px' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>To Be Paid Out</div>
+                <div style={{ fontWeight: 700, fontSize: 16, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)' }}>{fmtC(net_payable)}</div>
+              </div>
+            </div>
+          )
+        })()}
+
         {/* Add Expense */}
         <button
           className="btn-ghost"
-          style={{ fontSize: 12, marginTop: 8, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+          style={{ fontSize: 12, marginTop: 10, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
           onClick={onAddExpense}
         >
           <Plus size={13} /> Add Expense
         </button>
-
-        {/* Net Payable */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 16, marginTop: 16, padding: '12px 16px', background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>Net Payable</span>
-          <span style={{ fontWeight: 700, fontSize: 18, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
-            {fmtC(net_payable)}
-          </span>
-        </div>
 
         {/* Collapsible loads detail */}
         {showLoadDetail && (

@@ -404,7 +404,7 @@ export default function SupplierProfilePage() {
               ...(showVehicleReg ? [{ header: 'Vehicle Reg', key: 'vehicle_reg' }] : []),
               { header: 'Description',     key: 'description' },
               { header: 'Amount',          value: r => parseFloat(r.amount).toFixed(2) },
-              { header: 'VAT Applicable',  value: r => r.vat_applicable ? 'Yes' : 'No' },
+              { header: 'VAT',             value: r => r.vat_applicable ? 'Yes' : 'No' },
               { header: 'Statement Month', value: r => `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` },
               { header: 'Due Date',        value: r => formatDate(r.payment_due_date) },
               { header: 'Verified',        value: r => r.is_verified ? 'Yes' : '' },
@@ -764,7 +764,6 @@ export default function SupplierProfilePage() {
                               ) : (
                                 <>
                                   {formatCurrency(inv.amount)}
-                                  {!inv.vat_applicable && <span style={styles.noVatTag}>NON VAT</span>}
                                   {inv.is_multi_line && !isEditing && (
                                     <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-muted)', fontWeight: 700 }}>ML</span>
                                   )}
@@ -844,7 +843,7 @@ export default function SupplierProfilePage() {
                                 />
                               ) : (
                                 inv.vat_applicable
-                                  ? <span style={{ color: '#16a34a', fontSize: 13 }}>✓</span>
+                                  ? <span style={{ color: '#16a34a', fontSize: 15, fontWeight: 700 }}>✓</span>
                                   : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>
                               )}
                             </td>

@@ -343,8 +343,8 @@ def get_subcontractor_costing(
             if truck.registration else []
         )
 
-        exp_excl = sum((Decimal(str(i.amount)) for i in inv_list if i.vat_applicable), D0)
-        exp_incl = admin_fee + sum((Decimal(str(i.amount)) for i in inv_list if not i.vat_applicable), D0)
+        exp_incl = admin_fee + sum((Decimal(str(i.amount)) for i in inv_list if i.vat_applicable), D0)
+        exp_excl = sum((Decimal(str(i.amount)) for i in inv_list if not i.vat_applicable), D0)
         net_payable = income_incl - exp_excl - exp_incl
 
         truck.subcontractor_display_name = sub.name
