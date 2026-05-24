@@ -602,7 +602,7 @@ export default function SubcontractorProfilePage() {
                   onDeleteInvoice={setExpenseDeleteTarget}
                 />
               ))}
-              <SummaryCard summary={costing.summary} />
+              <SummaryCard summary={costing.summary} trucks={costing.trucks} />
             </>
           )}
         </div>
@@ -1010,37 +1010,68 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
 
 // ── Monthly Summary Card ───────────────────────────────────────────────────────
 
-function SummaryCard({ summary }) {
+function SummaryCard({ summary, trucks = [] }) {
+  const [expanded, setExpanded] = useState(false)
+
+  const th = (label, right = false) => (
+    <th key={label} style={{ ...thStyle, textAlign: right ? 'right' : 'left' }}>{label}</th>
+  )
+
+  const truckRows = trucks.filter(td => parseFloat(td.income_incl_vat) !== 0 || parseFloat(td.total_expenses_excl_vat) !== 0 || parseFloat(td.total_expenses_incl_vat) !== 0)
+
   return (
-    <div style={{
-      background: 'var(--bg-card)', border: '1px solid var(--accent)',
-      borderRadius: 10, padding: '16px 20px', marginTop: 8, marginBottom: 24,
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 12 }}>
-        Monthly Summary — All Trucks
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 10, marginTop: 8, marginBottom: 24, overflow: 'hidden' }}>
+      {/* Header — click to expand */}
+      <div
+        onClick={() => setExpanded(v => !v)}
+        style={{ padding: '14px 20px', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', userSelect: 'none' }}
+      >
+        <span style={{ fontSize: 13, color: 'var(--text-muted)', marginRight: -4 }}>{expanded ? '▼' : '▶'}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', flex: 1 }}>
+          Monthly Summary — All Trucks
+        </span>
+        <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>
+          {fmtC(summary.net_payable)}
+        </span>
       </div>
-      <table style={tblStyle}>
-        <thead>
-          <tr style={{ background: 'var(--bg-surface)' }}>
-            <th style={thStyle}></th>
-            <th style={{ ...thStyle, textAlign: 'right' }}>Income Excl VAT</th>
-            <th style={{ ...thStyle, textAlign: 'right' }}>Income Incl VAT</th>
-            <th style={{ ...thStyle, textAlign: 'right' }}>Exp Excl VAT</th>
-            <th style={{ ...thStyle, textAlign: 'right' }}>Exp Incl VAT</th>
-            <th style={{ ...thStyle, textAlign: 'right', color: 'var(--accent)' }}>Net Payable</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr style={{ fontWeight: 700 }}>
-            <td style={tdStyle}>TOTAL</td>
-            <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.income_excl_vat)}</td>
-            <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.income_incl_vat)}</td>
-            <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.total_expenses_excl_vat)}</td>
-            <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.total_expenses_incl_vat)}</td>
-            <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontSize: 15 }}>{fmtC(summary.net_payable)}</td>
-          </tr>
-        </tbody>
-      </table>
+
+      {expanded && (
+        <div style={{ padding: '0 0 16px' }}>
+          <table style={tblStyle}>
+            <thead>
+              <tr style={{ background: 'var(--bg-surface)' }}>
+                {th('Vehicle')}
+                {th('Income', true)}
+                {th('Diesel', true)}
+                {th('Admin', true)}
+                {th('To Be Paid Out', true)}
+              </tr>
+            </thead>
+            <tbody>
+              {truckRows.map(td => (
+                <tr key={td.truck.id}>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{td.truck.registration}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.income_incl_vat)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.total_expenses_excl_vat)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.total_expenses_incl_vat)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: parseFloat(td.net_payable) >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
+                    {fmtC(td.net_payable)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
+                <td style={tdStyle}>TOTAL</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.income_incl_vat)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.total_expenses_excl_vat)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.total_expenses_incl_vat)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontSize: 15 }}>{fmtC(summary.net_payable)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
