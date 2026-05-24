@@ -49,8 +49,21 @@ def _current_month_bounds():
     return today.replace(day=1), today
 
 
-def _build_summary(driver: Driver, month_start: date) -> dict:
-    load_count = sum(1 for l in driver.loads if l.load_date >= month_start)
+def _build_summary(driver: Driver, month_start: date, db: Session) -> dict:
+    if driver.truck_id:
+        start_dt = datetime(month_start.year, month_start.month, 1, tzinfo=timezone.utc)
+        if month_start.month == 12:
+            end_dt = datetime(month_start.year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end_dt = datetime(month_start.year, month_start.month + 1, 1, tzinfo=timezone.utc)
+        load_count = db.query(func.count(TruckLoad.id)).filter(
+            TruckLoad.truck_id == driver.truck_id,
+            TruckLoad.entity_id == driver.entity_id,
+            TruckLoad.load_date >= start_dt,
+            TruckLoad.load_date < end_dt,
+        ).scalar() or 0
+    else:
+        load_count = 0
     payments_total = sum(
         (p.amount or Decimal("0")) for p in driver.payments if p.payment_date >= month_start
     )
@@ -191,7 +204,7 @@ def list_drivers(
 
     drivers = q.order_by(Driver.last_name, Driver.first_name).offset(skip).limit(limit).all()
     month_start, _ = _current_month_bounds()
-    return [_build_summary(d, month_start) for d in drivers]
+    return [_build_summary(d, month_start, db) for d in drivers]
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────
