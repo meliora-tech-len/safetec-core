@@ -637,6 +637,11 @@ class DriverPayCycle(Base):
     casual_group_a_loads  = Column(Integer, default=0, nullable=False)  # R2200 mines
     casual_group_b_loads  = Column(Integer, default=0, nullable=False)  # R1900 mines
 
+    # Split load counts (auto-synced from truck_load_lines)
+    permanent_split_loads      = Column(Integer, default=0, nullable=False)
+    casual_split_group_a_loads = Column(Integer, default=0, nullable=False)
+    casual_split_group_b_loads = Column(Integer, default=0, nullable=False)
+
     subsistence_advance_paid     = Column(Numeric(12, 2), default=0)
     subsistence_advance_verified = Column(Boolean, default=False)
 
@@ -830,6 +835,7 @@ class TruckLoad(Base):
     date_paid = Column(DateTime(timezone=True))
     is_paid = Column(Boolean, default=False)
     is_archived = Column(Boolean, nullable=False, default=False)
+    is_split_load = Column(Boolean, nullable=False, default=False)
     notes = Column(Text)
     checked_by = Column(String(50))
 
@@ -840,6 +846,22 @@ class TruckLoad(Base):
     truck    = relationship("Truck", back_populates="truck_loads")
     mine     = relationship("Mine", back_populates="truck_loads")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
+    lines    = relationship("TruckLoadLine", back_populates="truck_load",
+                            cascade="all, delete-orphan", order_by="TruckLoadLine.sort_order")
+
+
+class TruckLoadLine(Base):
+    __tablename__ = "truck_load_lines"
+
+    id            = Column(Integer, primary_key=True)
+    truck_load_id = Column(Integer, ForeignKey("truck_loads.id", ondelete="CASCADE"), nullable=False)
+    driver_id     = Column(Integer, ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True)
+    sort_order    = Column(Integer, default=0)
+    notes         = Column(Text)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+
+    truck_load = relationship("TruckLoad", back_populates="lines")
+    driver     = relationship("Driver", foreign_keys=[driver_id])
 
 
 # ── Driver Salary Config ───────────────────────────────────────────────────────

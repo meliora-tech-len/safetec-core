@@ -1060,6 +1060,9 @@ class DriverPayCycleOut(BaseModel):
     lohatla_extra_loads: int
     casual_group_a_loads: int = 0
     casual_group_b_loads: int = 0
+    permanent_split_loads: int = 0
+    casual_split_group_a_loads: int = 0
+    casual_split_group_b_loads: int = 0
     subsistence_advance_paid: Decimal
     subsistence_advance_verified: bool
     staff_loan_balance: Decimal
@@ -1131,6 +1134,25 @@ class MineOut(MineBase):
         from_attributes = True
 
 
+# ── Truck Load Line Schemas ───────────────────────────────────────────────────
+
+class TruckLoadLineIn(BaseModel):
+    driver_id:  Optional[int] = None
+    sort_order: int = 0
+    notes:      Optional[str] = None
+
+
+class TruckLoadLineOut(BaseModel):
+    id:          int
+    driver_id:   Optional[int] = None
+    driver_name: Optional[str] = None
+    sort_order:  int = 0
+    notes:       Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ── Truck Load Schemas ────────────────────────────────────────────────────────
 
 class TruckLoadBase(BaseModel):
@@ -1149,12 +1171,13 @@ class TruckLoadBase(BaseModel):
     diesel_rate: Optional[Decimal] = None
     date_paid: Optional[datetime] = None
     is_paid: bool = False
+    is_split_load: bool = False
     notes: Optional[str] = None
     checked_by: Optional[str] = None
 
 
 class TruckLoadCreate(TruckLoadBase):
-    pass
+    lines: List[TruckLoadLineIn] = []
 
 
 class TruckLoadUpdate(BaseModel):
@@ -1172,6 +1195,8 @@ class TruckLoadUpdate(BaseModel):
     diesel_rate: Optional[Decimal] = None
     date_paid: Optional[datetime] = None
     is_paid: Optional[bool] = None
+    is_split_load: Optional[bool] = None
+    lines: Optional[List[TruckLoadLineIn]] = None
     notes: Optional[str] = None
     checked_by: Optional[str] = None
 
@@ -1190,6 +1215,7 @@ class TruckLoadOut(TruckLoadBase):
     truck_registration: Optional[str] = None
     mine_name: Optional[str] = None
     supplier_name: Optional[str] = None
+    lines: List[TruckLoadLineOut] = []
 
     class Config:
         from_attributes = True

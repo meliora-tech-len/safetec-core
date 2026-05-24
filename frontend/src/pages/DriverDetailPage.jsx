@@ -47,13 +47,16 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
     const rateB      = parseFloat(s.casual_rate_group_b || 0)
     const loadsA     = Number(inputs.casual_group_a_loads || 0)
     const loadsB     = Number(inputs.casual_group_b_loads || 0)
-    const earningsA  = rateA * loadsA
-    const earningsB  = rateB * loadsB
+    const splitA     = Number(inputs.casual_split_group_a_loads || 0)
+    const splitB     = Number(inputs.casual_split_group_b_loads || 0)
+    const earningsA  = rateA * loadsA + (rateA / 2) * splitA
+    const earningsB  = rateB * loadsB + (rateB / 2) * splitB
     const loadEarnings = earningsA + earningsB
-    const assmang    = parseFloat(s.assmang_bonus_per_load || 0) * (loadsA + loadsB)
+    const effectiveTotal = loadsA + loadsB + (splitA + splitB) * 0.5
+    const assmang    = parseFloat(s.assmang_bonus_per_load || 0) * effectiveTotal
     const gross        = loadEarnings + assmang + additionalTotal
     return {
-      grand: loadsA + loadsB, loadsA, loadsB, rateA, rateB,
+      grand: effectiveTotal, loadsA, loadsB, splitA, splitB, rateA, rateB,
       earningsA, earningsB, loadEarnings, assmang, additionalTotal, gross,
       isCasual: true,
       basicSalary: 0, subsL: 0, totalSubs: 0,
@@ -61,20 +64,23 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
     }
   }
 
-  const basicSalary =
-    (lBase > 0 ? parseFloat(s.lohatla_base_salary) : 0)
+  const splitCount   = Number(inputs.permanent_split_loads || 0)
+  const lEffective   = lTotal + splitCount * 0.5
+  const grand        = lEffective
 
-  const subsL = parseFloat(s.lohatla_subs_per_load) * lTotal
+  const basicSalary = lEffective > 0 ? parseFloat(s.lohatla_base_salary) : 0
+
+  const subsL = parseFloat(s.lohatla_subs_per_load) * lEffective
   const totalSubs = subsL
 
-  const incL = parseFloat(s.lohatla_incentive_per_load) * lExtra
+  const incL = parseFloat(s.lohatla_incentive_per_load) * Math.max(0, lEffective - 7)
   const totalInc = incL
 
   const assmang = parseFloat(s.assmang_bonus_per_load) * grand
   const gross = basicSalary + totalSubs + totalInc + assmang + additionalTotal
 
   return {
-    grand, lTotal, basicSalary, subsL, totalSubs,
+    grand, lTotal, lEffective, splitCount, basicSalary, subsL, totalSubs,
     incL, totalInc, assmang, additionalTotal, gross, isCasual: false,
   }
 }
@@ -254,7 +260,7 @@ export default function DriverDetailPage() {
   const [editModal,   setEditModal]   = useState(false)
 
   // Load inputs (controlled, live calc)
-  const [loads, setLoads] = useState({ lohatla_base_loads: 0, lohatla_extra_loads: 0, casual_group_a_loads: 0, casual_group_b_loads: 0 })
+  const [loads, setLoads] = useState({ lohatla_base_loads: 0, lohatla_extra_loads: 0, casual_group_a_loads: 0, casual_group_b_loads: 0, permanent_split_loads: 0, casual_split_group_a_loads: 0, casual_split_group_b_loads: 0 })
   const [subsAdvance, setSubsAdvance] = useState(0)
   const [subsVerified, setSubsVerified] = useState(false)
   const [loanBal, setLoanBal]   = useState(0)
@@ -291,10 +297,13 @@ export default function DriverDetailPage() {
       .then(c => {
         setCycle(c)
         setLoads({
-          lohatla_base_loads:   c.lohatla_base_loads,
-          lohatla_extra_loads:  c.lohatla_extra_loads,
-          casual_group_a_loads: c.casual_group_a_loads || 0,
-          casual_group_b_loads: c.casual_group_b_loads || 0,
+          lohatla_base_loads:        c.lohatla_base_loads,
+          lohatla_extra_loads:       c.lohatla_extra_loads,
+          casual_group_a_loads:      c.casual_group_a_loads      || 0,
+          casual_group_b_loads:      c.casual_group_b_loads      || 0,
+          permanent_split_loads:     c.permanent_split_loads     || 0,
+          casual_split_group_a_loads: c.casual_split_group_a_loads || 0,
+          casual_split_group_b_loads: c.casual_split_group_b_loads || 0,
         })
         setSubsAdvance(parseFloat(c.subsistence_advance_paid) || 0)
         setSubsVerified(c.subsistence_advance_verified || false)
@@ -485,6 +494,11 @@ export default function DriverDetailPage() {
                       </div>}
                     </div>
                   </div>
+                  {loads.permanent_split_loads > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>
+                      + {loads.permanent_split_loads} split load{loads.permanent_split_loads > 1 ? 's' : ''} = +{(loads.permanent_split_loads * 0.5).toFixed(1)} effective loads (auto)
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
@@ -506,6 +520,17 @@ export default function DriverDetailPage() {
                       {fmt(effectiveSettings.casual_rate_group_b)} per load · Earnings: {fmt((parseFloat(effectiveSettings.casual_rate_group_b) || 0) * loads.casual_group_b_loads)}
                     </div>}
                   </div>
+                  {(loads.casual_split_group_a_loads > 0 || loads.casual_split_group_b_loads > 0) && effectiveSettings && (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 10px',
+                      background: 'var(--bg-surface)', borderRadius: 6 }}>
+                      Auto-split loads — Group A: {loads.casual_split_group_a_loads} · Group B: {loads.casual_split_group_b_loads}
+                      &nbsp;({((loads.casual_split_group_a_loads + loads.casual_split_group_b_loads) * 0.5).toFixed(1)} eff. loads ·&nbsp;
+                      {fmt(
+                        (loads.casual_split_group_a_loads * parseFloat(effectiveSettings.casual_rate_group_a || 0)) / 2 +
+                        (loads.casual_split_group_b_loads * parseFloat(effectiveSettings.casual_rate_group_b || 0)) / 2
+                      )})
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -513,9 +538,11 @@ export default function DriverDetailPage() {
               {liveCalc && (
                 <div style={{ background: 'var(--bg-page)', borderRadius: 8, padding: '12px 14px', marginBottom: 16, fontSize: 13 }}>
                   {(liveCalc.isCasual ? [
-                    ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.earningsA)]] : []),
-                    ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.earningsB)]] : []),
-                    ...(liveCalc.assmang > 0 ? [[`Assmang bonus (${liveCalc.grand} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
+                    ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.loadsA * liveCalc.rateA)]] : []),
+                    ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.loadsB * liveCalc.rateB)]] : []),
+                    ...(liveCalc.splitA > 0 ? [[`Group A split (${liveCalc.splitA} × ${fmt(liveCalc.rateA / 2)})`, fmt(liveCalc.splitA * liveCalc.rateA / 2)]] : []),
+                    ...(liveCalc.splitB > 0 ? [[`Group B split (${liveCalc.splitB} × ${fmt(liveCalc.rateB / 2)})`, fmt(liveCalc.splitB * liveCalc.rateB / 2)]] : []),
+                    ...(liveCalc.assmang > 0 ? [[`Assmang bonus (${liveCalc.grand.toFixed(1)} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
                   ] : [
                     ['Basic salary',    fmt(liveCalc.basicSalary)],

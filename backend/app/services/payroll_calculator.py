@@ -22,7 +22,8 @@ def calculate_pay_cycle(
     def r(v):
         return v.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    lohatla_total = (cycle.lohatla_base_loads or 0) + (cycle.lohatla_extra_loads or 0)
+    lohatla_full  = (cycle.lohatla_base_loads or 0) + (cycle.lohatla_extra_loads or 0)
+    lohatla_total = lohatla_full  # kept for permanent path below
     grand_total   = lohatla_total
 
     additional_total    = sum((d(al.amount) for al in (cycle.additional_loads or [])), Decimal(0))
@@ -36,14 +37,19 @@ def calculate_pay_cycle(
         # ── Casual: group-based per-load rate, R150 bonus, no BC deductions ────
         casual_rate_a = d(settings.casual_rate_group_a)
         casual_rate_b = d(settings.casual_rate_group_b)
-        loads_a = cycle.casual_group_a_loads or 0
-        loads_b = cycle.casual_group_b_loads or 0
-        casual_total = loads_a + loads_b
+        loads_a  = cycle.casual_group_a_loads or 0
+        loads_b  = cycle.casual_group_b_loads or 0
+        split_a  = getattr(cycle, 'casual_split_group_a_loads', 0) or 0
+        split_b  = getattr(cycle, 'casual_split_group_b_loads', 0) or 0
 
-        earnings_a    = casual_rate_a * loads_a
-        earnings_b    = casual_rate_b * loads_b
+        earnings_a    = casual_rate_a * Decimal(loads_a) + (casual_rate_a / 2) * Decimal(split_a)
+        earnings_b    = casual_rate_b * Decimal(loads_b) + (casual_rate_b / 2) * Decimal(split_b)
         load_earnings = earnings_a + earnings_b
-        assmang_bonus = d(settings.assmang_bonus_per_load) * casual_total
+
+        effective_total = Decimal(loads_a + loads_b) + Decimal(split_a + split_b) * Decimal("0.5")
+        casual_total    = effective_total
+
+        assmang_bonus = d(settings.assmang_bonus_per_load) * effective_total
         gross = load_earnings + assmang_bonus + additional_total
 
         total_deductions = loan_deduction + cash_deduction + food_deduction
@@ -51,8 +57,8 @@ def calculate_pay_cycle(
 
         return {
             "driver_type":               "casual",
-            "grand_total_loads":          casual_total,
-            "lohatla_total_loads":         casual_total,
+            "grand_total_loads":          effective_total,
+            "lohatla_total_loads":         effective_total,
             "casual_rate_per_load":        Decimal("0.00"),
             "load_earnings":               r(load_earnings),
             "basic_salary":                Decimal("0.00"),
@@ -85,18 +91,22 @@ def calculate_pay_cycle(
 
     # ── Permanent: Bargaining Council rules ─────────────────────────────────────
 
-    # Basic salary — floor for 7 loads
-    basic_salary = d(settings.lohatla_base_salary) if (cycle.lohatla_base_loads or 0) > 0 else Decimal(0)
+    split_count      = getattr(cycle, 'permanent_split_loads', 0) or 0
+    lohatla_effective = Decimal(lohatla_total) + Decimal(split_count) * Decimal("0.5")
+    grand_total      = lohatla_effective
 
-    # Subsistence — all loads × rate
-    subs_lohatla = d(settings.lohatla_subs_per_load) * lohatla_total
+    # Basic salary — floor for 7 effective loads
+    basic_salary = d(settings.lohatla_base_salary) if lohatla_effective > 0 else Decimal(0)
+
+    # Subsistence — all effective loads × rate
+    subs_lohatla = d(settings.lohatla_subs_per_load) * lohatla_effective
     total_subs   = subs_lohatla
 
-    # Load incentive — only extra loads
-    inc_lohatla = d(settings.lohatla_incentive_per_load) * (cycle.lohatla_extra_loads or 0)
+    # Load incentive — effective loads above 7
+    inc_lohatla = d(settings.lohatla_incentive_per_load) * max(Decimal(0), lohatla_effective - Decimal(7))
     total_inc   = inc_lohatla
 
-    # Assmang bonus — ALL loads × rate
+    # Assmang bonus — ALL effective loads × rate
     assmang_bonus = d(settings.assmang_bonus_per_load) * grand_total
 
     gross = basic_salary + total_subs + total_inc + assmang_bonus + additional_total
@@ -122,8 +132,8 @@ def calculate_pay_cycle(
 
     return {
         "driver_type":               "permanent",
-        "grand_total_loads":          grand_total,
-        "lohatla_total_loads":         lohatla_total,
+        "grand_total_loads":          lohatla_effective,
+        "lohatla_total_loads":         lohatla_effective,
         "casual_rate_per_load":        Decimal("0.00"),
         "load_earnings":               Decimal("0.00"),
         "basic_salary":                r(basic_salary),

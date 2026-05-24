@@ -28,7 +28,8 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 
 const EMPTY_LOAD = {
   load_date: today, slip_number: '', po_number: '', driver_name: '',
-  mine_id: '', supplier_id: '', tonnes: '', rate_per_ton: '', is_paid: false, notes: '', checked_by: '',
+  mine_id: '', supplier_id: '', tonnes: '', rate_per_ton: '', is_paid: false,
+  is_split_load: false, lines: [], notes: '', checked_by: '',
 }
 const EMPTY_DIESEL = {
   fillup_date: today, supplier_id: '', invoice_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
@@ -74,6 +75,35 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
           options={drivers} getValue={d => `${d.first_name} ${d.last_name}`.trim()}
           getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`.trim()} placeholder="Driver…"
           style={{ minWidth: 110 }} />
+      </td>
+      <td style={S.td}>
+        <label style={{ fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+          <input type="checkbox" checked={!!form.is_split_load}
+            onChange={e => {
+              const on = e.target.checked
+              set('is_split_load', on)
+              set('lines', on ? [{ driver_id: '', sort_order: 0 }, { driver_id: '', sort_order: 1 }] : [])
+            }} />
+          ½ Split
+        </label>
+        {form.is_split_load && (
+          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {(form.lines || []).map((ln, i) => (
+              <SearchableSelect key={i}
+                value={String(ln.driver_id || '')}
+                onChange={v => {
+                  const next = [...(form.lines || [])]
+                  next[i] = { ...next[i], driver_id: v ? parseInt(v) : null }
+                  set('lines', next)
+                }}
+                options={drivers}
+                getValue={d => String(d.id)}
+                getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
+                placeholder={`Driver ${i + 1}…`}
+                style={{ minWidth: 130 }} />
+            ))}
+          </div>
+        )}
       </td>
       <td style={S.td}>
         <SearchableSelect value={String(form.mine_id)} onChange={v => { set('mine_id', v); setRateSource(null) }}
@@ -1043,6 +1073,8 @@ export default function TruckLoadProfilePage() {
       slip_number:  load.slip_number  || '',
       po_number:    load.po_number    || '',
       driver_name:  load.driver_name  || '',
+      is_split_load: !!load.is_split_load,
+      lines: (load.lines || []).map(ln => ({ driver_id: ln.driver_id, sort_order: ln.sort_order })),
       mine_id:      String(load.mine_id || ''),
       supplier_id:  load.supplier_id ? String(load.supplier_id) : '',
       tonnes:       load.tonnes    != null ? String(load.tonnes)    : '',
@@ -1058,6 +1090,10 @@ export default function TruckLoadProfilePage() {
   const buildPayload = (form) => ({
     entity_id:    truck.entity_id,
     truck_id:     truck.id,
+    is_split_load: !!form.is_split_load,
+    lines: form.is_split_load
+      ? (form.lines || []).map((ln, i) => ({ driver_id: ln.driver_id ? parseInt(ln.driver_id) : null, sort_order: i }))
+      : [],
     mine_id:      parseInt(form.mine_id),
     supplier_id:  form.supplier_id ? parseInt(form.supplier_id) : null,
     load_date:    new Date(form.load_date + 'T12:00:00').toISOString(),
@@ -1134,7 +1170,7 @@ export default function TruckLoadProfilePage() {
   const showPo  = truck?.notes?.toLowerCase() === 'intsimbi'
   const showSub = truck?.is_subcontractor || false
   const vatRegistered = entities.find(e => e.id === truck?.entity_id)?.vat_registered !== false
-  const COLS    = (showPo ? 11 : 10) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
+  const COLS    = (showPo ? 12 : 11) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
 
   const { sort: loadSort, onSort: onLoadSort } = useSort('load_date', 'asc')
   const sortedLoads = useMemo(() => applySort(loads, loadSort), [loads, loadSort])
@@ -1338,6 +1374,7 @@ export default function TruckLoadProfilePage() {
                 <SortableHeader label="Slip #" col="slip_number" sort={loadSort} onSort={onLoadSort} />
                 {showPo && <th>PO #</th>}
                 <SortableHeader label="Driver" col="driver_name" sort={loadSort} onSort={onLoadSort} />
+                <th style={{ whiteSpace: 'nowrap' }}>Split</th>
                 <SortableHeader label="Mine" col="mine_name" sort={loadSort} onSort={onLoadSort} />
                 <SortableHeader label="Tonnes" col="tonnes" sort={loadSort} onSort={onLoadSort} />
                 <SortableHeader label="Rate/t" col="rate_per_ton" sort={loadSort} onSort={onLoadSort} />
@@ -1386,6 +1423,16 @@ export default function TruckLoadProfilePage() {
                             </span>
                           )}
                         </span>
+                      ) : '—'}
+                    </td>
+                    <td style={{ fontSize: 12 }}>
+                      {l.is_split_load ? (
+                        <div>
+                          <span className="badge badge-quote" style={{ fontSize: 9, padding: '1px 5px' }}>½ split</span>
+                          {(l.lines || []).map((ln, i) => ln.driver_name && (
+                            <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{ln.driver_name}</div>
+                          ))}
+                        </div>
                       ) : '—'}
                     </td>
                     <td style={{ fontSize: 13 }}>{l.mine_name || '—'}</td>

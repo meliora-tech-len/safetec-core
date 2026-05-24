@@ -8,13 +8,13 @@ from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
-    User, TruckLoad, Mine, MineRate, Truck, Supplier,
+    User, TruckLoad, TruckLoadLine, Mine, MineRate, Truck, Supplier,
     Driver, DriverType, DriverPayCycle, DriverTripLog, PayrollSettings,
     DieselSettings,
 )
 from app.schemas.schemas import (
     TruckLoadCreate, TruckLoadUpdate, TruckLoadOut,
-    TruckLoadBulkCreate, TruckLoadSummary,
+    TruckLoadBulkCreate, TruckLoadSummary, TruckLoadLineOut,
 )
 from app.services.audit import log_action
 
@@ -103,6 +103,19 @@ def _enrich(load: TruckLoad) -> dict:
     d["truck_registration"] = load.truck.registration if load.truck else None
     d["mine_name"]           = load.mine.name if load.mine else None
     d["supplier_name"]       = load.supplier.name if load.supplier else None
+    d["lines"] = [
+        TruckLoadLineOut(
+            id=ln.id,
+            driver_id=ln.driver_id,
+            driver_name=(
+                f"{ln.driver.first_name} {ln.driver.last_name}".strip()
+                if ln.driver else None
+            ),
+            sort_order=ln.sort_order,
+            notes=ln.notes,
+        )
+        for ln in (load.lines or [])
+    ]
     return d
 
 
@@ -127,21 +140,31 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     else:
         month_end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
 
-    # Count ALL loads for this truck in this calendar month, scoped to the driver's entity.
-    total_loads = db.query(func.count(TruckLoad.id)).filter(
+    base_filter = [
         TruckLoad.truck_id == truck_id,
         TruckLoad.entity_id == driver.entity_id,
         TruckLoad.load_date >= month_start,
         TruckLoad.load_date < month_end,
+    ]
+
+    full_loads = db.query(func.count(TruckLoad.id)).filter(
+        *base_filter, TruckLoad.is_split_load != True,
     ).scalar() or 0
 
+    split_loads = db.query(TruckLoad).filter(
+        *base_filter, TruckLoad.is_split_load == True,
+    ).all()
+    split_count = len(split_loads)
+
     if driver.driver_type == DriverType.permanent:
-        lohatla_base  = min(7, total_loads)
-        lohatla_extra = max(0, total_loads - 7)
+        lohatla_base  = min(7, full_loads)
+        lohatla_extra = max(0, full_loads - 7)
+        split_a = split_b = 0
     else:
-        # Casual: flat per-load rate, no base/extra split
-        lohatla_base  = total_loads
+        lohatla_base  = full_loads
         lohatla_extra = 0
+        split_a = sum(1 for l in split_loads if l.mine and l.mine.casual_group == 'A')
+        split_b = split_count - split_a
 
     cycle = db.query(DriverPayCycle).filter(
         DriverPayCycle.driver_id == driver.id,
@@ -152,6 +175,11 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     if cycle:
         cycle.lohatla_base_loads  = lohatla_base
         cycle.lohatla_extra_loads = lohatla_extra
+        if driver.driver_type == DriverType.permanent:
+            cycle.permanent_split_loads = split_count
+        else:
+            cycle.casual_split_group_a_loads = split_a
+            cycle.casual_split_group_b_loads = split_b
     else:
         settings = db.query(PayrollSettings).order_by(PayrollSettings.id.desc()).first()
         cycle = DriverPayCycle(
@@ -161,6 +189,9 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
             payroll_settings_id=settings.id if settings else None,
             lohatla_base_loads=lohatla_base,
             lohatla_extra_loads=lohatla_extra,
+            permanent_split_loads=(split_count if driver.driver_type == DriverType.permanent else 0),
+            casual_split_group_a_loads=(split_a if driver.driver_type != DriverType.permanent else 0),
+            casual_split_group_b_loads=(split_b if driver.driver_type != DriverType.permanent else 0),
         )
         db.add(cycle)
         db.flush()
@@ -206,6 +237,91 @@ def _remove_trip_log(load_id: int, db: Session):
     db.query(DriverTripLog).filter(
         DriverTripLog.truck_load_id == load_id
     ).delete(synchronize_session=False)
+
+
+def _sync_split_driver_pay_cycle(driver_id: int, load_date: datetime, db: Session):
+    """Re-sync split load counts for a driver who appears in truck_load_lines."""
+    driver = db.query(Driver).filter(Driver.id == driver_id, Driver.is_active == True).first()
+    if not driver:
+        return
+
+    year, month = load_date.year, load_date.month
+    month_start = datetime(year, month, 1, tzinfo=timezone.utc)
+    month_end = (datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+                 if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc))
+
+    lines = (
+        db.query(TruckLoadLine)
+        .join(TruckLoad, TruckLoad.id == TruckLoadLine.truck_load_id)
+        .filter(
+            TruckLoadLine.driver_id == driver_id,
+            TruckLoad.is_split_load == True,
+            TruckLoad.load_date >= month_start,
+            TruckLoad.load_date < month_end,
+        ).all()
+    )
+    split_count = len(lines)
+
+    cycle = db.query(DriverPayCycle).filter(
+        DriverPayCycle.driver_id == driver_id,
+        DriverPayCycle.pay_month == month,
+        DriverPayCycle.pay_year  == year,
+    ).first()
+    settings = db.query(PayrollSettings).order_by(PayrollSettings.id.desc()).first()
+
+    if driver.driver_type == DriverType.permanent:
+        if cycle:
+            cycle.permanent_split_loads = split_count
+        else:
+            cycle = DriverPayCycle(
+                driver_id=driver_id, pay_month=month, pay_year=year,
+                payroll_settings_id=settings.id if settings else None,
+                permanent_split_loads=split_count,
+            )
+            db.add(cycle)
+            db.flush()
+    else:
+        split_a = sum(
+            1 for ln in lines
+            if ln.truck_load and ln.truck_load.mine and ln.truck_load.mine.casual_group == 'A'
+        )
+        split_b = split_count - split_a
+        if cycle:
+            cycle.casual_split_group_a_loads = split_a
+            cycle.casual_split_group_b_loads = split_b
+        else:
+            cycle = DriverPayCycle(
+                driver_id=driver_id, pay_month=month, pay_year=year,
+                payroll_settings_id=settings.id if settings else None,
+                casual_split_group_a_loads=split_a,
+                casual_split_group_b_loads=split_b,
+            )
+            db.add(cycle)
+            db.flush()
+
+
+def _sync_lines_drivers(load: TruckLoad, load_date: datetime, db: Session):
+    """Re-sync pay cycles for all drivers listed in a split load's lines."""
+    for line in load.lines:
+        if line.driver_id:
+            _sync_split_driver_pay_cycle(line.driver_id, load_date, db)
+
+
+def _replace_lines(load: TruckLoad, lines_in, db: Session):
+    """Delete existing lines and insert new ones from payload."""
+    db.query(TruckLoadLine).filter(
+        TruckLoadLine.truck_load_id == load.id
+    ).delete(synchronize_session=False)
+    db.flush()
+    if load.is_split_load and lines_in:
+        for i, ln in enumerate(lines_in):
+            db.add(TruckLoadLine(
+                truck_load_id=load.id,
+                driver_id=ln.driver_id,
+                sort_order=ln.sort_order if ln.sort_order is not None else i,
+                notes=ln.notes,
+            ))
+        db.flush()
 
 
 # ── List loads ────────────────────────────────────────────────────────────────
@@ -324,14 +440,22 @@ def create_truck_load(
                 detail="No active mine rate found for this mine/entity. Provide rate_per_ton explicitly.",
             )
 
-    load = TruckLoad(**payload.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
+    lines_in = payload.lines or []
+    load = TruckLoad(**payload.model_dump(exclude={"rate_per_ton", "lines"}), rate_per_ton=rate)
     _compute_amounts(load)
     _compute_subcontractor_amounts(load, db)
     db.add(load)
     db.flush()  # get load.id before syncing
 
-    # Sync driver pay cycle (creates or updates load counts)
+    # Insert split load lines
+    _replace_lines(load, lines_in, db)
+
+    # Sync primary truck driver pay cycle
     _sync_driver_pay_cycle(load.truck_id, load.load_date, db)
+    db.flush()
+
+    # Sync split partner drivers
+    _sync_lines_drivers(load, load.load_date, db)
     db.flush()
 
     # Add trip log entry (pay cycle now exists)
@@ -439,14 +563,22 @@ def update_truck_load(
 
     old_truck_id  = load.truck_id
     old_load_date = load.load_date
+    old_line_drivers = [(ln.driver_id, load.load_date) for ln in load.lines if ln.driver_id]
 
     updated_fields = payload.model_dump(exclude_none=True)
+    lines_in = updated_fields.pop("lines", None)
     for field, value in updated_fields.items():
         setattr(load, field, value)
 
     _compute_amounts(load)
     # Re-snapshot only when truck changes; otherwise preserve historical snapshot
     _compute_subcontractor_amounts(load, db if "truck_id" in updated_fields else None)
+
+    # Replace lines if provided or if split flag changed
+    if lines_in is not None or "is_split_load" in updated_fields:
+        from app.schemas.schemas import TruckLoadLineIn as _LineIn
+        new_lines = [_LineIn(**ln) if isinstance(ln, dict) else ln for ln in (lines_in or [])]
+        _replace_lines(load, new_lines, db)
 
     # If truck or date changed, re-sync both the old and new month
     new_truck_id  = load.truck_id
@@ -455,6 +587,11 @@ def update_truck_load(
     months_to_sync = {(old_truck_id, old_load_date), (new_truck_id, new_load_date)}
     for truck_id, ld in months_to_sync:
         _sync_driver_pay_cycle(truck_id, ld, db)
+
+    # Sync old line drivers (their counts may have dropped) and new line drivers
+    for d_id, d_date in old_line_drivers:
+        _sync_split_driver_pay_cycle(d_id, d_date, db)
+    _sync_lines_drivers(load, new_load_date, db)
 
     # Update the linked trip log entry date/mine if it moved
     trip_entry = db.query(DriverTripLog).filter(
@@ -516,6 +653,7 @@ def delete_truck_load(
 
     truck_id  = load.truck_id
     load_date = load.load_date
+    line_drivers = [(ln.driver_id, load.load_date) for ln in load.lines if ln.driver_id]
 
     # Remove auto-created trip log entry before deleting the load
     _remove_trip_log(load_id, db)
@@ -528,8 +666,12 @@ def delete_truck_load(
     db.delete(load)
     db.flush()
 
-    # Re-sync the driver's cycle for this month (count is now one less)
+    # Re-sync the primary truck driver
     _sync_driver_pay_cycle(truck_id, load_date, db)
+
+    # Re-sync split partner drivers (lines deleted by CASCADE; counts now lower)
+    for d_id, d_date in line_drivers:
+        _sync_split_driver_pay_cycle(d_id, d_date, db)
 
     db.commit()
     return {"detail": "Truck load deleted"}
