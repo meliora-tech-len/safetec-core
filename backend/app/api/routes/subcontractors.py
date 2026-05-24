@@ -321,9 +321,6 @@ def get_subcontractor_costing(
             .order_by(TruckLoad.load_date)
             .all()
         )
-        if not loads:
-            continue
-
         income_excl = sum(
             (Decimal(str(l.subcontractor_amount_excl_vat)) for l in loads if l.subcontractor_amount_excl_vat is not None),
             D0,

@@ -590,7 +590,7 @@ export default function SubcontractorProfilePage() {
             </div>
           ) : !costing || costing.trucks.length === 0 ? (
             <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
-              No loads found for {MONTHS[month]} {year}
+              No trucks linked to this subcontractor
             </div>
           ) : (
             <>
@@ -812,7 +812,8 @@ function NewInvoiceRow({ form, setForm, saving, onSave, onCancel, firstInputRef,
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
 function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
-  const [showLoads, setShowLoads] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [showLoadDetail, setShowLoadDetail] = useState(false)
   const {
     truck, loads,
     income_excl_vat, income_incl_vat,
@@ -844,17 +845,26 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
 
   return (
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 24, overflow: 'hidden' }}>
-      {/* Truck header */}
-      <div style={{ padding: '12px 20px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+      {/* Truck header — click to expand */}
+      <div
+        onClick={() => setExpanded(v => !v)}
+        style={{ padding: '12px 20px', background: 'var(--bg-surface)', borderBottom: expanded ? '1px solid var(--border)' : 'none', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', cursor: 'pointer', userSelect: 'none' }}
+      >
+        <span style={{ fontSize: 13, color: 'var(--text-muted)', marginRight: -8 }}>{expanded ? '▼' : '▶'}</span>
         <span style={{ fontWeight: 700, fontSize: 16 }}>{truck.registration}</span>
         {truck.fleet_number && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{truck.fleet_number}</span>}
         <span style={{ color: 'var(--border)', fontSize: 12 }}>|</span>
         <span style={{ fontSize: 13 }}>{loadCount} load{loadCount !== 1 ? 's' : ''}</span>
         <span style={{ color: 'var(--border)', fontSize: 12 }}>|</span>
         <span style={{ fontSize: 13 }}>{totalTonnes.toFixed(3)} t</span>
+        {!expanded && parseFloat(net_payable) !== 0 && (
+          <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 13, color: parseFloat(net_payable) >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
+            Net: {fmtC(net_payable)}
+          </span>
+        )}
       </div>
 
-      <div style={{ padding: '16px 20px' }}>
+      {expanded && <div style={{ padding: '16px 20px' }}>
         {/* 6-column costing template */}
         <table style={{ ...tblStyle, tableLayout: 'auto' }}>
           <thead>
@@ -873,11 +883,11 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
             <tr>
               <td style={tdStyle}>
                 <button
-                  onClick={() => setShowLoads(v => !v)}
+                  onClick={e => { e.stopPropagation(); setShowLoadDetail(v => !v) }}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 5 }}
                 >
                   See Spreadsheet with Loads
-                  <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{showLoads ? '▲' : '▼'}</span>
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{showLoadDetail ? '▲' : '▼'}</span>
                 </button>
               </td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(incomeExcl)}</td>
@@ -955,7 +965,7 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
         </div>
 
         {/* Collapsible loads detail */}
-        {showLoads && (
+        {showLoadDetail && (
           <div style={{ marginTop: 20 }}>
             <SectionLabel>Load Detail</SectionLabel>
             <table style={tblStyle}>
@@ -993,7 +1003,7 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
             </table>
           </div>
         )}
-      </div>
+      </div>}
     </div>
   )
 }
