@@ -885,35 +885,44 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
             </tr>
           </thead>
           <tbody>
-            {/* Income / loads row */}
+            {/* Income / loads row — standard template (greyed) */}
             <tr>
               <td style={tdStyle}>
                 <button
                   onClick={e => { e.stopPropagation(); setShowLoadDetail(v => !v) }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 5 }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}
                 >
                   See Spreadsheet with Loads
-                  <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>{showLoadDetail ? '▲' : '▼'}</span>
+                  <span style={{ fontSize: 9 }}>{showLoadDetail ? '▲' : '▼'}</span>
                 </button>
               </td>
-              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(incomeExcl)}</td>
-              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(vat)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(incomeExcl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(vat)}</td>
               <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmtC(incomeIncl)}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={tdStyle}></td>
             </tr>
 
-            {/* Admin Fee */}
+            {/* Admin Fee — standard template (greyed) */}
             <tr>
-              <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, color: 'var(--accent)' }}>Admin Fee</td>
+              <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Admin Fee</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-              <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600, color: 'var(--accent)' }}>{fmtC(admin_fee)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(admin_fee)}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={tdStyle}></td>
             </tr>
+
+            {/* Supplier invoices section heading */}
+            {templateSuppliers.length > 0 && (
+              <tr>
+                <td colSpan={7} style={{ padding: '10px 10px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
+                  Supplier Invoices
+                </td>
+              </tr>
+            )}
 
             {/* Template supplier rows — always present */}
             {templateSuppliers.map(supplierName => {
