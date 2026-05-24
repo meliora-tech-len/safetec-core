@@ -50,13 +50,14 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
     const earningsA  = rateA * loadsA
     const earningsB  = rateB * loadsB
     const loadEarnings = earningsA + earningsB
-    const gross        = loadEarnings + additionalTotal
+    const assmang    = parseFloat(s.assmang_bonus_per_load || 0) * (loadsA + loadsB)
+    const gross        = loadEarnings + assmang + additionalTotal
     return {
       grand: loadsA + loadsB, loadsA, loadsB, rateA, rateB,
-      earningsA, earningsB, loadEarnings, additionalTotal, gross,
+      earningsA, earningsB, loadEarnings, assmang, additionalTotal, gross,
       isCasual: true,
       basicSalary: 0, subsL: 0, totalSubs: 0,
-      incL: 0, totalInc: 0, assmang: 0,
+      incL: 0, totalInc: 0,
     }
   }
 
@@ -514,6 +515,7 @@ export default function DriverDetailPage() {
                   {liveCalc.isCasual ? [
                     ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.earningsA)]] : []),
                     ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.earningsB)]] : []),
+                    ...(liveCalc.assmang > 0 ? [[`Assmang bonus (${liveCalc.grand} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
                   ] : [
                     ['Basic salary',    fmt(liveCalc.basicSalary)],

@@ -33,26 +33,34 @@ def calculate_pay_cycle(
     food_deduction = sum((d(fp.amount) for fp in (cycle.food_payments or [])), Decimal(0))
 
     if driver_type == "casual":
-        # ── Casual: flat per-load rate, no basic salary, no BC deductions ──────
-        casual_rate = d(settings.lohatla_casual_rate_per_load)
-        load_earnings = casual_rate * lohatla_total
-        gross = load_earnings + additional_total
+        # ── Casual: group-based per-load rate, R150 bonus, no BC deductions ────
+        casual_rate_a = d(settings.casual_rate_group_a)
+        casual_rate_b = d(settings.casual_rate_group_b)
+        loads_a = cycle.casual_group_a_loads or 0
+        loads_b = cycle.casual_group_b_loads or 0
+        casual_total = loads_a + loads_b
+
+        earnings_a    = casual_rate_a * loads_a
+        earnings_b    = casual_rate_b * loads_b
+        load_earnings = earnings_a + earnings_b
+        assmang_bonus = d(settings.assmang_bonus_per_load) * casual_total
+        gross = load_earnings + assmang_bonus + additional_total
 
         total_deductions = loan_deduction + cash_deduction + food_deduction
         net_payable = gross - total_deductions
 
         return {
             "driver_type":               "casual",
-            "grand_total_loads":          grand_total,
-            "lohatla_total_loads":         lohatla_total,
-            "casual_rate_per_load":        r(casual_rate),
+            "grand_total_loads":          casual_total,
+            "lohatla_total_loads":         casual_total,
+            "casual_rate_per_load":        Decimal("0.00"),
             "load_earnings":               r(load_earnings),
             "basic_salary":                Decimal("0.00"),
             "total_subsistence":           Decimal("0.00"),
             "subs_lohatla":                Decimal("0.00"),
             "total_incentive":             Decimal("0.00"),
             "incentive_lohatla":           Decimal("0.00"),
-            "assmang_bonus":               Decimal("0.00"),
+            "assmang_bonus":               r(assmang_bonus),
             "additional_loads_total":      r(additional_total),
             "additional_loads_verified":   r(additional_verified),
             "gross":                       r(gross),
