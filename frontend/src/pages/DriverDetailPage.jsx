@@ -39,7 +39,6 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
   const lBase  = Number(inputs.lohatla_base_loads  || 0)
   const lExtra = Number(inputs.lohatla_extra_loads || 0)
   const lTotal = lBase + lExtra
-  const grand  = lTotal
   const additionalTotal = (additionalLoads || []).reduce((sum, al) => sum + parseFloat(al.amount || 0), 0)
 
   if (driverType === 'casual') {
