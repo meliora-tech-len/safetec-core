@@ -512,7 +512,7 @@ export default function DriverDetailPage() {
               {/* Auto-calc summary */}
               {liveCalc && (
                 <div style={{ background: 'var(--bg-page)', borderRadius: 8, padding: '12px 14px', marginBottom: 16, fontSize: 13 }}>
-                  {liveCalc.isCasual ? [
+                  {(liveCalc.isCasual ? [
                     ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.earningsA)]] : []),
                     ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.earningsB)]] : []),
                     ...(liveCalc.assmang > 0 ? [[`Assmang bonus (${liveCalc.grand} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
@@ -523,7 +523,7 @@ export default function DriverDetailPage() {
                     ['Load incentive',  fmt(liveCalc.totalInc)],
                     [`Assmang bonus (${liveCalc.grand} × R150)`, fmt(liveCalc.assmang)],
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
-                  ].map(([label, val]) => (
+                  ]).map(([label, val]) => (
                     <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
                       <span style={{ fontWeight: 500 }}>{val}</span>
