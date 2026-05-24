@@ -874,9 +874,9 @@ function ProfitSheetSection({ truck, year, month, summary }) {
     setField('custom_lines', (data.custom_lines || []).filter(l => l.id !== id))
   }
 
-  // Income from loads (read-only)
-  const incomeExcl = parseFloat(summary?.total_excl_vat) || 0
-  const incomeIncl = parseFloat(summary?.total_incl_vat) || 0
+  // Income: use manual override if saved, otherwise fall back to loads summary
+  const incomeExcl = data.income_excl_vat != null ? parseFloat(data.income_excl_vat) : (parseFloat(summary?.total_excl_vat) || 0)
+  const incomeIncl = data.income_incl_vat != null ? parseFloat(data.income_incl_vat) : (parseFloat(summary?.total_incl_vat) || 0)
 
   // Fixed expenses
   const fixedTotal = EXPENSE_ROWS.reduce((s, r) => s + (parseFloat(data[r.key]) || 0), 0)
@@ -905,17 +905,40 @@ function ProfitSheetSection({ truck, year, month, summary }) {
       {/* ── Top bar: save + summary stats ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', gap: 0, borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden' }}>
-          {[
-            { label: 'Income Excl VAT', value: fmt(incomeExcl), color: 'var(--text-muted)' },
-            { label: 'Income Incl VAT', value: fmt(incomeIncl), color: 'var(--accent)' },
-            { label: 'Total Expenses',  value: fmt(totalExpenses), color: 'var(--danger)' },
-            { label: 'Net Profit',      value: hasData ? fmt(netProfit) : '—', color: !hasData ? 'var(--text-muted)' : netProfit >= 0 ? '#16a34a' : 'var(--danger)' },
-          ].map((s, i, arr) => (
-            <div key={s.label} style={{ padding: '10px 24px', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
-              <div style={{ fontWeight: 700, fontSize: 15, color: s.color }}>{s.value}</div>
+          {/* Income Excl VAT — editable */}
+          <div style={{ padding: '10px 20px', borderRight: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Income Excl VAT</div>
+            <input
+              type="number" step="0.01" min="0"
+              value={data.income_excl_vat ?? (summary?.total_excl_vat ?? '')}
+              placeholder={fmt(parseFloat(summary?.total_excl_vat) || 0)}
+              onChange={e => setField('income_excl_vat', e.target.value === '' ? null : e.target.value)}
+              style={{ width: 140, fontWeight: 700, fontSize: 15, color: 'var(--text-muted)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
+            />
+          </div>
+          {/* Income Incl VAT — editable */}
+          <div style={{ padding: '10px 20px', borderRight: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Income Incl VAT</div>
+            <input
+              type="number" step="0.01" min="0"
+              value={data.income_incl_vat ?? (summary?.total_incl_vat ?? '')}
+              placeholder={fmt(parseFloat(summary?.total_incl_vat) || 0)}
+              onChange={e => setField('income_incl_vat', e.target.value === '' ? null : e.target.value)}
+              style={{ width: 140, fontWeight: 700, fontSize: 15, color: 'var(--accent)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
+            />
+          </div>
+          {/* Total Expenses — calculated, read-only */}
+          <div style={{ padding: '10px 20px', borderRight: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Total Expenses</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--danger)' }}>{fmt(totalExpenses)}</div>
+          </div>
+          {/* Net Profit — calculated, read-only */}
+          <div style={{ padding: '10px 20px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Net Profit</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: !hasData ? 'var(--text-muted)' : netProfit >= 0 ? '#16a34a' : 'var(--danger)' }}>
+              {hasData ? fmt(netProfit) : '—'}
             </div>
-          ))}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {dirty && <span style={{ fontSize: 12, color: '#d97706' }}>Unsaved changes</span>}
