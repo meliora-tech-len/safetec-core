@@ -836,6 +836,8 @@ class TruckLoad(Base):
     is_paid = Column(Boolean, default=False)
     is_archived = Column(Boolean, nullable=False, default=False)
     is_split_load = Column(Boolean, nullable=False, default=False)
+    driver_id     = Column(Integer, ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True)
+    split_group_id = Column(Integer, nullable=True)
     notes = Column(Text)
     checked_by = Column(String(50))
 
@@ -846,22 +848,7 @@ class TruckLoad(Base):
     truck    = relationship("Truck", back_populates="truck_loads")
     mine     = relationship("Mine", back_populates="truck_loads")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
-    lines    = relationship("TruckLoadLine", back_populates="truck_load",
-                            cascade="all, delete-orphan", order_by="TruckLoadLine.sort_order")
-
-
-class TruckLoadLine(Base):
-    __tablename__ = "truck_load_lines"
-
-    id            = Column(Integer, primary_key=True)
-    truck_load_id = Column(Integer, ForeignKey("truck_loads.id", ondelete="CASCADE"), nullable=False)
-    driver_id     = Column(Integer, ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True)
-    sort_order    = Column(Integer, default=0)
-    notes         = Column(Text)
-    created_at    = Column(DateTime(timezone=True), server_default=func.now())
-
-    truck_load = relationship("TruckLoad", back_populates="lines")
-    driver     = relationship("Driver", foreign_keys=[driver_id])
+    driver   = relationship("Driver", foreign_keys=[driver_id])
 
 
 # ── Driver Salary Config ───────────────────────────────────────────────────────

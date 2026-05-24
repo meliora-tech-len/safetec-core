@@ -1134,25 +1134,6 @@ class MineOut(MineBase):
         from_attributes = True
 
 
-# ── Truck Load Line Schemas ───────────────────────────────────────────────────
-
-class TruckLoadLineIn(BaseModel):
-    driver_id:  Optional[int] = None
-    sort_order: int = 0
-    notes:      Optional[str] = None
-
-
-class TruckLoadLineOut(BaseModel):
-    id:          int
-    driver_id:   Optional[int] = None
-    driver_name: Optional[str] = None
-    sort_order:  int = 0
-    notes:       Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
 # ── Truck Load Schemas ────────────────────────────────────────────────────────
 
 class TruckLoadBase(BaseModel):
@@ -1163,6 +1144,7 @@ class TruckLoadBase(BaseModel):
     load_date: datetime
     slip_number: Optional[str] = None
     po_number: Optional[str] = None
+    driver_id: Optional[int] = None
     driver_name: Optional[str] = None
     tonnes: Decimal
     rate_per_ton: Optional[Decimal] = None
@@ -1177,7 +1159,7 @@ class TruckLoadBase(BaseModel):
 
 
 class TruckLoadCreate(TruckLoadBase):
-    lines: List[TruckLoadLineIn] = []
+    pass
 
 
 class TruckLoadUpdate(BaseModel):
@@ -1187,6 +1169,7 @@ class TruckLoadUpdate(BaseModel):
     load_date: Optional[datetime] = None
     slip_number: Optional[str] = None
     po_number: Optional[str] = None
+    driver_id: Optional[int] = None
     driver_name: Optional[str] = None
     tonnes: Optional[Decimal] = None
     rate_per_ton: Optional[Decimal] = None
@@ -1196,7 +1179,6 @@ class TruckLoadUpdate(BaseModel):
     date_paid: Optional[datetime] = None
     is_paid: Optional[bool] = None
     is_split_load: Optional[bool] = None
-    lines: Optional[List[TruckLoadLineIn]] = None
     notes: Optional[str] = None
     checked_by: Optional[str] = None
 
@@ -1204,6 +1186,7 @@ class TruckLoadUpdate(BaseModel):
 class TruckLoadOut(TruckLoadBase):
     id: int
     rate_per_ton: Decimal
+    split_group_id: Optional[int] = None
     amount_excl_vat: Optional[Decimal] = None
     amount_incl_vat: Optional[Decimal] = None
     subcontractor_admin_fee_per_ton: Optional[Decimal] = None
@@ -1215,10 +1198,19 @@ class TruckLoadOut(TruckLoadBase):
     truck_registration: Optional[str] = None
     mine_name: Optional[str] = None
     supplier_name: Optional[str] = None
-    lines: List[TruckLoadLineOut] = []
 
     class Config:
         from_attributes = True
+
+
+class SplitLoadCreate(BaseModel):
+    load_a: TruckLoadCreate
+    load_b: TruckLoadCreate
+
+
+class SplitLoadOut(BaseModel):
+    load_a: TruckLoadOut
+    load_b: TruckLoadOut
 
 
 class TruckLoadBulkCreate(BaseModel):

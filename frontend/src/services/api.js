@@ -143,6 +143,7 @@ export const getFleetTrucks = (params = {}) => api.get('/fleet/trucks', { params
 export const getTruckLoads = (params = {}) => api.get('/truck-loads', { params })
 export const getTruckLoadSummary = (params = {}) => api.get('/truck-loads/summary', { params })
 export const createTruckLoad = (data) => api.post('/truck-loads', data)
+export const createSplitLoad = (data) => api.post('/truck-loads/split', data)
 export const bulkCreateTruckLoads = (data) => api.post('/truck-loads/bulk', data)
 export const updateTruckLoad = (id, data) => api.put(`/truck-loads/${id}`, data)
 export const deleteTruckLoad = (id) => api.delete(`/truck-loads/${id}`)
