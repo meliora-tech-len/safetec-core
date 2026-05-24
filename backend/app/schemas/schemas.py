@@ -121,9 +121,9 @@ class UserEntityAccessOut(BaseModel):
     entity_id: int
     entity_code: Optional[str] = None
     entity_name: Optional[str] = None
-    can_create: bool
-    can_edit: bool
-    can_delete: bool
+    can_create: bool = True
+    can_edit: bool = True
+    can_delete: bool = False
     allowed_modules: Optional[List[str]] = []
 
     class Config:

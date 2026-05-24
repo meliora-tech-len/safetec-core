@@ -148,9 +148,9 @@ class UserEntityAccess(Base):
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
 
     # CRUD permissions
-    can_create = Column(Boolean, default=True)
-    can_edit = Column(Boolean, default=True)
-    can_delete = Column(Boolean, default=False)
+    can_create = Column(Boolean, default=True, server_default='true')
+    can_edit = Column(Boolean, default=True, server_default='true')
+    can_delete = Column(Boolean, default=False, server_default='false')
 
     # Module-level access: ["clients", "invoices", "suppliers", "fleet", "diesel"]
     allowed_modules = Column(JSON, default=list)
