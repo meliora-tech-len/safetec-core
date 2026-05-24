@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import {
@@ -598,6 +598,7 @@ export default function SubcontractorProfilePage() {
                 <TruckCostingCard
                   key={td.truck.id}
                   truckData={td}
+                  templateSuppliers={costing.diesel_suppliers || []}
                   onAddExpense={() => openExpenseModal(td.truck.registration)}
                   onDeleteInvoice={setExpenseDeleteTarget}
                 />
@@ -811,7 +812,7 @@ function NewInvoiceRow({ form, setForm, saving, onSave, onCancel, firstInputRef,
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice }) {
   const [expanded, setExpanded] = useState(false)
   const [showLoadDetail, setShowLoadDetail] = useState(false)
   const {
@@ -829,13 +830,18 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
   const incomeIncl  = parseFloat(income_incl_vat) || 0
   const vat         = incomeIncl - incomeExcl
 
-  // Sort invoices: by supplier name, then diesel (vat_applicable=true) before admin fee
-  const sortedInvoices = [...supplier_invoices].sort((a, b) => {
-    const na = (a.supplier_name || '').toLowerCase()
-    const nb = (b.supplier_name || '').toLowerCase()
-    if (na < nb) return -1
-    if (na > nb) return 1
-    return (b.vat_applicable ? 1 : 0) - (a.vat_applicable ? 1 : 0)
+  // Build lookup: supplier_name (upper) → { diesel: inv|null, fee: inv|null }
+  const invBySupplier = {}
+  for (const inv of supplier_invoices) {
+    const key = (inv.supplier_name || `Supplier #${inv.supplier_id}`).toUpperCase()
+    if (!invBySupplier[key]) invBySupplier[key] = { diesel: null, fee: null, dieselAll: [], feeAll: [] }
+    if (inv.vat_applicable) invBySupplier[key].dieselAll.push(inv)
+    else invBySupplier[key].feeAll.push(inv)
+  }
+  // Any invoices from suppliers not in the template (custom additions)
+  const extraInvoices = supplier_invoices.filter(inv => {
+    const key = (inv.supplier_name || `Supplier #${inv.supplier_id}`).toUpperCase()
+    return !templateSuppliers.map(s => s.toUpperCase()).includes(key)
   })
 
   const colHdr = (label, right = false) => (
@@ -909,22 +915,60 @@ function TruckCostingCard({ truckData, onAddExpense, onDeleteInvoice }) {
               <td style={tdStyle}></td>
             </tr>
 
-            {/* Per-invoice rows */}
-            {sortedInvoices.map(inv => {
-              const supplierLabel = (inv.supplier_name || `Supplier #${inv.supplier_id}`).toUpperCase()
-              const rowLabel = inv.vat_applicable ? `${supplierLabel} DIESEL` : `${supplierLabel} DIESEL ADMIN FEE`
+            {/* Template supplier rows — always present */}
+            {templateSuppliers.map(supplierName => {
+              const key = supplierName.toUpperCase()
+              const group = invBySupplier[key] || { dieselAll: [], feeAll: [] }
+              const dieselAmt = group.dieselAll.reduce((s, i) => s + parseFloat(i.amount || 0), 0)
+              const feeAmt = group.feeAll.reduce((s, i) => s + parseFloat(i.amount || 0), 0)
+              return (
+                <React.Fragment key={supplierName}>
+                  <tr>
+                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{key} DIESEL</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(dieselAmt)}</td>
+                    <td style={tdStyle}>
+                      {group.dieselAll.map(inv => (
+                        <button key={inv.id} className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
+                          <Trash2 size={12} color="var(--danger)" />
+                        </button>
+                      ))}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{key} DIESEL ADMIN FEE</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(feeAmt)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                    <td style={tdStyle}>
+                      {group.feeAll.map(inv => (
+                        <button key={inv.id} className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
+                          <Trash2 size={12} color="var(--danger)" />
+                        </button>
+                      ))}
+                    </td>
+                  </tr>
+                </React.Fragment>
+              )
+            })}
+            {/* Extra invoices from suppliers not in the template */}
+            {extraInvoices.map(inv => {
+              const label = (inv.supplier_name || `Supplier #${inv.supplier_id}`).toUpperCase()
               return (
                 <tr key={inv.id}>
-                  <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{rowLabel}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    {inv.vat_applicable ? dash : fmtC(inv.amount)}
+                  <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    {label} {inv.vat_applicable ? 'DIESEL' : 'DIESEL ADMIN FEE'}
                   </td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    {inv.vat_applicable ? fmtC(inv.amount) : dash}
-                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{inv.vat_applicable ? dash : fmtC(inv.amount)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{inv.vat_applicable ? fmtC(inv.amount) : dash}</td>
                   <td style={tdStyle}>
                     <button className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
                       <Trash2 size={12} color="var(--danger)" />

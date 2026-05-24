@@ -1681,3 +1681,4 @@ class SubcontractorCostingOut(BaseModel):
     year: int
     trucks: List[SubcontractorTruckCostingOut]
     summary: SubcontractorCostingSummary
+    diesel_suppliers: List[str] = []

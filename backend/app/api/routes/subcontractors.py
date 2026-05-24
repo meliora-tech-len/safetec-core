@@ -8,7 +8,7 @@ from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity, DieselSettings
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity, DieselSettings, DieselRate, Supplier
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
@@ -368,12 +368,24 @@ def get_subcontractor_costing(
         net_payable=sum((t.net_payable for t in truck_results), D0),
     )
 
+    diesel_supplier_names = [
+        row[0] for row in (
+            db.query(Supplier.name)
+            .join(DieselRate, DieselRate.supplier_id == Supplier.id)
+            .filter(DieselRate.entity_id == sub.entity_id, DieselRate.is_active == True)
+            .distinct()
+            .order_by(Supplier.name)
+            .all()
+        )
+    ]
+
     return SubcontractorCostingOut(
         subcontractor=SubcontractorOut.model_validate(sub),
         month=month,
         year=year,
         trucks=truck_results,
         summary=summary,
+        diesel_suppliers=diesel_supplier_names,
     )
 
 
