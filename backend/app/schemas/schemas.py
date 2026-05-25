@@ -1001,10 +1001,13 @@ class DriverAdditionalLoadOut(DriverAdditionalLoadCreate):
     created_at: datetime
     verified_by: Optional[int] = None
     verified2_by: Optional[int] = None
+    verified3_by: Optional[int] = None
     verified_by_initials: Optional[str] = None
     verified_by_date: Optional[str] = None
     verified2_by_initials: Optional[str] = None
     verified2_by_date: Optional[str] = None
+    verified3_by_initials: Optional[str] = None
+    verified3_by_date: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -1032,10 +1035,13 @@ class DriverFoodPaymentOut(DriverFoodPaymentCreate):
     created_at: datetime
     verified_by: Optional[int] = None
     verified2_by: Optional[int] = None
+    verified3_by: Optional[int] = None
     verified_by_initials: Optional[str] = None
     verified_by_date: Optional[str] = None
     verified2_by_initials: Optional[str] = None
     verified2_by_date: Optional[str] = None
+    verified3_by_initials: Optional[str] = None
+    verified3_by_date: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -1365,11 +1371,14 @@ class SupplierInvoiceOut(BaseModel):
     # Verifier IDs (for frontend lock logic)
     verified_by: Optional[int] = None
     verified2_by: Optional[int] = None
+    verified3_by: Optional[int] = None
     # Verification display (initials + date)
     verified_by_initials: Optional[str] = None
     verified_by_date: Optional[str] = None
     verified2_by_initials: Optional[str] = None
     verified2_by_date: Optional[str] = None
+    verified3_by_initials: Optional[str] = None
+    verified3_by_date: Optional[str] = None
     is_multi_line: bool = False
     line_items: List[SupplierInvoiceLineItemOut] = []
 
@@ -1527,11 +1536,15 @@ class DieselFillUpOut(BaseModel):
     supplier_invoice_number: Optional[str] = None
     verified2_by: Optional[int] = None
     verified2_at: Optional[datetime] = None
+    verified3_by: Optional[int] = None
+    verified3_at: Optional[datetime] = None
     # Verification display (initials + date)
     verified_by_initials: Optional[str] = None
     verified_by_date: Optional[str] = None
     verified2_by_initials: Optional[str] = None
     verified2_by_date: Optional[str] = None
+    verified3_by_initials: Optional[str] = None
+    verified3_by_date: Optional[str] = None
 
     class Config:
         from_attributes = True

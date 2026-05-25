@@ -334,11 +334,13 @@ def get_subcontractor_costing(
 
         inv_list = (
             db.query(SupplierInvoice)
+            .join(Supplier, Supplier.id == SupplierInvoice.supplier_id)
             .filter(
                 SupplierInvoice.vehicle_reg == truck.registration,
                 SupplierInvoice.statement_month == month,
                 SupplierInvoice.statement_year == year,
                 SupplierInvoice.is_archived == False,
+                Supplier.is_diesel_supplier == False,
             )
             .all()
             if truck.registration else []

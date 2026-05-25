@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import {
   getSuppliers, getDieselRates, createDieselRate, updateDieselRate,
@@ -6,6 +6,7 @@ import {
 } from '../services/api'
 import { Plus, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Save, RefreshCw, Fuel } from 'lucide-react'
 import toast from 'react-hot-toast'
+import DateInput from '../components/DateInput'
 
 const fmt = (n, d = 2) => Number(n || 0).toFixed(d)
 const fmt2 = (n) => Number(n || 0).toFixed(2)
@@ -496,8 +497,7 @@ export default function DieselRatesPage() {
 
             <div style={styles.field}>
               <label style={styles.label}>Effective Date</label>
-              <input
-                type="date"
+              <DateInput
                 value={form.effective_date}
                 onChange={e => setForm(f => ({ ...f, effective_date: e.target.value }))}
                 style={styles.input}

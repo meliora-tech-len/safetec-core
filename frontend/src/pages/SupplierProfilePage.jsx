@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+﻿import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   getSupplier, getEntities,
@@ -7,6 +7,7 @@ import {
   verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
   addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
   getSubcontractors,
+  finalizeSupplierInvoice,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
@@ -16,6 +17,7 @@ import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
 import DeleteModal from '../components/DeleteModal'
 import SearchableSelect from '../components/SearchableSelect'
+import DateInput from '../components/DateInput'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -337,6 +339,13 @@ export default function SupplierProfilePage() {
   const handleVerify = async (inv) => {
     try {
       await verifySupplierInvoice(inv.id)
+      loadInvoices()
+    } catch (e) { toast.error(errorMessage(e)) }
+  }
+
+  const handleFinalize = async (inv) => {
+    try {
+      await finalizeSupplierInvoice(inv.id)
       loadInvoices()
     } catch (e) { toast.error(errorMessage(e)) }
   }
@@ -784,13 +793,12 @@ export default function SupplierProfilePage() {
                             {/* Date */}
                             <td style={styles.td}>
                               {isEditing ? (
-                                <input
-                                  ref={firstInputRef}
-                                  type="date" value={f.invoice_date}
+                                <DateInput
+                                  ref={firstInputRef} value={f.invoice_date}
                                   onChange={e => setEditForm(p => ({ ...p, invoice_date: e.target.value }))}
                                   onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
                                   onClick={e => e.stopPropagation()}
-                                  style={styles.cellInput}
+                                  inputStyle={styles.cellInput}
                                 />
                               ) : formatDate(inv.invoice_date)}
                             </td>
@@ -979,7 +987,7 @@ export default function SupplierProfilePage() {
 
                             {/* Verified */}
                             <td style={styles.td}>
-                              <VerifyBadge item={inv} onVerify={handleVerify} currentUserId={user?.id} isAdmin={isAdmin} />
+                              <VerifyBadge item={inv} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} />
                             </td>
 
                             {/* Paid */}
@@ -1113,9 +1121,9 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
         </td>
       )}
       <td style={styles.td}>
-        <input ref={firstInputRef} type="date" value={form.invoice_date}
+        <DateInput ref={firstInputRef} value={form.invoice_date}
           onChange={e => set('invoice_date', e.target.value)}
-          onKeyDown={e => onKeyDown(e, onSave, onCancel)} style={styles.cellInput} />
+          onKeyDown={e => onKeyDown(e, onSave, onCancel)} inputStyle={styles.cellInput} />
       </td>
       <td style={styles.td}>
         <input value={form.invoice_number} placeholder="e.g. TM1794"

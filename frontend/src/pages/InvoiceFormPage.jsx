@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { getEntities, getSuppliers, getCustomers, createCustomer, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
+import DateInput from '../components/DateInput'
 
 const LINE_TYPES = [
   { value: 'item',   label: 'Item',   color: 'var(--accent)' },
@@ -403,11 +404,11 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
               </div>
               <div>
                 <label className="form-label">Issue Date</label>
-                <input className="form-input" type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} />
+                <DateInput className="form-input" value={issueDate} onChange={e => setIssueDate(e.target.value)} />
               </div>
               <div>
                 <label className="form-label">Due Date</label>
-                <input className="form-input" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                <DateInput className="form-input" value={dueDate} onChange={e => setDueDate(e.target.value)} />
               </div>
             </div>
 

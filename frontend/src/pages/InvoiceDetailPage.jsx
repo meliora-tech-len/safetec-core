@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getInvoice, updateInvoice, deleteInvoice, downloadInvoicePdf } from '../services/api'
 import { useTheme } from '../hooks/useTheme'
@@ -6,6 +6,7 @@ import { formatCurrency, formatDate, statusBadgeClass, statusLabel, errorMessage
 import toast from 'react-hot-toast'
 import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail, Send } from 'lucide-react'
 import DeleteModal from '../components/DeleteModal'
+import DateInput from '../components/DateInput'
 
 const STATUS_FLOW = {
   draft:     ['ready', 'cancelled'],
@@ -338,8 +339,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
             <div style={styles.modalBody}>
               <div style={styles.field}>
                 <label style={styles.fieldLabel}>Payment Date</label>
-                <input
-                  type="date"
+                <DateInput
                   value={payDate}
                   onChange={e => setPayDate(e.target.value)}
                   style={styles.input}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+﻿import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
@@ -19,6 +19,7 @@ import {
 import toast from 'react-hot-toast'
 import DeleteModal from '../components/DeleteModal'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
+import DateInput from '../components/DateInput'
 
 const fmt    = (n) => n == null ? '—' : `R ${parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtNum = (n) => n == null ? '—' : parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
@@ -57,7 +58,7 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
     <tr style={{ background: 'var(--accent-subtle)', outline: '2px solid var(--accent)', outlineOffset: -1 }}
       onClick={e => e.stopPropagation()}>
       <td style={S.td}>
-        <input ref={firstInputRef} type="date" value={form.load_date}
+        <DateInput ref={firstInputRef} value={form.load_date}
           onChange={e => set('load_date', e.target.value)} onKeyDown={handleKey} style={S.input} />
       </td>
       <td style={S.td}>
@@ -259,7 +260,7 @@ function DieselSection({ truck, year, month, suppliers }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
             <div>
               <label className="form-label">Date *</label>
-              <input className="form-input" type="date" value={form.fillup_date} onChange={e => set('fillup_date', e.target.value)} />
+              <DateInput className="form-input" value={form.fillup_date} onChange={e => set('fillup_date', e.target.value)} />
             </div>
             <div>
               <label className="form-label">Supplier *</label>
@@ -525,7 +526,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
             </div>
             <div>
               <label className="form-label">Date</label>
-              <input className="form-input" type="date" value={form.load_date} onChange={e => set('load_date', e.target.value)} />
+              <DateInput className="form-input" value={form.load_date} onChange={e => set('load_date', e.target.value)} />
             </div>
             <div>
               <label className="form-label">Amount (R) *</label>
@@ -709,7 +710,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
             </div>
             <div>
               <label className="form-label">Date</label>
-              <input className="form-input" type="date" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} />
+              <DateInput className="form-input" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} />
             </div>
             <div>
               <label className="form-label">Amount (R) *</label>
@@ -1857,7 +1858,7 @@ export default function TruckLoadProfilePage() {
                       </div>
                       <div>
                         <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Date</label>
-                        <input type="date" value={f.load_date} onChange={e => setField('load_date', e.target.value)}
+                        <DateInput value={f.load_date} onChange={e => setField('load_date', e.target.value)}
                           style={{ ...S.input, width: '100%' }} />
                       </div>
                       <div>

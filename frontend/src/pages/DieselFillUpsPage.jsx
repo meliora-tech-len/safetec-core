@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+﻿import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   getDieselFillUps, getDieselFillUpSummary, createDieselFillUp,
-  updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp,
+  updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp, finalizeDieselFillUp,
   getCurrentDieselRate, getEntities, getDieselSettings, getSuppliers,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
@@ -13,6 +13,7 @@ import SearchableSelect from '../components/SearchableSelect'
 import VerifyBadge from '../components/VerifyBadge'
 import DeleteModal from '../components/DeleteModal'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
+import DateInput from '../components/DateInput'
 
 const API = import.meta.env.VITE_API_URL || ''
 function rawApi(path, opts = {}) {
@@ -207,6 +208,11 @@ export default function DieselFillUpsPage() {
 
   const handleVerify = async (f) => {
     try { await verifyDieselFillUp(f.id); load() }
+    catch (err) { toast.error(errorMessage(err)) }
+  }
+
+  const handleFinalize = async (f) => {
+    try { await finalizeDieselFillUp(f.id); load() }
     catch (err) { toast.error(errorMessage(err)) }
   }
 
@@ -453,7 +459,7 @@ export default function DieselFillUpsPage() {
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.invoice_number || '—'}</td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.slip_number || '—'}</td>
                   <td>
-                    <VerifyBadge item={f} onVerify={handleVerify} currentUserId={user?.id} isAdmin={isAdmin} />
+                    <VerifyBadge item={f} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} />
                   </td>
                   <td onClick={e => e.stopPropagation()}>
                     <button className="btn-icon btn-ghost" onClick={e => handleDelete(f, e)} title="Delete">
@@ -520,7 +526,7 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
 
       {/* Date */}
       <td style={S.td}>
-        <input ref={firstInputRef} type="date" value={form.fillup_date}
+        <DateInput ref={firstInputRef} value={form.fillup_date}
           onChange={e => set('fillup_date', e.target.value)} onKeyDown={onKeyDown}
           max={new Date().toISOString().slice(0, 10)} style={S.input} />
       </td>

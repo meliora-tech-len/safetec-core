@@ -21,7 +21,7 @@ from app.schemas.schemas import (
 )
 from app.services.diesel_service import DieselCalculationService
 from app.services.audit import log_action
-from app.services.verification import apply_verify_step, get_verification_display
+from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
 
 router = APIRouter(prefix="/api/diesel", tags=["diesel"])
 
@@ -654,6 +654,27 @@ def verify_fillup(
         db, "diesel_fillup.verified", user_id=current_user.id,
         entity_id=f.entity_id, resource_type="diesel_fillup",
         resource_id=fillup_id, description=f"Verified diesel fill-up #{fillup_id}",
+    )
+    db.commit()
+    db.refresh(f)
+    return _enrich_fillup(f, db)
+
+
+@router.patch("/fillups/{fillup_id}/finalize")
+def finalize_fillup(
+    fillup_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    f = db.query(DieselFillUp).filter(DieselFillUp.id == fillup_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Fill-up not found")
+    _check_entity_access(f.entity_id, current_user)
+    apply_finalize_step(f, current_user, is_admin=(current_user.role == "admin"))
+    log_action(
+        db, "diesel_fillup.finalized", user_id=current_user.id,
+        entity_id=f.entity_id, resource_type="diesel_fillup",
+        resource_id=fillup_id, description=f"Applied final lock on diesel fill-up #{fillup_id}",
     )
     db.commit()
     db.refresh(f)

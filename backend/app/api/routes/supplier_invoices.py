@@ -16,7 +16,7 @@ from app.schemas.schemas import (
     SupplierCurrentPayable, Supplier30DaysPayable,
 )
 from app.services.audit import log_action
-from app.services.verification import apply_verify_step, get_verification_display
+from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
 from app.services.diesel_service import DieselCalculationService
 
 router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
@@ -462,7 +462,7 @@ def update_supplier_invoice(
     return inv
 
 
-# ── 2-step verify ─────────────────────────────────────────────────────────────
+# ── Verification ──────────────────────────────────────────────────────────────
 
 @router.patch("/{invoice_id}/verify")
 def verify_supplier_invoice(
@@ -480,6 +480,30 @@ def verify_supplier_invoice(
         db, "supplier_invoice.verified", user_id=current_user.id,
         entity_id=inv.entity_id, resource_type="supplier_invoice",
         resource_id=invoice_id, description=f"Verified supplier invoice {inv.invoice_number}",
+    )
+    db.commit()
+    db.refresh(inv)
+    d = {c.name: getattr(inv, c.name) for c in inv.__table__.columns}
+    d.update(get_verification_display(db, inv))
+    return d
+
+
+@router.patch("/{invoice_id}/finalize")
+def finalize_supplier_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+    apply_finalize_step(inv, current_user, is_admin=(current_user.role == "admin"))
+    log_action(
+        db, "supplier_invoice.finalized", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice",
+        resource_id=invoice_id,
+        description=f"Applied final lock on supplier invoice {inv.invoice_number}",
     )
     db.commit()
     db.refresh(inv)

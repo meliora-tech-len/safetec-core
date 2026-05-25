@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { Plus, Edit2, ChevronDown, ChevronRight, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
   getMines, createMine, updateMine, deleteMine,
   getMineRates, addMineRate, getEntities, getPayrollSettings,
 } from '../services/api'
+import DateInput from '../components/DateInput'
 
 const fmt = (n) =>
   n == null
@@ -136,8 +137,7 @@ function InlineRateForm({ mineId, entityId, currentRate, onSave, onCancel }) {
         required
         autoFocus
       />
-      <input
-        type="date"
+      <DateInput
         className="form-control"
         style={{ width: 130, padding: '4px 8px', fontSize: 12 }}
         value={effectiveFrom}

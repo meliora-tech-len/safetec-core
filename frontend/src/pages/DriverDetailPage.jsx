@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, X, Edit2, Check, Download } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import VerifyBadge from '../components/VerifyBadge'
+import DateInput from '../components/DateInput'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -121,7 +122,7 @@ function TripModal({ defaultDate, onSave, onClose }) {
   return (
     <Modal title="Add Trip Date" onClose={onClose}>
       <label className="form-label">Date</label>
-      <input className="form-input" type="date" value={form.trip_date} onChange={e => set('trip_date', e.target.value)} />
+      <DateInput className="form-input" value={form.trip_date} onChange={e => set('trip_date', e.target.value)} />
       <label className="form-label" style={{ marginTop: 12 }}>Mine</label>
       <input className="form-input" list="mine-list" value={form.mine_name} onChange={e => set('mine_name', e.target.value)} placeholder="Mine name" />
       <datalist id="mine-list">{ALL_MINES.map(m => <option key={m} value={m} />)}</datalist>
@@ -152,7 +153,7 @@ function AdditionalLoadModal({ entry, defaultTruckReg, onSave, onClose }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
         <div>
           <label className="form-label">Date *</label>
-          <input className="form-input" type="date" value={form.load_date} onChange={e => set('load_date', e.target.value)} />
+          <DateInput className="form-input" value={form.load_date} onChange={e => set('load_date', e.target.value)} />
         </div>
         <div>
           <label className="form-label">Amount (R) *</label>
@@ -203,7 +204,7 @@ function FoodPaymentModal({ entry, onSave, onClose }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
         <div>
           <label className="form-label">Date *</label>
-          <input className="form-input" type="date" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} />
+          <DateInput className="form-input" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} />
         </div>
         <div>
           <label className="form-label">Amount (R) *</label>
@@ -717,12 +718,20 @@ export default function DriverDetailPage() {
                             ...(al.verified2_by ? { background: 'rgba(253,224,71,0.55)', fontWeight: 700 } : {}),
                           }}>{fmt(al.amount)}</td>
                           <td>
-                            <VerifyBadge item={al} currentUserId={user?.id} isAdmin={isAdmin} onVerify={async (item) => {
-                              try {
-                                await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/verify`)
-                                loadCycle()
-                              } catch (e) { toast.error(e?.detail || 'Verification failed') }
-                            }} />
+                            <VerifyBadge item={al} currentUserId={user?.id} isAdmin={isAdmin}
+                              onVerify={async (item) => {
+                                try {
+                                  await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/verify`)
+                                  loadCycle()
+                                } catch (e) { toast.error(e?.detail || 'Verification failed') }
+                              }}
+                              onFinalize={async (item) => {
+                                try {
+                                  await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/finalize`)
+                                  loadCycle()
+                                } catch (e) { toast.error(e?.detail || 'Finalise failed') }
+                              }}
+                            />
                           </td>
                           <td style={{ display: 'flex', gap: 4 }}>
                             <button className="btn-icon" onClick={() => setAlModal(al)} style={{ padding: 4 }}><Edit2 size={11} /></button>
@@ -780,12 +789,20 @@ export default function DriverDetailPage() {
                             ...(fp.verified2_by ? { background: 'rgba(253,224,71,0.55)', fontWeight: 700 } : {}),
                           }}>{fmt(fp.amount)}</td>
                           <td>
-                            <VerifyBadge item={fp} currentUserId={user?.id} isAdmin={isAdmin} onVerify={async (item) => {
-                              try {
-                                await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/verify`)
-                                loadCycle()
-                              } catch (e) { toast.error(e?.detail || 'Verification failed') }
-                            }} />
+                            <VerifyBadge item={fp} currentUserId={user?.id} isAdmin={isAdmin}
+                              onVerify={async (item) => {
+                                try {
+                                  await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/verify`)
+                                  loadCycle()
+                                } catch (e) { toast.error(e?.detail || 'Verification failed') }
+                              }}
+                              onFinalize={async (item) => {
+                                try {
+                                  await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/finalize`)
+                                  loadCycle()
+                                } catch (e) { toast.error(e?.detail || 'Finalise failed') }
+                              }}
+                            />
                           </td>
                           <td style={{ display: 'flex', gap: 4 }}>
                             <button className="btn-icon" onClick={() => setFpModal(fp)} style={{ padding: 4 }}><Edit2 size={11} /></button>

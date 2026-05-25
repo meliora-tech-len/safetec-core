@@ -1,10 +1,11 @@
-import { Fragment, useState, useEffect, useCallback, useRef, useMemo } from 'react'
+﻿import { Fragment, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Truck, Car, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertTriangle, AlertCircle, Clock, ChevronsUpDown, Check } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
+import DateInput from '../components/DateInput'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -249,8 +250,7 @@ function TrailerFields({ trailers, onChange }) {
           <div className="form-row">
             <div className="form-group">
               <label>Licence Expiry</label>
-              <input
-                type="date"
+              <DateInput
                 value={t.licence_expiry}
                 onChange={e => update(t.slot, 'licence_expiry', e.target.value)}
               />
@@ -285,8 +285,7 @@ function TrailerFields({ trailers, onChange }) {
             </div>
             <div className="form-group">
               <label>Contract End Date</label>
-              <input
-                type="date"
+              <DateInput
                 value={t.finance_contract_end}
                 onChange={e => update(t.slot, 'finance_contract_end', e.target.value)}
               />
@@ -616,7 +615,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
                   </div>
                   <div className="form-group">
                     <label>Licence Expiry Date</label>
-                    <input type="date" value={form.licence_expiry} onChange={e => set('licence_expiry', e.target.value)} />
+                    <DateInput value={form.licence_expiry} onChange={e => set('licence_expiry', e.target.value)} />
                   </div>
                 </div>
               </div>
@@ -646,8 +645,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
                   </div>
                   <div className="form-group">
                     <label>Contract End Date</label>
-                    <input
-                      type="date"
+                    <DateInput
                       value={form.finance_contract_end}
                       onChange={e => set('finance_contract_end', e.target.value)}
                     />
@@ -790,7 +788,7 @@ function PersonalVehicleModal({ pv, entities, onSave, onClose }) {
 
             <div className="form-group">
               <label>Licence Expiry Date</label>
-              <input type="date" value={form.licence_expiry} onChange={e => set('licence_expiry', e.target.value)} />
+              <DateInput value={form.licence_expiry} onChange={e => set('licence_expiry', e.target.value)} />
             </div>
 
             <div className="form-group">

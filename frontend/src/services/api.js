@@ -199,13 +199,19 @@ export const updateDieselFillUp = (id, data) => api.put(`/diesel/fillups/${id}`,
 export const deleteDieselFillUp = (id) => api.delete(`/diesel/fillups/${id}`)
 export const archiveDieselFillUp = (id) => api.patch(`/diesel/fillups/${id}/archive`)
 export const verifyDieselFillUp       = (id) => api.patch(`/diesel/fillups/${id}/verify`)
+export const finalizeDieselFillUp     = (id) => api.patch(`/diesel/fillups/${id}/finalize`)
 export const getDieselWarnings        = (params = {}) => api.get('/diesel/warnings', { params })
 export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)
 export const verifySupplierInvoice    = (id) => api.patch(`/supplier-invoices/${id}/verify`)
+export const finalizeSupplierInvoice  = (id) => api.patch(`/supplier-invoices/${id}/finalize`)
 export const verifyAdditionalLoad     = (driverId, year, month, loadId) =>
   api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/verify`)
+export const finalizeAdditionalLoad   = (driverId, year, month, loadId) =>
+  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/finalize`)
 export const verifyFoodPayment        = (driverId, year, month, paymentId) =>
   api.patch(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}/verify`)
+export const finalizeFoodPayment      = (driverId, year, month, paymentId) =>
+  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}/finalize`)
 
 // ── Payroll Settings ──────────────────────────────────────────────────────────
 export const getPayrollSettings = () => api.get('/payroll-settings')

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+﻿import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import {
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import SearchableSelect from '../components/SearchableSelect'
 import DeleteModal from '../components/DeleteModal'
+import DateInput from '../components/DateInput'
 
 const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December']
@@ -441,13 +442,12 @@ export default function SubcontractorProfilePage() {
                                 {/* Date */}
                                 <td style={styles.td}>
                                   {isEditing ? (
-                                    <input
-                                      ref={firstInputRef}
-                                      type="date" value={f.invoice_date}
+                                    <DateInput
+                                      ref={firstInputRef} value={f.invoice_date}
                                       onChange={e => setEditForm(p => ({ ...p, invoice_date: e.target.value }))}
                                       onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
                                       onClick={e => e.stopPropagation()}
-                                      style={styles.cellInput}
+                                      inputStyle={styles.cellInput}
                                     />
                                   ) : formatDate(inv.invoice_date)}
                                 </td>
@@ -664,7 +664,7 @@ export default function SubcontractorProfilePage() {
                 <div className="form-row">
                   <div className="form-group">
                     <label>Date *</label>
-                    <input type="date" value={expenseForm.invoice_date} onChange={e => setEF('invoice_date', e.target.value)} required />
+                    <DateInput value={expenseForm.invoice_date} onChange={e => setEF('invoice_date', e.target.value)} required />
                   </div>
                   <div className="form-group">
                     <label>Invoice # *</label>
@@ -800,9 +800,9 @@ function NewInvoiceRow({ form, setForm, saving, onSave, onCancel, firstInputRef,
   return (
     <tr style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border-accent)' }}>
       <td style={styles.td}>
-        <input ref={firstInputRef} type="date" value={form.invoice_date}
+        <DateInput ref={firstInputRef} value={form.invoice_date}
           onChange={e => set('invoice_date', e.target.value)}
-          onKeyDown={e => onKeyDown(e, onSave, onCancel)} style={styles.cellInput} />
+          onKeyDown={e => onKeyDown(e, onSave, onCancel)} inputStyle={styles.cellInput} />
       </td>
       <td style={styles.td}>
         <input value={form.invoice_number} placeholder="e.g. INV-001"
