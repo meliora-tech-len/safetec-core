@@ -6,6 +6,7 @@ import {
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
   verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
   addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
+  getSubcontractors,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
@@ -23,7 +24,7 @@ const MONTH_NAMES = [
 
 const today = new Date().toISOString().slice(0, 10)
 
-const blankForm = (entityId) => ({
+const blankForm = (entityId, isDieselSupplier = false) => ({
   entity_id: entityId || '',
   invoice_date: today,
   invoice_number: '',
@@ -32,7 +33,7 @@ const blankForm = (entityId) => ({
   _rate: '',
   vehicle_reg: '',
   description: '',
-  vat_applicable: true,
+  vat_applicable: !isDieselSupplier,
   notes: '',
   is_multi_line: false,
   line_items: [],
@@ -42,6 +43,7 @@ const blankLineItem = () => ({
   _key: Math.random(),
   item_code: '',
   item_description: '',
+  unit: '',
   quantity: '',
   _rate: '',
   amount_excl_vat: '',
@@ -90,6 +92,10 @@ export default function SupplierProfilePage() {
   // Diesel rate auto-fill state (for diesel suppliers)
   const [dieselRate, setDieselRate] = useState(null)
   const [amountAutoFilled, setAmountAutoFilled] = useState(false)
+  const [subbies, setSubbies] = useState([])
+  const [sortCol, setSortCol] = useState('vehicle_reg')
+  const [sortDir, setSortDir] = useState('asc')
+  const [filterText, setFilterText] = useState('')
 
   const loadInvoices = useCallback(() =>
     getSupplierInvoices({ supplier_id: supplierId }).then(r => setGroups(r.data))
@@ -99,7 +105,7 @@ export default function SupplierProfilePage() {
     Promise.all([
       getSupplier(supplierId).then(r => {
         setSupplier(r.data)
-        setNewForm(blankForm(r.data.entity_id))
+        setNewForm(blankForm(r.data.entity_id, r.data.is_diesel_supplier))
       }),
       getEntities().then(r => setEntities(r.data)),
     ]).then(() => setLoading(false))
@@ -140,6 +146,14 @@ export default function SupplierProfilePage() {
       })
       .catch(() => {})
   }, [supplierId])
+
+  // Fetch subcontractors for diesel supplier's entity (used for Subbie Name dropdown)
+  useEffect(() => {
+    if (!supplier?.is_diesel_supplier || !supplier?.entity_id) { setSubbies([]); return }
+    getSubcontractors({ entity_id: supplier.entity_id, limit: 500 })
+      .then(r => setSubbies(r.data || []))
+      .catch(() => setSubbies([]))
+  }, [supplier?.id, supplier?.entity_id, supplier?.is_diesel_supplier])
 
   // Focus first input whenever new row appears or edit row opens
   useEffect(() => {
@@ -205,11 +219,11 @@ export default function SupplierProfilePage() {
   }
 
   const cancelEdit = () => { setEditingId(null); setEditForm({}) }
-  const cancelNew = () => { setShowNew(false); setNewForm(blankForm(supplier?.entity_id)); setAmountAutoFilled(false) }
+  const cancelNew = () => { setShowNew(false); setNewForm(blankForm(supplier?.entity_id, supplier?.is_diesel_supplier)); setAmountAutoFilled(false) }
 
   const handleAddClick = () => {
     setEditingId(null)
-    setNewForm(blankForm(supplier?.entity_id))
+    setNewForm(blankForm(supplier?.entity_id, supplier?.is_diesel_supplier))
     setAmountAutoFilled(false)
     setDieselRate(null)
     setShowNew(true)
@@ -248,6 +262,8 @@ export default function SupplierProfilePage() {
   const saveNew = async () => {
     const err = validate(newForm)
     if (err) return toast.error(err)
+    if (isDuplicateInvoiceNumber(newForm.invoice_number))
+      return toast.error(`Invoice "${newForm.invoice_number}" already exists for this supplier`)
     setSaving(true)
     try {
       const r = await createSupplierInvoice({ ...buildPayload(newForm), supplier_id: parseInt(supplierId) })
@@ -276,6 +292,8 @@ export default function SupplierProfilePage() {
   const saveEdit = async () => {
     const err = validate(editForm)
     if (err) return toast.error(err)
+    if (isDuplicateInvoiceNumber(editForm.invoice_number, editingId))
+      return toast.error(`Invoice "${editForm.invoice_number}" already exists for this supplier`)
     setSaving(true)
     try {
       await updateSupplierInvoice(editingId, buildPayload(editForm))
@@ -357,6 +375,47 @@ export default function SupplierProfilePage() {
   // Suppliers with requires_registration=false (e.g. Axxess) don't use vehicle regs on invoices
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
+
+  const isDuplicateInvoiceNumber = (invoiceNumber, excludeId = null) =>
+    allInvoices.some(inv =>
+      inv.invoice_number.trim().toLowerCase() === invoiceNumber.trim().toLowerCase() &&
+      inv.id !== excludeId
+    )
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('asc') }
+  }
+
+  const sortArrow = (col) => sortCol === col ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
+
+  const processInvoices = (invoices) => {
+    let result = invoices
+    if (filterText.trim()) {
+      const q = filterText.toLowerCase()
+      result = result.filter(inv =>
+        (inv.invoice_number || '').toLowerCase().includes(q) ||
+        (inv.vehicle_reg || '').toLowerCase().includes(q) ||
+        (inv.description || '').toLowerCase().includes(q) ||
+        (inv.notes || '').toLowerCase().includes(q)
+      )
+    }
+    return [...result].sort((a, b) => {
+      let av, bv
+      switch (sortCol) {
+        case 'invoice_date':   av = a.invoice_date || '';   bv = b.invoice_date || '';   break
+        case 'invoice_number': av = a.invoice_number || ''; bv = b.invoice_number || ''; break
+        case 'vehicle_reg':    av = (a.vehicle_reg || '').toUpperCase(); bv = (b.vehicle_reg || '').toUpperCase(); break
+        case 'slip_number':    av = (a.slip_number || '').toLowerCase(); bv = (b.slip_number || '').toLowerCase(); break
+        case 'amount':         av = parseFloat(a.amount) || 0; bv = parseFloat(b.amount) || 0; break
+        case 'litres':         av = parseFloat(a.litres) || 0; bv = parseFloat(b.litres) || 0; break
+        default:               av = ''; bv = ''
+      }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+  }
 
   if (loading) return <div style={styles.page}><div className="loading-center"><div className="spinner" /></div></div>
   if (!supplier) return <div style={styles.page}><p style={{ color: 'var(--text-muted)' }}>Supplier not found.</p></div>
@@ -515,8 +574,9 @@ export default function SupplierProfilePage() {
                 {multiEntity && <th style={styles.th}>Entity</th>}
                 <th style={styles.th}>Date</th>
                 <th style={styles.th}>Invoice #</th>
+                {isDiesel && <th style={styles.th}>Slip #</th>}
                 {showVehicleReg && <th style={styles.th}>Vehicle Reg</th>}
-                <th style={styles.th}>Description</th>
+                <th style={styles.th}>{isDiesel ? 'Subbie Name' : 'Description'}</th>
                 <th style={styles.th}>Amount</th>
                 {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Litres</th>}
                 {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
@@ -541,10 +601,11 @@ export default function SupplierProfilePage() {
                     amountAutoFilled={amountAutoFilled}
                     onAmountEdit={() => setAmountAutoFilled(false)}
                     trucks={trucks}
+                    subbies={subbies}
                   />
                 : <tr>
                     <td
-                      colSpan={9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 2 : 0)}
+                      colSpan={9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)}
                       style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}
                     >
                       No invoices yet — click "Add Invoice" to start
@@ -570,6 +631,28 @@ export default function SupplierProfilePage() {
           catch (e) { toast.error(errorMessage(e)) }
         }}
       />
+
+      {/* ── Filter bar ── */}
+      {groups.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <input
+            type="text"
+            placeholder={`Filter by invoice #, vehicle reg, ${isDiesel ? 'subbie name' : 'description'}, notes…`}
+            value={filterText}
+            onChange={e => setFilterText(e.target.value)}
+            style={{
+              flex: 1, maxWidth: 400, padding: '5px 10px', borderRadius: 6,
+              border: '1px solid var(--border)', background: 'var(--bg-input, var(--bg-card))',
+              color: 'var(--text)', fontSize: 13,
+            }}
+          />
+          {filterText && (
+            <button onClick={() => setFilterText('')} className="btn-ghost" style={{ fontSize: 12, padding: '4px 8px' }}>
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {groups.map((group, groupIndex) => {
         const key = `${group.statement_year}-${group.statement_month}`
@@ -621,16 +704,36 @@ export default function SupplierProfilePage() {
                   <thead>
                     <tr style={{ background: 'var(--bg-surface)' }}>
                       {multiEntity && <th style={styles.th}>Entity</th>}
-                      <th style={styles.th}>Date</th>
-                      <th style={styles.th}>Invoice #</th>
-                      {showVehicleReg && <th style={styles.th}>Vehicle Reg</th>}
-                      <th style={styles.th}>Description</th>
-                      <th style={styles.th}>Amount</th>
-                      {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Litres</th>}
-                {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
+                      <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('invoice_date')}>
+                        Date{sortArrow('invoice_date')}
+                      </th>
+                      <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('invoice_number')}>
+                        Invoice #{sortArrow('invoice_number')}
+                      </th>
+                      {isDiesel && (
+                        <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('slip_number')}>
+                          Slip #{sortArrow('slip_number')}
+                        </th>
+                      )}
+                      {showVehicleReg && (
+                        <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('vehicle_reg')}>
+                          Vehicle Reg{sortArrow('vehicle_reg')}
+                        </th>
+                      )}
+                      <th style={styles.th}>{isDiesel ? 'Subbie Name' : 'Description'}</th>
+                      <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('amount')}>
+                        Amount{sortArrow('amount')}
+                      </th>
+                      {isDiesel && (
+                        <th style={{ ...styles.th, textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('litres')}>
+                          Litres{sortArrow('litres')}
+                        </th>
+                      )}
+                      {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
                       <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
+                      <th style={styles.th}>Notes</th>
                       <th style={styles.th}></th>
                     </tr>
                   </thead>
@@ -648,13 +751,14 @@ export default function SupplierProfilePage() {
                         amountAutoFilled={amountAutoFilled}
                         onAmountEdit={() => setAmountAutoFilled(false)}
                         trucks={trucks}
+                        subbies={subbies}
                       />
                     )}
-                    {group.invoices.map(inv => {
+                    {processInvoices(group.invoices).map(inv => {
                       const isEditing = editingId === inv.id
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
-                      const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 2 : 0)
+                      const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
 
                       return (
                         <Fragment key={inv.id}>
@@ -704,6 +808,17 @@ export default function SupplierProfilePage() {
                               ) : inv.invoice_number}
                             </td>
 
+                            {/* Slip # — diesel only, read-only from linked DieselFillUp */}
+                            {isDiesel && (
+                              <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 11 }}>
+                                {inv.slip_number ? (
+                                  <span>{inv.slip_number}</span>
+                                ) : (
+                                  <span style={{ color: 'var(--danger)', fontWeight: 600, fontSize: 10 }}>⚠ missing</span>
+                                )}
+                              </td>
+                            )}
+
                             {/* Vehicle Reg */}
                             {showVehicleReg && (
                               <td style={styles.td}>
@@ -727,17 +842,31 @@ export default function SupplierProfilePage() {
                               </td>
                             )}
 
-                            {/* Description */}
+                            {/* Description / Subbie Name */}
                             <td style={{ ...styles.td, maxWidth: 200 }}>
                               {isEditing ? (
-                                <input
-                                  value={f.description}
-                                  onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
-                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
-                                  onClick={e => e.stopPropagation()}
-                                  style={{ ...styles.cellInput, minWidth: 140 }}
-                                  placeholder="Description"
-                                />
+                                isDiesel && subbies.length > 0 ? (
+                                  <div onClick={e => e.stopPropagation()}>
+                                    <SearchableSelect
+                                      value={f.description}
+                                      onChange={v => setEditForm(p => ({ ...p, description: v }))}
+                                      options={[{ id: '', name: '' }, ...subbies]}
+                                      getValue={s => s.name}
+                                      getLabel={s => s.name || '— None —'}
+                                      placeholder="Subbie name…"
+                                      style={{ width: 160 }}
+                                    />
+                                  </div>
+                                ) : (
+                                  <input
+                                    value={f.description}
+                                    onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
+                                    onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ ...styles.cellInput, minWidth: 140 }}
+                                    placeholder={isDiesel ? 'Subbie name…' : 'Description'}
+                                  />
+                                )
                               ) : (
                                 <span style={{ color: 'var(--text-muted)', fontSize: 12 }} title={inv.description}>
                                   {inv.description
@@ -923,13 +1052,22 @@ export default function SupplierProfilePage() {
                             <tr style={{ borderBottom: '1px solid var(--border)' }}>
                               <td colSpan={totalCols} style={{ padding: '0 0 12px 0', background: 'var(--bg-base)' }}>
                                 {isEditing ? (
-                                  <LineItemsEditor
-                                    items={editForm.line_items || []}
-                                    onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
-                                    vatApplicable={editForm.vat_applicable !== false}
-                                  />
+                                  isDiesel
+                                    ? <DieselLineItemsEditor
+                                        items={editForm.line_items || []}
+                                        onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
+                                        vatApplicable={editForm.vat_applicable !== false}
+                                        subbies={subbies}
+                                      />
+                                    : <LineItemsEditor
+                                        items={editForm.line_items || []}
+                                        onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
+                                        vatApplicable={editForm.vat_applicable !== false}
+                                      />
                                 ) : (
-                                  <LineItemsViewer items={inv.line_items || []} total={inv.amount} />
+                                  isDiesel
+                                    ? <DieselLineItemsViewer items={inv.line_items || []} total={inv.amount} />
+                                    : <LineItemsViewer items={inv.line_items || []} total={inv.amount} />
                                 )}
                               </td>
                             </tr>
@@ -961,10 +1099,10 @@ export default function SupplierProfilePage() {
 }
 
 
-function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit, trucks = [] }) {
+function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
-  const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 2 : 0)
+  const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
   const lineTotal = (form.line_items || []).reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
 
   const formRow = (
@@ -985,6 +1123,7 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
           onKeyDown={e => onKeyDown(e, onSave, onCancel)}
           style={{ ...styles.cellInput, minWidth: 90 }} />
       </td>
+      {isDiesel && <td style={styles.td} />}
       {showVehicleReg && (
         <td style={styles.td}>
           <SearchableSelect
@@ -999,10 +1138,23 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
         </td>
       )}
       <td style={styles.td}>
-        <input value={form.description} placeholder="Description"
-          onChange={e => set('description', e.target.value)}
-          onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-          style={{ ...styles.cellInput, minWidth: 140 }} />
+        {isDiesel && subbies.length > 0 ? (
+          <SearchableSelect
+            value={form.description}
+            onChange={v => set('description', v)}
+            options={[{ id: '', name: '' }, ...subbies]}
+            getValue={s => s.name}
+            getLabel={s => s.name || '— None —'}
+            placeholder="Subbie name…"
+            style={{ width: 160 }}
+            formInput
+          />
+        ) : (
+          <input value={form.description} placeholder={isDiesel ? 'Subbie name…' : 'Description'}
+            onChange={e => set('description', e.target.value)}
+            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            style={{ ...styles.cellInput, minWidth: 140 }} />
+        )}
       </td>
       {/* Amount */}
       <td style={styles.td}>
@@ -1034,7 +1186,7 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
         <td style={{ ...styles.td, textAlign: 'right' }}>
           <input type="number" step="0.0001" min="0" placeholder="0.0000"
             value={form._rate || ''}
-            onChange={e => { set('_rate', e.target.value); setAmountAutoFilled(false) }}
+            onChange={e => { set('_rate', e.target.value); onAmountEdit?.() }}
             onKeyDown={e => onKeyDown(e, onSave, onCancel)}
             style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
           />
@@ -1083,11 +1235,19 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
       {formRow}
       <tr style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border-accent)' }}>
         <td colSpan={totalCols} style={{ padding: '0 12px 12px 12px' }}>
-          <LineItemsEditor
-            items={form.line_items || []}
-            onChange={items => setForm(f => ({ ...f, line_items: items }))}
-            vatApplicable={form.vat_applicable !== false}
-          />
+          {isDiesel
+            ? <DieselLineItemsEditor
+                items={form.line_items || []}
+                onChange={items => setForm(f => ({ ...f, line_items: items }))}
+                vatApplicable={form.vat_applicable !== false}
+                subbies={subbies}
+              />
+            : <LineItemsEditor
+                items={form.line_items || []}
+                onChange={items => setForm(f => ({ ...f, line_items: items }))}
+                vatApplicable={form.vat_applicable !== false}
+              />
+          }
         </td>
       </tr>
     </>
@@ -1259,6 +1419,173 @@ function LineItemsViewer({ items, total }) {
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
               R {parseFloat(total ?? 0).toFixed(2)}
             </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+
+// Diesel sub-line columns mirror the main invoice table:
+// Invoice # | Vehicle Reg | Subbie Name | Litres | Rate/L | Excl. VAT | Incl. VAT
+// Stored as: item_code | unit | item_description | quantity | _rate(computed) | amount_excl_vat | amount_incl_vat
+
+function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies = [] }) {
+  const vatMult = vatApplicable ? 1.15 : 1
+  const addLine = () => onChange([...items, blankLineItem()])
+  const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
+  const updateLine = (idx, field, value) => {
+    const updated = { ...items[idx], [field]: value }
+    const litres = parseFloat(field === 'quantity' ? value : updated.quantity) || 0
+    const rate = parseFloat(field === '_rate' ? value : updated._rate) || 0
+    if (field === 'quantity' || field === '_rate') {
+      const excl = litres && rate ? Math.round(litres * rate * 100) / 100 : 0
+      updated.amount_excl_vat = excl || ''
+      updated.amount_incl_vat = excl ? String(Math.round(excl * vatMult * 100) / 100) : ''
+    }
+    onChange(items.map((li, i) => i === idx ? updated : li))
+  }
+  const totalLitres = items.reduce((s, li) => s + (parseFloat(li.quantity) || 0), 0)
+  const totalExcl = items.reduce((s, li) => s + (parseFloat(li.amount_excl_vat) || 0), 0)
+  const totalIncl = items.reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
+
+  return (
+    <div style={{ marginTop: 8, overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr style={{ background: 'var(--bg-surface)' }}>
+            <th style={liStyles.th}>Invoice #</th>
+            <th style={liStyles.th}>Vehicle Reg</th>
+            <th style={liStyles.th}>Subbie Name</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Litres</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate/L</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
+            <th style={liStyles.th} />
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((li, idx) => (
+            <tr key={li._key ?? li.id ?? idx} style={{ borderBottom: '1px solid var(--border)' }}>
+              <td style={liStyles.td}>
+                <input value={li.item_code ?? ''} placeholder="e.g. TM1794"
+                  onChange={e => updateLine(idx, 'item_code', e.target.value)}
+                  style={{ ...liStyles.input, minWidth: 90 }} />
+              </td>
+              <td style={liStyles.td}>
+                <input value={li.unit ?? ''} placeholder="e.g. DDM652NC"
+                  onChange={e => updateLine(idx, 'unit', e.target.value.toUpperCase())}
+                  style={{ ...liStyles.input, minWidth: 100, textTransform: 'uppercase' }} />
+              </td>
+              <td style={liStyles.td}>
+                {subbies.length > 0 ? (
+                  <SearchableSelect
+                    value={li.item_description ?? ''}
+                    onChange={v => updateLine(idx, 'item_description', v)}
+                    options={[{ id: '', name: '' }, ...subbies]}
+                    getValue={s => s.name}
+                    getLabel={s => s.name || '— None —'}
+                    placeholder="Subbie name…"
+                    style={{ width: 140 }}
+                    formInput
+                  />
+                ) : (
+                  <input value={li.item_description ?? ''} placeholder="Subbie name…"
+                    onChange={e => updateLine(idx, 'item_description', e.target.value)}
+                    style={{ ...liStyles.input, minWidth: 120 }} />
+                )}
+              </td>
+              <td style={liStyles.td}>
+                <input type="number" step="0.001" value={li.quantity ?? ''} placeholder="0.000"
+                  onChange={e => updateLine(idx, 'quantity', e.target.value)}
+                  style={{ ...liStyles.input, width: 80, textAlign: 'right' }} />
+              </td>
+              <td style={liStyles.td}>
+                <input type="number" step="0.0001" value={li._rate || ''} placeholder="0.0000"
+                  onChange={e => updateLine(idx, '_rate', e.target.value)}
+                  style={{ ...liStyles.input, width: 80, textAlign: 'right' }} />
+              </td>
+              <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)', fontSize: 11 }}>
+                {parseFloat(li.amount_excl_vat) ? parseFloat(li.amount_excl_vat).toFixed(2) : '—'}
+              </td>
+              <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', fontSize: 11, fontWeight: 600 }}>
+                {parseFloat(li.amount_incl_vat) ? parseFloat(li.amount_incl_vat).toFixed(2) : '—'}
+              </td>
+              <td style={{ ...liStyles.td, textAlign: 'center' }}>
+                <button onClick={() => removeLine(idx)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}>
+                  <X size={12} color="var(--danger)" />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
+            <td colSpan={2} style={{ padding: '8px 6px' }}>
+              <button onClick={addLine} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontWeight: 600, fontSize: 12, padding: 0 }}>
+                <Plus size={13} /> Add line
+              </button>
+            </td>
+            <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>{totalLitres.toFixed(1)}L</td>
+            <td style={liStyles.td} />
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>{totalExcl.toFixed(2)}</td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>{totalIncl.toFixed(2)}</td>
+            <td />
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+
+function DieselLineItemsViewer({ items, total }) {
+  if (!items || items.length === 0)
+    return <p style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>No line items.</p>
+  const totalLitres = items.reduce((s, li) => s + (parseFloat(li.quantity) || 0), 0)
+  const totalExcl = items.reduce((s, li) => s + (parseFloat(li.amount_excl_vat) || 0), 0)
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr style={{ background: 'var(--bg-surface)' }}>
+            <th style={liStyles.th}>Invoice #</th>
+            <th style={liStyles.th}>Vehicle Reg</th>
+            <th style={liStyles.th}>Subbie Name</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Litres</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate/L</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(li => {
+            const litres = parseFloat(li.quantity) || 0
+            const excl = parseFloat(li.amount_excl_vat) || 0
+            const rate = litres > 0 ? excl / litres : null
+            return (
+              <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ ...liStyles.td, fontWeight: 600 }}>{li.item_code || '—'}</td>
+                <td style={liStyles.td}><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{li.unit || '—'}</span></td>
+                <td style={{ ...liStyles.td, color: 'var(--text-muted)' }}>{li.item_description || '—'}</td>
+                <td style={{ ...liStyles.td, textAlign: 'right' }}>{litres ? `${litres.toFixed(1)}L` : '—'}</td>
+                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>{rate != null ? rate.toFixed(4) : '—'}</td>
+                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>R {excl.toFixed(2)}</td>
+                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>R {parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
+            <td colSpan={2} style={liStyles.td} />
+            <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>{totalLitres.toFixed(1)}L</td>
+            <td style={liStyles.td} />
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>R {totalExcl.toFixed(2)}</td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>R {parseFloat(total ?? 0).toFixed(2)}</td>
           </tr>
         </tfoot>
       </table>

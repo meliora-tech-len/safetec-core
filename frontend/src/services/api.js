@@ -199,6 +199,7 @@ export const updateDieselFillUp = (id, data) => api.put(`/diesel/fillups/${id}`,
 export const deleteDieselFillUp = (id) => api.delete(`/diesel/fillups/${id}`)
 export const archiveDieselFillUp = (id) => api.patch(`/diesel/fillups/${id}/archive`)
 export const verifyDieselFillUp       = (id) => api.patch(`/diesel/fillups/${id}/verify`)
+export const getDieselWarnings        = (params = {}) => api.get('/diesel/warnings', { params })
 export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)
 export const verifySupplierInvoice    = (id) => api.patch(`/supplier-invoices/${id}/verify`)
 export const verifyAdditionalLoad     = (driverId, year, month, loadId) =>

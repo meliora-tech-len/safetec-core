@@ -60,6 +60,17 @@ def _auto_create_diesel_fillup(
 
         inv_date = supplier_invoice.invoice_date.date() if hasattr(supplier_invoice.invoice_date, 'date') else supplier_invoice.invoice_date
 
+        # Link to existing DieselFillUp if same supplier + invoice number already exists
+        existing_fillup = db.query(DieselFillUp).filter(
+            DieselFillUp.supplier_id == supplier.id,
+            DieselFillUp.invoice_number == supplier_invoice.invoice_number,
+        ).first()
+        if existing_fillup:
+            if not existing_fillup.supplier_invoice_id:
+                existing_fillup.supplier_invoice_id = supplier_invoice.id
+                db.commit()
+            return existing_fillup.id
+
         # Use the active DieselRate if available; otherwise derive from invoice amount / litres
         rate_record = DieselCalculationService.get_active_rate(db, supplier.id, entity_id, inv_date)
         if rate_record:
@@ -280,21 +291,23 @@ def list_supplier_invoices(
         SupplierInvoice.invoice_date.asc(),
     ).all()
 
-    # Pre-fetch diesel_fillup_id for all invoices in one query
+    # Pre-fetch diesel_fillup_id + slip_number for all invoices in one query
     inv_ids = [i.id for i in invoices]
-    fillup_id_by_inv: dict = {}
+    fillup_data_by_inv: dict = {}
     if inv_ids:
         rows = (
-            db.query(DieselFillUp.supplier_invoice_id, DieselFillUp.id)
+            db.query(DieselFillUp.supplier_invoice_id, DieselFillUp.id, DieselFillUp.slip_number)
             .filter(DieselFillUp.supplier_invoice_id.in_(inv_ids))
             .all()
         )
-        fillup_id_by_inv = {sup_inv_id: fid for sup_inv_id, fid in rows}
+        fillup_data_by_inv = {sup_inv_id: {"fillup_id": fid, "slip_number": sn} for sup_inv_id, fid, sn in rows}
 
     def _to_out(inv) -> SupplierInvoiceOut:
         out = SupplierInvoiceOut.model_validate(inv)
+        fillup_data = fillup_data_by_inv.get(inv.id, {})
         return out.model_copy(update={
-            "diesel_fillup_id": fillup_id_by_inv.get(inv.id),
+            "diesel_fillup_id": fillup_data.get("fillup_id"),
+            "slip_number": fillup_data.get("slip_number"),
             "is_multi_line": inv.is_multi_line,
             "line_items": [SupplierInvoiceLineItemOut.model_validate(li) for li in inv.line_items],
             **get_verification_display(db, inv),
@@ -337,8 +350,13 @@ def get_supplier_invoice(
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(inv.entity_id, current_user)
+    fillup = db.query(DieselFillUp).filter(DieselFillUp.supplier_invoice_id == invoice_id).first()
     out = SupplierInvoiceOut.model_validate(inv)
-    return out.model_copy(update=get_verification_display(db, inv))
+    return out.model_copy(update={
+        **get_verification_display(db, inv),
+        "slip_number": fillup.slip_number if fillup else None,
+        "diesel_fillup_id": fillup.id if fillup else None,
+    })
 
 
 # ── Create ────────────────────────────────────────────────────────────────────
@@ -353,6 +371,18 @@ def create_supplier_invoice(
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
     _check_entity_access(payload.entity_id, current_user)
+
+    # Hard block duplicate: same supplier + invoice number + entity
+    existing = db.query(SupplierInvoice).filter(
+        SupplierInvoice.supplier_id == payload.supplier_id,
+        SupplierInvoice.invoice_number == payload.invoice_number.strip(),
+        SupplierInvoice.entity_id == payload.entity_id,
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Invoice '{payload.invoice_number}' already exists for this supplier",
+        )
 
     inv_date = payload.invoice_date
     due_date = calculate_supplier_due_date(inv_date, supplier.payment_term)

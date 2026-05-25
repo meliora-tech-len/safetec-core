@@ -48,6 +48,8 @@ const blankExpenseForm = (truckReg = '') => ({
   vat_applicable: true,
   vehicle_reg:    truckReg,
   description:    '',
+  litres:         '',
+  rate_per_litre: '',
 })
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -231,11 +233,27 @@ export default function SubcontractorProfilePage() {
 
   const setEF = (k, v) => setExpenseForm(f => ({ ...f, [k]: v }))
 
+  const isDieselExpenseSupplier = suppliers.find(
+    s => String(s.id) === String(expenseForm.supplier_id)
+  )?.is_diesel_supplier || false
+
   const saveExpense = async (e) => {
     e.preventDefault()
     if (!expenseForm.supplier_id) { toast.error('Select a supplier'); return }
     if (!expenseForm.invoice_number.trim()) { toast.error('Invoice number is required'); return }
-    if (!expenseForm.amount || parseFloat(expenseForm.amount) <= 0) { toast.error('Enter a valid amount'); return }
+
+    const litresVal = parseFloat(expenseForm.litres) || 0
+    const rateVal   = parseFloat(expenseForm.rate_per_litre) || 0
+    let amount = parseFloat(expenseForm.amount) || 0
+
+    if (isDieselExpenseSupplier) {
+      if (litresVal <= 0) { toast.error('Enter litres for diesel invoice'); return }
+      if (rateVal <= 0)   { toast.error('Enter rate per litre for diesel invoice'); return }
+      if (amount <= 0) amount = +(litresVal * rateVal).toFixed(2)
+    } else {
+      if (amount <= 0) { toast.error('Enter a valid amount'); return }
+    }
+
     setExpenseSaving(true)
     try {
       await createSupplierInvoice({
@@ -243,10 +261,11 @@ export default function SubcontractorProfilePage() {
         supplier_id:    parseInt(expenseForm.supplier_id),
         invoice_date:   new Date(expenseForm.invoice_date + 'T12:00:00').toISOString(),
         invoice_number: expenseForm.invoice_number.trim(),
-        amount:         parseFloat(expenseForm.amount),
+        amount,
         vat_applicable: expenseForm.vat_applicable,
         vehicle_reg:    expenseForm.vehicle_reg || null,
         description:    expenseForm.description.trim() || null,
+        ...(isDieselExpenseSupplier && litresVal > 0 && { litres: litresVal }),
       })
       toast.success('Expense added')
       setShowExpenseModal(false)
@@ -663,8 +682,8 @@ export default function SubcontractorProfilePage() {
                 </div>
                 <div className="form-row">
                   <div className="form-group">
-                    <label>Amount *</label>
-                    <input type="number" step="0.01" min="0" value={expenseForm.amount} onChange={e => setEF('amount', e.target.value)} required placeholder="0.00" />
+                    <label>Amount {isDieselExpenseSupplier ? '(auto-calc)' : '*'}</label>
+                    <input type="number" step="0.01" min="0" value={expenseForm.amount} onChange={e => setEF('amount', e.target.value)} placeholder="0.00" />
                   </div>
                   <div className="form-group">
                     <label>Truck Reg</label>
@@ -678,6 +697,18 @@ export default function SubcontractorProfilePage() {
                     </select>
                   </div>
                 </div>
+                {isDieselExpenseSupplier && (
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Litres *</label>
+                      <input type="number" step="0.01" min="0" value={expenseForm.litres} onChange={e => setEF('litres', e.target.value)} placeholder="0.00" />
+                    </div>
+                    <div className="form-group">
+                      <label>Rate/L *</label>
+                      <input type="number" step="0.0001" min="0" value={expenseForm.rate_per_litre} onChange={e => setEF('rate_per_litre', e.target.value)} placeholder="0.00" />
+                    </div>
+                  </div>
+                )}
                 <div className="form-group">
                   <label>Description</label>
                   <input value={expenseForm.description} onChange={e => setEF('description', e.target.value)} placeholder="Optional" />

@@ -34,7 +34,7 @@ const EMPTY_LOAD = {
   notes: '', checked_by: '',
 }
 const EMPTY_DIESEL = {
-  fillup_date: today, supplier_id: '', invoice_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
+  fillup_date: today, supplier_id: '', slip_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
 }
 const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: today, notes: '' }
 
@@ -65,6 +65,7 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
           onChange={e => set('slip_number', e.target.value)} onKeyDown={handleKey}
           style={{ ...S.input, width: 80 }} />
       </td>
+      <td style={S.td}>—</td>
       {showPo && (
         <td style={S.td}>
           <input value={form.po_number} placeholder="PO #"
@@ -147,8 +148,27 @@ function DieselSection({ truck, year, month, suppliers }) {
   const [form, setForm]           = useState({ ...EMPTY_DIESEL })
   const [autoRate, setAutoRate]   = useState(null)
   const [rateEdited, setRateEdited] = useState(false)
-  const [dupWarning, setDupWarning] = useState(null)
+  const [dSort, setDSort]         = useState({ col: 'fillup_date', dir: 'asc' })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleDSort = (col) => setDSort(s => ({
+    col, dir: s.col === col && s.dir === 'asc' ? 'desc' : 'asc'
+  }))
+  const dArrow = (col) => dSort.col === col ? (dSort.dir === 'asc' ? ' ↑' : ' ↓') : ''
+  const sortEntries = (arr) => [...arr].sort((a, b) => {
+    let av, bv
+    switch (dSort.col) {
+      case 'fillup_date':   av = a.fillup_date || '';  bv = b.fillup_date || '';  break
+      case 'slip_number':   av = (a.slip_number || '').toLowerCase(); bv = (b.slip_number || '').toLowerCase(); break
+      case 'invoice_number': av = (a.supplier_invoice_number || a.invoice_number || '').toLowerCase(); bv = (b.supplier_invoice_number || b.invoice_number || '').toLowerCase(); break
+      case 'litres':        av = parseFloat(a.litres) || 0; bv = parseFloat(b.litres) || 0; break
+      case 'total_amount':  av = parseFloat(a.total_amount) || 0; bv = parseFloat(b.total_amount) || 0; break
+      default: av = ''; bv = ''
+    }
+    if (av < bv) return dSort.dir === 'asc' ? -1 : 1
+    if (av > bv) return dSort.dir === 'asc' ? 1 : -1
+    return 0
+  })
 
   const litresNum = parseFloat(form.litres) || 0
   const rateNum   = parseFloat(form.rate_per_litre) || 0
@@ -190,14 +210,13 @@ function DieselSection({ truck, year, month, suppliers }) {
         fillup_date:    form.fillup_date,
         litres:         litresNum,
         rate_per_litre: rateNum,
-        invoice_number: form.invoice_number || null,
+        slip_number:    form.slip_number || null,
         notes:          form.notes || null,
         diesel_type:    form.diesel_type || 'fillup',
       })
       toast.success('Diesel entry added')
       setForm({ ...EMPTY_DIESEL })
       setAddingNew(false)
-      setDupWarning(null)
       fetchFillups()
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Failed to save diesel entry')
@@ -209,18 +228,6 @@ function DieselSection({ truck, year, month, suppliers }) {
     if (!form.fillup_date)  return toast.error('Date required')
     if (litresNum <= 0)     return toast.error('Enter litres')
     if (rateNum <= 0)       return toast.error('Enter rate per litre')
-    if (form.invoice_number?.trim()) {
-      const inv = form.invoice_number.trim().toLowerCase()
-      const dup = fillups.find(f =>
-        f.invoice_number?.trim().toLowerCase() === inv &&
-        f.fillup_date?.slice(0, 10) === form.fillup_date
-      )
-      if (dup) {
-        setDupWarning({ invoice_number: form.invoice_number.trim(), fillup_date: form.fillup_date })
-        return
-      }
-    }
-    setDupWarning(null)
     doAdd()
   }
 
@@ -260,8 +267,8 @@ function DieselSection({ truck, year, month, suppliers }) {
                 options={suppliers} getValue={s => String(s.id)} getLabel={s => s.name} placeholder="Supplier…" formInput />
             </div>
             <div>
-              <label className="form-label">Invoice #</label>
-              <input className="form-input" value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" />
+              <label className="form-label">Slip #</label>
+              <input className="form-input" value={form.slip_number} onChange={e => set('slip_number', e.target.value)} placeholder="SLP-001" />
             </div>
             <div>
               <label className="form-label">Type</label>
@@ -307,23 +314,8 @@ function DieselSection({ truck, year, month, suppliers }) {
             <label className="form-label">Mine / Notes</label>
             <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
           </div>
-          {dupWarning && (
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              gap: 12, marginTop: 14, padding: '10px 16px', borderRadius: 8,
-              background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.4)',
-            }}>
-              <span style={{ fontSize: 13, color: '#d97706' }}>
-                ⚠ Invoice <strong>{dupWarning.invoice_number}</strong> on <strong>{dupWarning.fillup_date}</strong> has already been captured. Save anyway?
-              </span>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                <button className="btn-ghost btn-sm" onClick={() => setDupWarning(null)}>Dismiss</button>
-                <button className="btn-primary btn-sm" onClick={doAdd} disabled={saving}>Save Anyway</button>
-              </div>
-            </div>
-          )}
           <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
-            <button className="btn btn-ghost" onClick={() => { setAddingNew(false); setForm({ ...EMPTY_DIESEL }); setDupWarning(null) }}>Cancel</button>
+            <button className="btn btn-ghost" onClick={() => { setAddingNew(false); setForm({ ...EMPTY_DIESEL }) }}>Cancel</button>
             <button className="btn btn-primary" onClick={handleAdd} disabled={saving}>
               {saving ? 'Saving…' : 'Save Entry'}
             </button>
@@ -354,20 +346,21 @@ function DieselSection({ truck, year, month, suppliers }) {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
+                      <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleDSort('fillup_date')}>Date{dArrow('fillup_date')}</th>
                       <th>Type</th>
-                      <th>Invoice #</th>
-                      <th style={{ textAlign: 'right' }}>Litres</th>
+                      <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleDSort('slip_number')}>Slip #{dArrow('slip_number')}</th>
+                      <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleDSort('invoice_number')}>Invoice #{dArrow('invoice_number')}</th>
+                      <th style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleDSort('litres')}>Litres{dArrow('litres')}</th>
                       <th style={{ textAlign: 'right' }}>Rate/L</th>
                       <th style={{ textAlign: 'right' }}>Amount</th>
                       <th style={{ textAlign: 'right' }}>Admin</th>
-                      <th style={{ textAlign: 'right' }}>Total</th>
+                      <th style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleDSort('total_amount')}>Total{dArrow('total_amount')}</th>
                       <th>Notes</th>
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {entries.map(f => (
+                    {sortEntries(entries).map(f => (
                       <tr key={f.id} style={{ height: 48 }}>
                         <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(f.fillup_date)}</td>
                         <td>
@@ -379,7 +372,12 @@ function DieselSection({ truck, year, month, suppliers }) {
                             {f.diesel_type === 'topup' ? 'Top-up' : 'Fill-up'}
                           </span>
                         </td>
-                        <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{f.invoice_number || '—'}</td>
+                        <td style={{ fontFamily: 'monospace', fontSize: 12, color: f.slip_number ? 'var(--text-primary)' : 'var(--danger)', fontWeight: f.slip_number ? 400 : 600 }}>
+                          {f.slip_number || '⚠ missing'}
+                        </td>
+                        <td style={{ fontFamily: 'monospace', fontSize: 12, color: (f.supplier_invoice_number || f.invoice_number) ? 'var(--text-muted)' : 'var(--danger)', fontWeight: (f.supplier_invoice_number || f.invoice_number) ? 400 : 600 }}>
+                          {f.supplier_invoice_number || f.invoice_number || '⚠ missing'}
+                        </td>
                         <td style={{ textAlign: 'right' }}>{parseFloat(f.litres).toFixed(1)}</td>
                         <td style={{ textAlign: 'right', fontSize: 12 }}>R {parseFloat(f.rate_per_litre).toFixed(2)}</td>
                         <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(f.amount)}</td>
@@ -396,7 +394,7 @@ function DieselSection({ truck, year, month, suppliers }) {
                   </tbody>
                   <tfoot>
                     <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                      <td colSpan={3} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
+                      <td colSpan={4} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
                       <td style={{ textAlign: 'right', padding: '8px 12px' }}>{subLitres.toFixed(1)} L</td>
                       <td colSpan={3} />
                       <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(subTotal)}</td>
@@ -1296,8 +1294,8 @@ export default function TruckLoadProfilePage() {
   const showSub = !isSubcontractorEntity && (truck?.is_subcontractor || false)
   const vatRegistered = entities.find(e => e.id === truck?.entity_id)?.vat_registered !== false
   const COLS    = isSubcontractorEntity
-    ? (showPo ? 7 : 6)
-    : (showPo ? 12 : 11) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
+    ? (showPo ? 8 : 7)
+    : (showPo ? 13 : 12) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
 
   const { sort: loadSort, onSort: onLoadSort } = useSort('load_date', 'asc')
   const sortedLoads = useMemo(() => applySort(loads, loadSort), [loads, loadSort])
@@ -1558,6 +1556,7 @@ export default function TruckLoadProfilePage() {
               <tr>
                 <SortableHeader label="Date" col="load_date" sort={loadSort} onSort={onLoadSort} />
                 <SortableHeader label="Slip #" col="slip_number" sort={loadSort} onSort={onLoadSort} />
+                <th style={{ whiteSpace: 'nowrap' }}>Invoice #</th>
                 {showPo && <th>PO #</th>}
                 {!isSubcontractorEntity && <SortableHeader label="Driver" col="driver_name" sort={loadSort} onSort={onLoadSort} />}
                 {!isSubcontractorEntity && <th style={{ whiteSpace: 'nowrap' }}>Split</th>}
@@ -1599,6 +1598,7 @@ export default function TruckLoadProfilePage() {
                       className="hoverable-row">
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(l.load_date)}</td>
                       <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.slip_number || '—'}</td>
+                      <td style={{ fontSize: 12, fontFamily: 'monospace', color: l.diesel_invoice ? 'var(--text-muted)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>{l.diesel_invoice || '—'}</td>
                       {showPo && <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.po_number || '—'}</td>}
                       {!isSubcontractorEntity && <td style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                         {l.driver_name ? (
@@ -1628,10 +1628,8 @@ export default function TruckLoadProfilePage() {
                         {l.notes || '—'}
                       </td>
                       <td onClick={e => e.stopPropagation()}>
-                        {isAdmin && (
-                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
-                            onClick={e => handleDelete(l, e)}><Trash2 size={13} /></button>
-                        )}
+                        <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                          onClick={e => handleDelete(l, e)}><Trash2 size={13} /></button>
                       </td>
                     </tr>
                   )
@@ -1650,6 +1648,9 @@ export default function TruckLoadProfilePage() {
                     <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(a.load_date)}</td>
                     <td style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
                       {a.slip_number || '—'} / {b.slip_number || '—'}
+                    </td>
+                    <td style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                      {a.diesel_invoice || b.diesel_invoice || '—'}
                     </td>
                     {showPo && <td>—</td>}
                     <td style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
@@ -1681,6 +1682,7 @@ export default function TruckLoadProfilePage() {
                         className="hoverable-row">
                         <td />
                         <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{sl.slip_number || '—'}</td>
+                        <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{sl.diesel_invoice || '—'}</td>
                         {showPo && <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{sl.po_number || '—'}</td>}
                         <td style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                           {sl.driver_name ? (
@@ -1710,10 +1712,8 @@ export default function TruckLoadProfilePage() {
                           {sl.notes || '—'}
                         </td>
                         <td onClick={e => e.stopPropagation()}>
-                          {isAdmin && (
-                            <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
-                              onClick={e => handleDelete(sl, e)}><Trash2 size={13} /></button>
-                          )}
+                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                            onClick={e => handleDelete(sl, e)}><Trash2 size={13} /></button>
                         </td>
                       </tr>
                     )
@@ -1724,7 +1724,7 @@ export default function TruckLoadProfilePage() {
             {!loading && loads.length > 0 && summary && (
               <tfoot>
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                  <td colSpan={showPo ? 5 : 4} style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>
+                  <td colSpan={showPo ? 6 : 5} style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>
                     {summary.total_loads} loads
                   </td>
                   <td style={{ textAlign: 'right', padding: '10px 12px' }}>{fmtNum(summary.total_tonnes)}</td>

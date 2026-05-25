@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { getDashboardStats, getSupplierPayablesDashboard } from '../services/api'
+import { getDashboardStats, getSupplierPayablesDashboard, getDieselWarnings } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
-import { TrendingUp, AlertCircle, FileText, Clock, Building2, ChevronRight, CreditCard } from 'lucide-react'
+import { TrendingUp, AlertCircle, FileText, Clock, Building2, ChevronRight, CreditCard, Fuel } from 'lucide-react'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -14,6 +14,7 @@ export default function DashboardPage() {
   const { entities, activeEntity, setActiveEntity, isAdmin } = useAuth()
   const [stats, setStats] = useState(null)
   const [payables, setPayables] = useState(null)
+  const [dieselWarnings, setDieselWarnings] = useState(null)
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
@@ -24,10 +25,12 @@ export default function DashboardPage() {
     Promise.all([
       getDashboardStats(activeEntity?.id || undefined),
       getSupplierPayablesDashboard(params),
-    ]).then(([statsRes, payablesRes]) => {
+      getDieselWarnings(params),
+    ]).then(([statsRes, payablesRes, warningsRes]) => {
       if (!ignore) {
         setStats(statsRes.data)
         setPayables(payablesRes.data)
+        setDieselWarnings(warningsRes.data)
       }
     }).finally(() => {
       if (!ignore) setLoading(false)
@@ -158,6 +161,74 @@ export default function DashboardPage() {
                           <span style={{ fontWeight: 700 }}>{formatCurrency(p.total_outstanding)}</span>
                         </div>
                       ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Diesel Warnings */}
+          {dieselWarnings && (dieselWarnings.missing_slip_count > 0 || dieselWarnings.missing_invoice_count > 0) && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <Fuel size={15} color="var(--text-muted)" />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Diesel — Needs Attention</span>
+              </div>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                {dieselWarnings.missing_slip_count > 0 && (
+                  <div className="card" style={{ flex: 1, minWidth: 260 }}>
+                    <div style={styles.cardHeader}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>Missing Slip #</span>
+                      <span style={{ background: 'rgba(239,68,68,0.12)', color: '#dc2626', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4 }}>
+                        {dieselWarnings.missing_slip_count}
+                      </span>
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      {dieselWarnings.missing_slip.slice(0, 5).map(f => (
+                        <div key={f.id} style={{ ...styles.payableRow, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                          <div>
+                            <span style={{ fontWeight: 600, fontSize: 12 }}>{f.truck_registration || '—'}</span>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>{f.supplier_name}</span>
+                          </div>
+                          <span style={{ fontSize: 11, color: f.invoice_number ? 'var(--text-muted)' : 'var(--danger)' }}>
+                            {f.invoice_number ? `INV: ${f.invoice_number}` : f.fillup_date}
+                          </span>
+                        </div>
+                      ))}
+                      {dieselWarnings.missing_slip_count > 5 && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'right', paddingTop: 6 }}>
+                          +{dieselWarnings.missing_slip_count - 5} more
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {dieselWarnings.missing_invoice_count > 0 && (
+                  <div className="card" style={{ flex: 1, minWidth: 260 }}>
+                    <div style={styles.cardHeader}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>Missing Invoice #</span>
+                      <span style={{ background: 'rgba(245,158,11,0.15)', color: '#d97706', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4 }}>
+                        {dieselWarnings.missing_invoice_count}
+                      </span>
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      {dieselWarnings.missing_invoice.slice(0, 5).map(f => (
+                        <div key={f.id} style={{ ...styles.payableRow, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                          <div>
+                            <span style={{ fontWeight: 600, fontSize: 12 }}>{f.truck_registration || '—'}</span>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>{f.supplier_name}</span>
+                          </div>
+                          <span style={{ fontSize: 11, color: f.slip_number ? 'var(--text-muted)' : 'var(--danger)' }}>
+                            {f.slip_number ? `Slip: ${f.slip_number}` : f.fillup_date}
+                          </span>
+                        </div>
+                      ))}
+                      {dieselWarnings.missing_invoice_count > 5 && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'right', paddingTop: 6 }}>
+                          +{dieselWarnings.missing_invoice_count - 5} more
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

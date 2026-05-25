@@ -1361,6 +1361,7 @@ class SupplierInvoiceOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     diesel_fillup_id: Optional[int] = None
+    slip_number: Optional[str] = None
     # Verifier IDs (for frontend lock logic)
     verified_by: Optional[int] = None
     verified2_by: Optional[int] = None
@@ -1523,6 +1524,7 @@ class DieselFillUpOut(BaseModel):
     # Enriched
     truck_registration: Optional[str] = None
     supplier_name: Optional[str] = None
+    supplier_invoice_number: Optional[str] = None
     verified2_by: Optional[int] = None
     verified2_at: Optional[datetime] = None
     # Verification display (initials + date)

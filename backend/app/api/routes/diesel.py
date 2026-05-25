@@ -10,7 +10,7 @@ from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
     User, DieselSettings, DieselRate, DieselFillUp,
-    Supplier, Truck, TruckLoad,
+    Supplier, Truck, TruckLoad, SupplierInvoice,
 )
 from app.schemas.schemas import (
     DieselSettingsOut, DieselSettingsUpdate,
@@ -45,6 +45,58 @@ def _clear_truckload_diesel(db: Session, truckload_id: int) -> None:
         tl.diesel_rate = None
 
 
+def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, user_id: int) -> None:
+    """
+    Called after a DieselFillUp is created with an invoice_number but no supplier_invoice_id.
+    Links to an existing SupplierInvoice if found, otherwise auto-creates one for diesel suppliers.
+    """
+    inv_num = fillup.invoice_number.strip()
+
+    existing_inv = db.query(SupplierInvoice).filter(
+        SupplierInvoice.supplier_id == fillup.supplier_id,
+        SupplierInvoice.invoice_number == inv_num,
+        SupplierInvoice.entity_id == fillup.entity_id,
+    ).first()
+
+    if existing_inv:
+        fillup.supplier_invoice_id = existing_inv.id
+        db.commit()
+        return
+
+    supplier = db.query(Supplier).filter(Supplier.id == fillup.supplier_id).first()
+    if not supplier or not supplier.is_diesel_supplier:
+        return
+
+    truck = db.query(Truck).filter(Truck.id == fillup.truck_id).first()
+    vehicle_reg = truck.registration if truck else None
+
+    inv_datetime = datetime(fillup.fillup_date.year, fillup.fillup_date.month, fillup.fillup_date.day, tzinfo=timezone.utc)
+
+    inv = SupplierInvoice(
+        entity_id=fillup.entity_id,
+        supplier_id=fillup.supplier_id,
+        invoice_number=inv_num,
+        invoice_date=inv_datetime,
+        amount=fillup.total_amount,
+        litres=fillup.litres,
+        vat_applicable=False,
+        vehicle_reg=vehicle_reg,
+        statement_month=fillup.fillup_date.month,
+        statement_year=fillup.fillup_date.year,
+        created_by_id=user_id,
+    )
+    db.add(inv)
+    db.flush()
+
+    fillup.supplier_invoice_id = inv.id
+    log_action(
+        db, "supplier_invoice.auto_created", user_id=user_id,
+        entity_id=fillup.entity_id, resource_type="supplier_invoice",
+        description=f"Auto-created supplier invoice {inv_num} from diesel fill-up for {vehicle_reg} ({fillup.litres}L)",
+    )
+    db.commit()
+
+
 def _check_entity_access(entity_id: int, user: User):
     if user.role == "admin":
         return
@@ -63,9 +115,50 @@ def _enrich_fillup(f: DieselFillUp, db=None) -> dict:
     d = {c.name: getattr(f, c.name) for c in f.__table__.columns}
     d["truck_registration"] = f.truck.registration if f.truck else None
     d["supplier_name"]      = f.supplier.name if f.supplier else None
+    d["supplier_invoice_number"] = f.supplier_invoice.invoice_number if f.supplier_invoice else None
     if db:
         d.update(get_verification_display(db, f))
     return d
+
+
+# ── Diesel Warnings (dashboard) ──────────────────────────────────────────────
+
+@router.get("/warnings")
+def get_diesel_warnings(
+    entity_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return counts of diesel fill-ups missing slip# or invoice# for the dashboard."""
+    accessible = _accessible_entity_ids(current_user)
+    q = db.query(DieselFillUp).filter(DieselFillUp.is_archived == False)
+    if accessible is not None:
+        q = q.filter(DieselFillUp.entity_id.in_(accessible))
+    if entity_id:
+        _check_entity_access(entity_id, current_user)
+        q = q.filter(DieselFillUp.entity_id == entity_id)
+
+    fillups = q.all()
+    missing_slip = [
+        {"id": f.id, "truck_id": f.truck_id, "supplier_id": f.supplier_id,
+         "fillup_date": str(f.fillup_date), "invoice_number": f.invoice_number,
+         "truck_registration": f.truck.registration if f.truck else None,
+         "supplier_name": f.supplier.name if f.supplier else None}
+        for f in fillups if not f.slip_number
+    ]
+    missing_invoice = [
+        {"id": f.id, "truck_id": f.truck_id, "supplier_id": f.supplier_id,
+         "fillup_date": str(f.fillup_date), "slip_number": f.slip_number,
+         "truck_registration": f.truck.registration if f.truck else None,
+         "supplier_name": f.supplier.name if f.supplier else None}
+        for f in fillups if not f.supplier_invoice_id
+    ]
+    return {
+        "missing_slip_count": len(missing_slip),
+        "missing_invoice_count": len(missing_invoice),
+        "missing_slip": missing_slip,
+        "missing_invoice": missing_invoice,
+    }
 
 
 # ── Diesel Settings ───────────────────────────────────────────────────────────
@@ -387,13 +480,28 @@ def create_fillup(
     if payload.fillup_date > date.today():
         raise HTTPException(status_code=400, detail="Fill-up date cannot be in the future")
 
-    # Warn on duplicate (soft check — return as header or embed in response)
-    existing = db.query(DieselFillUp).filter(
-        DieselFillUp.truck_id == payload.truck_id,
-        DieselFillUp.supplier_id == payload.supplier_id,
-        DieselFillUp.fillup_date == payload.fillup_date,
-        DieselFillUp.invoice_number == payload.invoice_number,
-    ).first() if payload.invoice_number else None
+    # Hard block duplicates
+    if payload.slip_number and payload.truck_id:
+        existing = db.query(DieselFillUp).filter(
+            DieselFillUp.truck_id == payload.truck_id,
+            DieselFillUp.supplier_id == payload.supplier_id,
+            DieselFillUp.slip_number == payload.slip_number.strip(),
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Slip '{payload.slip_number}' already exists for this truck",
+            )
+    if payload.invoice_number and payload.supplier_id:
+        existing = db.query(DieselFillUp).filter(
+            DieselFillUp.supplier_id == payload.supplier_id,
+            DieselFillUp.invoice_number == payload.invoice_number.strip(),
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Invoice '{payload.invoice_number}' already exists for this supplier",
+            )
 
     # Get entity diesel settings for admin fee
     settings = DieselCalculationService.get_diesel_settings(db, payload.entity_id)
@@ -434,6 +542,9 @@ def create_fillup(
 
     if f.truckload_id:
         _sync_truckload_diesel(db, f.truckload_id, f)
+
+    if f.invoice_number and not f.supplier_invoice_id and f.supplier_id:
+        _auto_link_or_create_supplier_invoice(db, f, current_user.id)
 
     return _enrich_fillup(f)
 
