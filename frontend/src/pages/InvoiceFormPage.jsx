@@ -268,7 +268,9 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
 
   if (loading) return <div style={{ padding: '28px 32px', color: 'var(--text-muted)' }}>Loading...</div>
 
-  const selectedEntity = entities.find(e => String(e.id) === entityId)
+  const selectedEntity   = entities.find(e => String(e.id) === entityId)
+  const selectedCustomer = recipientType === 'customer' && customerId
+    ? customers.find(c => String(c.id) === customerId) : null
   const vatPct = Math.round(vatRate * 100)
 
   return (
@@ -353,6 +355,30 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                 )}
               </div>
             </div>
+
+            {/* Customer company details — shown when a customer is selected */}
+            {selectedCustomer && (selectedCustomer.registration_number || selectedCustomer.vat_number || selectedCustomer.address || selectedCustomer.city) && (
+              <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 12, display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                {selectedCustomer.registration_number && (
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Reg No: </span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{selectedCustomer.registration_number}</span>
+                  </div>
+                )}
+                {selectedCustomer.vat_number && (
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>VAT No: </span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{selectedCustomer.vat_number}</span>
+                  </div>
+                )}
+                {(selectedCustomer.address || selectedCustomer.city) && (
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Address: </span>
+                    <span>{[selectedCustomer.address, selectedCustomer.city, selectedCustomer.postal_code].filter(Boolean).join(', ')}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="form-row" style={{ marginTop: 12 }}>
               <div>
@@ -635,7 +661,10 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
 }
 
 function QuickAddCustomerModal({ entityId, onCreated, onClose }) {
-  const [form, setForm] = useState({ name: '', trading_name: '', contact_person: '', email: '', phone: '' })
+  const [form, setForm] = useState({
+    name: '', trading_name: '', contact_person: '', email: '', phone: '',
+    registration_number: '', vat_number: '', address: '', city: '', postal_code: '',
+  })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -657,7 +686,7 @@ function QuickAddCustomerModal({ entityId, onCreated, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={onClose}>
-      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: '24px 28px', width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.4)' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: '24px 28px', width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.4)', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <span style={{ fontWeight: 700, fontSize: 15 }}>Quick-Add Customer</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}><X size={17} /></button>
@@ -673,6 +702,30 @@ function QuickAddCustomerModal({ entityId, onCreated, onClose }) {
           <div>
             <label className="form-label">Trading Name</label>
             <input className="form-input" value={form.trading_name} onChange={e => set('trading_name', e.target.value)} />
+          </div>
+          <div className="form-row">
+            <div>
+              <label className="form-label">Registration Number</label>
+              <input className="form-input" value={form.registration_number} onChange={e => set('registration_number', e.target.value)} placeholder="e.g. 2024/123456/07" />
+            </div>
+            <div>
+              <label className="form-label">VAT Number</label>
+              <input className="form-input" value={form.vat_number} onChange={e => set('vat_number', e.target.value)} placeholder="e.g. 4123456789" />
+            </div>
+          </div>
+          <div>
+            <label className="form-label">Address</label>
+            <input className="form-input" value={form.address} onChange={e => set('address', e.target.value)} placeholder="Street address" />
+          </div>
+          <div className="form-row">
+            <div>
+              <label className="form-label">City</label>
+              <input className="form-input" value={form.city} onChange={e => set('city', e.target.value)} />
+            </div>
+            <div>
+              <label className="form-label">Postal Code</label>
+              <input className="form-input" value={form.postal_code} onChange={e => set('postal_code', e.target.value)} />
+            </div>
           </div>
           <div>
             <label className="form-label">Contact Person</label>
