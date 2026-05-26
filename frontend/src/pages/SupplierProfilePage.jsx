@@ -1526,8 +1526,8 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
             <th style={liStyles.th}>Invoice #</th>
             <th style={liStyles.th}>Vehicle Reg</th>
             <th style={liStyles.th}>Subbie Name</th>
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Litres</th>
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate/L</th>
+            <th style={liStyles.th}>Litres</th>
+            <th style={liStyles.th}>Rate/L</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
             <th style={liStyles.th} />
@@ -1567,8 +1567,7 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
                     getValue={s => s.name}
                     getLabel={s => s.name || '— None —'}
                     placeholder="Subbie name…"
-                    style={{ width: 140 }}
-                    formInput
+                    style={{ minWidth: 130 }}
                   />
                 ) : (
                   <input value={li.item_description ?? ''} placeholder="Subbie name…"
