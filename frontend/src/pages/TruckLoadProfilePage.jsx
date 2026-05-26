@@ -90,10 +90,10 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
       )}
       {!isSubcontractorEntity && <td style={S.td}>
         <SearchableSelect
-          value={form.driver_id ? String(form.driver_id) : ''}
+          value={form.driver_id != null ? String(form.driver_id) : ''}
           onChange={v => {
             const d = drivers.find(x => String(x.id) === v)
-            set('driver_id', v ? parseInt(v) : null)
+            set('driver_id', v || null)
             set('driver_name', d ? `${d.first_name} ${d.last_name}`.trim() : (form.driver_name || ''))
           }}
           options={drivers}
@@ -1352,7 +1352,7 @@ export default function TruckLoadProfilePage() {
     const driverName = d ? `${d.first_name} ${d.last_name}`.trim() : ''
     setEditForm({
       ...EMPTY_LOAD,
-      driver_id: selectedDriverId ? parseInt(selectedDriverId) : null,
+      driver_id: selectedDriverId || null,
       driver_name: driverName,
       statement_month: month,
       statement_year: year,
