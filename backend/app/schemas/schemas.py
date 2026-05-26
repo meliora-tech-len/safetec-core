@@ -1167,6 +1167,8 @@ class TruckLoadBase(BaseModel):
     is_split_load: bool = False
     notes: Optional[str] = None
     checked_by: Optional[str] = None
+    statement_month: Optional[int] = None
+    statement_year: Optional[int] = None
 
 
 class TruckLoadCreate(TruckLoadBase):
@@ -1192,6 +1194,8 @@ class TruckLoadUpdate(BaseModel):
     is_split_load: Optional[bool] = None
     notes: Optional[str] = None
     checked_by: Optional[str] = None
+    statement_month: Optional[int] = None
+    statement_year: Optional[int] = None
 
 
 class TruckLoadOut(TruckLoadBase):

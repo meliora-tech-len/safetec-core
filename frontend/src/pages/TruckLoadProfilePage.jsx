@@ -62,6 +62,20 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
           onChange={e => set('load_date', e.target.value)} onKeyDown={handleKey} style={S.input} />
       </td>
       <td style={S.td}>
+        <div style={{ display: 'flex', gap: 3 }}>
+          <select value={form.statement_month || ''} onChange={e => set('statement_month', parseInt(e.target.value))}
+            style={{ ...S.input, width: 68, padding: '2px 4px' }}>
+            {MONTHS.map((m, i) => (
+              <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>
+            ))}
+          </select>
+          <input type="number" min="2020" max="2099"
+            value={form.statement_year || ''}
+            onChange={e => set('statement_year', parseInt(e.target.value))} onKeyDown={handleKey}
+            style={{ ...S.input, width: 52 }} />
+        </div>
+      </td>
+      <td style={S.td}>
         <input value={form.slip_number} placeholder="Slip #"
           onChange={e => set('slip_number', e.target.value)} onKeyDown={handleKey}
           style={{ ...S.input, width: 80 }} />
@@ -1336,7 +1350,13 @@ export default function TruckLoadProfilePage() {
   const startNew  = () => {
     const d = drivers.find(x => String(x.id) === selectedDriverId)
     const driverName = d ? `${d.first_name} ${d.last_name}`.trim() : ''
-    setEditForm({ ...EMPTY_LOAD, driver_name: driverName })
+    setEditForm({
+      ...EMPTY_LOAD,
+      driver_id: selectedDriverId ? parseInt(selectedDriverId) : null,
+      driver_name: driverName,
+      statement_month: month,
+      statement_year: year,
+    })
     setRateSource(null)
     setEditingId('new')
   }
@@ -1354,9 +1374,11 @@ export default function TruckLoadProfilePage() {
       supplier_id:  load.supplier_id ? String(load.supplier_id) : '',
       tonnes:       load.tonnes    != null ? String(load.tonnes)    : '',
       rate_per_ton: load.rate_per_ton != null ? String(load.rate_per_ton) : '',
-      is_paid:      !!load.is_paid,
-      notes:        load.notes     || '',
-      checked_by:   load.checked_by || '',
+      is_paid:         !!load.is_paid,
+      notes:           load.notes      || '',
+      checked_by:      load.checked_by || '',
+      statement_month: load.statement_month || month,
+      statement_year:  load.statement_year  || year,
     })
     setRateSource('manual')
     setEditingId(load.id)
@@ -1374,9 +1396,11 @@ export default function TruckLoadProfilePage() {
     driver_name:  form.driver_name || null,
     tonnes:       parseFloat(form.tonnes),
     rate_per_ton: form.rate_per_ton ? parseFloat(form.rate_per_ton) : null,
-    is_paid:      form.is_paid,
-    notes:        form.notes       || null,
-    checked_by:   form.checked_by  || null,
+    is_paid:         form.is_paid,
+    notes:           form.notes      || null,
+    checked_by:      form.checked_by || null,
+    statement_month: form.statement_month || null,
+    statement_year:  form.statement_year  || null,
   })
 
   const doSave = async () => {
@@ -1468,8 +1492,8 @@ export default function TruckLoadProfilePage() {
   const showSub = !isSubcontractorEntity && (truck?.is_subcontractor || false)
   const vatRegistered = entities.find(e => e.id === truck?.entity_id)?.vat_registered !== false
   const COLS    = isSubcontractorEntity
-    ? (showPo ? 8 : 7)
-    : (showPo ? 13 : 12) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
+    ? (showPo ? 9 : 8)
+    : (showPo ? 14 : 13) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
 
   const { sort: loadSort, onSort: onLoadSort } = useSort('load_date', 'asc')
   const sortedLoads = useMemo(() => applySort(loads, loadSort), [loads, loadSort])
@@ -1729,6 +1753,7 @@ export default function TruckLoadProfilePage() {
             <thead>
               <tr>
                 <SortableHeader label="Date" col="load_date" sort={loadSort} onSort={onLoadSort} />
+                <th style={{ whiteSpace: 'nowrap' }}>Period</th>
                 <SortableHeader label="Slip #" col="slip_number" sort={loadSort} onSort={onLoadSort} />
                 <th style={{ whiteSpace: 'nowrap' }}>Invoice #</th>
                 {showPo && <th>PO #</th>}
@@ -1771,8 +1796,11 @@ export default function TruckLoadProfilePage() {
                       style={{ cursor: 'pointer', opacity: l.is_paid ? 0.7 : 1 }}
                       className="hoverable-row">
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(l.load_date)}</td>
+                      <td style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {l.statement_month ? `${MONTHS[l.statement_month - 1]?.slice(0, 3)} ${l.statement_year}` : '—'}
+                      </td>
                       <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.slip_number || '—'}</td>
-                      <td style={{ fontSize: 12, fontFamily: 'monospace', color: l.diesel_invoice ? 'var(--text-muted)' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>{l.diesel_invoice || '—'}</td>
+                      <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{l.diesel_invoice || '—'}</td>
                       {showPo && <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.po_number || '—'}</td>}
                       {!isSubcontractorEntity && <td style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                         {l.driver_name ? (
@@ -1820,6 +1848,9 @@ export default function TruckLoadProfilePage() {
                   <tr key={`sg-${gid}`} style={{ background: 'var(--bg-surface)', cursor: 'pointer' }}
                     onClick={() => toggleSplitGroup(gid)}>
                     <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(a.load_date)}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      {a.statement_month ? `${MONTHS[a.statement_month - 1]?.slice(0, 3)} ${a.statement_year}` : '—'}
+                    </td>
                     <td style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
                       {a.slip_number || '—'}{b ? ` / ${b.slip_number || '—'}` : ''}
                     </td>
@@ -1854,6 +1885,7 @@ export default function TruckLoadProfilePage() {
                       <tr key={sl.id} onClick={() => startEdit(sl)}
                         style={{ background: 'var(--bg-base)', borderLeft: '3px solid var(--accent)', cursor: 'pointer', opacity: sl.is_paid ? 0.7 : 1 }}
                         className="hoverable-row">
+                        <td />
                         <td />
                         <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{sl.slip_number || '—'}</td>
                         <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{sl.diesel_invoice || '—'}</td>
