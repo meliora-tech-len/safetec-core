@@ -1057,6 +1057,7 @@ export default function SupplierProfilePage() {
                                         onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
                                         vatApplicable={editForm.vat_applicable !== false}
                                         subbies={subbies}
+                                        trucks={trucks}
                                       />
                                     : <LineItemsEditor
                                         items={editForm.line_items || []}
@@ -1307,6 +1308,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
                 onChange={items => setForm(f => ({ ...f, line_items: items }))}
                 vatApplicable={form.vat_applicable !== false}
                 subbies={subbies}
+                trucks={trucks}
               />
             : <LineItemsEditor
                 items={form.line_items || []}
@@ -1497,7 +1499,7 @@ function LineItemsViewer({ items, total }) {
 // Invoice # | Vehicle Reg | Subbie Name | Litres | Rate/L | Excl. VAT | Incl. VAT
 // Stored as: item_code | unit | item_description | quantity | _rate(computed) | amount_excl_vat | amount_incl_vat
 
-function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies = [] }) {
+function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies = [], trucks = [] }) {
   const vatMult = vatApplicable ? 1.15 : 1
   const addLine = () => onChange([...items, blankLineItem()])
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
@@ -1540,9 +1542,21 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
                   style={{ ...liStyles.input, minWidth: 90 }} />
               </td>
               <td style={liStyles.td}>
-                <input value={li.unit ?? ''} placeholder="e.g. DDM652NC"
-                  onChange={e => updateLine(idx, 'unit', e.target.value.toUpperCase())}
-                  style={{ ...liStyles.input, minWidth: 100, textTransform: 'uppercase' }} />
+                {trucks.length > 0 ? (
+                  <SearchableSelect
+                    value={li.unit ?? ''}
+                    onChange={v => updateLine(idx, 'unit', v)}
+                    options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
+                    getValue={t => t.registration}
+                    getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
+                    placeholder="Vehicle reg…"
+                    style={{ minWidth: 130 }}
+                  />
+                ) : (
+                  <input value={li.unit ?? ''} placeholder="e.g. DDM652NC"
+                    onChange={e => updateLine(idx, 'unit', e.target.value.toUpperCase())}
+                    style={{ ...liStyles.input, minWidth: 100, textTransform: 'uppercase' }} />
+                )}
               </td>
               <td style={liStyles.td}>
                 {subbies.length > 0 ? (
