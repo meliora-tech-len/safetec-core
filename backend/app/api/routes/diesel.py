@@ -47,24 +47,33 @@ def _clear_truckload_diesel(db: Session, truckload_id: int) -> None:
 
 def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, user_id: int) -> None:
     """
-    Called after a DieselFillUp is created with an invoice_number but no supplier_invoice_id.
-    Links to an existing SupplierInvoice if found, otherwise auto-creates one for diesel suppliers.
+    Called after a DieselFillUp is saved with an invoice_number or slip_number but no supplier_invoice_id.
+    Links to an existing SupplierInvoice if found by invoice_number, otherwise auto-creates one.
     """
-    inv_num = fillup.invoice_number.strip()
+    inv_num = fillup.invoice_number.strip() if fillup.invoice_number else None
 
-    existing_inv = db.query(SupplierInvoice).filter(
-        SupplierInvoice.supplier_id == fillup.supplier_id,
-        SupplierInvoice.invoice_number == inv_num,
-        SupplierInvoice.entity_id == fillup.entity_id,
-    ).first()
-
-    if existing_inv:
-        fillup.supplier_invoice_id = existing_inv.id
-        db.commit()
-        return
+    # Only try to match an existing invoice when we have an invoice number to search by
+    if inv_num:
+        existing_inv = db.query(SupplierInvoice).filter(
+            SupplierInvoice.supplier_id == fillup.supplier_id,
+            SupplierInvoice.invoice_number == inv_num,
+            SupplierInvoice.entity_id == fillup.entity_id,
+        ).first()
+        if existing_inv:
+            fillup.supplier_invoice_id = existing_inv.id
+            db.commit()
+            return
 
     supplier = db.query(Supplier).filter(Supplier.id == fillup.supplier_id).first()
-    if not supplier or not supplier.is_diesel_supplier:
+    if not supplier:
+        return
+    # Non-diesel suppliers don't get auto-invoices — log and skip rather than silently returning
+    if not supplier.is_diesel_supplier:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"Diesel fill-up #{fillup.id}: supplier {supplier.id} ({supplier.name}) is not marked "
+            f"as a diesel supplier — skipping auto-invoice creation"
+        )
         return
 
     truck = db.query(Truck).filter(Truck.id == fillup.truck_id).first()
@@ -89,10 +98,11 @@ def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, use
     db.flush()
 
     fillup.supplier_invoice_id = inv.id
+    ref = inv_num or fillup.slip_number or f"fill-up #{fillup.id}"
     log_action(
         db, "supplier_invoice.auto_created", user_id=user_id,
         entity_id=fillup.entity_id, resource_type="supplier_invoice",
-        description=f"Auto-created supplier invoice {inv_num} from diesel fill-up for {vehicle_reg} ({fillup.litres}L)",
+        description=f"Auto-created supplier invoice {ref} from diesel fill-up for {vehicle_reg} ({fillup.litres}L)",
     )
     db.commit()
 
@@ -480,12 +490,13 @@ def create_fillup(
     if payload.fillup_date > date.today():
         raise HTTPException(status_code=400, detail="Fill-up date cannot be in the future")
 
-    # Hard block duplicates
+    # Hard block duplicates (ignore archived records)
     if payload.slip_number and payload.truck_id:
         existing = db.query(DieselFillUp).filter(
             DieselFillUp.truck_id == payload.truck_id,
             DieselFillUp.supplier_id == payload.supplier_id,
             DieselFillUp.slip_number == payload.slip_number.strip(),
+            DieselFillUp.is_archived == False,
         ).first()
         if existing:
             raise HTTPException(
@@ -496,6 +507,7 @@ def create_fillup(
         existing = db.query(DieselFillUp).filter(
             DieselFillUp.supplier_id == payload.supplier_id,
             DieselFillUp.invoice_number == payload.invoice_number.strip(),
+            DieselFillUp.is_archived == False,
         ).first()
         if existing:
             raise HTTPException(
@@ -543,8 +555,14 @@ def create_fillup(
     if f.truckload_id:
         _sync_truckload_diesel(db, f.truckload_id, f)
 
-    if f.invoice_number and not f.supplier_invoice_id and f.supplier_id:
-        _auto_link_or_create_supplier_invoice(db, f, current_user.id)
+    if (f.invoice_number or f.slip_number) and not f.supplier_invoice_id and f.supplier_id:
+        try:
+            _auto_link_or_create_supplier_invoice(db, f, current_user.id)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                f"Auto-link supplier invoice failed for fill-up #{f.id}: {exc}", exc_info=True
+            )
 
     return _enrich_fillup(f)
 
@@ -586,6 +604,16 @@ def update_fillup(
 
     if f.truckload_id:
         _sync_truckload_diesel(db, f.truckload_id, f)
+
+    # Auto-link supplier invoice if we now have a slip/invoice number and no existing link
+    if (f.invoice_number or f.slip_number) and not f.supplier_invoice_id and f.supplier_id:
+        try:
+            _auto_link_or_create_supplier_invoice(db, f, current_user.id)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                f"Auto-link supplier invoice failed for fill-up #{f.id}: {exc}", exc_info=True
+            )
 
     return _enrich_fillup(f)
 
@@ -742,3 +770,36 @@ def report_annual_summary(
 ):
     _check_entity_access(entity_id, current_user)
     return DieselCalculationService.get_annual_summary(db, entity_id, year)
+
+
+@router.post("/fillups/repair-invoice-links")
+def repair_invoice_links(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Admin-only. Retroactively creates/links SupplierInvoices for all DieselFillUps
+    that have a slip_number or invoice_number but no supplier_invoice_id.
+    Returns a count of how many were linked.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    unlinked = db.query(DieselFillUp).filter(
+        DieselFillUp.supplier_invoice_id == None,
+        DieselFillUp.supplier_id != None,
+        DieselFillUp.is_archived == False,
+        (DieselFillUp.invoice_number != None) | (DieselFillUp.slip_number != None),
+    ).all()
+
+    linked = 0
+    skipped = []
+    for f in unlinked:
+        try:
+            _auto_link_or_create_supplier_invoice(db, f, current_user.id)
+            if f.supplier_invoice_id:
+                linked += 1
+        except Exception as exc:
+            skipped.append({"fillup_id": f.id, "error": str(exc)})
+
+    return {"linked": linked, "skipped": skipped, "total_checked": len(unlinked)}

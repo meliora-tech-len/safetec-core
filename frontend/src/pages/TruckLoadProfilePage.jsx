@@ -10,8 +10,8 @@ import {
   getTruck, getTruckLoads, getTruckLoadSummary,
   createTruckLoad, createSplitLoad, updateTruckLoad, deleteTruckLoad, archiveTruckLoad,
   getMines, getDrivers, getSettings, getSuppliers,
-  getDieselFillUps, createDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, getCurrentDieselRate,
-  addDriverAdditionalLoad, deleteDriverAdditionalLoad, archiveDriverAdditionalLoad,
+  getDieselFillUps, createDieselFillUp, updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, getCurrentDieselRate,
+  addDriverAdditionalLoad, updateDriverAdditionalLoad, deleteDriverAdditionalLoad, archiveDriverAdditionalLoad,
   addDriverFoodPayment, getTruckAdditionalLoads, getTruckFoodPayments, deleteDriverFoodPayment,
   getTruckMonthlyExpenses, upsertTruckMonthlyExpenses,
   getSupplierInvoicesByVehicle,
@@ -35,7 +35,7 @@ const EMPTY_LOAD = {
   notes: '', checked_by: '',
 }
 const EMPTY_DIESEL = {
-  fillup_date: today, supplier_id: '', slip_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
+  fillup_date: today, supplier_id: '', invoice_number: '', slip_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
 }
 const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: today, notes: '' }
 
@@ -152,6 +152,45 @@ function DieselSection({ truck, year, month, suppliers }) {
   const [dSort, setDSort]         = useState({ col: 'fillup_date', dir: 'asc' })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
+  const [editingFillupId, setEditingFillupId] = useState(null)
+  const [editFillupForm, setEditFillupForm]   = useState({})
+  const [editSaving, setEditSaving]           = useState(false)
+  const setEF = (k, v) => setEditFillupForm(f => ({ ...f, [k]: v }))
+
+  const startEditFillup = (f) => {
+    if (editingFillupId !== null) return
+    setEditFillupForm({
+      fillup_date:    f.fillup_date ? f.fillup_date.slice(0, 10) : today,
+      diesel_type:    f.diesel_type || 'fillup',
+      slip_number:    f.slip_number || '',
+      invoice_number: f.invoice_number || '',
+      litres:         f.litres != null ? String(f.litres) : '',
+      rate_per_litre: f.rate_per_litre != null ? String(f.rate_per_litre) : '',
+      notes:          f.notes || '',
+    })
+    setEditingFillupId(f.id)
+  }
+
+  const doUpdateFillup = async () => {
+    setEditSaving(true)
+    try {
+      await updateDieselFillUp(editingFillupId, {
+        fillup_date:    editFillupForm.fillup_date,
+        diesel_type:    editFillupForm.diesel_type,
+        slip_number:    editFillupForm.slip_number || null,
+        invoice_number: editFillupForm.invoice_number || null,
+        litres:         parseFloat(editFillupForm.litres),
+        rate_per_litre: parseFloat(editFillupForm.rate_per_litre),
+        notes:          editFillupForm.notes || null,
+      })
+      toast.success('Entry updated')
+      setEditingFillupId(null)
+      fetchFillups()
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Failed to update')
+    } finally { setEditSaving(false) }
+  }
+
   const handleDSort = (col) => setDSort(s => ({
     col, dir: s.col === col && s.dir === 'asc' ? 'desc' : 'asc'
   }))
@@ -211,6 +250,7 @@ function DieselSection({ truck, year, month, suppliers }) {
         fillup_date:    form.fillup_date,
         litres:         litresNum,
         rate_per_litre: rateNum,
+        invoice_number: form.invoice_number || null,
         slip_number:    form.slip_number || null,
         notes:          form.notes || null,
         diesel_type:    form.diesel_type || 'fillup',
@@ -266,6 +306,10 @@ function DieselSection({ truck, year, month, suppliers }) {
               <label className="form-label">Supplier *</label>
               <SearchableSelect value={String(form.supplier_id)} onChange={v => { set('supplier_id', v); setRateEdited(false); setAutoRate(null) }}
                 options={suppliers} getValue={s => String(s.id)} getLabel={s => s.name} placeholder="Supplier…" formInput />
+            </div>
+            <div>
+              <label className="form-label">Invoice #</label>
+              <input className="form-input" value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" />
             </div>
             <div>
               <label className="form-label">Slip #</label>
@@ -362,35 +406,88 @@ function DieselSection({ truck, year, month, suppliers }) {
                   </thead>
                   <tbody>
                     {sortEntries(entries).map(f => (
-                      <tr key={f.id} style={{ height: 48 }}>
-                        <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(f.fillup_date)}</td>
-                        <td>
-                          <span style={{
-                            padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700,
-                            background: f.diesel_type === 'topup' ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)',
-                            color: f.diesel_type === 'topup' ? '#d97706' : '#16a34a',
-                          }}>
-                            {f.diesel_type === 'topup' ? 'Top-up' : 'Fill-up'}
-                          </span>
-                        </td>
-                        <td style={{ fontFamily: 'monospace', fontSize: 12, color: f.slip_number ? 'var(--text-primary)' : 'var(--danger)', fontWeight: f.slip_number ? 400 : 600 }}>
-                          {f.slip_number || '⚠ missing'}
-                        </td>
-                        <td style={{ fontFamily: 'monospace', fontSize: 12, color: (f.supplier_invoice_number || f.invoice_number) ? 'var(--text-muted)' : 'var(--danger)', fontWeight: (f.supplier_invoice_number || f.invoice_number) ? 400 : 600 }}>
-                          {f.supplier_invoice_number || f.invoice_number || '⚠ missing'}
-                        </td>
-                        <td style={{ textAlign: 'right' }}>{parseFloat(f.litres).toFixed(1)}</td>
-                        <td style={{ textAlign: 'right', fontSize: 12 }}>R {parseFloat(f.rate_per_litre).toFixed(2)}</td>
-                        <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(f.amount)}</td>
-                        <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(f.admin_fee_amount)}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(f.total_amount)}</td>
-                        <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.notes || '—'}</td>
-                        <td>
-                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(f)}>
-                            <Trash2 size={13} />
-                          </button>
-                        </td>
-                      </tr>
+                      editingFillupId === f.id ? (
+                        <tr key={f.id} onClick={e => e.stopPropagation()}
+                          style={{ background: 'var(--accent-subtle)', outline: '2px solid var(--accent)', outlineOffset: -1 }}>
+                          <td style={{ padding: '4px 6px' }}>
+                            <DateInput className="form-input" value={editFillupForm.fillup_date}
+                              onChange={e => setEF('fillup_date', e.target.value)} style={{ width: 105 }} />
+                          </td>
+                          <td style={{ padding: '4px 6px' }}>
+                            <select className="form-input" value={editFillupForm.diesel_type}
+                              onChange={e => setEF('diesel_type', e.target.value)} style={{ fontSize: 12 }}>
+                              <option value="fillup">Fill-up</option>
+                              <option value="topup">Top-up</option>
+                            </select>
+                          </td>
+                          <td style={{ padding: '4px 6px' }}>
+                            <input className="form-input" value={editFillupForm.slip_number}
+                              onChange={e => setEF('slip_number', e.target.value)} placeholder="SLP-001"
+                              style={{ width: 80 }} />
+                          </td>
+                          <td style={{ padding: '4px 6px' }}>
+                            <input className="form-input" value={editFillupForm.invoice_number}
+                              onChange={e => setEF('invoice_number', e.target.value)} placeholder="INV-001"
+                              style={{ width: 90 }} />
+                          </td>
+                          <td style={{ padding: '4px 6px' }}>
+                            <input className="form-input" type="number" step="0.01" value={editFillupForm.litres}
+                              onChange={e => setEF('litres', e.target.value)} placeholder="0.00"
+                              style={{ width: 70, textAlign: 'right' }} />
+                          </td>
+                          <td style={{ padding: '4px 6px' }}>
+                            <input className="form-input" type="number" step="0.001" value={editFillupForm.rate_per_litre}
+                              onChange={e => setEF('rate_per_litre', e.target.value)} placeholder="0.00"
+                              style={{ width: 70, textAlign: 'right' }} />
+                          </td>
+                          <td /><td /><td />
+                          <td style={{ padding: '4px 6px' }}>
+                            <input className="form-input" value={editFillupForm.notes}
+                              onChange={e => setEF('notes', e.target.value)} placeholder="Notes"
+                              style={{ minWidth: 80 }} />
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap', padding: '4px 6px' }}>
+                            <button className="btn btn-icon btn-primary" onClick={doUpdateFillup}
+                              disabled={editSaving} title="Save" style={{ marginRight: 4 }}>
+                              <Save size={13} />
+                            </button>
+                            <button className="btn btn-icon btn-ghost" onClick={() => setEditingFillupId(null)}
+                              title="Cancel">
+                              <X size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={f.id} style={{ height: 48, cursor: 'pointer' }} onClick={() => startEditFillup(f)}>
+                          <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(f.fillup_date)}</td>
+                          <td>
+                            <span style={{
+                              padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                              background: f.diesel_type === 'topup' ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)',
+                              color: f.diesel_type === 'topup' ? '#d97706' : '#16a34a',
+                            }}>
+                              {f.diesel_type === 'topup' ? 'Top-up' : 'Fill-up'}
+                            </span>
+                          </td>
+                          <td style={{ fontFamily: 'monospace', fontSize: 12, color: f.slip_number ? 'var(--text-primary)' : 'var(--danger)', fontWeight: f.slip_number ? 400 : 600 }}>
+                            {f.slip_number || '⚠ missing'}
+                          </td>
+                          <td style={{ fontFamily: 'monospace', fontSize: 12, color: (f.supplier_invoice_number || f.invoice_number) ? 'var(--text-muted)' : 'var(--danger)', fontWeight: (f.supplier_invoice_number || f.invoice_number) ? 400 : 600 }}>
+                            {f.supplier_invoice_number || f.invoice_number || '⚠ missing'}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>{parseFloat(f.litres).toFixed(1)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 12 }}>R {parseFloat(f.rate_per_litre).toFixed(2)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(f.amount)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(f.admin_fee_amount)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(f.total_amount)}</td>
+                          <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.notes || '—'}</td>
+                          <td onClick={e => e.stopPropagation()}>
+                            <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(f)}>
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      )
                     ))}
                   </tbody>
                   <tfoot>
@@ -444,6 +541,44 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [form, setForm]         = useState({ driver_id: '', route_name: '', amount: '', load_date: today, notes: '' })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const [editingEntryId, setEditingEntryId] = useState(null)
+  const [editEntryForm, setEditEntryForm]   = useState({})
+  const [editEntrySaving, setEditEntrySaving] = useState(false)
+  const setEE = (k, v) => setEditEntryForm(f => ({ ...f, [k]: v }))
+
+  const startEditEntry = (e) => {
+    if (editingEntryId !== null) return
+    setEditEntryForm({
+      driver_id:  String(e.driver_id || ''),
+      route_name: e.route_name || '',
+      load_date:  e.load_date ? e.load_date.slice(0, 10) : today,
+      amount:     e.amount != null ? String(e.amount) : '',
+      notes:      e.notes || '',
+    })
+    setEditingEntryId(e.id)
+  }
+
+  const doUpdateEntry = async () => {
+    const entry = entries.find(e => e.id === editingEntryId)
+    if (!entry) return
+    setEditEntrySaving(true)
+    try {
+      await updateDriverAdditionalLoad(entry.driver_id, year, month, editingEntryId, {
+        driver_id:          parseInt(editEntryForm.driver_id) || entry.driver_id,
+        load_date:          new Date(editEntryForm.load_date + 'T12:00:00').toISOString(),
+        route_name:         editEntryForm.route_name,
+        truck_registration: truck.registration,
+        amount:             parseFloat(editEntryForm.amount) || 0,
+        notes:              editEntryForm.notes || null,
+      })
+      toast.success('Entry updated')
+      setEditingEntryId(null)
+      fetchEntries()
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Failed to update')
+    } finally { setEditEntrySaving(false) }
+  }
 
   const fetchEntries = useCallback(async () => {
     setLoading(true)
@@ -563,28 +698,66 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
             </thead>
             <tbody>
               {sortedAdditional.map(e => (
-                <tr key={e.id}>
-                  <td style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                editingEntryId === e.id ? (
+                  <tr key={e.id} onClick={ev => ev.stopPropagation()}
+                    style={{ background: 'var(--accent-subtle)', outline: '2px solid var(--accent)', outlineOffset: -1 }}>
+                    <td style={{ padding: '4px 6px', fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>
                       {e.driver_name}
-                      {driverTypeByName[e.driver_name] && (
-                        <span className={`badge ${driverTypeByName[e.driver_name] === 'permanent' ? 'badge-paid' : 'badge-quote'}`}
-                          style={{ fontSize: 9, padding: '1px 5px' }}>
-                          {driverTypeByName[e.driver_name] === 'permanent' ? 'P' : 'C'}
-                        </span>
-                      )}
-                    </span>
-                  </td>
-                  <td style={{ fontSize: 13 }}>{e.route_name}</td>
-                  <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.load_date)}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(e.amount)}</td>
-                  <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
-                  <td>
-                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(e)}>
-                      <Trash2 size={13} />
-                    </button>
-                  </td>
-                </tr>
+                    </td>
+                    <td style={{ padding: '4px 6px' }}>
+                      <input className="form-input" value={editEntryForm.route_name}
+                        onChange={ev => setEE('route_name', ev.target.value)} placeholder="Description"
+                        style={{ minWidth: 120 }} />
+                    </td>
+                    <td style={{ padding: '4px 6px' }}>
+                      <DateInput className="form-input" value={editEntryForm.load_date}
+                        onChange={ev => setEE('load_date', ev.target.value)} style={{ width: 105 }} />
+                    </td>
+                    <td style={{ padding: '4px 6px' }}>
+                      <input className="form-input" type="number" step="0.01" value={editEntryForm.amount}
+                        onChange={ev => setEE('amount', ev.target.value)} placeholder="0.00"
+                        style={{ width: 90, textAlign: 'right' }} />
+                    </td>
+                    <td style={{ padding: '4px 6px' }}>
+                      <input className="form-input" value={editEntryForm.notes}
+                        onChange={ev => setEE('notes', ev.target.value)} placeholder="Notes"
+                        style={{ minWidth: 80 }} />
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap', padding: '4px 6px' }}>
+                      <button className="btn btn-icon btn-primary" onClick={doUpdateEntry}
+                        disabled={editEntrySaving} title="Save" style={{ marginRight: 4 }}>
+                        <Save size={13} />
+                      </button>
+                      <button className="btn btn-icon btn-ghost" onClick={() => setEditingEntryId(null)}
+                        title="Cancel">
+                        <X size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => startEditEntry(e)}>
+                    <td style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        {e.driver_name}
+                        {driverTypeByName[e.driver_name] && (
+                          <span className={`badge ${driverTypeByName[e.driver_name] === 'permanent' ? 'badge-paid' : 'badge-quote'}`}
+                            style={{ fontSize: 9, padding: '1px 5px' }}>
+                            {driverTypeByName[e.driver_name] === 'permanent' ? 'P' : 'C'}
+                          </span>
+                        )}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: 13 }}>{e.route_name}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.load_date)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(e.amount)}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
+                    <td onClick={ev => ev.stopPropagation()}>
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(e)}>
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                )
               ))}
             </tbody>
             {entries.length > 0 && (

@@ -326,7 +326,7 @@ class SupplierInvoice(Base):
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
 
     invoice_date = Column(DateTime(timezone=True), nullable=False)
-    invoice_number = Column(String(100), nullable=False)
+    invoice_number = Column(String(100), nullable=True)
     amount = Column(Numeric(12, 2), nullable=False)
     litres = Column(Numeric(10, 3), nullable=True)
     vat_applicable = Column(Boolean, default=True)

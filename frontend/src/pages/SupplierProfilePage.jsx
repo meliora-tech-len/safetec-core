@@ -25,6 +25,8 @@ const MONTH_NAMES = [
 ]
 
 const today = new Date().toISOString().slice(0, 10)
+const currentMonth = () => new Date().getMonth() + 1
+const currentYear  = () => new Date().getFullYear()
 
 const blankForm = (entityId, isDieselSupplier = false) => ({
   entity_id: entityId || '',
@@ -39,6 +41,8 @@ const blankForm = (entityId, isDieselSupplier = false) => ({
   notes: '',
   is_multi_line: false,
   line_items: [],
+  statement_month: currentMonth(),
+  statement_year: currentYear(),
 })
 
 const blankLineItem = () => ({
@@ -214,6 +218,8 @@ export default function SupplierProfilePage() {
         const excl = parseFloat(li.amount_excl_vat) || 0
         return { ...li, _key: li.id, _rate: qty > 0 ? String(Math.round(excl / qty * 10000) / 10000) : '' }
       }) : [],
+      statement_month: inv.statement_month || currentMonth(),
+      statement_year: inv.statement_year || currentYear(),
     })
     if (inv.is_multi_line) {
       setOpenInvoiceIds(s => { const n = new Set(s); n.add(inv.id); return n })
@@ -242,6 +248,8 @@ export default function SupplierProfilePage() {
     description: form.description.trim() || null,
     notes: form.notes.trim() || null,
     is_multi_line: form.is_multi_line,
+    statement_month: parseInt(form.statement_month),
+    statement_year: parseInt(form.statement_year),
   })
 
   const buildLineItemPayload = (li, idx) => ({
@@ -387,7 +395,7 @@ export default function SupplierProfilePage() {
 
   const isDuplicateInvoiceNumber = (invoiceNumber, excludeId = null) =>
     allInvoices.some(inv =>
-      inv.invoice_number.trim().toLowerCase() === invoiceNumber.trim().toLowerCase() &&
+      (inv.invoice_number || '').trim().toLowerCase() === invoiceNumber.trim().toLowerCase() &&
       inv.id !== excludeId
     )
 
@@ -582,6 +590,7 @@ export default function SupplierProfilePage() {
               <tr style={{ background: 'var(--bg-surface)' }}>
                 {multiEntity && <th style={styles.th}>Entity</th>}
                 <th style={styles.th}>Date</th>
+                <th style={styles.th}>Period</th>
                 <th style={styles.th}>Invoice #</th>
                 {isDiesel && <th style={styles.th}>Slip #</th>}
                 {showVehicleReg && <th style={styles.th}>Vehicle Reg</th>}
@@ -614,7 +623,7 @@ export default function SupplierProfilePage() {
                   />
                 : <tr>
                     <td
-                      colSpan={9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)}
+                      colSpan={10 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)}
                       style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}
                     >
                       No invoices yet — click "Add Invoice" to start
@@ -630,7 +639,7 @@ export default function SupplierProfilePage() {
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         title="Delete Supplier Invoice"
-        description={deleteTarget ? `Invoice ${deleteTarget.invoice_number}${deleteTarget.amount ? ` — ${formatCurrency(deleteTarget.amount)}` : ''}` : ''}
+        description={deleteTarget ? `Invoice ${deleteTarget.invoice_number || '(no number)'}${deleteTarget.amount ? ` — ${formatCurrency(deleteTarget.amount)}` : ''}` : ''}
         onArchive={async () => {
           try { await archiveSupplierInvoice(deleteTarget.id); toast.success('Invoice archived'); setDeleteTarget(null); loadInvoices() }
           catch (e) { toast.error(errorMessage(e)) }
@@ -716,6 +725,7 @@ export default function SupplierProfilePage() {
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('invoice_date')}>
                         Date{sortArrow('invoice_date')}
                       </th>
+                      <th style={styles.th}>Period</th>
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('invoice_number')}>
                         Invoice #{sortArrow('invoice_number')}
                       </th>
@@ -767,7 +777,7 @@ export default function SupplierProfilePage() {
                       const isEditing = editingId === inv.id
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
-                      const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
+                      const totalCols = 10 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
 
                       return (
                         <Fragment key={inv.id}>
@@ -801,6 +811,33 @@ export default function SupplierProfilePage() {
                                   inputStyle={styles.cellInput}
                                 />
                               ) : formatDate(inv.invoice_date)}
+                            </td>
+
+                            {/* Period */}
+                            <td style={styles.td}>
+                              {isEditing ? (
+                                <div style={{ display: 'flex', gap: 3 }} onClick={e => e.stopPropagation()}>
+                                  <select
+                                    value={f.statement_month}
+                                    onChange={e => setEditForm(p => ({ ...p, statement_month: parseInt(e.target.value) }))}
+                                    style={{ ...styles.cellInput, width: 72, padding: '2px 2px' }}
+                                  >
+                                    {MONTH_NAMES.slice(1).map((m, i) => (
+                                      <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>
+                                    ))}
+                                  </select>
+                                  <input
+                                    type="number" min="2020" max="2099"
+                                    value={f.statement_year}
+                                    onChange={e => setEditForm(p => ({ ...p, statement_year: parseInt(e.target.value) }))}
+                                    style={{ ...styles.cellInput, width: 52 }}
+                                  />
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                  {MONTH_NAMES[inv.statement_month]?.slice(0, 3)} {inv.statement_year}
+                                </span>
+                              )}
                             </td>
 
                             {/* Invoice # */}
@@ -1110,7 +1147,7 @@ export default function SupplierProfilePage() {
 function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
-  const totalCols = 9 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
+  const totalCols = 10 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
   const lineTotal = (form.line_items || []).reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
 
   const formRow = (
@@ -1124,6 +1161,25 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
         <DateInput ref={firstInputRef} value={form.invoice_date}
           onChange={e => set('invoice_date', e.target.value)}
           onKeyDown={e => onKeyDown(e, onSave, onCancel)} inputStyle={styles.cellInput} />
+      </td>
+      <td style={styles.td}>
+        <div style={{ display: 'flex', gap: 3 }}>
+          <select
+            value={form.statement_month}
+            onChange={e => set('statement_month', parseInt(e.target.value))}
+            style={{ ...styles.cellInput, width: 72, padding: '2px 2px' }}
+          >
+            {MONTH_NAMES.slice(1).map((m, i) => (
+              <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>
+            ))}
+          </select>
+          <input
+            type="number" min="2020" max="2099"
+            value={form.statement_year}
+            onChange={e => set('statement_year', parseInt(e.target.value))}
+            style={{ ...styles.cellInput, width: 52 }}
+          />
+        </div>
       </td>
       <td style={styles.td}>
         <input value={form.invoice_number} placeholder="e.g. TM1794"

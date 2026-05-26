@@ -387,10 +387,14 @@ def create_supplier_invoice(
     inv_date = payload.invoice_date
     due_date = calculate_supplier_due_date(inv_date, supplier.payment_term)
 
+    now = datetime.now(tz=timezone.utc)
+    stmt_month = payload.statement_month or now.month
+    stmt_year = payload.statement_year or now.year
+
     inv = SupplierInvoice(
-        **payload.model_dump(),
-        statement_month=inv_date.month,
-        statement_year=inv_date.year,
+        **payload.model_dump(exclude={'statement_month', 'statement_year'}),
+        statement_month=stmt_month,
+        statement_year=stmt_year,
         payment_due_date=due_date,
         created_by_id=current_user.id,
     )
@@ -446,8 +450,6 @@ def update_supplier_invoice(
         supplier = db.query(Supplier).filter(Supplier.id == inv.supplier_id).first()
         new_date = updates["invoice_date"]
         updates["payment_due_date"] = calculate_supplier_due_date(new_date, supplier.payment_term)
-        updates["statement_month"] = new_date.month
-        updates["statement_year"] = new_date.year
 
     for field, value in updates.items():
         setattr(inv, field, value)

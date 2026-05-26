@@ -20,6 +20,13 @@ function displayToISO(text) {
 
 // Accepts/emits yyyy-mm-dd (same API as <input type="date">).
 // Displays and accepts typing in dd/mm/yyyy. Calendar icon opens the native picker.
+//
+// Props:
+//   style      — applied to the inner <input> (border, background, padding, width, etc.)
+//   inputStyle — also applied to the inner <input>, takes priority over style
+//   className  — applied to the inner <input> (e.g. "form-input")
+//   Width/flex props from style are also forwarded to the outer wrapper div so
+//   that container-level sizing constraints (width: 130, flex: 1, etc.) work correctly.
 const DateInput = forwardRef(function DateInput(
   { value, onChange, className, style, inputStyle, disabled, onKeyDown, ...props },
   ref
@@ -72,15 +79,22 @@ const DateInput = forwardRef(function DateInput(
     emit(e.target.value)
   }
 
+  // Forward layout-only props to the outer div so width/flex constraints work
+  const { width, minWidth, maxWidth, flex, flexShrink, flexGrow, flexBasis } = style || {}
+  const wrapperLayout = Object.fromEntries(
+    Object.entries({ width, minWidth, maxWidth, flex, flexShrink, flexGrow, flexBasis })
+      .filter(([, v]) => v !== undefined)
+  )
+
   return (
-    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', ...style }}>
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', ...wrapperLayout }}>
       <input
         {...props}
         ref={ref}
         type="text"
         inputMode="numeric"
         className={className}
-        style={{ flex: 1, minWidth: 0, paddingRight: '1.8em', ...inputStyle }}
+        style={{ flex: 1, minWidth: 0, ...style, ...inputStyle, paddingRight: '1.8em' }}
         disabled={disabled}
         value={text}
         onChange={handleChange}

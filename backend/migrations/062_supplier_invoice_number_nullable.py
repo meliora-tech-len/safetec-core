@@ -3,7 +3,7 @@ from sqlalchemy import text
 
 def upgrade(conn):
     try:
-        conn.execute(text("ALTER TABLE truck_monthly_expenses ADD COLUMN custom_lines TEXT"))
+        conn.execute(text("ALTER TABLE supplier_invoices ALTER COLUMN invoice_number DROP NOT NULL"))
     except Exception:
         pass
     conn.commit()

@@ -2,13 +2,16 @@ import { Outlet } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import Sidebar from './Sidebar'
 import FeedbackWidget from '../FeedbackWidget'
+import ErrorBoundary from '../ErrorBoundary'
 
 export default function AppLayout() {
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       <Sidebar />
       <main style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <Outlet />
+        <ErrorBoundary>
+          <Outlet />
+        </ErrorBoundary>
       </main>
       <Toaster
         position="top-right"

@@ -2,10 +2,12 @@
 from sqlalchemy import text
 
 def upgrade(conn):
-    conn.execute(text("""
-        ALTER TABLE business_entities
-        ADD COLUMN IF NOT EXISTS vat_registered BOOLEAN NOT NULL DEFAULT TRUE
-    """))
+    try:
+        conn.execute(text(
+            "ALTER TABLE business_entities ADD COLUMN vat_registered BOOLEAN NOT NULL DEFAULT TRUE"
+        ))
+    except Exception:
+        pass
     conn.execute(text("""
         UPDATE business_entities SET vat_registered = FALSE WHERE code = 'BKMO'
     """))

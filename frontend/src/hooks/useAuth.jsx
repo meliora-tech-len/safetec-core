@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { login as apiLogin, getEntities } from "../services/api"
 
-const AuthContext = createContext(null)
+const AuthContext = createContext({ user: null, loading: true, entities: [], isAdmin: false })
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {

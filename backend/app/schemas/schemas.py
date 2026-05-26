@@ -1306,7 +1306,7 @@ class SupplierInvoiceCreate(BaseModel):
     subcontractor_id: Optional[int] = None
     entity_id: int
     invoice_date: datetime
-    invoice_number: str
+    invoice_number: Optional[str] = None
     amount: Decimal = Decimal('0')
     litres: Optional[Decimal] = None
     vat_applicable: bool = True
@@ -1314,6 +1314,8 @@ class SupplierInvoiceCreate(BaseModel):
     description: Optional[str] = None
     notes: Optional[str] = None
     is_multi_line: bool = False
+    statement_month: Optional[int] = None
+    statement_year: Optional[int] = None
 
 
 class SubcontractorInvoiceCreate(BaseModel):
@@ -1339,6 +1341,8 @@ class SupplierInvoiceUpdate(BaseModel):
     paid_date: Optional[datetime] = None
     payment_reference: Optional[str] = None
     notes: Optional[str] = None
+    statement_month: Optional[int] = None
+    statement_year: Optional[int] = None
 
 
 class SupplierInvoiceOut(BaseModel):
@@ -1348,7 +1352,7 @@ class SupplierInvoiceOut(BaseModel):
     subcontractor_id: Optional[int] = None
     entity_id: int
     invoice_date: datetime
-    invoice_number: str
+    invoice_number: Optional[str] = None
     amount: Decimal
     litres: Optional[Decimal] = None
     vat_applicable: bool

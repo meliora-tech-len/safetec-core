@@ -13,14 +13,18 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Handle 401 globally
+// Handle 401 globally — use replace to avoid a hard reload flash
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
-      window.location.href = '/login'
+      localStorage.removeItem('activeEntity')
+      // Only redirect if not already on the login page to avoid loops
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.replace('/login')
+      }
     }
     return Promise.reject(err)
   }
@@ -154,6 +158,8 @@ export const getDrivers = (params = {}) => api.get('/drivers', { params })
 export const updateDriver = (id, data) => api.put(`/drivers/${id}`, data)
 export const addDriverAdditionalLoad = (driverId, year, month, data) =>
   api.post(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads`, data)
+export const updateDriverAdditionalLoad = (driverId, year, month, loadId, data) =>
+  api.put(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}`, data)
 export const deleteDriverAdditionalLoad = (driverId, year, month, loadId) =>
   api.delete(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}`)
 export const archiveDriverAdditionalLoad = (driverId, year, month, loadId) =>
@@ -225,6 +231,7 @@ export const getDieselReportByTruck = (params) => api.get('/diesel/reports/month
 export const getDieselReportBySupplier = (params) => api.get('/diesel/reports/monthly-by-supplier', { params })
 export const getDieselCostPerLoad = (truckloadId) => api.get('/diesel/reports/cost-per-load', { params: { truckload_id: truckloadId } })
 export const getDieselAnnualSummary = (params) => api.get('/diesel/reports/annual-summary', { params })
+export const repairDieselInvoiceLinks = () => api.post('/diesel/fillups/repair-invoice-links')
 
 // ── Supplier Invoices ─────────────────────────────────────────────────────────
 export const getSupplierInvoices = (params = {}) => api.get('/supplier-invoices/', { params })

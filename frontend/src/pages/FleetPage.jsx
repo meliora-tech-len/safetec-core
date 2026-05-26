@@ -251,6 +251,7 @@ function TrailerFields({ trailers, onChange }) {
             <div className="form-group">
               <label>Licence Expiry</label>
               <DateInput
+                className="form-input"
                 value={t.licence_expiry}
                 onChange={e => update(t.slot, 'licence_expiry', e.target.value)}
               />
@@ -286,6 +287,7 @@ function TrailerFields({ trailers, onChange }) {
             <div className="form-group">
               <label>Contract End Date</label>
               <DateInput
+                className="form-input"
                 value={t.finance_contract_end}
                 onChange={e => update(t.slot, 'finance_contract_end', e.target.value)}
               />
@@ -615,7 +617,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
                   </div>
                   <div className="form-group">
                     <label>Licence Expiry Date</label>
-                    <DateInput value={form.licence_expiry} onChange={e => set('licence_expiry', e.target.value)} />
+                    <DateInput className="form-input" value={form.licence_expiry} onChange={e => set('licence_expiry', e.target.value)} />
                   </div>
                 </div>
               </div>
@@ -646,6 +648,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
                   <div className="form-group">
                     <label>Contract End Date</label>
                     <DateInput
+                      className="form-input"
                       value={form.finance_contract_end}
                       onChange={e => set('finance_contract_end', e.target.value)}
                     />
@@ -788,7 +791,7 @@ function PersonalVehicleModal({ pv, entities, onSave, onClose }) {
 
             <div className="form-group">
               <label>Licence Expiry Date</label>
-              <DateInput value={form.licence_expiry} onChange={e => set('licence_expiry', e.target.value)} />
+              <DateInput className="form-input" value={form.licence_expiry} onChange={e => set('licence_expiry', e.target.value)} />
             </div>
 
             <div className="form-group">

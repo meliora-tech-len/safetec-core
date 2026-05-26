@@ -12,17 +12,14 @@ def upgrade(conn):
     conn.execute(text(
         "UPDATE user_entity_access SET can_delete = FALSE WHERE can_delete IS NULL"
     ))
-    # Add server-side defaults so future raw SQL inserts also get correct values
-    conn.execute(text(
-        "ALTER TABLE user_entity_access "
-        "ALTER COLUMN can_create SET DEFAULT TRUE"
-    ))
-    conn.execute(text(
-        "ALTER TABLE user_entity_access "
-        "ALTER COLUMN can_edit SET DEFAULT TRUE"
-    ))
-    conn.execute(text(
-        "ALTER TABLE user_entity_access "
-        "ALTER COLUMN can_delete SET DEFAULT FALSE"
-    ))
+    # Add server-side defaults — PostgreSQL only (SQLite handles defaults at ORM level)
+    for sql in [
+        "ALTER TABLE user_entity_access ALTER COLUMN can_create SET DEFAULT TRUE",
+        "ALTER TABLE user_entity_access ALTER COLUMN can_edit SET DEFAULT TRUE",
+        "ALTER TABLE user_entity_access ALTER COLUMN can_delete SET DEFAULT FALSE",
+    ]:
+        try:
+            conn.execute(text(sql))
+        except Exception:
+            pass
     conn.commit()

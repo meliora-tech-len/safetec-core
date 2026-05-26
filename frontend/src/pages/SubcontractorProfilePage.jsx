@@ -664,7 +664,7 @@ export default function SubcontractorProfilePage() {
                 <div className="form-row">
                   <div className="form-group">
                     <label>Date *</label>
-                    <DateInput value={expenseForm.invoice_date} onChange={e => setEF('invoice_date', e.target.value)} required />
+                    <DateInput className="form-input" value={expenseForm.invoice_date} onChange={e => setEF('invoice_date', e.target.value)} required />
                   </div>
                   <div className="form-group">
                     <label>Invoice # *</label>

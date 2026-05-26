@@ -213,7 +213,7 @@ export default function Sidebar() {
               ...styles.navItem,
               ...(isActive ? styles.navItemActive : {}),
             })}>
-              <Icon size={16} />
+              <Icon size={15} />
               <span>{label}</span>
             </NavLink>
           ))}
@@ -228,7 +228,7 @@ export default function Sidebar() {
                 ...styles.navItem,
                 ...(isActive ? styles.navItemActive : {}),
               })}>
-                <Icon size={16} />
+                <Icon size={15} />
                 <span>{label}</span>
               </NavLink>
             ))}
@@ -243,7 +243,7 @@ export default function Sidebar() {
               ...styles.navItem,
               ...(isActive ? styles.navItemActive : {}),
             })}>
-              <Icon size={16} />
+              <Icon size={15} />
               <span>{label}</span>
             </NavLink>
           ))}
@@ -258,7 +258,7 @@ export default function Sidebar() {
                 ...styles.navItem,
                 ...(isActive ? styles.navItemActive : {}),
               })}>
-                <Icon size={16} />
+                <Icon size={15} />
                 <span>{label}</span>
               </NavLink>
             ))}
@@ -358,26 +358,26 @@ export default function Sidebar() {
 
 const styles = {
   sidebar: {
-    width: 210, flexShrink: 0, background: 'var(--bg-sidebar)',
+    width: 185, flexShrink: 0, background: 'var(--bg-sidebar)',
     borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column',
     height: '100vh', position: 'sticky', top: 0,
   },
   logo: {
-    display: 'flex', alignItems: 'center', gap: 10,
-    padding: '16px 14px', borderBottom: '1px solid var(--border)',
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '12px 12px', borderBottom: '1px solid var(--border)',
   },
   logoIcon: {
-    width: 34, height: 34, borderRadius: 8,
+    width: 30, height: 30, borderRadius: 7,
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  logoText: { fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' },
+  logoText: { fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' },
   logoSub: { fontSize: 10, color: 'var(--text-muted)', marginTop: 1 },
-  nav: { flex: 1, padding: '10px 8px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 },
-  navSection: { display: 'flex', flexDirection: 'column', gap: 1, marginBottom: 8 },
-  navLabel: { fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '8px 8px 4px' },
+  nav: { flex: 1, padding: '8px 6px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 },
+  navSection: { display: 'flex', flexDirection: 'column', gap: 1, marginBottom: 6 },
+  navLabel: { fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '6px 8px 3px' },
   navItem: {
-    display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
-    borderRadius: 7, fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)',
+    display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px',
+    borderRadius: 6, fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)',
     textDecoration: 'none', transition: 'all 0.12s',
   },
   navItemActive: {
@@ -385,15 +385,15 @@ const styles = {
   },
   userSection: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '10px 12px', borderTop: '1px solid var(--border)',
+    padding: '8px 10px', borderTop: '1px solid var(--border)',
   },
-  userInfo: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
+  userInfo: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
   avatar: {
-    width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)',
+    width: 26, height: 26, borderRadius: '50%', background: 'var(--accent)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 12, fontWeight: 700, color: 'white', flexShrink: 0,
+    fontSize: 11, fontWeight: 700, color: 'white', flexShrink: 0,
   },
-  userName: { fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  userName: { fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   userRole: { fontSize: 10, color: 'var(--text-muted)' },
   logoutBtn: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'flex', borderRadius: 6 },
   entityDropdown: {
