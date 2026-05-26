@@ -28,7 +28,7 @@ function displayToISO(text) {
 //   Width/flex props from style are also forwarded to the outer wrapper div so
 //   that container-level sizing constraints (width: 130, flex: 1, etc.) work correctly.
 const DateInput = forwardRef(function DateInput(
-  { value, onChange, className, style, inputStyle, disabled, onKeyDown, ...props },
+  { value, onChange, className, style, inputStyle, disabled, onKeyDown, onClick, ...props },
   ref
 ) {
   const [text, setText] = useState(isoToDisplay(value))
@@ -73,6 +73,11 @@ const DateInput = forwardRef(function DateInput(
     onKeyDown?.(e)
   }
 
+  const handleClick = (e) => {
+    try { pickerRef.current?.showPicker?.() } catch {}
+    onClick?.(e)
+  }
+
   const handlePickerChange = (e) => {
     if (!e.target.value) return
     setText(isoToDisplay(e.target.value))
@@ -100,6 +105,7 @@ const DateInput = forwardRef(function DateInput(
         onChange={handleChange}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
+        onClick={handleClick}
         placeholder="dd/mm/yyyy"
         maxLength={10}
       />

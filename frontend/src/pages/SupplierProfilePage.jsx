@@ -581,59 +581,11 @@ export default function SupplierProfilePage() {
         </div>
       )}
 
-      {/* ── Shared table columns helper ── */}
-      {/* ── Statement groups (always rendered, new row injected at top of first group) ── */}
-      {groups.length === 0 ? (
-        <div style={styles.group}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: 'var(--bg-surface)' }}>
-                {multiEntity && <th style={styles.th}>Entity</th>}
-                <th style={styles.th}>Date</th>
-                <th style={styles.th}>Period</th>
-                <th style={styles.th}>Invoice #</th>
-                {isDiesel && <th style={styles.th}>Slip #</th>}
-                {showVehicleReg && <th style={styles.th}>Vehicle Reg</th>}
-                <th style={styles.th}>{isDiesel ? 'Subbie Name' : 'Description'}</th>
-                <th style={styles.th}>Amount</th>
-                {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Litres</th>}
-                {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
-                <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
-                <th style={styles.th}>Notes</th>
-                <th style={styles.th}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {showNew
-                ? <NewRow
-                    form={newForm} setForm={setNewForm} saving={saving}
-                    onSave={saveNew} onCancel={cancelNew}
-                    entities={entities} multiEntity={multiEntity}
-                    firstInputRef={firstInputRef}
-                    onKeyDown={handleKeyDown}
-                    showVehicleReg={showVehicleReg}
-                    isDiesel={isDiesel}
-                    dieselRate={dieselRate}
-                    amountAutoFilled={amountAutoFilled}
-                    onAmountEdit={() => setAmountAutoFilled(false)}
-                    trucks={trucks}
-                    subbies={subbies}
-                  />
-                : <tr>
-                    <td
-                      colSpan={10 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)}
-                      style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}
-                    >
-                      No invoices yet — click "Add Invoice" to start
-                    </td>
-                  </tr>
-              }
-            </tbody>
-          </table>
+      {groups.length === 0 && !showNew && (
+        <div style={{ ...styles.group, padding: '48px 24px', textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: 14 }}>No invoices yet — click "Add Invoice" to start</p>
         </div>
-      ) : null}
+      )}
 
       <DeleteModal
         isOpen={!!deleteTarget}
@@ -649,6 +601,24 @@ export default function SupplierProfilePage() {
           catch (e) { toast.error(errorMessage(e)) }
         }}
       />
+
+      {/* ── New invoice card ── */}
+      {showNew && (
+        <NewInvoiceCard
+          form={newForm} setForm={setNewForm} saving={saving}
+          onSave={saveNew} onCancel={cancelNew}
+          entities={entities} multiEntity={multiEntity}
+          firstInputRef={firstInputRef}
+          onKeyDown={handleKeyDown}
+          showVehicleReg={showVehicleReg}
+          isDiesel={isDiesel}
+          dieselRate={dieselRate}
+          amountAutoFilled={amountAutoFilled}
+          onAmountEdit={() => setAmountAutoFilled(false)}
+          trucks={trucks}
+          subbies={subbies}
+        />
+      )}
 
       {/* ── Filter bar ── */}
       {groups.length > 0 && (
@@ -757,22 +727,6 @@ export default function SupplierProfilePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {groupIndex === 0 && showNew && (
-                      <NewRow
-                        form={newForm} setForm={setNewForm} saving={saving}
-                        onSave={saveNew} onCancel={cancelNew}
-                        entities={entities} multiEntity={multiEntity}
-                        firstInputRef={firstInputRef}
-                        onKeyDown={handleKeyDown}
-                        showVehicleReg={showVehicleReg}
-                        isDiesel={isDiesel}
-                        dieselRate={dieselRate}
-                        amountAutoFilled={amountAutoFilled}
-                        onAmountEdit={() => setAmountAutoFilled(false)}
-                        trucks={trucks}
-                        subbies={subbies}
-                      />
-                    )}
                     {processInvoices(group.invoices).map(inv => {
                       const isEditing = editingId === inv.id
                       const f = editForm
@@ -1144,161 +1098,209 @@ export default function SupplierProfilePage() {
 }
 
 
-function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [] }) {
+const CS = {
+  field: (minWidth = 140) => ({ display: 'flex', flexDirection: 'column', minWidth, flex: '1 1 auto' }),
+  label: {
+    fontSize: 11, fontWeight: 700, color: 'var(--text-muted)',
+    textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 5,
+  },
+  input: {
+    padding: '6px 10px', fontSize: 13,
+    background: 'var(--bg-input, var(--bg-card))',
+    border: '1px solid var(--border)', borderRadius: 6,
+    color: 'var(--text-primary)', width: '100%',
+    outline: 'none', boxSizing: 'border-box',
+  },
+}
+
+
+function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
-  const totalCols = 10 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
   const lineTotal = (form.line_items || []).reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
 
-  const formRow = (
-    <tr style={{ background: 'var(--accent-subtle)', borderBottom: form.is_multi_line ? 'none' : '1px solid var(--border-accent)' }}>
-      {multiEntity && (
-        <td style={styles.td}>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{entityCode}</span>
-        </td>
-      )}
-      <td style={styles.td}>
-        <DateInput ref={firstInputRef} value={form.invoice_date}
-          onChange={e => set('invoice_date', e.target.value)}
-          onKeyDown={e => onKeyDown(e, onSave, onCancel)} inputStyle={styles.cellInput} />
-      </td>
-      <td style={styles.td}>
-        <div style={{ display: 'flex', gap: 3 }}>
-          <select
-            value={form.statement_month}
-            onChange={e => set('statement_month', parseInt(e.target.value))}
-            style={{ ...styles.cellInput, width: 72, padding: '2px 2px' }}
-          >
-            {MONTH_NAMES.slice(1).map((m, i) => (
-              <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>
-            ))}
-          </select>
-          <input
-            type="number" min="2020" max="2099"
-            value={form.statement_year}
-            onChange={e => set('statement_year', parseInt(e.target.value))}
-            style={{ ...styles.cellInput, width: 52 }}
-          />
+  return (
+    <div style={{
+      background: 'var(--bg-card)',
+      border: '1px solid var(--accent)',
+      borderRadius: 12,
+      padding: '18px 22px',
+      marginBottom: 20,
+      boxShadow: '0 2px 16px rgba(0,0,0,0.07)',
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>New Invoice</span>
+          {multiEntity && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-surface)', padding: '2px 8px', borderRadius: 4, fontWeight: 600, border: '1px solid var(--border)' }}>
+              {entityCode}
+            </span>
+          )}
         </div>
-      </td>
-      <td style={styles.td}>
-        <input value={form.invoice_number} placeholder="e.g. TM1794"
-          onChange={e => set('invoice_number', e.target.value)}
-          onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-          style={{ ...styles.cellInput, minWidth: 90 }} />
-      </td>
-      {isDiesel && <td style={styles.td} />}
-      {showVehicleReg && (
-        <td style={styles.td}>
-          <SearchableSelect
-            value={form.vehicle_reg}
-            onChange={v => set('vehicle_reg', v)}
-            options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
-            getValue={t => t.registration}
-            getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
-            placeholder="Vehicle reg…"
-            style={{ width: 150 }}
-          />
-        </td>
-      )}
-      <td style={styles.td}>
-        {isDiesel && subbies.length > 0 ? (
-          <SearchableSelect
-            value={form.description}
-            onChange={v => set('description', v)}
-            options={[{ id: '', name: '' }, ...subbies]}
-            getValue={s => s.name}
-            getLabel={s => s.name || '— None —'}
-            placeholder="Subbie name…"
-            style={{ width: 160 }}
-            formInput
-          />
-        ) : (
-          <input value={form.description} placeholder={isDiesel ? 'Subbie name…' : 'Description'}
-            onChange={e => set('description', e.target.value)}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
+            {['single', 'multi'].map(v => (
+              <button key={v}
+                onClick={() => setForm(f => ({ ...f, is_multi_line: v === 'multi', line_items: [] }))}
+                style={{
+                  padding: '5px 12px', border: 'none',
+                  borderRight: v === 'single' ? '1px solid var(--border)' : 'none',
+                  background: (form.is_multi_line ? v === 'multi' : v === 'single') ? 'var(--accent)' : 'var(--bg-card)',
+                  color: (form.is_multi_line ? v === 'multi' : v === 'single') ? '#fff' : 'var(--text)',
+                  fontWeight: 600, fontSize: 11, cursor: 'pointer',
+                }}>
+                {v === 'single' ? 'Single' : 'Multi-line'}
+              </button>
+            ))}
+          </div>
+          <button onClick={onSave} disabled={saving} className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Save size={13} /> Save
+          </button>
+          <button onClick={onCancel} className="btn btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <X size={13} /> Cancel
+          </button>
+        </div>
+      </div>
+
+      {/* Fields */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px 16px', alignItems: 'flex-start' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', width: 120 }}>
+          <label style={CS.label}>Date</label>
+          <DateInput ref={firstInputRef} value={form.invoice_date}
+            onChange={e => set('invoice_date', e.target.value)}
             onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-            style={{ ...styles.cellInput, minWidth: 140 }} />
-        )}
-      </td>
-      {/* Amount */}
-      <td style={styles.td}>
-        {form.is_multi_line ? (
-          <span style={{ fontWeight: 700, fontSize: 13 }}>{lineTotal > 0 ? `R ${lineTotal.toFixed(2)}` : '—'}</span>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-            <input type="number" step="0.01" placeholder="0.00" value={form.amount}
-              onChange={e => { set('amount', e.target.value); onAmountEdit?.() }}
+            inputStyle={CS.input} />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <label style={CS.label}>Statement Period</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <select value={form.statement_month} onChange={e => set('statement_month', parseInt(e.target.value))}
+              style={{ ...CS.input, width: 118, flex: 'none' }}>
+              {MONTH_NAMES.slice(1).map((m, i) => (
+                <option key={i + 1} value={i + 1}>{m}</option>
+              ))}
+            </select>
+            <input type="number" min="2020" max="2099" value={form.statement_year}
+              onChange={e => set('statement_year', parseInt(e.target.value))}
               onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-              style={{ ...styles.cellInput, width: 90, textAlign: 'right' }} />
-            {amountAutoFilled && (
-              <span style={{ fontSize: 9, fontWeight: 700, color: '#16a34a', whiteSpace: 'nowrap' }}>auto</span>
-            )}
+              style={{ ...CS.input, width: 68, flex: 'none' }} />
+          </div>
+        </div>
+
+        <div style={CS.field(140)}>
+          <label style={CS.label}>Invoice #</label>
+          <input value={form.invoice_number} placeholder="e.g. TM1794"
+            onChange={e => set('invoice_number', e.target.value)}
+            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            style={CS.input} />
+        </div>
+
+        {showVehicleReg && (
+          <div style={CS.field(170)}>
+            <label style={CS.label}>Vehicle Reg</label>
+            <SearchableSelect
+              value={form.vehicle_reg}
+              onChange={v => set('vehicle_reg', v)}
+              options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
+              getValue={t => t.registration}
+              getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
+              placeholder="Vehicle reg…"
+              style={{ width: '100%', padding: '6px 10px', fontSize: 13 }}
+            />
           </div>
         )}
-      </td>
-      {isDiesel && (
-        <td style={{ ...styles.td, textAlign: 'right' }}>
-          <input type="number" step="0.001" min="0" placeholder="0.000"
-            value={form.litres}
-            onChange={e => set('litres', e.target.value)}
-            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-            style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
-          />
-        </td>
-      )}
-      {isDiesel && (
-        <td style={{ ...styles.td, textAlign: 'right' }}>
-          <input type="number" step="0.0001" min="0" placeholder="0.0000"
-            value={form._rate || ''}
-            onChange={e => { set('_rate', e.target.value); onAmountEdit?.() }}
-            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-            style={{ ...styles.cellInput, width: 80, textAlign: 'right' }}
-          />
-        </td>
-      )}
-      <td style={{ ...styles.td, textAlign: 'center' }}>
-        <input type="checkbox" checked={form.vat_applicable}
-          onChange={e => set('vat_applicable', e.target.checked)} style={{ cursor: 'pointer' }} />
-      </td>
-      <td style={styles.td} />
-      <td style={styles.td} />
-      <td style={styles.td}>
-        <input value={form.notes} placeholder="Notes"
-          onChange={e => set('notes', e.target.value)}
-          onKeyDown={e => onKeyDown(e, onSave, onCancel)}
-          style={{ ...styles.cellInput, minWidth: 120 }} />
-      </td>
-      <td style={{ ...styles.td, whiteSpace: 'nowrap', verticalAlign: 'top', paddingTop: 10 }}>
-        {/* Single/Multi toggle */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-          {['single', 'multi'].map(v => (
-            <button key={v}
-              onClick={() => setForm(f => ({ ...f, is_multi_line: v === 'multi', line_items: [] }))}
-              style={{
-                padding: '2px 8px', borderRadius: 12, border: '1px solid var(--border)',
-                background: (form.is_multi_line ? v === 'multi' : v === 'single') ? 'var(--accent)' : 'var(--bg-card)',
-                color: (form.is_multi_line ? v === 'multi' : v === 'single') ? '#fff' : 'var(--text)',
-                fontWeight: 600, fontSize: 10, cursor: 'pointer', whiteSpace: 'nowrap',
-              }}>
-              {v === 'single' ? 'Single' : 'Multi'}
-            </button>
-          ))}
-        </div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <button onClick={onSave} disabled={saving} className="btn btn-icon btn-primary" title="Save (Enter)"><Save size={14} /></button>
-          <button onClick={onCancel} className="btn btn-icon btn-ghost" title="Cancel (Esc)"><X size={14} /></button>
-        </div>
-      </td>
-    </tr>
-  )
 
-  if (!form.is_multi_line) return formRow
+        {isDiesel && (
+          <div style={CS.field(110)}>
+            <label style={CS.label}>Litres</label>
+            <input type="number" step="0.001" min="0" placeholder="0.000"
+              value={form.litres}
+              onChange={e => set('litres', e.target.value)}
+              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              style={{ ...CS.input, textAlign: 'right' }} />
+          </div>
+        )}
 
-  return (
-    <>
-      {formRow}
-      <tr style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--border-accent)' }}>
-        <td colSpan={totalCols} style={{ padding: '0 12px 12px 12px' }}>
+        {isDiesel && (
+          <div style={CS.field(130)}>
+            <label style={CS.label}>
+              Rate/L
+              {dieselRate && (
+                <span style={{ fontWeight: 400, color: 'var(--accent)', marginLeft: 5, fontSize: 10 }}>
+                  (R{parseFloat(dieselRate.rate_per_litre).toFixed(4)})
+                </span>
+              )}
+            </label>
+            <input type="number" step="0.0001" min="0" placeholder="0.0000"
+              value={form._rate || ''}
+              onChange={e => { set('_rate', e.target.value); onAmountEdit?.() }}
+              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              style={{ ...CS.input, textAlign: 'right' }} />
+          </div>
+        )}
+
+        <div style={CS.field(120)}>
+          <label style={CS.label}>
+            Amount
+            {amountAutoFilled && <span style={{ marginLeft: 5, color: '#16a34a', fontWeight: 700, fontSize: 10 }}>AUTO</span>}
+          </label>
+          {form.is_multi_line ? (
+            <div style={{ padding: '6px 10px', fontWeight: 700, fontSize: 14, background: 'var(--bg-surface)', borderRadius: 6, border: '1px solid var(--border)' }}>
+              {lineTotal > 0 ? `R ${lineTotal.toFixed(2)}` : '—'}
+            </div>
+          ) : (
+            <input type="number" step="0.01" placeholder="0.00"
+              value={form.amount}
+              onChange={e => { set('amount', e.target.value); onAmountEdit?.() }}
+              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              style={{ ...CS.input, textAlign: 'right' }} />
+          )}
+        </div>
+
+        <div style={{ ...CS.field(110), flex: 'none' }}>
+          <label style={CS.label}>VAT</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 7 }}>
+            <input type="checkbox" checked={form.vat_applicable}
+              onChange={e => set('vat_applicable', e.target.checked)}
+              style={{ cursor: 'pointer', width: 15, height: 15 }} />
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Applicable</span>
+          </div>
+        </div>
+
+        <div style={CS.field(170)}>
+          <label style={CS.label}>{isDiesel ? 'Subbie Name' : 'Description'}</label>
+          {isDiesel && subbies.length > 0 ? (
+            <SearchableSelect
+              value={form.description}
+              onChange={v => set('description', v)}
+              options={[{ id: '', name: '' }, ...subbies]}
+              getValue={s => s.name}
+              getLabel={s => s.name || '— None —'}
+              placeholder="Subbie name…"
+              style={{ width: '100%', padding: '6px 10px', fontSize: 13 }}
+            />
+          ) : (
+            <input value={form.description}
+              placeholder={isDiesel ? 'Subbie name…' : 'Description'}
+              onChange={e => set('description', e.target.value)}
+              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              style={CS.input} />
+          )}
+        </div>
+
+        <div style={{ ...CS.field(200), flex: '3 1 200px' }}>
+          <label style={CS.label}>Notes</label>
+          <input value={form.notes} placeholder="Optional notes"
+            onChange={e => set('notes', e.target.value)}
+            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            style={CS.input} />
+        </div>
+      </div>
+
+      {form.is_multi_line && (
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
           {isDiesel
             ? <DieselLineItemsEditor
                 items={form.line_items || []}
@@ -1312,9 +1314,9 @@ function NewRow({ form, setForm, saving, onSave, onCancel, entities, multiEntity
                 vatApplicable={form.vat_applicable !== false}
               />
           }
-        </td>
-      </tr>
-    </>
+        </div>
+      )}
+    </div>
   )
 }
 
