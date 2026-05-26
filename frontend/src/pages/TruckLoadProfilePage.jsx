@@ -1813,22 +1813,22 @@ export default function TruckLoadProfilePage() {
                 const { loads: pair, gid } = row
                 const [a, b] = pair
                 const isOpen = openSplitGroups.has(gid)
-                const sumExcl = ((+a.amount_excl_vat || 0) + (+b.amount_excl_vat || 0))
-                const sumIncl = ((+a.amount_incl_vat || 0) + (+b.amount_incl_vat || 0))
-                const sumTonnes = ((+a.tonnes || 0) + (+b.tonnes || 0))
+                const sumExcl = ((+a.amount_excl_vat || 0) + (+b?.amount_excl_vat || 0))
+                const sumIncl = ((+a.amount_incl_vat || 0) + (+b?.amount_incl_vat || 0))
+                const sumTonnes = ((+a.tonnes || 0) + (+b?.tonnes || 0))
                 return [
                   <tr key={`sg-${gid}`} style={{ background: 'var(--bg-surface)', cursor: 'pointer' }}
                     onClick={() => toggleSplitGroup(gid)}>
                     <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(a.load_date)}</td>
                     <td style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                      {a.slip_number || '—'} / {b.slip_number || '—'}
+                      {a.slip_number || '—'}{b ? ` / ${b.slip_number || '—'}` : ''}
                     </td>
                     <td style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                      {a.diesel_invoice || b.diesel_invoice || '—'}
+                      {a.diesel_invoice || b?.diesel_invoice || '—'}
                     </td>
                     {showPo && <td>—</td>}
                     <td style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                      {a.driver_name || '—'} / {b.driver_name || '—'}
+                      {a.driver_name || '—'}{b ? ` / ${b.driver_name || '—'}` : ''}
                     </td>
                     <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
                       <span className="badge badge-quote" style={{ fontSize: 9, padding: '1px 5px' }}>½ split</span>
@@ -1837,7 +1837,7 @@ export default function TruckLoadProfilePage() {
                         {isOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                       </button>
                     </td>
-                    <td style={{ fontSize: 13 }}>{a.mine_name || '—'}{a.mine_name !== b.mine_name ? ` / ${b.mine_name || '—'}` : ''}</td>
+                    <td style={{ fontSize: 13 }}>{a.mine_name || '—'}{b && a.mine_name !== b.mine_name ? ` / ${b.mine_name || '—'}` : ''}</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(sumTonnes)}</td>
                     <td>—</td>
                     <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(sumExcl)}</td>

@@ -514,8 +514,8 @@ export default function SupplierProfilePage() {
           {truckLoadGroups.map(group => {
             const key     = `loads-${group.year}-${group.month}`
             const isOpen  = !loadsCollapsed[key]
-            const totalTonnes = group.loads.reduce((s, l) => s + parseFloat(l.tonnes || 0), 0)
-            const totalAmt    = group.loads.reduce((s, l) => s + parseFloat(l.amount_excl_vat || 0), 0)
+            const totalTonnes = group.loads.reduce((s, l) => s + parseFloat(l?.tonnes || 0), 0)
+            const totalAmt    = group.loads.reduce((s, l) => s + parseFloat(l?.amount_excl_vat || 0), 0)
             return (
               <div key={key} style={{ ...styles.group, marginBottom: 10 }}>
                 <div style={styles.groupHeader} onClick={() => toggleLoadsCollapse(key)}>
