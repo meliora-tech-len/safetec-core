@@ -111,6 +111,7 @@ class BusinessEntity(Base):
     subcontractors  = relationship("Subcontractor",  back_populates="entity", foreign_keys="Subcontractor.entity_id")
     customers       = relationship("Customer",       back_populates="entity")
     invoices = relationship("Invoice", back_populates="entity")
+    invoice_templates = relationship("InvoiceTemplate", back_populates="entity")
     user_access = relationship("UserEntityAccess", back_populates="entity")
     trucks = relationship("Truck", back_populates="entity")
     drivers = relationship("Driver", back_populates="entity")
@@ -313,6 +314,50 @@ class InvoiceLineItem(Base):
     offloading_number = Column(String(100), nullable=True)
 
     invoice = relationship("Invoice", back_populates="line_items")
+
+
+# ── Invoice Templates ──────────────────────────────────────────────────────────
+
+class InvoiceTemplate(Base):
+    __tablename__ = "invoice_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
+    customer_id = Column(Integer, ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
+
+    name = Column(String(200), nullable=False)
+    document_type = Column(Enum(DocumentType), default=DocumentType.invoice, nullable=False)
+    is_vat_exempt = Column(Boolean, default=False)
+    vat_rate = Column(Numeric(5, 4), default=0.15)
+    notes = Column(Text)
+    print_note = Column(Boolean, default=False)
+    terms = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    entity = relationship("BusinessEntity", back_populates="invoice_templates")
+    supplier = relationship("Supplier", foreign_keys=[supplier_id])
+    customer = relationship("Customer", foreign_keys=[customer_id])
+    line_items = relationship("InvoiceTemplateLineItem", back_populates="template",
+                              cascade="all, delete-orphan", order_by="InvoiceTemplateLineItem.sort_order")
+
+
+class InvoiceTemplateLineItem(Base):
+    __tablename__ = "invoice_template_line_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("invoice_templates.id", ondelete="CASCADE"), nullable=False)
+    description = Column(Text)
+    is_vat_exempt = Column(Boolean, default=False)
+    sort_order = Column(Integer, default=0)
+    line_type = Column(String(20), default='item')
+    quantity = Column(Numeric(12, 4))
+    unit_price = Column(Numeric(12, 2))
+    amount = Column(Numeric(12, 2))
+
+    template = relationship("InvoiceTemplate", back_populates="line_items")
 
 
 # ── Supplier Invoices (incoming payables) ─────────────────────────────────────

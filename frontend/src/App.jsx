@@ -31,6 +31,8 @@ import ReportsPage from './pages/ReportsPage'
 import SubcontractorsPage from './pages/SubcontractorsPage'
 import SubcontractorProfilePage from './pages/SubcontractorProfilePage'
 import CustomersPage from './pages/CustomersPage'
+import InvoiceTemplatesPage from './pages/InvoiceTemplatesPage'
+import InvoiceTemplateFormPage from './pages/InvoiceTemplateFormPage'
 import './styles/globals.css'
 
 function PrivateRoute({ children }) {
@@ -98,6 +100,11 @@ export default function App() {
             <Route path="/purchase-orders/new" element={<InvoiceFormPage docType="purchase_order" />} />
             <Route path="/purchase-orders/:id" element={<InvoiceDetailPage docType="purchase_order" />} />
             <Route path="/purchase-orders/:id/edit" element={<InvoiceFormPage docType="purchase_order" />} />
+
+            {/* Invoice Templates */}
+            <Route path="/invoice-templates" element={<InvoiceTemplatesPage />} />
+            <Route path="/invoice-templates/new" element={<InvoiceTemplateFormPage />} />
+            <Route path="/invoice-templates/:id/edit" element={<InvoiceTemplateFormPage />} />
 
             {/* Admin only */}
             <Route path="/audit" element={<AdminRoute><AuditPage /></AdminRoute>} />

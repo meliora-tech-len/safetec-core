@@ -122,6 +122,14 @@ export const deleteMine = (id) => api.delete(`/mines/${id}`)
 export const getMineRates = (mineId, params = {}) => api.get(`/mines/${mineId}/rates`, { params })
 export const addMineRate = (mineId, data) => api.post(`/mines/${mineId}/rates`, data)
 
+// ── Invoice Templates ─────────────────────────────────────────────────────────
+export const getInvoiceTemplates = (params = {}) => api.get('/invoice-templates/', { params })
+export const getInvoiceTemplate = (id) => api.get(`/invoice-templates/${id}`)
+export const createInvoiceTemplate = (data) => api.post('/invoice-templates/', data)
+export const updateInvoiceTemplate = (id, data) => api.put(`/invoice-templates/${id}`, data)
+export const deleteInvoiceTemplate = (id) => api.delete(`/invoice-templates/${id}`)
+export const cloneInvoiceTemplatePayload = (id) => api.post(`/invoice-templates/${id}/clone-payload`)
+
 // ── Customers ─────────────────────────────────────────────────────────────────
 export const getCustomers = (params = {}) => api.get('/customers/', { params })
 export const getCustomer = (id) => api.get(`/customers/${id}`)

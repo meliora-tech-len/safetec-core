@@ -494,6 +494,86 @@ class NextNumberOut(BaseModel):
     counter: int
 
 
+# ── Invoice Templates ──────────────────────────────────────────────────────────
+
+class TemplateLineItemBase(BaseModel):
+    description: Optional[str] = None
+    is_vat_exempt: bool = False
+    sort_order: int = 0
+    line_type: str = 'item'
+    quantity: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
+    amount: Optional[Decimal] = None
+
+    @field_validator('line_type')
+    @classmethod
+    def validate_line_type(cls, v):
+        if v not in {'item', 'header', 'note', 'spacer'}:
+            raise ValueError("line_type must be one of: item, header, note, spacer")
+        return v
+
+class TemplateLineItemCreate(TemplateLineItemBase):
+    pass
+
+class TemplateLineItemOut(TemplateLineItemBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class InvoiceTemplateBase(BaseModel):
+    entity_id: int
+    supplier_id: Optional[int] = None
+    customer_id: Optional[int] = None
+    name: str
+    document_type: DocumentType = DocumentType.invoice
+    is_vat_exempt: bool = False
+    vat_rate: Optional[Decimal] = Decimal("0.15")
+    notes: Optional[str] = None
+    print_note: bool = False
+    terms: Optional[str] = None
+
+class InvoiceTemplateCreate(InvoiceTemplateBase):
+    line_items: List[TemplateLineItemCreate] = []
+
+class InvoiceTemplateUpdate(BaseModel):
+    supplier_id: Optional[int] = None
+    customer_id: Optional[int] = None
+    name: Optional[str] = None
+    document_type: Optional[DocumentType] = None
+    is_vat_exempt: Optional[bool] = None
+    vat_rate: Optional[Decimal] = None
+    notes: Optional[str] = None
+    print_note: Optional[bool] = None
+    terms: Optional[str] = None
+    line_items: Optional[List[TemplateLineItemCreate]] = None
+
+class InvoiceTemplateOut(InvoiceTemplateBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    line_items: List[TemplateLineItemOut] = []
+    supplier: Optional[SupplierSummary] = None
+    customer: Optional[CustomerSummary] = None
+    entity: Optional[EntityOut] = None
+
+    class Config:
+        from_attributes = True
+
+class InvoiceTemplateSummary(BaseModel):
+    id: int
+    name: str
+    document_type: DocumentType
+    entity_id: int
+    entity_code: Optional[str] = None
+    supplier_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    line_item_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
 # ── Audit Log ─────────────────────────────────────────────────────────────────
 
 class AuditLogOut(BaseModel):

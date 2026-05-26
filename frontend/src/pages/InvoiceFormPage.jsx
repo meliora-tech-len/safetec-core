@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useCallback } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { getEntities, getSuppliers, getCustomers, createCustomer, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
@@ -50,8 +50,10 @@ function formatCurrency(val) {
 export default function InvoiceFormPage({ docType = 'invoice' }) {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, activeEntity } = useAuth()
   const isEdit = !!id
+  const templatePayload = !isEdit ? location.state?.templatePayload : null
   const isInvoice = docType === 'invoice'
   const isPO      = docType === 'purchase_order'
   const docLabel  = isInvoice ? 'Invoice' : isPO ? 'Purchase Order' : 'Quote'
@@ -118,6 +120,32 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             line_type: li.line_type || 'item',
             loading_number: li.loading_number || '',
             offloading_number: li.offloading_number || '',
+          })))
+        } else if (templatePayload) {
+          // Pre-fill from template clone
+          setEntityId(String(templatePayload.entity_id))
+          setIsVatExempt(templatePayload.is_vat_exempt || false)
+          setVatRate(templatePayload.vat_rate || 0.15)
+          setNotes(templatePayload.notes || '')
+          setPrintNote(templatePayload.print_note || false)
+          if (templatePayload.customer_id) {
+            setRecipientType('customer')
+            setCustomerId(String(templatePayload.customer_id))
+          } else if (templatePayload.supplier_id) {
+            setRecipientType('supplier')
+            setSupplierId(String(templatePayload.supplier_id))
+          }
+          setLines(templatePayload.line_items.map((li, i) => ({
+            _id: `tpl-${i}`,
+            description: li.description || '',
+            quantity: li.quantity != null ? String(li.quantity) : '',
+            unit_price: li.unit_price != null ? String(li.unit_price) : '',
+            amount: li.amount != null ? String(li.amount) : '',
+            is_vat_exempt: li.is_vat_exempt || false,
+            sort_order: i,
+            line_type: li.line_type || 'item',
+            loading_number: '',
+            offloading_number: '',
           })))
         } else {
           const defaultEntity = activeEntity || entsRes.data[0]
