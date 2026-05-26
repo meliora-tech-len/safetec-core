@@ -941,8 +941,9 @@ class DieselFillUp(Base):
     rate_per_litre = Column(Numeric(10, 4), nullable=False)
     amount = Column(Numeric(12, 2), nullable=False)           # litres × rate
     admin_fee_pct = Column(Numeric(5, 4), nullable=False, default=0)
-    admin_fee_amount = Column(Numeric(12, 2), nullable=False, default=0)
-    total_amount = Column(Numeric(12, 2), nullable=False)     # amount + admin_fee_amount
+    admin_fee_amount = Column(Numeric(12, 2), nullable=False, default=0)  # excl VAT
+    admin_fee_vat = Column(Numeric(12, 2), nullable=False, default=0, server_default='0')  # VAT on admin fee
+    total_amount = Column(Numeric(12, 2), nullable=False)     # amount + admin_fee_amount + admin_fee_vat
 
     invoice_number = Column(String(100))
     slip_number = Column(String(100))

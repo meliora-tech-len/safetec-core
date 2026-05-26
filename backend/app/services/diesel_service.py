@@ -39,27 +39,32 @@ class DieselCalculationService:
         rate_per_litre: Decimal,
         admin_fee_pct: Decimal,
         apply_admin_fee: bool,
+        vat_rate: Decimal = Decimal("0.15"),
     ) -> dict:
         """
-        Compute amount, admin_fee_amount, and total_amount.
+        Compute amount, admin_fee_amount (excl VAT), admin_fee_vat, and total_amount.
         All values are rounded to 2 decimal places.
         """
         litres = Decimal(str(litres))
         rate_per_litre = Decimal(str(rate_per_litre))
         admin_fee_pct = Decimal(str(admin_fee_pct))
+        vat_rate = Decimal(str(vat_rate))
 
         amount = (litres * rate_per_litre).quantize(TWO_DP, rounding=ROUND_HALF_UP)
 
         if apply_admin_fee and admin_fee_pct > 0:
             admin_fee_amount = (amount * admin_fee_pct).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+            admin_fee_vat = (admin_fee_amount * vat_rate).quantize(TWO_DP, rounding=ROUND_HALF_UP)
         else:
             admin_fee_amount = Decimal("0.00")
+            admin_fee_vat = Decimal("0.00")
 
-        total_amount = (amount + admin_fee_amount).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+        total_amount = (amount + admin_fee_amount + admin_fee_vat).quantize(TWO_DP, rounding=ROUND_HALF_UP)
 
         return {
             "amount": amount,
             "admin_fee_amount": admin_fee_amount,
+            "admin_fee_vat": admin_fee_vat,
             "total_amount": total_amount,
         }
 

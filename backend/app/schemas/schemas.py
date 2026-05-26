@@ -1521,6 +1521,7 @@ class DieselFillUpOut(BaseModel):
     amount: Decimal
     admin_fee_pct: Decimal
     admin_fee_amount: Decimal
+    admin_fee_vat: Decimal = Decimal("0")
     total_amount: Decimal
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
@@ -1586,6 +1587,7 @@ class DieselFillUpSummary(BaseModel):
     total_litres: Decimal = Decimal("0")
     total_amount: Decimal = Decimal("0")
     total_admin_fee: Decimal = Decimal("0")
+    total_admin_fee_vat: Decimal = Decimal("0")
     grand_total: Decimal = Decimal("0")
 
 

@@ -10,7 +10,7 @@ from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
     User, DieselSettings, DieselRate, DieselFillUp,
-    Supplier, Truck, TruckLoad, SupplierInvoice,
+    Supplier, Truck, TruckLoad, SupplierInvoice, BusinessEntity,
 )
 from app.schemas.schemas import (
     DieselSettingsOut, DieselSettingsUpdate,
@@ -392,6 +392,7 @@ def get_fillup_summary(
         func.coalesce(func.sum(DieselFillUp.litres), 0),
         func.coalesce(func.sum(DieselFillUp.amount), 0),
         func.coalesce(func.sum(DieselFillUp.admin_fee_amount), 0),
+        func.coalesce(func.sum(DieselFillUp.admin_fee_vat), 0),
         func.coalesce(func.sum(DieselFillUp.total_amount), 0),
     ).one()
 
@@ -400,7 +401,8 @@ def get_fillup_summary(
         total_litres=Decimal(str(rows[1])),
         total_amount=Decimal(str(rows[2])),
         total_admin_fee=Decimal(str(rows[3])),
-        grand_total=Decimal(str(rows[4])),
+        total_admin_fee_vat=Decimal(str(rows[4])),
+        grand_total=Decimal(str(rows[5])),
     )
 
 
@@ -520,11 +522,15 @@ def create_fillup(
     admin_fee_pct = Decimal(str(settings.admin_fee_pct)) if settings else Decimal("0")
     apply_admin_fee = settings.apply_admin_fee if settings else False
 
+    entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
+    vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
+
     amounts = DieselCalculationService.calculate_fillup_amounts(
         litres=payload.litres,
         rate_per_litre=payload.rate_per_litre,
         admin_fee_pct=admin_fee_pct,
         apply_admin_fee=apply_admin_fee,
+        vat_rate=vat_rate,
     )
 
     f = DieselFillUp(
@@ -588,7 +594,9 @@ def update_fillup(
         settings = DieselCalculationService.get_diesel_settings(db, f.entity_id)
         admin_fee_pct = Decimal(str(f.admin_fee_pct))  # keep snapshotted pct
         apply_admin_fee = settings.apply_admin_fee if settings else (admin_fee_pct > 0)
-        amounts = DieselCalculationService.calculate_fillup_amounts(litres, rate, admin_fee_pct, apply_admin_fee)
+        entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == f.entity_id).first()
+        vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
+        amounts = DieselCalculationService.calculate_fillup_amounts(litres, rate, admin_fee_pct, apply_admin_fee, vat_rate)
         updates.update(amounts)
 
     for field, value in updates.items():

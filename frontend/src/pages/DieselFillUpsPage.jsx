@@ -135,8 +135,10 @@ export default function DieselFillUpsPage() {
     const amount = litres * rate
     const pct      = dieselSettings ? parseFloat(dieselSettings.admin_fee_pct) : 0
     const applyFee = dieselSettings ? dieselSettings.apply_admin_fee : false
-    const fee = applyFee && pct > 0 ? amount * pct : 0
-    setPreview({ amount: amount.toFixed(2), fee: fee.toFixed(2), total: (amount + fee).toFixed(2) })
+    const feeExcl = applyFee && pct > 0 ? amount * pct : 0
+    const feeVat  = feeExcl * 0.15
+    const feeIncl = feeExcl + feeVat
+    setPreview({ amount: amount.toFixed(2), fee: feeExcl.toFixed(2), feeVat: feeVat.toFixed(2), feeIncl: feeIncl.toFixed(2), total: (amount + feeIncl).toFixed(2) })
   }, [editForm.litres, editForm.rate_per_litre, dieselSettings])
 
   // Focus first input when edit opens
@@ -250,7 +252,7 @@ export default function DieselFillUpsPage() {
   }, [fillups, search, sort])
 
   const multiEntity = entities.length > 1
-  const COLS = multiEntity ? 14 : 13
+  const COLS = multiEntity ? 15 : 14
 
   return (
     <div style={styles.page}>
@@ -271,9 +273,11 @@ export default function DieselFillUpsPage() {
               { header: 'Litres',        value: r => parseFloat(r.litres).toFixed(2) },
               { header: 'Rate/L',        value: r => parseFloat(r.rate_per_litre).toFixed(2) },
               { header: 'Amount (excl)', value: r => parseFloat(r.amount).toFixed(2) },
-              { header: 'Admin Fee %',   value: r => (parseFloat(r.admin_fee_pct) * 100).toFixed(2) + '%' },
-              { header: 'Admin Fee Amt', value: r => parseFloat(r.admin_fee_amount).toFixed(2) },
-              { header: 'Total',         value: r => parseFloat(r.total_amount).toFixed(2) },
+              { header: 'Admin Fee %',        value: r => (parseFloat(r.admin_fee_pct) * 100).toFixed(2) + '%' },
+              { header: 'Admin Fee (excl VAT)', value: r => parseFloat(r.admin_fee_amount).toFixed(2) },
+              { header: 'Admin Fee VAT',        value: r => parseFloat(r.admin_fee_vat || 0).toFixed(2) },
+              { header: 'Admin Fee (incl VAT)', value: r => (parseFloat(r.admin_fee_amount) + parseFloat(r.admin_fee_vat || 0)).toFixed(2) },
+              { header: 'Total',                value: r => parseFloat(r.total_amount).toFixed(2) },
               { header: 'Invoice #',     key: 'invoice_number' },
               { header: 'Slip #',        key: 'slip_number' },
               { header: 'Verified',      value: r => r.verified ? 'Yes' : '' },
@@ -360,8 +364,8 @@ export default function DieselFillUpsPage() {
         <div className="grid-4" style={{ marginBottom: 16 }}>
           <SummaryCard label="Logs" value={summary.total_fillups} />
           <SummaryCard label="Total Litres" value={`${parseFloat(summary.total_litres).toLocaleString('en-ZA', { minimumFractionDigits: 2 })} L`} />
-          <SummaryCard label="Excl. Admin Fee" value={formatCurrency(summary.total_amount)} />
-          <SummaryCard label="Grand Total (incl. fee)" value={formatCurrency(summary.grand_total)} accent />
+          <SummaryCard label="Admin Fee (incl VAT)" value={formatCurrency(parseFloat(summary.total_admin_fee) + parseFloat(summary.total_admin_fee_vat || 0))} />
+          <SummaryCard label="Grand Total (incl. fee + VAT)" value={formatCurrency(summary.grand_total)} accent />
         </div>
       )}
 
@@ -377,7 +381,8 @@ export default function DieselFillUpsPage() {
               <th className="text-right">Litres</th>
               <th className="text-right">Rate/L</th>
               <th className="text-right">Amount</th>
-              <th className="text-right">Admin Fee</th>
+              <th className="text-right">Admin Fee (excl)</th>
+              <th className="text-right">Admin Fee (incl)</th>
               <SortableHeader label="Total" col="total_amount" sort={sort} onSort={onSort} className="text-right" />
               <th>Type</th>
               <th>Invoice #</th>
@@ -443,6 +448,11 @@ export default function DieselFillUpsPage() {
                   <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {parseFloat(f.admin_fee_amount) > 0 ? formatCurrency(f.admin_fee_amount) : '—'}
                   </td>
+                  <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {parseFloat(f.admin_fee_amount) > 0
+                      ? formatCurrency(parseFloat(f.admin_fee_amount) + parseFloat(f.admin_fee_vat || 0))
+                      : '—'}
+                  </td>
                   <td className="text-right" style={{
                     fontWeight: 700,
                     ...(f.verified2_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
@@ -479,6 +489,9 @@ export default function DieselFillUpsPage() {
                 <td />
                 <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(summary.total_amount)}</td>
                 <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(summary.total_admin_fee)}</td>
+                <td className="text-right" style={{ padding: '10px 12px' }}>
+                  {formatCurrency((parseFloat(summary.total_admin_fee) + parseFloat(summary.total_admin_fee_vat || 0)))}
+                </td>
                 <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(summary.grand_total)}</td>
                 <td colSpan={5} />
               </tr>
@@ -582,9 +595,14 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
         {preview.amount ? formatCurrency(preview.amount) : '—'}
       </td>
 
-      {/* Admin fee (calc) */}
+      {/* Admin fee excl (calc) */}
       <td style={{ ...S.td, textAlign: 'right', color: 'var(--text-muted)', fontSize: 12, whiteSpace: 'nowrap' }}>
         {preview.fee && parseFloat(preview.fee) > 0 ? formatCurrency(preview.fee) : '—'}
+      </td>
+
+      {/* Admin fee incl VAT (calc) */}
+      <td style={{ ...S.td, textAlign: 'right', color: 'var(--text-muted)', fontSize: 12, whiteSpace: 'nowrap' }}>
+        {preview.feeIncl && parseFloat(preview.feeIncl) > 0 ? formatCurrency(preview.feeIncl) : '—'}
       </td>
 
       {/* Total (calc) */}
