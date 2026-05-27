@@ -131,6 +131,7 @@ const _modalBox = {
 }
 const _th = { padding: '6px 10px', textAlign: 'left', fontWeight: 600, fontSize: 11, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }
 const _td = { padding: '5px 10px', verticalAlign: 'middle' }
+const _btnSm = { padding: '3px 10px', fontSize: 11, borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: 'pointer' }
 
 function lineStatus(li, trucks, entityId) {
   if (!li.item_code || !(li.quantity > 0)) return 'missing'
@@ -285,12 +286,18 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
                 </button>
               </div>
             </div>
-            {(statusCounts.no_truck > 0 || statusCounts.missing > 0) && (
-              <div style={{ marginBottom: 8, padding: '7px 12px', borderRadius: 4, background: 'rgba(217,119,6,0.08)', border: '1px solid rgba(217,119,6,0.25)', fontSize: 12 }}>
-                {statusCounts.no_truck > 0 && <span style={{ color: '#d97706', marginRight: 12 }}>⚠ {statusCounts.no_truck} truck registration{statusCounts.no_truck !== 1 ? 's' : ''} not found — fill-ups will be skipped</span>}
-                {statusCounts.missing > 0 && <span style={{ color: '#dc2626' }}>✕ {statusCounts.missing} line{statusCounts.missing !== 1 ? 's' : ''} with missing data</span>}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, minHeight: 28 }}>
+              {(statusCounts.no_truck > 0 || statusCounts.missing > 0) ? (
+                <div style={{ padding: '5px 10px', borderRadius: 4, background: 'rgba(217,119,6,0.08)', border: '1px solid rgba(217,119,6,0.25)', fontSize: 12 }}>
+                  {statusCounts.no_truck > 0 && <span style={{ color: '#d97706', marginRight: 12 }}>⚠ {statusCounts.no_truck} truck registration{statusCounts.no_truck !== 1 ? 's' : ''} not found — fill-ups will be skipped</span>}
+                  {statusCounts.missing > 0 && <span style={{ color: '#dc2626' }}>✕ {statusCounts.missing} line{statusCounts.missing !== 1 ? 's' : ''} with missing data</span>}
+                </div>
+              ) : <div />}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button style={_btnSm} onClick={() => setExpanded(Object.fromEntries(invoices.map((_, i) => [i, true])))}>Expand All</button>
+                <button style={_btnSm} onClick={() => setExpanded({})}>Collapse All</button>
               </div>
-            )}
+            </div>
             <div style={{ maxHeight: 380, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, marginBottom: 16 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
@@ -306,9 +313,17 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
                 <tbody>
                   {invoices.map((inv, i) => {
                     const isSelected = selectedNums.has(inv.invoice_number)
+                    const invStatuses = inv.line_items.map(li => lineStatus(li, trucks, entityId))
+                    const invHasMissing = invStatuses.includes('missing')
+                    const invHasNoTruck = invStatuses.includes('no_truck')
+                    const invRowBg = invHasMissing
+                      ? 'rgba(220,38,38,0.07)'
+                      : invHasNoTruck
+                        ? 'rgba(217,119,6,0.08)'
+                        : 'transparent'
                     return (
                       <Fragment key={i}>
-                        <tr style={{ borderBottom: '1px solid var(--border)', opacity: isSelected ? 1 : 0.45 }}>
+                        <tr style={{ borderBottom: '1px solid var(--border)', opacity: isSelected ? 1 : 0.45, background: invRowBg }}>
                           <td style={{ ..._td, width: 28 }}>
                             <input type="checkbox" checked={isSelected}
                               onChange={() => setSelectedNums(prev => {
