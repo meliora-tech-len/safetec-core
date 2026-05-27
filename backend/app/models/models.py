@@ -396,6 +396,7 @@ class SupplierInvoice(Base):
     payment_reference = Column(String(200))
 
     notes = Column(Text)
+    deposit_paid = Column(Numeric(12, 2), nullable=True)
     is_multi_line = Column(Boolean, default=False, nullable=False, server_default='false')
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

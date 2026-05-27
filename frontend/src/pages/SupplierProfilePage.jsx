@@ -34,6 +34,7 @@ const blankForm = (entityId, isDieselSupplier = false) => ({
   invoice_date: today,
   invoice_number: '',
   amount: '',
+  deposit_paid: '',
   litres: '',
   _rate: '',
   vehicle_reg: '',
@@ -578,6 +579,7 @@ export default function SupplierProfilePage() {
       invoice_date: inv.invoice_date?.slice(0, 10) || today,
       invoice_number: inv.invoice_number || '',
       amount: String(inv.amount || ''),
+      deposit_paid: inv.deposit_paid ? String(inv.deposit_paid) : '',
       litres: inv.litres ? String(inv.litres) : '',
       _rate: inv.litres && inv.amount ? String(Math.round(parseFloat(inv.amount) / parseFloat(inv.litres) * 10000) / 10000) : '',
       vehicle_reg: inv.vehicle_reg || '',
@@ -614,6 +616,7 @@ export default function SupplierProfilePage() {
     invoice_date: new Date(form.invoice_date + 'T12:00:00').toISOString(),
     invoice_number: form.invoice_number.trim(),
     amount: form.is_multi_line ? 0 : parseFloat(form.amount),
+    deposit_paid: form.deposit_paid !== '' && form.deposit_paid != null ? parseFloat(form.deposit_paid) : null,
     litres: form.litres ? parseFloat(form.litres) : null,
     vat_applicable: form.vat_applicable,
     vehicle_reg: form.vehicle_reg.trim() || null,
@@ -1103,6 +1106,8 @@ export default function SupplierProfilePage() {
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('amount')}>
                         Amount{sortArrow('amount')}
                       </th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Deposit</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Outstanding</th>
                       {isDiesel && (
                         <th style={{ ...styles.th, textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('litres')}>
                           Litres{sortArrow('litres')}
@@ -1121,7 +1126,7 @@ export default function SupplierProfilePage() {
                       const isEditing = editingId === inv.id
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
-                      const totalCols = 10 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
+                      const totalCols = 12 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
 
                       return (
                         <Fragment key={inv.id}>
@@ -1292,6 +1297,36 @@ export default function SupplierProfilePage() {
                                   )}
                                 </>
                               )}
+                            </td>
+
+                            {/* Deposit Paid */}
+                            <td style={{ ...styles.td, textAlign: 'right' }}>
+                              {isEditing ? (
+                                <input
+                                  type="number" step="0.01" min="0" placeholder="0.00"
+                                  value={f.deposit_paid || ''}
+                                  onChange={e => setEditForm(p => ({ ...p, deposit_paid: e.target.value }))}
+                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ ...styles.cellInput, width: 90, textAlign: 'right' }}
+                                />
+                              ) : inv.deposit_paid ? (
+                                <span style={{ fontSize: 12 }}>{formatCurrency(inv.deposit_paid)}</span>
+                              ) : (
+                                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                              )}
+                            </td>
+
+                            {/* Outstanding Amount */}
+                            <td style={{ ...styles.td, textAlign: 'right' }}>
+                              {(() => {
+                                const amt = parseFloat(isEditing ? f.amount : inv.amount) || 0
+                                const dep = parseFloat(isEditing ? f.deposit_paid : inv.deposit_paid) || 0
+                                const outstanding = amt - dep
+                                if (dep === 0) return <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                if (outstanding <= 0) return <span style={{ color: '#16a34a', fontSize: 12, fontWeight: 600 }}>Paid</span>
+                                return <span style={{ fontSize: 12, fontWeight: 600, color: '#d97706' }}>{formatCurrency(outstanding)}</span>
+                              })()}
                             </td>
 
                             {/* Litres — diesel suppliers only */}
@@ -1481,7 +1516,7 @@ export default function SupplierProfilePage() {
                         Statement Total:
                       </td>
                       <td style={{ ...styles.td, fontWeight: 700 }}>{formatCurrency(group.subtotal)}</td>
-                      <td colSpan={5 + (isDiesel ? 2 : 0)} style={styles.td} />
+                      <td colSpan={7 + (isDiesel ? 2 : 0)} style={styles.td} />
                     </tr>
                   </tfoot>
                 </table>
@@ -1654,6 +1689,15 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
               onKeyDown={e => onKeyDown(e, onSave, onCancel)}
               style={{ ...CS.input, textAlign: 'right' }} />
           )}
+        </div>
+
+        <div style={CS.field(120)}>
+          <label style={CS.label}>Deposit Paid</label>
+          <input type="number" step="0.01" min="0" placeholder="0.00"
+            value={form.deposit_paid || ''}
+            onChange={e => set('deposit_paid', e.target.value)}
+            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            style={{ ...CS.input, textAlign: 'right' }} />
         </div>
 
         <div style={{ ...CS.field(110), flex: 'none' }}>

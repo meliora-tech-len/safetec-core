@@ -1477,6 +1477,7 @@ class SupplierInvoiceCreate(BaseModel):
     vehicle_reg: Optional[str] = None
     description: Optional[str] = None
     notes: Optional[str] = None
+    deposit_paid: Optional[Decimal] = None
     is_multi_line: bool = False
     statement_month: Optional[int] = None
     statement_year: Optional[int] = None
@@ -1505,6 +1506,7 @@ class SupplierInvoiceUpdate(BaseModel):
     paid_date: Optional[datetime] = None
     payment_reference: Optional[str] = None
     notes: Optional[str] = None
+    deposit_paid: Optional[Decimal] = None
     statement_month: Optional[int] = None
     statement_year: Optional[int] = None
 
@@ -1531,6 +1533,7 @@ class SupplierInvoiceOut(BaseModel):
     paid_date: Optional[datetime] = None
     payment_reference: Optional[str] = None
     notes: Optional[str] = None
+    deposit_paid: Optional[Decimal] = None
     created_by_id: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
