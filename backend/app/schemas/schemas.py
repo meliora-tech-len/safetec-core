@@ -1633,7 +1633,7 @@ class DieselFillUpCreate(BaseModel):
     supplier_invoice_id: Optional[int] = None
     diesel_type: str = 'fillup'
     notes: Optional[str] = None
-    driver_name: Optional[str] = None
+    # driver_name: Optional[str] = None  # reserved for TruckLoad
 
 
 class DieselFillUpUpdate(BaseModel):
@@ -1649,7 +1649,7 @@ class DieselFillUpUpdate(BaseModel):
     diesel_type: Optional[str] = None
     verified: Optional[bool] = None
     notes: Optional[str] = None
-    driver_name: Optional[str] = None
+    # driver_name: Optional[str] = None  # reserved for TruckLoad
 
 
 class DieselFillUpOut(BaseModel):
@@ -1674,7 +1674,7 @@ class DieselFillUpOut(BaseModel):
     verified_by: Optional[int] = None
     verified_at: Optional[datetime] = None
     notes: Optional[str] = None
-    driver_name: Optional[str] = None
+    # driver_name: Optional[str] = None  # reserved for TruckLoad
     created_by: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None

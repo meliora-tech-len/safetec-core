@@ -616,6 +616,7 @@ def delete_supplier_invoice(
         entity_id=inv.entity_id, resource_type="supplier_invoice",
         resource_id=invoice_id, description=f"Deleted invoice {inv.invoice_number}",
     )
+    db.query(DieselFillUp).filter(DieselFillUp.supplier_invoice_id == invoice_id).delete()
     db.delete(inv)
     db.commit()
     return {"detail": "Invoice deleted"}
@@ -855,7 +856,6 @@ def bulk_import_invoices(
                 invoice_number=num or None,
                 slip_number=li.item_code or None,
                 supplier_invoice_id=inv.id,
-                driver_name=li.driver_name or None,
                 admin_fee_pct=admin_fee_pct,
                 created_by=current_user.id,
                 **amounts,

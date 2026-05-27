@@ -1027,7 +1027,8 @@ class DieselFillUp(Base):
 
     diesel_type = Column(String(10), nullable=False, default='fillup', server_default='fillup')
     notes = Column(Text)
-    driver_name = Column(String(200), nullable=True)
+    # driver_name reserved for TruckLoad; not stored on DieselFillUp until Loads import is confirmed
+    # driver_name = Column(String(200), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
