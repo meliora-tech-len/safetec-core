@@ -983,6 +983,7 @@ class DieselRate(Base):
     rate_per_litre = Column(Numeric(10, 4), nullable=False)
     additional_charge_per_ton = Column(Numeric(10, 2), nullable=False, default=0)
     effective_date = Column(Date, nullable=False)
+    effective_to = Column(Date, nullable=True)
     notes = Column(Text)
     is_active = Column(Boolean, nullable=False, default=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

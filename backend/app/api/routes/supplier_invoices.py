@@ -94,12 +94,8 @@ def _auto_create_diesel_fillup(
                 db.commit()
             return existing_fillup.id
 
-        # Use the active DieselRate if available; otherwise derive from invoice amount / litres
-        rate_record = DieselCalculationService.get_active_rate(db, supplier.id, entity_id, inv_date)
-        if rate_record:
-            rate_per_litre = Decimal(str(rate_record.rate_per_litre))
-        else:
-            rate_per_litre = (invoice_amount / litres).quantize(Decimal("0.0001"))
+        # Always derive rate from invoice (ground truth); system rate is for manual fill-ups only
+        rate_per_litre = (invoice_amount / litres).quantize(Decimal("0.0001"))
 
         settings = DieselCalculationService.get_diesel_settings(db, entity_id)
         admin_fee_pct = Decimal(str(settings.admin_fee_pct)) if settings else Decimal("0")
@@ -826,12 +822,11 @@ def bulk_import_invoices(
 
             litres_d = Decimal(str(li.quantity))
             excl_d = Decimal(str(li.amount_excl_vat))
-            rate_record = DieselCalculationService.get_active_rate(
-                db, supplier.id, payload.entity_id, inv_date_obj
-            )
-            if rate_record:
-                rate_per_litre = Decimal(str(rate_record.rate_per_litre))
-            elif litres_d > 0:
+            if litres_d <= 0:
+                fillups_skipped += 1
+                continue
+            # Derive rate from the invoice line (ground truth); system rate is for manual fill-ups only
+            if excl_d > 0:
                 rate_per_litre = (excl_d / litres_d).quantize(Decimal("0.0001"))
             else:
                 fillups_skipped += 1

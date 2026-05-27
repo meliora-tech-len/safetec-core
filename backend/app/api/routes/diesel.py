@@ -342,6 +342,8 @@ def update_diesel_rate(
         rate.notes = payload.notes
     if payload.is_active is not None:
         rate.is_active = payload.is_active
+    if payload.effective_to is not None:
+        rate.effective_to = payload.effective_to
 
     log_action(
         db, "diesel_rate.updated", user_id=current_user.id,

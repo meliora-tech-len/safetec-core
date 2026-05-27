@@ -24,7 +24,7 @@ export default function DieselRatesPage() {
   const [editRate, setEditRate] = useState(null)
   const [form, setForm] = useState({
     supplier_id: '', rate_per_litre: '', additional_charge_per_ton: '0',
-    effective_date: '', notes: '', is_active: true,
+    effective_date: '', effective_to: '', notes: '', is_active: true,
   })
   const [saving, setSaving] = useState(false)
 
@@ -90,6 +90,7 @@ export default function DieselRatesPage() {
       rate_per_litre: '',
       additional_charge_per_ton: '0',
       effective_date: today,
+      effective_to: '',
       notes: '',
       is_active: true,
     })
@@ -103,6 +104,7 @@ export default function DieselRatesPage() {
       rate_per_litre: fmt(rate.rate_per_litre),
       additional_charge_per_ton: fmt2(rate.additional_charge_per_ton ?? 0),
       effective_date: rate.effective_date,
+      effective_to: rate.effective_to || '',
       notes: rate.notes || '',
       is_active: rate.is_active,
     })
@@ -117,7 +119,11 @@ export default function DieselRatesPage() {
     setSaving(true)
     try {
       if (editRate) {
-        await updateDieselRate(editRate.id, { notes: form.notes, is_active: form.is_active })
+        await updateDieselRate(editRate.id, {
+          notes: form.notes,
+          is_active: form.is_active,
+          effective_to: form.effective_to || null,
+        })
         toast.success('Rate updated')
       } else {
         await createDieselRate({
@@ -126,6 +132,7 @@ export default function DieselRatesPage() {
           rate_per_litre: Number(form.rate_per_litre),
           additional_charge_per_ton: Number(form.additional_charge_per_ton) || 0,
           effective_date: form.effective_date,
+          effective_to: form.effective_to || null,
           notes: form.notes || null,
         })
         toast.success('Rate added')
@@ -210,7 +217,8 @@ export default function DieselRatesPage() {
                 <th style={styles.th}>Supplier</th>
                 <th style={styles.th}>Current Rate (R/L)</th>
                 <th style={styles.th}>Additional Charge (R/ton)</th>
-                <th style={styles.th}>Effective Date</th>
+                <th style={styles.th}>Effective From</th>
+                <th style={styles.th}>Effective To</th>
                 <th style={styles.th}>History</th>
                 <th style={styles.th}>Actions</th>
               </tr>
@@ -251,6 +259,9 @@ export default function DieselRatesPage() {
                       {current ? fmtDate(current.effective_date) : '—'}
                     </td>
                     <td style={styles.td}>
+                      {current?.effective_to ? fmtDate(current.effective_to) : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Open</span>}
+                    </td>
+                    <td style={styles.td}>
                       <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                         {sRates.length} {sRates.length === 1 ? 'entry' : 'entries'}
                       </span>
@@ -266,11 +277,11 @@ export default function DieselRatesPage() {
                   </tr>,
                   isExp && sRates.length > 0 && (
                     <tr key={`${supplier.id}-history`}>
-                      <td colSpan={7} style={{ padding: '0 0 4px 32px', background: 'var(--bg-hover)' }}>
+                      <td colSpan={8} style={{ padding: '0 0 4px 32px', background: 'var(--bg-hover)' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                           <thead>
                             <tr>
-                              {['Effective Date', 'Rate (R/L)', 'Additional Charge (R/ton)', 'Status', 'Notes', 'Actions'].map(h => (
+                              {['Effective From', 'Effective To', 'Rate (R/L)', 'Additional Charge (R/ton)', 'Status', 'Notes', 'Actions'].map(h => (
                                 <th key={h} style={{ ...styles.th, fontSize: 11, background: 'transparent', padding: '6px 10px' }}>{h}</th>
                               ))}
                             </tr>
@@ -291,6 +302,9 @@ export default function DieselRatesPage() {
                                     {isCurrent && (
                                       <span style={styles.currentBadge}><CheckCircle size={10} /> Current</span>
                                     )}
+                                  </td>
+                                  <td style={{ ...styles.td, fontSize: 12 }}>
+                                    {r.effective_to ? fmtDate(r.effective_to) : <span style={{ color: 'var(--text-muted)' }}>Open</span>}
                                   </td>
                                   <td style={{ ...styles.td, fontSize: 12, fontWeight: 600 }}>
                                     R {fmt(r.rate_per_litre)}
@@ -495,19 +509,29 @@ export default function DieselRatesPage() {
               </div>
             </div>
 
-            <div style={styles.field}>
-              <label style={styles.label}>Effective Date</label>
-              <DateInput
-                value={form.effective_date}
-                onChange={e => setForm(f => ({ ...f, effective_date: e.target.value }))}
-                style={styles.input}
-                disabled={!!editRate}
-              />
-              {form.effective_date > today && (
-                <span style={{ fontSize: 11, color: '#d97706', marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <AlertTriangle size={11} /> Future date — rate won't apply until then
-                </span>
-              )}
+            <div style={styles.row2}>
+              <div style={styles.field}>
+                <label style={styles.label}>Effective From</label>
+                <DateInput
+                  value={form.effective_date}
+                  onChange={e => setForm(f => ({ ...f, effective_date: e.target.value }))}
+                  style={styles.input}
+                  disabled={!!editRate}
+                />
+                {form.effective_date > today && (
+                  <span style={{ fontSize: 11, color: '#d97706', marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <AlertTriangle size={11} /> Future date
+                  </span>
+                )}
+              </div>
+              <div style={styles.field}>
+                <label style={styles.label}>Effective To <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
+                <DateInput
+                  value={form.effective_to}
+                  onChange={e => setForm(f => ({ ...f, effective_to: e.target.value }))}
+                  style={styles.input}
+                />
+              </div>
             </div>
 
             <div style={styles.field}>

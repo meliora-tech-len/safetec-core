@@ -27,7 +27,10 @@ class DieselCalculationService:
                 DieselRate.supplier_id == supplier_id,
                 DieselRate.entity_id == entity_id,
                 DieselRate.effective_date <= on_date,
-                DieselRate.is_active == True,
+                and_(
+                    DieselRate.is_active == True,
+                    (DieselRate.effective_to == None) | (DieselRate.effective_to >= on_date),
+                ),
             )
             .order_by(DieselRate.effective_date.desc(), DieselRate.id.desc())
             .first()

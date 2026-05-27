@@ -1595,12 +1595,14 @@ class DieselRateCreate(BaseModel):
     rate_per_litre: Decimal
     additional_charge_per_ton: Decimal = Decimal("0")
     effective_date: date_type
+    effective_to: Optional[date_type] = None
     notes: Optional[str] = None
 
 
 class DieselRateUpdate(BaseModel):
     notes: Optional[str] = None
     is_active: Optional[bool] = None
+    effective_to: Optional[date_type] = None
 
 
 class DieselRateOut(BaseModel):
@@ -1610,6 +1612,7 @@ class DieselRateOut(BaseModel):
     rate_per_litre: Decimal
     additional_charge_per_ton: Decimal = Decimal("0")
     effective_date: date_type
+    effective_to: Optional[date_type] = None
     notes: Optional[str] = None
     is_active: bool
     created_by: Optional[int] = None
