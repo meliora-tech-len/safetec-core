@@ -258,6 +258,8 @@ export const updateInvoiceLineItem = (invoiceId, lineId, data) =>
   api.put(`/supplier-invoices/${invoiceId}/line-items/${lineId}`, data)
 export const deleteInvoiceLineItem = (invoiceId, lineId) =>
   api.delete(`/supplier-invoices/${invoiceId}/line-items/${lineId}`)
+export const bulkImportSupplierInvoices = (data) =>
+  api.post('/supplier-invoices/bulk-import', data)
 
 // ── Truck Monthly Expenses (Profit Sheet) ─────────────────────────────────────
 export const getTruckMonthlyExpenses = (truckId, params) =>

@@ -7,12 +7,13 @@ import {
   verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
   addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
   getSubcontractors, getDieselFillUps,
-  finalizeSupplierInvoice,
+  finalizeSupplierInvoice, bulkImportSupplierInvoices,
 } from '../services/api'
+import * as XLSX from 'xlsx'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
 import DeleteModal from '../components/DeleteModal'
@@ -103,6 +104,7 @@ export default function SupplierProfilePage() {
   const [sortCol, setSortCol] = useState('vehicle_reg')
   const [sortDir, setSortDir] = useState('asc')
   const [filterText, setFilterText] = useState('')
+  const [showImport, setShowImport] = useState(false)
 
   const loadInvoices = useCallback(() =>
     getSupplierInvoices({ supplier_id: supplierId }).then(r => setGroups(r.data))
@@ -499,6 +501,12 @@ export default function SupplierProfilePage() {
               { header: 'Notes',           key: 'notes' },
             ]}
           />
+          {isDiesel && supplier?.name?.toLowerCase().includes('wbg') && (
+            <button className="btn-ghost" onClick={() => setShowImport(true)}
+                    style={{ display:'flex', alignItems:'center', gap:5 }}>
+              <Upload size={15} /> Import Excel
+            </button>
+          )}
           <button className="btn-primary" onClick={handleAddClick} disabled={showNew}>
             <Plus size={15} /> Add Invoice
           </button>
@@ -594,6 +602,16 @@ export default function SupplierProfilePage() {
         <div style={{ ...styles.group, padding: '48px 24px', textAlign: 'center' }}>
           <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: 14 }}>No invoices yet — click "Add Invoice" to start</p>
         </div>
+      )}
+
+      {showImport && (
+        <WBGImportModal
+          supplierId={supplierId}
+          supplier={supplier}
+          entities={entities}
+          onClose={() => setShowImport(false)}
+          onImported={() => { setShowImport(false); loadInvoices() }}
+        />
       )}
 
       <DeleteModal
@@ -1784,3 +1802,230 @@ const styles = {
     fontWeight: 700, background: 'rgba(156,163,175,0.2)', color: 'var(--text-muted)',
   },
 }
+
+// ── WBG Diesel Excel import ───────────────────────────────────────────────────
+
+function parseWBGSheet(ws) {
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, cellDates: true })
+  const invoices = []
+  let pending = []
+  for (const row of rows.slice(3)) {
+    const [siteOrDate,,slip,reg,,driver,ltr,,txnVal] = row
+    const invDate = row[9]
+    const invNo   = row[10]
+    const invTotal = row[11]
+    if (!siteOrDate && !invNo) continue
+    if (invNo && typeof siteOrDate !== 'string') {
+      invoices.push({
+        invoice_date: invDate instanceof Date ? invDate.toISOString() : invDate,
+        invoice_number: String(invNo).trim(),
+        amount: parseFloat(invTotal) || 0,
+        line_items: pending,
+      })
+      pending = []
+      continue
+    }
+    if (typeof siteOrDate === 'string' && slip) {
+      const excl = parseFloat(txnVal) || 0
+      pending.push({
+        item_code:        String(slip).replace(/^INV/i, '').trim(),
+        unit:             String(reg || '').trim().toUpperCase(),
+        item_description: String(driver || '').trim(),
+        quantity:         parseFloat(ltr) || 0,
+        amount_excl_vat:  excl,
+        amount_incl_vat:  excl,
+        sort_order:       pending.length,
+      })
+    }
+  }
+  return invoices
+}
+
+function matchingSheets(sheetNames, entityName) {
+  if (!entityName) return sheetNames
+  const keyword = entityName.trim().split(/\s+/)[0].toLowerCase()
+  const matches = sheetNames.filter(n => n.toLowerCase().includes(keyword))
+  return matches.length > 0 ? matches : sheetNames
+}
+
+function WBGImportModal({ supplierId, supplier, entities, onClose, onImported }) {
+  const [step, setStep] = useState('idle')
+  const [workbook, setWorkbook] = useState(null)
+  const [entityId, setEntityId] = useState(supplier?.entity_id || '')
+  const [sheetName, setSheetName] = useState('')
+  const [invoices, setInvoices] = useState([])
+  const [expanded, setExpanded] = useState({})
+  const [importing, setImporting] = useState(false)
+  const fileRef = useRef(null)
+
+  const selectedEntity = entities?.find(e => e.id === parseInt(entityId))
+  const availableSheets = workbook ? matchingSheets(workbook.SheetNames, selectedEntity?.name) : []
+
+  function handleFile(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array', cellDates: true })
+      setWorkbook(wb)
+      const sheets = matchingSheets(wb.SheetNames, selectedEntity?.name)
+      setSheetName(sheets[0] || wb.SheetNames[0])
+    }
+    reader.readAsArrayBuffer(file)
+  }
+
+  function handleEntityChange(newEntityId) {
+    setEntityId(newEntityId)
+    if (workbook) {
+      const entity = entities?.find(e => e.id === parseInt(newEntityId))
+      const sheets = matchingSheets(workbook.SheetNames, entity?.name)
+      setSheetName(sheets[0] || workbook.SheetNames[0])
+    }
+  }
+
+  function handlePreview() {
+    if (!workbook || !sheetName) return
+    const ws = workbook.Sheets[sheetName]
+    const parsed = parseWBGSheet(ws)
+    setInvoices(parsed)
+    setExpanded({})
+    setStep('preview')
+  }
+
+  async function handleImport() {
+    setImporting(true)
+    try {
+      const r = await bulkImportSupplierInvoices({
+        supplier_id: parseInt(supplierId),
+        entity_id: parseInt(entityId),
+        invoices,
+      })
+      const { created, skipped } = r.data
+      if (created > 0) {
+        toast.success(`${created} invoice${created !== 1 ? 's' : ''} imported${skipped > 0 ? `, ${skipped} skipped (already exist)` : ''}`)
+      } else {
+        toast(`All ${skipped} invoices already exist — nothing imported`)
+      }
+      onImported()
+    } catch (e) {
+      toast.error(errorMessage(e))
+      setImporting(false)
+    }
+  }
+
+  const totalLines = invoices.reduce((s, inv) => s + inv.line_items.length, 0)
+
+  return (
+    <div style={modalOverlay} onClick={onClose}>
+      <div style={modalBox} onClick={e => e.stopPropagation()}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+          <h3 style={{ margin:0, fontSize:16 }}>Import WBG Excel</h3>
+          <button className="btn-ghost" onClick={onClose} style={{ padding:'2px 6px' }}><X size={14}/></button>
+        </div>
+
+        {step === 'idle' && (
+          <>
+            <div style={{ marginBottom:12 }}>
+              <label style={{ display:'block', marginBottom:4, fontSize:13, fontWeight:600 }}>Entity</label>
+              <select value={entityId} onChange={e => handleEntityChange(e.target.value)}
+                      style={{ width:'100%', padding:'6px 8px', borderRadius:4, border:'1px solid var(--border)', fontSize:13 }}>
+                <option value="">— select entity —</option>
+                {(entities || []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom:12 }}>
+              <label style={{ display:'block', marginBottom:4, fontSize:13, fontWeight:600 }}>Excel file (.xlsx)</label>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile}
+                     style={{ fontSize:13 }} />
+            </div>
+            {workbook && (
+              <div style={{ marginBottom:16 }}>
+                <label style={{ display:'block', marginBottom:4, fontSize:13, fontWeight:600 }}>Sheet</label>
+                <select value={sheetName} onChange={e => setSheetName(e.target.value)}
+                        style={{ width:'100%', padding:'6px 8px', borderRadius:4, border:'1px solid var(--border)', fontSize:13 }}>
+                  {availableSheets.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                {availableSheets.length < workbook.SheetNames.length && (
+                  <p style={{ margin:'4px 0 0', fontSize:11, color:'var(--text-muted)' }}>
+                    Showing {availableSheets.length} of {workbook.SheetNames.length} sheets matching "{selectedEntity?.name}"
+                  </p>
+                )}
+              </div>
+            )}
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
+              <button className="btn-ghost" onClick={onClose}>Cancel</button>
+              <button className="btn-primary" onClick={handlePreview} disabled={!workbook || !entityId}>
+                Preview
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 'preview' && (
+          <>
+            <p style={{ margin:'0 0 12px', fontSize:13, color:'var(--text-muted)' }}>
+              Sheet: <strong>{sheetName}</strong> — {invoices.length} invoice{invoices.length !== 1 ? 's' : ''}, {totalLines} line items
+            </p>
+            <div style={{ maxHeight:400, overflowY:'auto', border:'1px solid var(--border)', borderRadius:4, marginBottom:16 }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                <thead>
+                  <tr style={{ background:'var(--bg-secondary)' }}>
+                    <th style={th}></th>
+                    <th style={th}>Invoice No</th>
+                    <th style={th}>Invoice Date</th>
+                    <th style={{...th, textAlign:'right'}}>Total</th>
+                    <th style={{...th, textAlign:'right'}}>Lines</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map((inv, i) => (
+                    <Fragment key={i}>
+                      <tr style={{ borderBottom:'1px solid var(--border)' }}>
+                        <td style={{ ...td, width:24, cursor:'pointer' }}
+                            onClick={() => setExpanded(p => ({ ...p, [i]: !p[i] }))}>
+                          {expanded[i] ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
+                        </td>
+                        <td style={td}>{inv.invoice_number}</td>
+                        <td style={td}>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-ZA') : '—'}</td>
+                        <td style={{...td, textAlign:'right'}}>{inv.amount.toLocaleString('en-ZA', { minimumFractionDigits:2 })}</td>
+                        <td style={{...td, textAlign:'right'}}>{inv.line_items.length}</td>
+                      </tr>
+                      {expanded[i] && inv.line_items.map((li, j) => (
+                        <tr key={j} style={{ background:'var(--bg-secondary)', borderBottom:'1px solid var(--border)' }}>
+                          <td style={td}></td>
+                          <td style={{ ...td, color:'var(--text-muted)', paddingLeft:16 }}>{li.item_code}</td>
+                          <td style={{ ...td, color:'var(--text-muted)' }}>{li.unit} — {li.item_description}</td>
+                          <td style={{ ...td, textAlign:'right', color:'var(--text-muted)' }}>{li.amount_excl_vat.toLocaleString('en-ZA', { minimumFractionDigits:2 })}</td>
+                          <td style={{ ...td, textAlign:'right', color:'var(--text-muted)' }}>{li.quantity}L</td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
+              <button className="btn-ghost" onClick={() => setStep('idle')}>Back</button>
+              <button className="btn-primary" onClick={handleImport} disabled={importing || invoices.length === 0}>
+                {importing ? 'Importing…' : `Import ${invoices.length} invoice${invoices.length !== 1 ? 's' : ''}`}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const modalOverlay = {
+  position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000,
+  display:'flex', alignItems:'center', justifyContent:'center',
+}
+const modalBox = {
+  background:'var(--bg-primary)', border:'1px solid var(--border)', borderRadius:8,
+  padding:24, width:680, maxWidth:'95vw', maxHeight:'90vh', overflowY:'auto',
+  boxShadow:'0 8px 32px rgba(0,0,0,0.25)',
+}
+const th = { padding:'6px 10px', textAlign:'left', fontWeight:600, fontSize:11,
+             borderBottom:'1px solid var(--border)', whiteSpace:'nowrap' }
+const td = { padding:'5px 10px', verticalAlign:'middle' }
