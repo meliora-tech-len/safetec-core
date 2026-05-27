@@ -1379,6 +1379,35 @@ class SupplierInvoiceLineItemCreate(SupplierInvoiceLineItemBase):
     pass
 
 
+class InvoiceLineItemImport(BaseModel):
+    item_code: Optional[str] = None
+    item_description: Optional[str] = None
+    unit: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    amount_excl_vat: Decimal = Decimal('0')
+    amount_incl_vat: Decimal = Decimal('0')
+    sort_order: int = 0
+
+
+class InvoiceImportItem(BaseModel):
+    invoice_date: datetime
+    invoice_number: str
+    amount: Decimal = Decimal('0')
+    line_items: List[InvoiceLineItemImport] = []
+
+
+class BulkImportPayload(BaseModel):
+    supplier_id: int
+    entity_id: int
+    invoices: List[InvoiceImportItem]
+
+
+class BulkImportResult(BaseModel):
+    created: int
+    skipped: int
+    skipped_numbers: List[str] = []
+
+
 class SupplierInvoiceLineItemOut(SupplierInvoiceLineItemBase):
     id: int
     invoice_id: int

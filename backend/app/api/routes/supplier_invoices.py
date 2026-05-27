@@ -14,6 +14,7 @@ from app.schemas.schemas import (
     SupplierInvoiceLineItemCreate, SupplierInvoiceLineItemOut,
     SupplierStatementGroup, SupplierPayablesDashboard,
     SupplierCurrentPayable, Supplier30DaysPayable,
+    BulkImportPayload, BulkImportResult,
 )
 from app.services.audit import log_action
 from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
@@ -661,6 +662,81 @@ def mark_statement_paid(
     )
     db.commit()
     return {"detail": f"{len(unpaid)} invoice(s) marked as paid"}
+
+
+@router.post("/bulk-import", response_model=BulkImportResult)
+def bulk_import_invoices(
+    payload: BulkImportPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _check_entity_access(payload.entity_id, current_user)
+    supplier = db.query(Supplier).filter_by(id=payload.supplier_id).first()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+    existing_numbers = {
+        r[0] for r in db.query(SupplierInvoice.invoice_number).filter(
+            SupplierInvoice.supplier_id == payload.supplier_id,
+            SupplierInvoice.entity_id == payload.entity_id,
+        ).all() if r[0]
+    }
+
+    created, skipped, skipped_numbers = 0, 0, []
+    for item in payload.invoices:
+        num = (item.invoice_number or '').strip()
+        if num in existing_numbers:
+            skipped += 1
+            skipped_numbers.append(num)
+            continue
+
+        inv_date = item.invoice_date
+        if supplier.payment_term == PaymentTermType.days_30:
+            stmt_month, stmt_year = inv_date.month, inv_date.year
+        else:
+            stmt_month = 12 if inv_date.month == 1 else inv_date.month - 1
+            stmt_year = inv_date.year - 1 if inv_date.month == 1 else inv_date.year
+
+        inv = SupplierInvoice(
+            supplier_id=payload.supplier_id,
+            entity_id=payload.entity_id,
+            invoice_date=inv_date,
+            invoice_number=num,
+            amount=item.amount,
+            vat_applicable=False,
+            is_multi_line=True,
+            statement_month=stmt_month,
+            statement_year=stmt_year,
+            payment_due_date=calculate_supplier_due_date(inv_date, supplier.payment_term),
+            created_by_id=current_user.id,
+        )
+        db.add(inv)
+        db.flush()
+
+        for li in item.line_items:
+            db.add(SupplierInvoiceLineItem(
+                invoice_id=inv.id,
+                item_code=li.item_code,
+                item_description=li.item_description,
+                unit=li.unit,
+                quantity=li.quantity,
+                amount_excl_vat=li.amount_excl_vat,
+                amount_incl_vat=li.amount_incl_vat,
+                sort_order=li.sort_order,
+            ))
+        db.flush()
+        _recalc_invoice_total(db, inv)
+        existing_numbers.add(num)
+        created += 1
+
+    log_action(
+        db, "supplier_invoice.bulk_imported",
+        user_id=current_user.id, entity_id=payload.entity_id,
+        resource_type="supplier_invoice",
+        description=f"Bulk imported {created} invoices for {supplier.name}",
+    )
+    db.commit()
+    return BulkImportResult(created=created, skipped=skipped, skipped_numbers=skipped_numbers)
 
 
 # ── Line item endpoints ───────────────────────────────────────────────────────
