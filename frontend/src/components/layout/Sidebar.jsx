@@ -359,7 +359,7 @@ export default function Sidebar() {
 
 const styles = {
   sidebar: {
-    width: 185, flexShrink: 0, background: 'var(--bg-sidebar)',
+    width: 160, flexShrink: 0, background: 'var(--bg-sidebar)',
     borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column',
     height: '100vh', position: 'sticky', top: 0,
   },

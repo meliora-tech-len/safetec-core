@@ -40,6 +40,82 @@ const EMPTY_DIESEL = {
 const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: today, notes: '' }
 
 
+// ── Shared load form (card-style flex-wrap, used for both new and inline edit) ──
+function LoadForm({ editForm, setEditForm, mines, drivers, vatRate, rateSource, setRateSource,
+  saving, onSave, onCancel, firstInputRef, showPo, isSubcontractorEntity, fmt, MONTHS }) {
+  const lbl = { fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 3 }
+  const inp = { padding: '5px 8px', fontSize: 12, borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }
+  const cardExcl = editForm.tonnes && editForm.rate_per_ton ? (parseFloat(editForm.tonnes) * parseFloat(editForm.rate_per_ton)).toFixed(2) : null
+  const cardIncl = cardExcl ? (parseFloat(cardExcl) * (1 + vatRate)).toFixed(2) : null
+  const vatRegistered = vatRate > 0
+  const onKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave() } if (e.key === 'Escape') onCancel() }
+  const set = (k, v) => setEditForm(f => ({ ...f, [k]: v }))
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 14px', alignItems: 'flex-end' }}>
+      <div>
+        <div style={lbl}>Date</div>
+        <DateInput ref={firstInputRef} value={editForm.load_date} onChange={e => set('load_date', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 112 }} />
+      </div>
+      <div>
+        <div style={lbl}>Period</div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <select value={editForm.statement_month || ''} onChange={e => set('statement_month', parseInt(e.target.value))} style={{ ...inp, width: 60, padding: '5px 4px' }}>
+            {MONTHS.map((m, i) => <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>)}
+          </select>
+          <input type="number" min="2020" max="2099" value={editForm.statement_year || ''} onChange={e => set('statement_year', parseInt(e.target.value))} onKeyDown={onKey} style={{ ...inp, width: 64 }} />
+        </div>
+      </div>
+      <div>
+        <div style={lbl}>Slip #</div>
+        <input value={editForm.slip_number || ''} placeholder="Slip #" onChange={e => set('slip_number', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80 }} />
+      </div>
+      {showPo && <div>
+        <div style={lbl}>PO #</div>
+        <input value={editForm.po_number || ''} placeholder="PO #" onChange={e => set('po_number', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80 }} />
+      </div>}
+      {!isSubcontractorEntity && <div>
+        <div style={lbl}>Driver</div>
+        <SearchableSelect
+          value={editForm.driver_id != null ? String(editForm.driver_id) : ''}
+          onChange={v => { const d = drivers.find(x => String(x.id) === v); set('driver_id', v || null); set('driver_name', d ? `${d.first_name} ${d.last_name}`.trim() : (editForm.driver_name || '')) }}
+          options={drivers} getValue={d => String(d.id)}
+          getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
+          placeholder="Driver…" style={{ minWidth: 140 }} />
+      </div>}
+      <div>
+        <div style={lbl}>Mine</div>
+        <SearchableSelect value={String(editForm.mine_id)} onChange={v => { set('mine_id', v); setRateSource(null) }}
+          options={mines.filter(m => m.is_active)} getValue={m => String(m.id)} getLabel={m => m.name}
+          placeholder="Mine…" style={{ minWidth: 120 }} />
+      </div>
+      <div>
+        <div style={lbl}>Tonnes</div>
+        <input type="number" step="0.001" min="0" placeholder="0.000" value={editForm.tonnes || ''} onChange={e => set('tonnes', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80, textAlign: 'right' }} />
+      </div>
+      <div>
+        <div style={lbl}>Rate/t {rateSource === 'mine' && <span style={{ fontSize: 9, color: 'var(--accent)', marginLeft: 3 }}>auto</span>}</div>
+        <input type="number" step="0.01" min="0" placeholder="Rate" value={editForm.rate_per_ton || ''} onChange={e => { set('rate_per_ton', e.target.value); setRateSource('manual') }} onKeyDown={onKey} style={{ ...inp, width: 75, textAlign: 'right' }} />
+      </div>
+      <div>
+        <div style={lbl}>Excl VAT</div>
+        <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: cardExcl ? 'var(--text-primary)' : 'var(--text-muted)' }}>{cardExcl ? fmt(cardExcl) : '—'}</div>
+      </div>
+      {vatRegistered && <div>
+        <div style={lbl}>Incl VAT</div>
+        <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: 'var(--accent)', fontWeight: 700 }}>{cardIncl ? fmt(cardIncl) : '—'}</div>
+      </div>}
+      <div style={{ flex: 1, minWidth: 100 }}>
+        <div style={lbl}>Notes</div>
+        <input value={editForm.notes || ''} placeholder="Notes" onChange={e => set('notes', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: '100%' }} />
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button onClick={onSave} disabled={saving} className="btn btn-primary btn-sm"><Save size={13} /> Save</button>
+        <button onClick={onCancel} className="btn btn-ghost btn-sm"><X size={13} /> Cancel</button>
+      </div>
+    </div>
+  )
+}
+
 // ── Inline edit row (Loads tab) ────────────────────────────────────────────────
 function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rateSource, setRateSource,
   saving, onSave, onCancel, firstInputRef, showPo, showSub, isSubcontractorEntity }) {
@@ -64,7 +140,7 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
       <td style={S.td}>
         <div style={{ display: 'flex', gap: 3 }}>
           <select value={form.statement_month || ''} onChange={e => set('statement_month', parseInt(e.target.value))}
-            style={{ ...S.input, width: 68, padding: '2px 4px' }}>
+            style={{ ...S.input, width: 56, padding: '2px 4px' }}>
             {MONTHS.map((m, i) => (
               <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>
             ))}
@@ -72,13 +148,13 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
           <input type="number" min="2020" max="2099"
             value={form.statement_year || ''}
             onChange={e => set('statement_year', parseInt(e.target.value))} onKeyDown={handleKey}
-            style={{ ...S.input, width: 52 }} />
+            style={{ ...S.input, width: 44 }} />
         </div>
       </td>
       <td style={S.td}>
         <input value={form.slip_number} placeholder="Slip #"
           onChange={e => set('slip_number', e.target.value)} onKeyDown={handleKey}
-          style={{ ...S.input, width: 80 }} />
+          style={{ ...S.input, width: 68 }} />
       </td>
       <td style={S.td}>—</td>
       {showPo && (
@@ -100,13 +176,13 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
           getValue={d => String(d.id)}
           getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
           placeholder="Driver…"
-          style={{ minWidth: 110 }} />
+          style={{ minWidth: 95 }} />
       </td>}
       {!isSubcontractorEntity && <td style={S.td}>—</td>}
       <td style={S.td}>
         <SearchableSelect value={String(form.mine_id)} onChange={v => { set('mine_id', v); setRateSource(null) }}
           options={mines.filter(m => m.is_active)} getValue={m => String(m.id)}
-          getLabel={m => m.name} placeholder="Mine…" style={{ minWidth: 100 }} />
+          getLabel={m => m.name} placeholder="Mine…" style={{ minWidth: 85 }} />
       </td>
       {/* <td style={S.td}>
         <SearchableSelect value={String(form.supplier_id)} onChange={v => set('supplier_id', v)}
@@ -116,13 +192,13 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
       <td style={S.td}>
         <input type="number" step="0.001" min="0" placeholder="0.000" value={form.tonnes}
           onChange={e => set('tonnes', e.target.value)} onKeyDown={handleKey}
-          style={{ ...S.input, width: 75, textAlign: 'right' }} />
+          style={{ ...S.input, width: 65, textAlign: 'right' }} />
       </td>
       <td style={S.td}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
           <input type="number" step="0.01" min="0" placeholder="Rate" value={form.rate_per_ton}
             onChange={e => { set('rate_per_ton', e.target.value); setRateSource('manual') }} onKeyDown={handleKey}
-            style={{ ...S.input, width: 70, textAlign: 'right' }} />
+            style={{ ...S.input, width: 60, textAlign: 'right' }} />
           {rateSource === 'mine' && (
             <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', whiteSpace: 'nowrap' }}>auto</span>
           )}
@@ -138,7 +214,7 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
       <td style={S.td}>
         <input value={form.notes} placeholder="Notes"
           onChange={e => set('notes', e.target.value)} onKeyDown={handleKey}
-          style={{ ...S.input, minWidth: 90 }} />
+          style={{ ...S.input, minWidth: 70 }} />
       </td>
       <td style={{ ...S.td, whiteSpace: 'nowrap' }}>
         <button onClick={onSave} disabled={saving} className="btn btn-icon btn-primary" style={{ marginRight: 4 }} title="Save (Enter)">
@@ -1747,9 +1823,19 @@ export default function TruckLoadProfilePage() {
         </div>
       )}
 
+      {/* ── Add Load card form (new loads only, at top) ────────────────────────── */}
+      {activeTab === 'loads' && editingId === 'new' && (
+        <div className="card" style={{ marginBottom: 16, padding: '14px 16px' }}>
+          <LoadForm editForm={editForm} setEditForm={setEditForm} mines={mines} drivers={drivers}
+            vatRate={vatRate} rateSource={rateSource} setRateSource={setRateSource}
+            saving={saving} onSave={handleSave} onCancel={cancelEdit} firstInputRef={firstInputRef}
+            showPo={showPo} isSubcontractorEntity={isSubcontractorEntity} fmt={fmt} MONTHS={MONTHS} />
+        </div>
+      )}
+
       {activeTab === 'loads' && (
         <div className="card" style={{ overflow: 'auto' }}>
-          <table className="data-table" style={{ minWidth: 900 }}>
+          <table className="data-table compact-table" style={{ minWidth: 780 }}>
             <thead>
               <tr>
                 <SortableHeader label="Date" col="load_date" sort={loadSort} onSort={onLoadSort} />
@@ -1774,13 +1860,12 @@ export default function TruckLoadProfilePage() {
               </tr>
             </thead>
             <tbody>
-              {editingId === 'new' && <EditRow {...editRowProps} />}
               {loading && (
                 <tr><td colSpan={COLS} style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
                   <Loader size={16} style={{ animation: 'spin 1s linear infinite' }} />
                 </td></tr>
               )}
-              {!loading && loads.length === 0 && editingId !== 'new' && (
+              {!loading && loads.length === 0 && editingId === null && (
                 <tr><td colSpan={COLS} style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
                   No loads for {MONTHS[month - 1]} {year} — click "Add Load" to start
                 </td></tr>
@@ -1789,9 +1874,17 @@ export default function TruckLoadProfilePage() {
                 if (row.type === 'single') {
                   const l = row.load
                   const isEditing = editingId === l.id
-                  return isEditing ? (
-                    <EditRow key={l.id} {...editRowProps} />
-                  ) : (
+                  if (isEditing) return (
+                    <tr key={l.id}>
+                      <td colSpan={COLS} style={{ padding: '12px 16px', background: 'var(--accent-subtle)', borderTop: '2px solid var(--accent)', borderBottom: '2px solid var(--accent)' }}>
+                        <LoadForm editForm={editForm} setEditForm={setEditForm} mines={mines} drivers={drivers}
+                          vatRate={vatRate} rateSource={rateSource} setRateSource={setRateSource}
+                          saving={saving} onSave={handleSave} onCancel={cancelEdit} firstInputRef={firstInputRef}
+                          showPo={showPo} isSubcontractorEntity={isSubcontractorEntity} fmt={fmt} MONTHS={MONTHS} />
+                      </td>
+                    </tr>
+                  )
+                  return (
                     <tr key={l.id} onClick={() => startEdit(l)}
                       style={{ cursor: 'pointer', opacity: l.is_paid ? 0.7 : 1 }}
                       className="hoverable-row">
@@ -1879,9 +1972,17 @@ export default function TruckLoadProfilePage() {
                   </tr>,
                   ...(isOpen ? pair.map(sl => {
                     const isEditing = editingId === sl.id
-                    return isEditing ? (
-                      <EditRow key={sl.id} {...editRowProps} />
-                    ) : (
+                    if (isEditing) return (
+                      <tr key={sl.id}>
+                        <td colSpan={COLS} style={{ padding: '12px 16px', background: 'var(--accent-subtle)', borderTop: '2px solid var(--accent)', borderBottom: '2px solid var(--accent)', borderLeft: '3px solid var(--accent)' }}>
+                          <LoadForm editForm={editForm} setEditForm={setEditForm} mines={mines} drivers={drivers}
+                            vatRate={vatRate} rateSource={rateSource} setRateSource={setRateSource}
+                            saving={saving} onSave={handleSave} onCancel={cancelEdit} firstInputRef={firstInputRef}
+                            showPo={showPo} isSubcontractorEntity={isSubcontractorEntity} fmt={fmt} MONTHS={MONTHS} />
+                        </td>
+                      </tr>
+                    )
+                    return (
                       <tr key={sl.id} onClick={() => startEdit(sl)}
                         style={{ background: 'var(--bg-base)', borderLeft: '3px solid var(--accent)', cursor: 'pointer', opacity: sl.is_paid ? 0.7 : 1 }}
                         className="hoverable-row">
@@ -1930,14 +2031,17 @@ export default function TruckLoadProfilePage() {
             {!loading && loads.length > 0 && summary && (
               <tfoot>
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                  <td colSpan={showPo ? 6 : 5} style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>
+                  <td colSpan={isSubcontractorEntity ? (showPo ? 6 : 5) : (showPo ? 8 : 7)} style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>
                     {summary.total_loads} loads
                   </td>
-                  <td style={{ textAlign: 'right', padding: '10px 12px' }}>{fmtNum(summary.total_tonnes)}</td>
+                  <td style={{ textAlign: 'right', padding: '10px 12px', whiteSpace: 'nowrap' }}>{fmtNum(summary.total_tonnes)}</td>
                   <td />
-                  <td style={{ textAlign: 'right', padding: '10px 12px' }}>{fmt(summary.total_excl_vat)}</td>
-                  {vatRegistered && <td style={{ textAlign: 'right', padding: '10px 12px', color: 'var(--accent)' }}>{fmt(summary.total_incl_vat)}</td>}
-                  <td colSpan={2 + (showSub ? 3 : 0)} />
+                  <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap' }}>{fmt(summary.total_excl_vat)}</td>
+                  {vatRegistered && <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap', color: 'var(--accent)' }}>{fmt(summary.total_incl_vat)}</td>}
+                  {showSub && <td />}
+                  {showSub && <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap', color: 'var(--accent)' }}>{fmt(summary.total_subcontractor_excl_vat)}</td>}
+                  {showSub && <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap', fontWeight: 700, color: 'var(--accent)' }}>{fmt(summary.total_subcontractor_incl_vat)}</td>}
+                  <td colSpan={2} />
                 </tr>
               </tfoot>
             )}

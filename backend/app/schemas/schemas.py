@@ -1318,6 +1318,8 @@ class TruckLoadSummary(BaseModel):
     total_excl_vat: Decimal = Decimal("0")
     total_incl_vat: Decimal = Decimal("0")
     total_diesel_litres: Decimal = Decimal("0")
+    total_subcontractor_excl_vat: Decimal = Decimal("0")
+    total_subcontractor_incl_vat: Decimal = Decimal("0")
 
 
 # ── Driver Salary Config Schemas ──────────────────────────────────────────────

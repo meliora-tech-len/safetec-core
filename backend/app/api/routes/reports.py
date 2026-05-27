@@ -77,20 +77,23 @@ def income_expenses_report(
     )
     diesel_expense = {int(float(r.m)): float(r.amount) for r in diesel_rows}
 
-    # ── Supplier invoice expenses grouped by calendar month ────────────────────
+    # ── Supplier invoice expenses grouped by statement month ───────────────────
+    # statement_month/year already reflect payment-term costing allocation
+    # (set at invoice creation: days_30 → invoice month, cash → previous month)
     supplier_rows = (
         db.query(
-            func.extract('month', SupplierInvoice.invoice_date).label('m'),
+            SupplierInvoice.statement_month.label('m'),
             func.coalesce(func.sum(SupplierInvoice.amount), 0).label('amount'),
         )
         .filter(
             SupplierInvoice.entity_id == entity_id,
-            func.extract('year', SupplierInvoice.invoice_date) == year,
+            SupplierInvoice.statement_year == year,
+            SupplierInvoice.is_archived != True,
         )
-        .group_by(func.extract('month', SupplierInvoice.invoice_date))
+        .group_by(SupplierInvoice.statement_month)
         .all()
     )
-    supplier_expense = {int(float(r.m)): float(r.amount) for r in supplier_rows}
+    supplier_expense = {int(r.m): float(r.amount) for r in supplier_rows if r.m is not None}
 
     # ── Payroll: prefer finalized PayrollEntry, fall back to DriverPayCycle ────
 

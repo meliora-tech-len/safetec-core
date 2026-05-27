@@ -401,9 +401,19 @@ def create_supplier_invoice(
     inv_date = payload.invoice_date
     due_date = calculate_supplier_due_date(inv_date, supplier.payment_term)
 
-    now = datetime.now(tz=timezone.utc)
-    stmt_month = payload.statement_month or now.month
-    stmt_year = payload.statement_year or now.year
+    # Costing month allocation:
+    # 30-day suppliers → same month as invoice date
+    # Cash (current) suppliers → previous month (cost belongs to the prior period)
+    if supplier.payment_term == PaymentTermType.days_30:
+        stmt_month = inv_date.month
+        stmt_year = inv_date.year
+    else:  # current / cash
+        if inv_date.month == 1:
+            stmt_month = 12
+            stmt_year = inv_date.year - 1
+        else:
+            stmt_month = inv_date.month - 1
+            stmt_year = inv_date.year
 
     inv = SupplierInvoice(
         **payload.model_dump(exclude={'statement_month', 'statement_year'}),
@@ -459,11 +469,21 @@ def update_supplier_invoice(
     if updates.get("is_verified") is True and not inv.is_verified:
         updates["verified_at"] = datetime.now(tz=timezone.utc)
 
-    # Recalculate due date if invoice_date changed
+    # Recalculate due date and costing month if invoice_date changed
     if "invoice_date" in updates:
         supplier = db.query(Supplier).filter(Supplier.id == inv.supplier_id).first()
         new_date = updates["invoice_date"]
         updates["payment_due_date"] = calculate_supplier_due_date(new_date, supplier.payment_term)
+        if supplier.payment_term == PaymentTermType.days_30:
+            updates["statement_month"] = new_date.month
+            updates["statement_year"] = new_date.year
+        else:  # current / cash
+            if new_date.month == 1:
+                updates["statement_month"] = 12
+                updates["statement_year"] = new_date.year - 1
+            else:
+                updates["statement_month"] = new_date.month - 1
+                updates["statement_year"] = new_date.year
 
     for field, value in updates.items():
         setattr(inv, field, value)

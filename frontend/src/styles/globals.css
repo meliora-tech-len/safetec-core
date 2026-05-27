@@ -173,6 +173,10 @@ tbody tr { transition: background 0.1s; }
 tbody tr:hover { background: var(--bg-hover); }
 tbody tr:first-child td { border-top: none; }
 
+/* Compact table — tighter padding for wide tables on smaller screens */
+.compact-table th { padding: 7px 10px; }
+.compact-table td { padding: 7px 10px; font-size: 12px; }
+
 /* Form layout */
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-group label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }

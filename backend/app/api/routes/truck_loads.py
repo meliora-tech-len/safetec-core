@@ -355,6 +355,8 @@ def get_truck_load_summary(
         func.coalesce(func.sum(TruckLoad.amount_excl_vat), 0),
         func.coalesce(func.sum(TruckLoad.amount_incl_vat), 0),
         func.coalesce(func.sum(TruckLoad.diesel_litres), 0),
+        func.coalesce(func.sum(TruckLoad.subcontractor_amount_excl_vat), 0),
+        func.coalesce(func.sum(TruckLoad.subcontractor_amount_incl_vat), 0),
     )
 
     if accessible is not None:
@@ -381,7 +383,37 @@ def get_truck_load_summary(
         total_excl_vat=Decimal(str(row[2])),
         total_incl_vat=Decimal(str(row[3])),
         total_diesel_litres=Decimal(str(row[4])),
+        total_subcontractor_excl_vat=Decimal(str(row[5])),
+        total_subcontractor_incl_vat=Decimal(str(row[6])),
     )
+
+
+# ── Recalculate sub amounts ───────────────────────────────────────────────────
+
+@router.post("/recalculate-sub")
+def recalculate_sub_amounts(
+    truck_id: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Backfill subcontractor rate/amount columns for all non-archived loads of a truck."""
+    truck = db.query(Truck).filter(Truck.id == truck_id).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found")
+    if not truck.is_subcontractor:
+        raise HTTPException(status_code=400, detail="Truck is not a subcontractor truck")
+    _check_entity_access(truck.entity_id, current_user)
+
+    loads = db.query(TruckLoad).filter(
+        TruckLoad.truck_id == truck_id,
+        TruckLoad.is_archived != True,
+    ).all()
+
+    for load in loads:
+        _compute_subcontractor_amounts(load, db)
+
+    db.commit()
+    return {"updated": len(loads)}
 
 
 # ── Create load ───────────────────────────────────────────────────────────────
@@ -603,11 +635,15 @@ def update_truck_load(
         _compute_subcontractor_amounts(load, db)
     else:
         truck = db.query(Truck).filter(Truck.id == load.truck_id).first()
-        sub_vat_reg = True
-        if truck and truck.is_subcontractor and truck.entity_id:
-            truck_ent = db.query(BusinessEntity).filter(BusinessEntity.id == truck.entity_id).first()
-            sub_vat_reg = truck_ent.vat_registered if truck_ent else True
-        _compute_subcontractor_amounts(load, sub_vat_registered=sub_vat_reg)
+        # Re-snapshot if fee was never stored (load predates is_subcontractor flag being set)
+        if truck and truck.is_subcontractor and load.subcontractor_admin_fee_per_ton is None:
+            _compute_subcontractor_amounts(load, db)
+        else:
+            sub_vat_reg = True
+            if truck and truck.is_subcontractor and truck.entity_id:
+                truck_ent = db.query(BusinessEntity).filter(BusinessEntity.id == truck.entity_id).first()
+                sub_vat_reg = truck_ent.vat_registered if truck_ent else True
+            _compute_subcontractor_amounts(load, sub_vat_registered=sub_vat_reg)
 
     new_truck_id  = load.truck_id
     new_load_date = load.load_date
