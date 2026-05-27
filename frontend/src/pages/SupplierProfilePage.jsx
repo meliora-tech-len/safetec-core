@@ -812,7 +812,7 @@ export default function SupplierProfilePage() {
                                   onChange={e => setEditForm(p => ({ ...p, invoice_number: e.target.value }))}
                                   onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
                                   onClick={e => e.stopPropagation()}
-                                  placeholder={isDiesel ? 'Invoice # (optional)' : ''}
+                                  placeholder={isDiesel ? 'e.g. WBG-001' : ''}
                                   style={{ ...styles.cellInput, minWidth: 90 }}
                                 />
                               ) : inv.invoice_number ? inv.invoice_number : (
@@ -843,7 +843,7 @@ export default function SupplierProfilePage() {
                                       onChange={v => setEditForm(p => ({ ...p, vehicle_reg: v }))}
                                       options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
                                       getValue={t => t.registration}
-                                      getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
+                                      getLabel={t => t.registration === '' ? '— Select —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
                                       placeholder="Vehicle reg…"
                                       style={{ width: 150 }}
                                     />
@@ -1207,14 +1207,14 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
         </div>
 
         <div style={CS.field(140)}>
-          <label style={CS.label}>Invoice # {isDiesel && <span style={{ fontWeight: 400, textTransform: 'none', fontSize: 10 }}>(optional)</span>}</label>
+          <label style={CS.label}>Invoice #</label>
           <input value={form.invoice_number} placeholder={isDiesel ? 'Fill in when received' : 'e.g. TM1794'}
             onChange={e => set('invoice_number', e.target.value)}
             onKeyDown={e => onKeyDown(e, onSave, onCancel)}
             style={CS.input} />
         </div>
 
-        {showVehicleReg && (
+        {showVehicleReg && !isDiesel && (
           <div style={CS.field(170)}>
             <label style={CS.label}>Vehicle Reg</label>
             <SearchableSelect
@@ -1222,14 +1222,14 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
               onChange={v => set('vehicle_reg', v)}
               options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
               getValue={t => t.registration}
-              getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
+              getLabel={t => t.registration === '' ? '— Select —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
               placeholder="Vehicle reg…"
               style={{ width: '100%', padding: '6px 10px', fontSize: 13 }}
             />
           </div>
         )}
 
-        {isDiesel && (
+        {!isDiesel && (
           <div style={CS.field(110)}>
             <label style={CS.label}>Litres</label>
             <input type="number" step="0.001" min="0" placeholder="0.000"
@@ -1240,7 +1240,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
           </div>
         )}
 
-        {isDiesel && (
+        {!isDiesel && (
           <div style={CS.field(130)}>
             <label style={CS.label}>
               Rate/L
@@ -1576,9 +1576,7 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
                     onChange={v => selectSlip(idx, v)}
                     options={[{ slip_number: '' }, ...fillups]}
                     getValue={f => f.slip_number ?? ''}
-                    getLabel={f => f.slip_number
-                      ? `${f.slip_number} · ${f.truck_registration || '—'} · ${parseFloat(f.litres || 0).toFixed(0)}L`
-                      : '— Clear —'}
+                    getLabel={f => f.slip_number ? f.slip_number : '— Select —'}
                     placeholder="Select slip…"
                     style={{ minWidth: 130 }}
                   />
@@ -1595,7 +1593,7 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
                     onChange={v => updateLine(idx, 'unit', v)}
                     options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
                     getValue={t => t.registration}
-                    getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
+                    getLabel={t => t.registration === '' ? '— Select —' : t.registration}
                     placeholder="Vehicle reg…"
                     style={{ minWidth: 130 }}
                   />
