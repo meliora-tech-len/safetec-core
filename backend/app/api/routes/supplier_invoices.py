@@ -22,6 +22,28 @@ from app.services.diesel_service import DieselCalculationService
 router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
 
 
+def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, slip_number: str) -> None:
+    """Set supplier_invoice_id (and invoice_number if known) on the DieselFillUp matching slip_number."""
+    if not slip_number:
+        return
+    fillup = db.query(DieselFillUp).filter(
+        DieselFillUp.slip_number == slip_number,
+        DieselFillUp.entity_id == invoice.entity_id,
+    ).first()
+    if fillup:
+        fillup.supplier_invoice_id = invoice.id
+        if invoice.invoice_number:
+            fillup.invoice_number = invoice.invoice_number
+
+
+def _propagate_invoice_number_to_fillups(db: Session, invoice: SupplierInvoice) -> None:
+    """After invoice_number is set/changed, push it to all DieselFillUps linked via sub-line slip numbers."""
+    if not invoice.invoice_number:
+        return
+    for li in invoice.line_items:
+        _link_fillup_from_slip(db, invoice, li.item_code)
+
+
 def _recalc_invoice_total(db: Session, invoice: SupplierInvoice) -> None:
     from sqlalchemy import func as sa_func
     result = db.query(
@@ -488,6 +510,10 @@ def update_supplier_invoice(
     for field, value in updates.items():
         setattr(inv, field, value)
 
+    # When invoice_number is filled in (e.g. Pending → confirmed), push to linked fill-ups
+    if "invoice_number" in updates and inv.is_multi_line:
+        _propagate_invoice_number_to_fillups(db, inv)
+
     log_action(
         db, "supplier_invoice.updated", user_id=current_user.id,
         entity_id=inv.entity_id, resource_type="supplier_invoice",
@@ -654,6 +680,8 @@ def add_line_item(
     li = SupplierInvoiceLineItem(invoice_id=invoice_id, **data.model_dump())
     db.add(li)
     db.flush()
+    if data.item_code:
+        _link_fillup_from_slip(db, inv, data.item_code)
     _recalc_invoice_total(db, inv)
     db.refresh(li)
     return SupplierInvoiceLineItemOut.model_validate(li)
@@ -678,6 +706,8 @@ def update_line_item(
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(li, k, v)
     db.flush()
+    if data.item_code:
+        _link_fillup_from_slip(db, li.invoice, data.item_code)
     _recalc_invoice_total(db, li.invoice)
     db.refresh(li)
     return SupplierInvoiceLineItemOut.model_validate(li)
