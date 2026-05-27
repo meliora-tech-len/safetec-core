@@ -1812,3 +1812,4 @@ class SubcontractorCostingOut(BaseModel):
     trucks: List[SubcontractorTruckCostingOut]
     summary: SubcontractorCostingSummary
     diesel_suppliers: List[str] = []
+    is_vat_registered: bool = True

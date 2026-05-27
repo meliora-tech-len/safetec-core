@@ -229,7 +229,7 @@ def create_invoice(
             raise HTTPException(status_code=404, detail="Customer not found")
         recipient_name = customer.name
 
-    vat_rate = payload.vat_rate if payload.vat_rate is not None else (entity.vat_rate or Decimal("0.15"))
+    vat_rate = payload.vat_rate if payload.vat_rate is not None else (entity.vat_rate if entity.vat_rate is not None else Decimal("0.15"))
 
     try:
         invoice_number = generate_invoice_number(db, payload.entity_id, payload.document_type)

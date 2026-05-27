@@ -108,7 +108,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           setNotes(inv.notes || '')
           setPrintNote(inv.print_note || false)
           setIsVatExempt(inv.is_vat_exempt || false)
-          setVatRate(parseFloat(inv.vat_rate) || 0.15)
+          setVatRate(inv.vat_rate != null ? parseFloat(inv.vat_rate) : 0.15)
           setLines(inv.line_items.map(li => ({
             _id: String(li.id),
             description: li.description || '',
@@ -125,7 +125,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           // Pre-fill from template clone
           setEntityId(String(templatePayload.entity_id))
           setIsVatExempt(templatePayload.is_vat_exempt || false)
-          setVatRate(templatePayload.vat_rate || 0.15)
+          setVatRate(templatePayload.vat_rate != null ? parseFloat(templatePayload.vat_rate) : 0.15)
           setNotes(templatePayload.notes || '')
           setPrintNote(templatePayload.print_note || false)
           if (templatePayload.customer_id) {
@@ -151,7 +151,8 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           const defaultEntity = activeEntity || entsRes.data[0]
           if (defaultEntity) {
             setEntityId(String(defaultEntity.id))
-            setVatRate(parseFloat(defaultEntity.vat_rate) || 0.15)
+            setVatRate(defaultEntity.vat_rate != null ? parseFloat(defaultEntity.vat_rate) : 0.15)
+            if (defaultEntity.vat_registered === false) setIsVatExempt(true)
           }
         }
       } catch (e) {
@@ -192,7 +193,10 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
   useEffect(() => {
     if (isEdit || !entityId) return
     const entity = entities.find(e => String(e.id) === entityId)
-    if (entity) setVatRate(parseFloat(entity.vat_rate) || 0.15)
+    if (entity) {
+      setVatRate(entity.vat_rate != null ? parseFloat(entity.vat_rate) : 0.15)
+      if (entity.vat_registered === false) setIsVatExempt(true)
+    }
   }, [entityId, entities])
 
   // ── Line helpers ──────────────────────────────────────────────────

@@ -307,6 +307,9 @@ def get_subcontractor_costing(
     D0 = Decimal("0")
     truck_results = []
 
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == sub.entity_id).first()
+    is_vat_registered = entity.vat_registered if entity else True
+
     ds = db.query(DieselSettings).filter(DieselSettings.entity_id == sub.entity_id).first()
     fixed_admin_fee = Decimal(str(ds.subcontractor_monthly_admin_fee)) if ds else D0
 
@@ -400,7 +403,8 @@ def get_subcontractor_costing(
         # 1% admin fee (incl VAT)  → Expenses Incl VAT
         exp_excl += sum((g.tot_excl_admin_fee for g in diesel_groups), D0)
         exp_incl += sum((g.tot_admin_fee_incl  for g in diesel_groups), D0)
-        net_payable = income_incl - exp_excl - exp_incl
+        income_for_net = income_excl if not is_vat_registered else income_incl
+        net_payable = income_for_net - exp_excl - exp_incl
 
         truck.subcontractor_display_name = sub.name
         truck_results.append(SubcontractorTruckCostingOut(
@@ -442,6 +446,7 @@ def get_subcontractor_costing(
         trucks=truck_results,
         summary=summary,
         diesel_suppliers=diesel_supplier_names,
+        is_vat_registered=is_vat_registered,
     )
 
 

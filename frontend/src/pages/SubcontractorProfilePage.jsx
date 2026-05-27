@@ -619,9 +619,10 @@ export default function SubcontractorProfilePage() {
                   templateSuppliers={costing.diesel_suppliers || []}
                   onAddExpense={() => openExpenseModal(td.truck.registration)}
                   onDeleteInvoice={setExpenseDeleteTarget}
+                  isVatRegistered={costing.is_vat_registered !== false}
                 />
               ))}
-              <SummaryCard summary={costing.summary} trucks={costing.trucks} />
+              <SummaryCard summary={costing.summary} trucks={costing.trucks} isVatRegistered={costing.is_vat_registered !== false} />
             </>
           )}
         </div>
@@ -951,7 +952,7 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice }) {
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice, isVatRegistered = true }) {
   const [expanded, setExpanded] = useState(false)
   const [showLoadDetail, setShowLoadDetail] = useState(false)
   const [activeDieselTab, setActiveDieselTab] = useState(null)
@@ -1050,9 +1051,9 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                   )}
                 </button>
               </td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(incomeExcl)}</td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(vat)}</td>
-              <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmtC(incomeIncl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: isVatRegistered ? 'var(--text-muted)' : undefined, fontWeight: isVatRegistered ? undefined : 700 }}>{fmtC(incomeExcl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{isVatRegistered ? fmtC(vat) : dash}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{isVatRegistered ? fmtC(incomeIncl) : dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={tdStyle}></td>
@@ -1146,8 +1147,8 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
             <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
               <td style={tdStyle}>Totals</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(incomeExcl)}</td>
-              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(vat)}</td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{fmtC(incomeIncl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{isVatRegistered ? fmtC(vat) : dash}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{isVatRegistered ? fmtC(incomeIncl) : dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--danger)' }}>{fmtC(total_expenses_incl_vat)}</td>
               <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--danger)' }}>{fmtC(total_expenses_excl_vat)}</td>
               <td style={tdStyle}></td>
@@ -1162,7 +1163,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
             <div style={{ display: 'flex', gap: 0, marginTop: 12, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ flex: 1, padding: '10px 16px', borderRight: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>To Be Invoiced</div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>{fmtC(incomeIncl)}</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>{fmtC(isVatRegistered ? incomeIncl : incomeExcl)}</div>
               </div>
               <div style={{ flex: 1, padding: '10px 16px', borderRight: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>Total Expenses</div>
@@ -1198,7 +1199,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                   <th style={{ ...thStyle, textAlign: 'right' }}>Tonnes</th>
                   <th style={{ ...thStyle, textAlign: 'right' }}>Rate/t</th>
                   <th style={{ ...thStyle, textAlign: 'right' }}>Excl VAT</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Incl VAT</th>
+                  {isVatRegistered && <th style={{ ...thStyle, textAlign: 'right' }}>Incl VAT</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1210,7 +1211,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtT(l.tonnes)}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(l.subcontractor_rate)}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(l.subcontractor_amount_excl_vat)}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontWeight: 600 }}>{fmtC(l.subcontractor_amount_incl_vat)}</td>
+                    {isVatRegistered && <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontWeight: 600 }}>{fmtC(l.subcontractor_amount_incl_vat)}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -1218,7 +1219,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
                   <td style={tdStyle} colSpan={5}>Total</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(income_excl_vat)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{fmtC(income_incl_vat)}</td>
+                  {isVatRegistered && <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{fmtC(income_incl_vat)}</td>}
                 </tr>
               </tfoot>
             </table>
@@ -1241,14 +1242,14 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
 
 // ── Monthly Summary Card ───────────────────────────────────────────────────────
 
-function SummaryCard({ summary, trucks = [] }) {
+function SummaryCard({ summary, trucks = [], isVatRegistered = true }) {
   const [expanded, setExpanded] = useState(false)
 
   const th = (label, right = false) => (
     <th key={label} style={{ ...thStyle, textAlign: right ? 'right' : 'left' }}>{label}</th>
   )
 
-  const truckRows = trucks.filter(td => parseFloat(td.income_incl_vat) !== 0 || parseFloat(td.total_expenses_excl_vat) !== 0 || parseFloat(td.total_expenses_incl_vat) !== 0)
+  const truckRows = trucks.filter(td => parseFloat(isVatRegistered ? td.income_incl_vat : td.income_excl_vat) !== 0 || parseFloat(td.total_expenses_excl_vat) !== 0 || parseFloat(td.total_expenses_incl_vat) !== 0)
 
   return (
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 10, marginTop: 8, marginBottom: 24, overflow: 'hidden' }}>
@@ -1282,7 +1283,7 @@ function SummaryCard({ summary, trucks = [] }) {
               {truckRows.map(td => (
                 <tr key={td.truck.id}>
                   <td style={{ ...tdStyle, fontWeight: 600 }}>{td.truck.registration}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.income_incl_vat)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(isVatRegistered ? td.income_incl_vat : td.income_excl_vat)}</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.total_expenses_excl_vat)}</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.total_expenses_incl_vat)}</td>
                   <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: parseFloat(td.net_payable) >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
@@ -1294,7 +1295,7 @@ function SummaryCard({ summary, trucks = [] }) {
             <tfoot>
               <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
                 <td style={tdStyle}>TOTAL</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.income_incl_vat)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(isVatRegistered ? summary.income_incl_vat : summary.income_excl_vat)}</td>
                 <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.total_expenses_excl_vat)}</td>
                 <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.total_expenses_incl_vat)}</td>
                 <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontSize: 15 }}>{fmtC(summary.net_payable)}</td>

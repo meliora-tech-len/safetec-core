@@ -10,7 +10,7 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, TruckLoad, Mine, MineRate, Truck, Supplier,
     Driver, DriverType, DriverPayCycle, DriverTripLog, PayrollSettings,
-    DieselSettings,
+    DieselSettings, BusinessEntity,
 )
 from app.schemas.schemas import (
     TruckLoadCreate, TruckLoadUpdate, TruckLoadOut,
@@ -39,15 +39,15 @@ def _accessible_entity_ids(user: User) -> Optional[List[int]]:
     return [a.entity_id for a in user.entity_access]
 
 
-def _compute_amounts(load: TruckLoad):
+def _compute_amounts(load: TruckLoad, vat_registered: bool = True):
     """Recalculate and set amount_excl_vat and amount_incl_vat on the ORM object."""
     if load.tonnes is not None and load.rate_per_ton is not None:
         excl = Decimal(str(load.tonnes)) * Decimal(str(load.rate_per_ton))
         load.amount_excl_vat = excl.quantize(Decimal("0.01"))
-        load.amount_incl_vat = (excl * VAT_RATE).quantize(Decimal("0.01"))
+        load.amount_incl_vat = (excl * VAT_RATE if vat_registered else excl).quantize(Decimal("0.01"))
 
 
-def _compute_subcontractor_amounts(load: TruckLoad, db: Optional[Session] = None):
+def _compute_subcontractor_amounts(load: TruckLoad, db: Optional[Session] = None, sub_vat_registered: bool = True):
     """
     Compute the four subcontractor rate columns.
 
@@ -58,6 +58,9 @@ def _compute_subcontractor_amounts(load: TruckLoad, db: Optional[Session] = None
 
     On UPDATE omit db (or pass it only when truck_id changed) — the existing snapshot is
     reused and only the three derived fields are recomputed.
+
+    sub_vat_registered: the VAT-registration status of the truck-owner entity (subcontractor).
+    When False, amount_incl_vat == amount_excl_vat (no VAT added to payout).
     """
     if db is not None:
         truck = db.query(Truck).filter(Truck.id == load.truck_id).first()
@@ -73,6 +76,8 @@ def _compute_subcontractor_amounts(load: TruckLoad, db: Optional[Session] = None
         load.subcontractor_admin_fee_per_ton = (
             Decimal(str(settings.additional_charge_per_ton)) if settings else Decimal("0")
         )
+        truck_entity = db.query(BusinessEntity).filter(BusinessEntity.id == truck.entity_id).first()
+        sub_vat_registered = truck_entity.vat_registered if truck_entity else True
 
     fee = load.subcontractor_admin_fee_per_ton
     if fee is None:
@@ -83,7 +88,7 @@ def _compute_subcontractor_amounts(load: TruckLoad, db: Optional[Session] = None
         excl     = Decimal(str(load.tonnes)) * sub_rate
         load.subcontractor_rate            = sub_rate.quantize(Decimal("0.01"))
         load.subcontractor_amount_excl_vat = excl.quantize(Decimal("0.01"))
-        load.subcontractor_amount_incl_vat = (excl * VAT_RATE).quantize(Decimal("0.01"))
+        load.subcontractor_amount_incl_vat = (excl * VAT_RATE if sub_vat_registered else excl).quantize(Decimal("0.01"))
 
 
 def _resolve_rate(db: Session, mine_id: int, entity_id: int) -> Optional[Decimal]:
@@ -398,8 +403,11 @@ def create_truck_load(
                 detail="No active mine rate found for this mine/entity. Provide rate_per_ton explicitly.",
             )
 
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
+    vat_reg = entity.vat_registered if entity else True
+
     load = TruckLoad(**payload.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
-    _compute_amounts(load)
+    _compute_amounts(load, vat_registered=vat_reg)
     _compute_subcontractor_amounts(load, db)
     db.add(load)
     db.flush()
@@ -434,8 +442,9 @@ def bulk_create_truck_loads(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Cache DieselSettings and truck subcontractor flags to avoid per-row queries
+    # Cache DieselSettings, entity VAT status, and truck subcontractor flags to avoid per-row queries
     _diesel_settings_cache: dict = {}
+    _entity_vat_cache: dict = {}
     _truck_is_sub_cache: dict = {}
 
     created = []
@@ -451,8 +460,12 @@ def bulk_create_truck_loads(
                     detail=f"No active mine rate for mine {item.mine_id}/entity {item.entity_id}.",
                 )
 
+        if item.entity_id not in _entity_vat_cache:
+            ent = db.query(BusinessEntity).filter(BusinessEntity.id == item.entity_id).first()
+            _entity_vat_cache[item.entity_id] = ent.vat_registered if ent else True
+
         load = TruckLoad(**item.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
-        _compute_amounts(load)
+        _compute_amounts(load, vat_registered=_entity_vat_cache[item.entity_id])
 
         # Resolve subcontractor flag and diesel settings from cache
         if item.truck_id not in _truck_is_sub_cache:
@@ -520,9 +533,10 @@ def create_split_load(
                     status_code=400,
                     detail=f"No active mine rate for mine {item.mine_id}/entity {item.entity_id}. Provide rate_per_ton.",
                 )
+        ent = db.query(BusinessEntity).filter(BusinessEntity.id == item.entity_id).first()
         load = TruckLoad(**item.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
         load.is_split_load = True
-        _compute_amounts(load)
+        _compute_amounts(load, vat_registered=ent.vat_registered if ent else True)
         _compute_subcontractor_amounts(load, db)
         return load
 
@@ -581,8 +595,19 @@ def update_truck_load(
     for field, value in updated_fields.items():
         setattr(load, field, value)
 
-    _compute_amounts(load)
-    _compute_subcontractor_amounts(load, db if "truck_id" in updated_fields else None)
+    load_entity = db.query(BusinessEntity).filter(BusinessEntity.id == load.entity_id).first()
+    vat_reg = load_entity.vat_registered if load_entity else True
+    _compute_amounts(load, vat_registered=vat_reg)
+
+    if "truck_id" in updated_fields:
+        _compute_subcontractor_amounts(load, db)
+    else:
+        truck = db.query(Truck).filter(Truck.id == load.truck_id).first()
+        sub_vat_reg = True
+        if truck and truck.is_subcontractor and truck.entity_id:
+            truck_ent = db.query(BusinessEntity).filter(BusinessEntity.id == truck.entity_id).first()
+            sub_vat_reg = truck_ent.vat_registered if truck_ent else True
+        _compute_subcontractor_amounts(load, sub_vat_registered=sub_vat_reg)
 
     new_truck_id  = load.truck_id
     new_load_date = load.load_date
