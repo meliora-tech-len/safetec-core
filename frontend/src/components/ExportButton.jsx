@@ -35,7 +35,7 @@ export default function ExportButton({ columns, data, filename, title, disabled 
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>
       <button
-        className="btn-ghost btn-sm"
+        className="btn-ghost"
         onClick={() => setOpen(o => !o)}
         disabled={disabled || !data?.length}
         title={!data?.length ? 'No data to export' : 'Export'}

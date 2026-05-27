@@ -505,6 +505,11 @@ class TemplateLineItemBase(BaseModel):
     unit_price: Optional[Decimal] = None
     amount: Optional[Decimal] = None
 
+    @field_validator('is_vat_exempt', mode='before')
+    @classmethod
+    def coerce_bool(cls, v):
+        return bool(v) if v is not None else False
+
     @field_validator('line_type')
     @classmethod
     def validate_line_type(cls, v):
@@ -532,6 +537,11 @@ class InvoiceTemplateBase(BaseModel):
     notes: Optional[str] = None
     print_note: bool = False
     terms: Optional[str] = None
+
+    @field_validator('is_vat_exempt', 'print_note', mode='before')
+    @classmethod
+    def coerce_bool(cls, v):
+        return bool(v) if v is not None else False
 
 class InvoiceTemplateCreate(InvoiceTemplateBase):
     line_items: List[TemplateLineItemCreate] = []
@@ -929,6 +939,16 @@ class DriverOut(DriverBase):
         from_attributes = True
 
 
+class CasualTruckAssignmentOut(BaseModel):
+    id: int
+    truck_id: int
+    driver_slot: int
+    truck_registration: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class DriverSummary(BaseModel):
     id: int
     entity_id: int
@@ -942,6 +962,7 @@ class DriverSummary(BaseModel):
     is_active: bool
     load_count_this_month: int = 0
     total_payments_this_month: Decimal = Decimal("0")
+    casual_assignments: List['CasualTruckAssignmentOut'] = []
 
     class Config:
         from_attributes = True
@@ -1387,6 +1408,38 @@ class SupplierInvoiceLineItemOut(SupplierInvoiceLineItemBase):
         from_attributes = True
 
 
+class InvoiceLineItemImport(BaseModel):
+    item_code: Optional[str] = None
+    item_description: Optional[str] = None
+    unit: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    amount_excl_vat: Decimal = Decimal('0')
+    amount_incl_vat: Decimal = Decimal('0')
+    sort_order: int = 0
+    driver_name: Optional[str] = None
+
+
+class InvoiceImportItem(BaseModel):
+    invoice_date: datetime
+    invoice_number: str
+    amount: Decimal = Decimal('0')
+    line_items: List[InvoiceLineItemImport] = []
+
+
+class BulkImportPayload(BaseModel):
+    supplier_id: int
+    entity_id: int
+    invoices: List[InvoiceImportItem]
+
+
+class BulkImportResult(BaseModel):
+    created: int
+    skipped: int
+    skipped_numbers: List[str] = []
+    fillups_created: int = 0
+    fillups_skipped: int = 0
+
+
 class SupplierInvoiceCreate(BaseModel):
     supplier_id: Optional[int] = None
     subcontractor_id: Optional[int] = None
@@ -1580,6 +1633,7 @@ class DieselFillUpCreate(BaseModel):
     supplier_invoice_id: Optional[int] = None
     diesel_type: str = 'fillup'
     notes: Optional[str] = None
+    driver_name: Optional[str] = None
 
 
 class DieselFillUpUpdate(BaseModel):
@@ -1595,6 +1649,7 @@ class DieselFillUpUpdate(BaseModel):
     diesel_type: Optional[str] = None
     verified: Optional[bool] = None
     notes: Optional[str] = None
+    driver_name: Optional[str] = None
 
 
 class DieselFillUpOut(BaseModel):
@@ -1619,6 +1674,7 @@ class DieselFillUpOut(BaseModel):
     verified_by: Optional[int] = None
     verified_at: Optional[datetime] = None
     notes: Optional[str] = None
+    driver_name: Optional[str] = None
     created_by: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None

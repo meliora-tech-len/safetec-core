@@ -631,6 +631,25 @@ class Driver(Base):
     payments = relationship("DriverPayment", back_populates="driver", cascade="all, delete-orphan", order_by="DriverPayment.payment_date.desc()")
     pay_cycles = relationship("DriverPayCycle", back_populates="driver", cascade="all, delete-orphan")
     payroll_entries = relationship("PayrollEntry", back_populates="driver", cascade="all, delete-orphan", order_by="PayrollEntry.pay_year.desc(), PayrollEntry.pay_month.desc()")
+    casual_assignments = relationship("CasualTruckAssignment", back_populates="driver", cascade="all, delete-orphan")
+
+
+class CasualTruckAssignment(Base):
+    """Junction table: allows a casual driver to be assigned to multiple trucks simultaneously."""
+    __tablename__ = "casual_truck_assignments"
+    __table_args__ = (
+        UniqueConstraint("truck_id", "driver_slot", name="uq_casual_truck_slot"),
+    )
+
+    id        = Column(Integer, primary_key=True)
+    driver_id = Column(Integer, ForeignKey("drivers.id", ondelete="CASCADE"), nullable=False)
+    truck_id  = Column(Integer, ForeignKey("trucks.id", ondelete="CASCADE"), nullable=False)
+    driver_slot = Column(Integer, nullable=False)
+    entity_id = Column(Integer, ForeignKey("business_entities.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    driver = relationship("Driver", back_populates="casual_assignments")
+    truck  = relationship("Truck")
 
 
 # ── PayrollSettings ───────────────────────────────────────────────────────────
@@ -1008,6 +1027,7 @@ class DieselFillUp(Base):
 
     diesel_type = Column(String(10), nullable=False, default='fillup', server_default='fillup')
     notes = Column(Text)
+    driver_name = Column(String(200), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

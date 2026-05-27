@@ -14,6 +14,7 @@ from app.schemas.schemas import (
     SupplierInvoiceLineItemCreate, SupplierInvoiceLineItemOut,
     SupplierStatementGroup, SupplierPayablesDashboard,
     SupplierCurrentPayable, Supplier30DaysPayable,
+    BulkImportPayload, BulkImportResult,
 )
 from app.services.audit import log_action
 from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
@@ -731,3 +732,152 @@ def delete_line_item(
     db.delete(li)
     db.flush()
     _recalc_invoice_total(db, inv)
+
+
+# ── Bulk import ───────────────────────────────────────────────────────────────
+
+@router.post("/bulk-import", response_model=BulkImportResult)
+def bulk_import_invoices(
+    payload: BulkImportPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _check_entity_access(payload.entity_id, current_user)
+    supplier = db.query(Supplier).filter_by(id=payload.supplier_id).first()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+    existing_numbers = {
+        r[0] for r in db.query(SupplierInvoice.invoice_number).filter(
+            SupplierInvoice.supplier_id == payload.supplier_id,
+            SupplierInvoice.entity_id == payload.entity_id,
+        ).all() if r[0]
+    }
+
+    created, skipped, skipped_numbers = 0, 0, []
+    fillups_created, fillups_skipped = 0, 0
+
+    for item in payload.invoices:
+        num = (item.invoice_number or '').strip()
+        if num in existing_numbers:
+            skipped += 1
+            skipped_numbers.append(num)
+            continue
+
+        inv_date = item.invoice_date
+        if supplier.payment_term == PaymentTermType.days_30:
+            stmt_month, stmt_year = inv_date.month, inv_date.year
+        else:
+            stmt_month = 12 if inv_date.month == 1 else inv_date.month - 1
+            stmt_year = inv_date.year - 1 if inv_date.month == 1 else inv_date.year
+
+        inv = SupplierInvoice(
+            supplier_id=payload.supplier_id,
+            entity_id=payload.entity_id,
+            invoice_date=inv_date,
+            invoice_number=num or None,
+            amount=item.amount,
+            vat_applicable=False,
+            is_multi_line=True,
+            statement_month=stmt_month,
+            statement_year=stmt_year,
+            payment_due_date=calculate_supplier_due_date(inv_date, supplier.payment_term),
+            created_by_id=current_user.id,
+        )
+        db.add(inv)
+        db.flush()
+
+        inv_date_obj = inv_date.date() if hasattr(inv_date, 'date') else inv_date
+
+        for li in item.line_items:
+            db.add(SupplierInvoiceLineItem(
+                invoice_id=inv.id,
+                item_code=li.item_code,
+                item_description=li.item_description,
+                unit=li.unit,
+                quantity=li.quantity,
+                amount_excl_vat=li.amount_excl_vat,
+                amount_incl_vat=li.amount_incl_vat,
+                sort_order=li.sort_order,
+            ))
+
+            # Create DieselFillUp per line item
+            if not li.unit or not li.quantity or li.quantity <= 0:
+                fillups_skipped += 1
+                continue
+            truck = db.query(Truck).filter(
+                Truck.registration.ilike(li.unit.strip()),
+                Truck.entity_id == payload.entity_id,
+            ).first()
+            if not truck:
+                fillups_skipped += 1
+                continue
+            if li.item_code:
+                dup = db.query(DieselFillUp).filter(
+                    DieselFillUp.slip_number == li.item_code,
+                    DieselFillUp.entity_id == payload.entity_id,
+                ).first()
+                if dup:
+                    if not dup.supplier_invoice_id:
+                        dup.supplier_invoice_id = inv.id
+                    fillups_skipped += 1
+                    continue
+
+            litres_d = Decimal(str(li.quantity))
+            excl_d = Decimal(str(li.amount_excl_vat))
+            rate_record = DieselCalculationService.get_active_rate(
+                db, supplier.id, payload.entity_id, inv_date_obj
+            )
+            if rate_record:
+                rate_per_litre = Decimal(str(rate_record.rate_per_litre))
+            elif litres_d > 0:
+                rate_per_litre = (excl_d / litres_d).quantize(Decimal("0.0001"))
+            else:
+                fillups_skipped += 1
+                continue
+
+            settings = DieselCalculationService.get_diesel_settings(db, payload.entity_id)
+            admin_fee_pct = Decimal(str(settings.admin_fee_pct)) if settings else Decimal("0")
+            apply_admin_fee = settings.apply_admin_fee if settings else False
+            amounts = DieselCalculationService.calculate_fillup_amounts(
+                litres=litres_d,
+                rate_per_litre=rate_per_litre,
+                admin_fee_pct=admin_fee_pct,
+                apply_admin_fee=apply_admin_fee,
+            )
+            db.add(DieselFillUp(
+                entity_id=payload.entity_id,
+                truck_id=truck.id,
+                supplier_id=payload.supplier_id,
+                fillup_date=inv_date_obj,
+                litres=litres_d,
+                rate_per_litre=rate_per_litre,
+                invoice_number=num or None,
+                slip_number=li.item_code or None,
+                supplier_invoice_id=inv.id,
+                driver_name=li.driver_name or None,
+                admin_fee_pct=admin_fee_pct,
+                created_by=current_user.id,
+                **amounts,
+            ))
+            fillups_created += 1
+
+        db.flush()
+        _recalc_invoice_total(db, inv)
+        if num:
+            existing_numbers.add(num)
+        created += 1
+
+    log_action(
+        db, "supplier_invoice.bulk_imported",
+        user_id=current_user.id, entity_id=payload.entity_id,
+        resource_type="supplier_invoice",
+        description=(
+            f"Bulk imported {created} invoices, {fillups_created} fill-ups for {supplier.name}"
+        ),
+    )
+    db.commit()
+    return BulkImportResult(
+        created=created, skipped=skipped, skipped_numbers=skipped_numbers,
+        fillups_created=fillups_created, fillups_skipped=fillups_skipped,
+    )

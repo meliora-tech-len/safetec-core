@@ -7,12 +7,13 @@ import {
   verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
   addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
   getSubcontractors, getDieselFillUps,
-  finalizeSupplierInvoice,
+  finalizeSupplierInvoice, bulkImportSupplierInvoices,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
 import DeleteModal from '../components/DeleteModal'
@@ -57,6 +58,352 @@ const blankLineItem = () => ({
   sort_order: 0,
 })
 
+// ── WBG Excel import helpers & modal ─────────────────────────────────────────
+
+function visibleSheetNames(wb) {
+  return wb.SheetNames.filter((name, i) => {
+    const props = wb.Workbook?.Sheets?.[i]
+    return !props || !props.Hidden
+  })
+}
+
+function matchingSheets(sheetNames, entityName) {
+  if (!entityName) return sheetNames
+  const keyword = entityName.trim().split(/\s+/)[0].toLowerCase()
+  const matches = sheetNames.filter(n => n.toLowerCase().includes(keyword))
+  return matches.length > 0 ? matches : sheetNames
+}
+
+function parseWBGSheet(ws) {
+  // raw: true (default) keeps numbers as numbers and dates as Dates via cellDates.
+  // raw: false would stringify everything, breaking the typeof check below.
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, cellDates: true })
+  const invoices = []
+  let pending = []
+  for (const row of rows.slice(3)) {
+    const [siteOrDate,,slip,rawReg,,colDriver,ltr,,txnVal] = row
+    const invDate  = row[9]
+    const invNo    = row[10]
+    const invTotal = row[11]
+    if (!siteOrDate && !invNo) continue
+    if (invNo && typeof siteOrDate !== 'string') {
+      invoices.push({
+        invoice_date:   invDate instanceof Date ? invDate.toISOString() : invDate,
+        invoice_number: String(invNo).trim(),
+        amount:         parseFloat(invTotal) || 0,
+        line_items:     pending,
+      })
+      pending = []
+      continue
+    }
+    if (typeof siteOrDate === 'string' && slip) {
+      // Col 3 may contain "REG — DRIVER" — split on any dash with surrounding spaces
+      const rawRegStr = String(rawReg || '').trim()
+      const parts = rawRegStr.split(/ [-–—] /)
+      const cleanReg = parts[0].trim().toUpperCase()
+      const driverFromReg = (parts[1] || '').trim()
+      const cleanDriver = driverFromReg || String(colDriver || '').trim()
+
+      const excl = parseFloat(txnVal) || 0
+      pending.push({
+        item_code:        String(slip).replace(/^INV/i, '').trim(),
+        unit:             cleanReg,
+        item_description: '',
+        driver_name:      cleanDriver,
+        quantity:         parseFloat(ltr) || 0,
+        amount_excl_vat:  excl,
+        amount_incl_vat:  excl,
+        sort_order:       pending.length,
+      })
+    }
+  }
+  return invoices
+}
+
+const _modalOverlay = {
+  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+}
+const _modalBox = {
+  background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+  padding: 24, width: 680, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto',
+  boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+}
+const _th = { padding: '6px 10px', textAlign: 'left', fontWeight: 600, fontSize: 11, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }
+const _td = { padding: '5px 10px', verticalAlign: 'middle' }
+
+function lineStatus(li, trucks, entityId) {
+  if (!li.item_code || !(li.quantity > 0)) return 'missing'
+  const reg = (li.unit || '').toLowerCase()
+  const found = (trucks || []).some(
+    t => t.registration?.toLowerCase() === reg && t.entity_id === parseInt(entityId)
+  )
+  return found ? 'valid' : 'no_truck'
+}
+
+const _statusBadge = {
+  valid:    { color: '#16a34a', label: '✓' },
+  no_truck: { color: '#d97706', label: '! Truck not found' },
+  missing:  { color: '#dc2626', label: '! Missing data' },
+}
+
+function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImported }) {
+  const [step, setStep]         = useState('idle')
+  const [workbook, setWorkbook] = useState(null)
+  const [entityId, setEntityId] = useState(supplier?.entity_id || '')
+  const [sheetName, setSheetName] = useState('')
+  const [invoices, setInvoices] = useState([])
+  const [selectedNums, setSelectedNums] = useState(new Set())
+  const [expanded, setExpanded] = useState({})
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState(null)
+  const fileRef = useRef(null)
+
+  const selectedEntity  = entities?.find(e => e.id === parseInt(entityId))
+  const availableSheets = workbook
+    ? matchingSheets(visibleSheetNames(workbook), selectedEntity?.name)
+    : []
+
+  function handleFile(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array', cellDates: true })
+      setWorkbook(wb)
+      const visible = visibleSheetNames(wb)
+      const sheets  = matchingSheets(visible, selectedEntity?.name)
+      setSheetName(sheets[0] || visible[0] || '')
+    }
+    reader.readAsArrayBuffer(file)
+  }
+
+  function handleEntityChange(newEntityId) {
+    setEntityId(newEntityId)
+    if (workbook) {
+      const entity  = entities?.find(e => e.id === parseInt(newEntityId))
+      const visible = visibleSheetNames(workbook)
+      const sheets  = matchingSheets(visible, entity?.name)
+      setSheetName(sheets[0] || visible[0] || '')
+    }
+  }
+
+  function handlePreview() {
+    if (!workbook || !sheetName) return
+    const ws = workbook.Sheets[sheetName]
+    const parsed = parseWBGSheet(ws)
+    setInvoices(parsed)
+    setSelectedNums(new Set(parsed.map(inv => inv.invoice_number)))
+    setExpanded({})
+    setStep('preview')
+  }
+
+  async function handleImport() {
+    setImporting(true)
+    try {
+      const r = await bulkImportSupplierInvoices({
+        supplier_id: parseInt(supplierId),
+        entity_id:   parseInt(entityId),
+        invoices:    invoices.filter(inv => selectedNums.has(inv.invoice_number)),
+      })
+      setImportResult(r.data)
+      setStep('results')
+      onImported()
+    } catch (e) {
+      toast.error(errorMessage(e))
+      setImporting(false)
+    }
+  }
+
+  const totalLines = invoices.reduce((s, inv) => s + inv.line_items.length, 0)
+  const allLineItems = invoices.flatMap(inv => inv.line_items)
+  const statusCounts = allLineItems.reduce((acc, li) => {
+    const s = lineStatus(li, trucks, entityId)
+    acc[s] = (acc[s] || 0) + 1
+    return acc
+  }, {})
+
+  return (
+    <div style={_modalOverlay} onClick={onClose}>
+      <div style={_modalBox} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>Import WBG Excel</h3>
+          <button className="btn-ghost" onClick={onClose} style={{ padding: '2px 6px' }}><X size={14} /></button>
+        </div>
+
+        {step === 'idle' && (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Entity</label>
+              <select value={entityId} onChange={e => handleEntityChange(e.target.value)}
+                style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', fontSize: 13 }}>
+                <option value="">— select entity —</option>
+                {(entities || []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Excel file (.xlsx)</label>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ fontSize: 13 }} />
+            </div>
+            {workbook && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Sheet</label>
+                <select value={sheetName} onChange={e => setSheetName(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', fontSize: 13 }}>
+                  {availableSheets.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                {availableSheets.length < workbook.SheetNames.length && (
+                  <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
+                    Showing {availableSheets.length} of {workbook.SheetNames.length} sheets matching &ldquo;{selectedEntity?.name}&rdquo;
+                  </p>
+                )}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="btn-ghost" onClick={onClose}>Cancel</button>
+              <button className="btn-primary" onClick={handlePreview} disabled={!workbook || !entityId}>
+                Preview
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 'preview' && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)' }}>
+                Sheet: <strong>{sheetName}</strong> — {invoices.length} invoice{invoices.length !== 1 ? 's' : ''}, {totalLines} line items
+              </p>
+              <div style={{ display: 'flex', gap: 8, fontSize: 12 }}>
+                <button className="btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }}
+                  onClick={() => setSelectedNums(new Set(invoices.map(inv => inv.invoice_number)))}>
+                  Select All
+                </button>
+                <button className="btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }}
+                  onClick={() => setSelectedNums(new Set())}>
+                  Deselect All
+                </button>
+              </div>
+            </div>
+            {(statusCounts.no_truck > 0 || statusCounts.missing > 0) && (
+              <div style={{ marginBottom: 8, padding: '7px 12px', borderRadius: 4, background: 'rgba(217,119,6,0.08)', border: '1px solid rgba(217,119,6,0.25)', fontSize: 12 }}>
+                {statusCounts.no_truck > 0 && <span style={{ color: '#d97706', marginRight: 12 }}>⚠ {statusCounts.no_truck} truck registration{statusCounts.no_truck !== 1 ? 's' : ''} not found — fill-ups will be skipped</span>}
+                {statusCounts.missing > 0 && <span style={{ color: '#dc2626' }}>✕ {statusCounts.missing} line{statusCounts.missing !== 1 ? 's' : ''} with missing data</span>}
+              </div>
+            )}
+            <div style={{ maxHeight: 380, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, marginBottom: 16 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-surface)' }}>
+                    <th style={{ ..._th, width: 28 }}></th>
+                    <th style={_th}></th>
+                    <th style={_th}>Invoice No</th>
+                    <th style={_th}>Invoice Date</th>
+                    <th style={{ ..._th, textAlign: 'right' }}>Total</th>
+                    <th style={{ ..._th, textAlign: 'right' }}>Lines</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map((inv, i) => {
+                    const isSelected = selectedNums.has(inv.invoice_number)
+                    return (
+                      <Fragment key={i}>
+                        <tr style={{ borderBottom: '1px solid var(--border)', opacity: isSelected ? 1 : 0.45 }}>
+                          <td style={{ ..._td, width: 28 }}>
+                            <input type="checkbox" checked={isSelected}
+                              onChange={() => setSelectedNums(prev => {
+                                const next = new Set(prev)
+                                isSelected ? next.delete(inv.invoice_number) : next.add(inv.invoice_number)
+                                return next
+                              })} />
+                          </td>
+                          <td style={{ ..._td, width: 24, cursor: 'pointer' }}
+                            onClick={() => setExpanded(p => ({ ...p, [i]: !p[i] }))}>
+                            {expanded[i] ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                          </td>
+                          <td style={_td}>{inv.invoice_number}</td>
+                          <td style={_td}>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-ZA') : '—'}</td>
+                          <td style={{ ..._td, textAlign: 'right' }}>{inv.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+                          <td style={{ ..._td, textAlign: 'right' }}>{inv.line_items.length}</td>
+                        </tr>
+                        {expanded[i] && inv.line_items.map((li, j) => {
+                          const st = lineStatus(li, trucks, entityId)
+                          const badge = _statusBadge[st]
+                          return (
+                            <tr key={j} style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', opacity: isSelected ? 1 : 0.45 }}>
+                              <td style={_td}></td>
+                              <td style={{ ..._td, width: 24 }}>
+                                <span style={{ fontSize: 10, fontWeight: 700, color: badge.color }} title={badge.label}>
+                                  {st === 'valid' ? '✓' : '!'}
+                                </span>
+                              </td>
+                              <td style={{ ..._td, color: 'var(--text-muted)', paddingLeft: 8 }}>{li.item_code}</td>
+                              <td style={{ ..._td }}>
+                                <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{li.unit}</span>
+                                {li.driver_name && <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 11 }}>{li.driver_name}</span>}
+                                {st !== 'valid' && <span style={{ marginLeft: 8, fontSize: 10, color: badge.color, fontWeight: 600 }}>{badge.label}</span>}
+                              </td>
+                              <td style={{ ..._td, textAlign: 'right', color: 'var(--text-muted)' }}>{li.amount_excl_vat.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+                              <td style={{ ..._td, textAlign: 'right', color: 'var(--text-muted)' }}>{li.quantity}L</td>
+                            </tr>
+                          )
+                        })}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {selectedNums.size} of {invoices.length} selected
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn-ghost" onClick={() => setStep('idle')}>Back</button>
+                <button className="btn-primary" onClick={handleImport} disabled={importing || selectedNums.size === 0}>
+                  {importing ? 'Importing…' : `Import ${selectedNums.size} invoice${selectedNums.size !== 1 ? 's' : ''}`}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {step === 'results' && importResult && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              {importResult.created > 0 ? (
+                <p style={{ margin: '0 0 8px', fontSize: 14, color: '#16a34a', fontWeight: 600 }}>
+                  ✓ {importResult.created} invoice{importResult.created !== 1 ? 's' : ''} imported successfully
+                </p>
+              ) : (
+                <p style={{ margin: '0 0 8px', fontSize: 14, color: 'var(--text-muted)' }}>
+                  All invoices already exist — nothing new imported
+                </p>
+              )}
+              {importResult.skipped > 0 && (
+                <p style={{ margin: '0 0 4px', fontSize: 13, color: 'var(--text-muted)' }}>
+                  {importResult.skipped} invoice{importResult.skipped !== 1 ? 's' : ''} skipped (already exist)
+                </p>
+              )}
+              <p style={{ margin: '8px 0 4px', fontSize: 13 }}>
+                <span style={{ color: '#16a34a', fontWeight: 600 }}>{importResult.fillups_created}</span> diesel fill-up record{importResult.fillups_created !== 1 ? 's' : ''} created
+                {importResult.fillups_skipped > 0 && (
+                  <span style={{ color: '#d97706', marginLeft: 10 }}>
+                    ⚠ {importResult.fillups_skipped} skipped — truck not found or missing data
+                  </span>
+                )}
+              </p>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn-primary" onClick={onClose}>Done</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function PaymentTermBadge({ term }) {
   const is30 = term === '30_days'
   return (
@@ -91,6 +438,7 @@ export default function SupplierProfilePage() {
   const [showNew, setShowNew] = useState(false)       // new inline row visible
   const [newForm, setNewForm] = useState(blankForm(''))
   const [saving, setSaving] = useState(false)
+  const [showImport, setShowImport] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)  // invoice pending deletion
   const [openInvoiceIds, setOpenInvoiceIds] = useState(new Set())
   const firstInputRef = useRef(null)
@@ -499,6 +847,12 @@ export default function SupplierProfilePage() {
               { header: 'Notes',           key: 'notes' },
             ]}
           />
+          {isDiesel && supplier?.name?.toLowerCase().includes('wbg') && (
+            <button className="btn-ghost" onClick={() => setShowImport(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <Upload size={15} /> Import Excel
+            </button>
+          )}
           <button className="btn-primary" onClick={handleAddClick} disabled={showNew}>
             <Plus size={15} /> Add Invoice
           </button>
@@ -610,6 +964,17 @@ export default function SupplierProfilePage() {
           catch (e) { toast.error(errorMessage(e)) }
         }}
       />
+
+      {showImport && (
+        <WBGImportModal
+          supplierId={supplierId}
+          supplier={supplier}
+          entities={entities}
+          trucks={trucks}
+          onClose={() => setShowImport(false)}
+          onImported={() => { loadInvoices() }}
+        />
+      )}
 
       {/* ── New invoice card ── */}
       {showNew && (

@@ -164,6 +164,8 @@ export const archiveTruckLoad = (id) => api.patch(`/truck-loads/${id}/archive`)
 // ── Drivers ───────────────────────────────────────────────────────────────────
 export const getDrivers = (params = {}) => api.get('/drivers', { params })
 export const updateDriver = (id, data) => api.put(`/drivers/${id}`, data)
+export const addDriverTruckAssignment = (driverId, data) => api.post(`/drivers/${driverId}/truck-assignments`, data)
+export const removeDriverTruckAssignment = (driverId, assignmentId) => api.delete(`/drivers/${driverId}/truck-assignments/${assignmentId}`)
 export const addDriverAdditionalLoad = (driverId, year, month, data) =>
   api.post(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads`, data)
 export const updateDriverAdditionalLoad = (driverId, year, month, loadId, data) =>
@@ -215,6 +217,7 @@ export const archiveDieselFillUp = (id) => api.patch(`/diesel/fillups/${id}/arch
 export const verifyDieselFillUp       = (id) => api.patch(`/diesel/fillups/${id}/verify`)
 export const finalizeDieselFillUp     = (id) => api.patch(`/diesel/fillups/${id}/finalize`)
 export const getDieselWarnings        = (params = {}) => api.get('/diesel/warnings', { params })
+export const bulkImportSupplierInvoices = (data) => api.post('/supplier-invoices/bulk-import', data)
 export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)
 export const verifySupplierInvoice    = (id) => api.patch(`/supplier-invoices/${id}/verify`)
 export const finalizeSupplierInvoice  = (id) => api.patch(`/supplier-invoices/${id}/finalize`)

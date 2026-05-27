@@ -95,6 +95,25 @@ function ExpiryBadge({ expiry }) {
   )
 }
 
+// ── Drivers cell (compact, for non-SFT trucks) ───────────────────────────────
+
+function DriversCell({ drivers }) {
+  if (!drivers.length) return <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
+  const sorted = [...drivers].sort((a, b) => (a.driver_slot ?? 99) - (b.driver_slot ?? 99))
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {sorted.map(d => (
+        <span key={d.id} style={{ fontSize: 12, color: 'var(--text-primary)' }}>
+          {d.first_name} {d.last_name}
+          {d.driver_type === 'casual' && (
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>C</span>
+          )}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 // ── Stat cards ────────────────────────────────────────────────────────────────
 
 function StatCards({ stats, alertCount }) {
@@ -813,7 +832,7 @@ function PersonalVehicleModal({ pv, entities, onSave, onClose }) {
 
 // ── Expandable truck row ──────────────────────────────────────────────────────
 
-function TruckRow({ truck, onEdit, onDelete, isAdmin, truckDrivers = [] }) {
+function TruckRow({ truck, onEdit, onDelete, isAdmin, truckDrivers = [], showLicenceExpiry = false }) {
   const [open, setOpen] = useState(false)
   const s = STATUS_COLOURS[truck.status] || STATUS_COLOURS.active
 
@@ -841,7 +860,7 @@ function TruckRow({ truck, onEdit, onDelete, isAdmin, truckDrivers = [] }) {
             )}
           </div>
         </td>
-        <td><ExpiryBadge expiry={truck.licence_expiry} /></td>
+        <td>{showLicenceExpiry ? <ExpiryBadge expiry={truck.licence_expiry} /> : <DriversCell drivers={truckDrivers} />}</td>
         <td>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {(truck.trailers || []).map(t => (
@@ -1179,6 +1198,7 @@ export default function FleetPage() {
   }
 
   const entityMap    = Object.fromEntries(entities.map(e => [e.id, e]))
+  const sftEntityId  = entities.find(e => e.code === 'SFT')?.id
 
   // Split alerts into two groups
   const expiredAlerts = alerts
@@ -1473,7 +1493,10 @@ export default function FleetPage() {
                     <SortableHeader label="#"              col="fleet_number"   sort={truckSort} onSort={handleTruckSort} />
                     <SortableHeader label="Make / Model"   col="make"           sort={truckSort} onSort={handleTruckSort} />
                     <SortableHeader label="Registration"   col="registration"   sort={truckSort} onSort={handleTruckSort} />
-                    <SortableHeader label="Licence Expiry" col="licence_expiry" sort={truckSort} onSort={handleTruckSort} />
+                    {filterEntity && Number(filterEntity) === sftEntityId
+                      ? <SortableHeader label="Licence Expiry" col="licence_expiry" sort={truckSort} onSort={handleTruckSort} />
+                      : <th>Driver/s</th>
+                    }
                     <th>Trailers</th>
                     <SortableHeader label="Subcontractor"  col="subcontractor"  sort={truckSort} onSort={handleTruckSort} />
                     <SortableHeader label="Status"         col="status"         sort={truckSort} onSort={handleTruckSort} />
@@ -1496,7 +1519,11 @@ export default function FleetPage() {
                           key={truck.id}
                           truck={truck}
                           isAdmin={isAdmin}
-                          truckDrivers={allDrivers.filter(d => d.truck_id === truck.id)}
+                          showLicenceExpiry={truck.entity_id === sftEntityId}
+                          truckDrivers={allDrivers.filter(d =>
+                            d.truck_id === truck.id ||
+                            (d.driver_type === 'casual' && (d.casual_assignments || []).some(a => a.truck_id === truck.id))
+                          )}
                           onEdit={t => { setSelected(t); setModal('edit-truck') }}
                           onDelete={t => { setSelected(t); setModal('delete-truck') }}
                         />

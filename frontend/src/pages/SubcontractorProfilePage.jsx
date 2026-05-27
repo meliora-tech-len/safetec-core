@@ -474,7 +474,7 @@ export default function SubcontractorProfilePage() {
                                         onChange={v => setEditForm(p => ({ ...p, vehicle_reg: v }))}
                                         options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
                                         getValue={t => t.registration}
-                                        getLabel={t => t.registration === '' ? '— Clear —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
+                                        getLabel={t => t.registration === '' ? '— Select —' : t.fleet_number ? `#${t.fleet_number} · ${t.registration}` : t.registration}
                                         placeholder="Vehicle reg…"
                                         style={{ width: 150 }}
                                       />

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import calendar
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
@@ -13,7 +14,7 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, Driver, DriverType,
     DriverPayCycle, DriverTripLog, DriverAdditionalLoad, DriverFoodPayment,
-    TruckLoad, PayrollEntry,
+    TruckLoad, PayrollEntry, CasualTruckAssignment,
 )
 from app.schemas.schemas import (
     DriverCreate, DriverUpdate, DriverOut, DriverSummary, DriverStats,
@@ -21,6 +22,7 @@ from app.schemas.schemas import (
     DriverTripLogCreate, DriverTripLogOut,
     DriverAdditionalLoadCreate, DriverAdditionalLoadUpdate, DriverAdditionalLoadOut,
     DriverFoodPaymentCreate, DriverFoodPaymentUpdate, DriverFoodPaymentOut,
+    CasualTruckAssignmentOut,
 )
 from app.services.audit import log_action
 from app.services.payroll_calculator import calculate_pay_cycle
@@ -64,6 +66,15 @@ def _build_summary(driver: Driver, month_start: date, db: Session, payment_map: 
         ).scalar() or 0
     else:
         load_count = 0
+    casual_assignments = [
+        {
+            "id": a.id,
+            "truck_id": a.truck_id,
+            "driver_slot": a.driver_slot,
+            "truck_registration": a.truck.registration if a.truck else None,
+        }
+        for a in driver.casual_assignments
+    ]
     return {
         "id": driver.id,
         "entity_id": driver.entity_id,
@@ -77,6 +88,7 @@ def _build_summary(driver: Driver, month_start: date, db: Session, payment_map: 
         "is_active": driver.is_active,
         "load_count_this_month": load_count,
         "total_payments_this_month": payment_map.get(driver.id, Decimal("0")),
+        "casual_assignments": casual_assignments,
     }
 
 
@@ -332,6 +344,95 @@ def delete_driver(
     db.delete(driver)
     db.commit()
     return {"detail": "Driver deleted"}
+
+
+# ── Casual multi-truck assignments ────────────────────────────────────────────
+
+class TruckAssignPayload(BaseModel):
+    truck_id: int
+    driver_slot: int
+    entity_id: int
+
+
+@router.post("/{driver_id}/truck-assignments", response_model=CasualTruckAssignmentOut)
+def add_truck_assignment(
+    driver_id: int,
+    payload: TruckAssignPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    _check_access(driver.entity_id, current_user)
+    if driver.driver_type != DriverType.casual:
+        raise HTTPException(status_code=400, detail="Multi-truck assignments are only for casual drivers")
+
+    conflict = db.query(CasualTruckAssignment).filter(
+        CasualTruckAssignment.truck_id == payload.truck_id,
+        CasualTruckAssignment.driver_slot == payload.driver_slot,
+    ).first()
+    if conflict:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Driver {payload.driver_slot} slot on this truck is already taken",
+        )
+    existing = db.query(CasualTruckAssignment).filter(
+        CasualTruckAssignment.driver_id == driver_id,
+        CasualTruckAssignment.truck_id == payload.truck_id,
+        CasualTruckAssignment.driver_slot == payload.driver_slot,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Already assigned to this truck/slot")
+
+    assignment = CasualTruckAssignment(
+        driver_id=driver_id,
+        truck_id=payload.truck_id,
+        driver_slot=payload.driver_slot,
+        entity_id=payload.entity_id,
+    )
+    db.add(assignment)
+    db.flush()
+    log_action(db, "driver.truck_assigned", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="driver",
+               resource_id=driver_id,
+               description=f"Assigned {driver.first_name} {driver.last_name} to truck {payload.truck_id} slot {payload.driver_slot}")
+    db.commit()
+    db.refresh(assignment)
+    return {
+        "id": assignment.id,
+        "truck_id": assignment.truck_id,
+        "driver_slot": assignment.driver_slot,
+        "truck_registration": assignment.truck.registration if assignment.truck else None,
+    }
+
+
+@router.delete("/{driver_id}/truck-assignments/{assignment_id}")
+def remove_truck_assignment(
+    driver_id: int,
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    _check_access(driver.entity_id, current_user)
+
+    assignment = db.query(CasualTruckAssignment).filter(
+        CasualTruckAssignment.id == assignment_id,
+        CasualTruckAssignment.driver_id == driver_id,
+    ).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    log_action(db, "driver.truck_unassigned", user_id=current_user.id,
+               entity_id=driver.entity_id, resource_type="driver",
+               resource_id=driver_id,
+               description=f"Unassigned {driver.first_name} {driver.last_name} from truck {assignment.truck_id} slot {assignment.driver_slot}")
+    db.delete(assignment)
+    db.commit()
+    return {"detail": "Assignment removed"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

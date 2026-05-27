@@ -252,7 +252,7 @@ export default function DieselFillUpsPage() {
   }, [fillups, search, sort])
 
   const multiEntity = entities.length > 1
-  const COLS = multiEntity ? 15 : 14
+  const COLS = multiEntity ? 16 : 15
 
   return (
     <div style={styles.page}>
@@ -384,6 +384,7 @@ export default function DieselFillUpsPage() {
               <th className="text-right">Admin Fee (excl)</th>
               <th className="text-right">Admin Fee (incl)</th>
               <SortableHeader label="Total" col="total_amount" sort={sort} onSort={onSort} className="text-right" />
+              <th>Driver</th>
               <th>Type</th>
               <th>Invoice #</th>
               <th>Slip #</th>
@@ -457,6 +458,7 @@ export default function DieselFillUpsPage() {
                     fontWeight: 700,
                     ...(f.verified2_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
                   }}>{formatCurrency(f.total_amount)}</td>
+                  <td style={{ fontSize: 12 }}>{f.driver_name || '—'}</td>
                   <td>
                     <span style={{
                       padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700,
