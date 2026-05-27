@@ -1299,10 +1299,27 @@ class TruckLoadUpdate(BaseModel):
     statement_year: Optional[int] = None
 
 
+class TruckLoadDriverSplitBase(BaseModel):
+    driver_id: Optional[int] = None
+    mine_id: int
+    share: Decimal = Decimal("0.5")
+    slip_number: Optional[str] = None
+
+
+class TruckLoadDriverSplitOut(TruckLoadDriverSplitBase):
+    id: int
+    driver_name: Optional[str] = None
+    mine_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class TruckLoadOut(TruckLoadBase):
     id: int
     rate_per_ton: Decimal
     split_group_id: Optional[int] = None
+    driver_splits: List[TruckLoadDriverSplitOut] = []
     amount_excl_vat: Optional[Decimal] = None
     amount_incl_vat: Optional[Decimal] = None
     subcontractor_admin_fee_per_ton: Optional[Decimal] = None
@@ -1320,13 +1337,21 @@ class TruckLoadOut(TruckLoadBase):
 
 
 class SplitLoadCreate(BaseModel):
-    load_a: TruckLoadCreate
-    load_b: TruckLoadCreate
+    """One main load plus its driver lines. Each line is 0.5 of a load; a split
+    is exactly two drivers. Tonnes/rate live on `load`, never on the lines."""
+    load: TruckLoadCreate
+    splits: List[TruckLoadDriverSplitBase]
+
+    @field_validator("splits")
+    @classmethod
+    def _exactly_two(cls, v):
+        if len(v) != 2:
+            raise ValueError("A split load must have exactly two driver lines")
+        return v
 
 
 class SplitLoadOut(BaseModel):
-    load_a: TruckLoadOut
-    load_b: TruckLoadOut
+    load: TruckLoadOut
 
 
 class TruckLoadBulkCreate(BaseModel):

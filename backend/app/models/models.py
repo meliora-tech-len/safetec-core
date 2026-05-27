@@ -5,6 +5,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.database import Base
+from decimal import Decimal
 import enum
 
 
@@ -927,6 +928,30 @@ class TruckLoad(Base):
     mine     = relationship("Mine", back_populates="truck_loads")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
     driver   = relationship("Driver", foreign_keys=[driver_id])
+    driver_splits = relationship(
+        "TruckLoadDriverSplit", back_populates="truck_load",
+        cascade="all, delete-orphan", order_by="TruckLoadDriverSplit.sort_order",
+    )
+
+
+class TruckLoadDriverSplit(Base):
+    """A driver line on a split load. The main TruckLoad keeps the full tonnes/amount;
+    each driver line credits `share` (fixed 0.5) of a load to that driver's payroll.
+    Tonnes are deliberately absent — a split is only about which drivers + mines."""
+    __tablename__ = "truck_load_driver_splits"
+
+    id            = Column(Integer, primary_key=True)
+    truck_load_id = Column(Integer, ForeignKey("truck_loads.id", ondelete="CASCADE"), nullable=False)
+    driver_id     = Column(Integer, ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True)
+    mine_id       = Column(Integer, ForeignKey("mines.id", ondelete="RESTRICT"), nullable=False)
+    share         = Column(Numeric(4, 3), nullable=False, default=Decimal("0.5"))
+    slip_number   = Column(String(50))
+    sort_order    = Column(Integer, default=0)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+
+    truck_load = relationship("TruckLoad", back_populates="driver_splits")
+    driver     = relationship("Driver", foreign_keys=[driver_id])
+    mine       = relationship("Mine", foreign_keys=[mine_id])
 
 
 # ── Driver Salary Config ───────────────────────────────────────────────────────

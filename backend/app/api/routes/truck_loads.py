@@ -8,7 +8,7 @@ from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
-    User, TruckLoad, Mine, MineRate, Truck, Supplier,
+    User, TruckLoad, TruckLoadDriverSplit, Mine, MineRate, Truck, Supplier,
     Driver, DriverType, DriverPayCycle, DriverTripLog, PayrollSettings,
     DieselSettings, BusinessEntity,
 )
@@ -109,6 +109,19 @@ def _enrich(load: TruckLoad) -> dict:
     d["truck_registration"] = load.truck.registration if load.truck else None
     d["mine_name"]           = load.mine.name if load.mine else None
     d["supplier_name"]       = load.supplier.name if load.supplier else None
+    d["driver_splits"] = [
+        {
+            "id":          s.id,
+            "driver_id":   s.driver_id,
+            "mine_id":     s.mine_id,
+            "share":       s.share,
+            "slip_number": s.slip_number,
+            "driver_name": (f"{s.driver.first_name} {s.driver.last_name}".strip()
+                            if s.driver else None),
+            "mine_name":   s.mine.name if s.mine else None,
+        }
+        for s in (load.driver_splits or [])
+    ]
     return d
 
 
@@ -140,24 +153,18 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
         TruckLoad.load_date < month_end,
     ]
 
+    # Full loads only. Split loads are credited via truck_load_driver_splits and
+    # owned by _sync_split_driver — this function never touches the split columns.
     full_loads = db.query(func.count(TruckLoad.id)).filter(
         *base_filter, TruckLoad.is_split_load != True,
     ).scalar() or 0
 
-    split_loads = db.query(TruckLoad).filter(
-        *base_filter, TruckLoad.is_split_load == True,
-    ).all()
-    split_count = len(split_loads)
-
     if driver.driver_type == DriverType.permanent:
         lohatla_base  = min(7, full_loads)
         lohatla_extra = max(0, full_loads - 7)
-        split_a = split_b = 0
     else:
         lohatla_base  = full_loads
         lohatla_extra = 0
-        split_a = sum(1 for l in split_loads if l.mine and l.mine.casual_group == 'A')
-        split_b = split_count - split_a
 
     cycle = db.query(DriverPayCycle).filter(
         DriverPayCycle.driver_id == driver.id,
@@ -168,11 +175,6 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     if cycle:
         cycle.lohatla_base_loads  = lohatla_base
         cycle.lohatla_extra_loads = lohatla_extra
-        if driver.driver_type == DriverType.permanent:
-            cycle.permanent_split_loads = split_count
-        else:
-            cycle.casual_split_group_a_loads = split_a
-            cycle.casual_split_group_b_loads = split_b
     else:
         settings = db.query(PayrollSettings).order_by(PayrollSettings.id.desc()).first()
         cycle = DriverPayCycle(
@@ -182,9 +184,6 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
             payroll_settings_id=settings.id if settings else None,
             lohatla_base_loads=lohatla_base,
             lohatla_extra_loads=lohatla_extra,
-            permanent_split_loads=(split_count if driver.driver_type == DriverType.permanent else 0),
-            casual_split_group_a_loads=(split_a if driver.driver_type != DriverType.permanent else 0),
-            casual_split_group_b_loads=(split_b if driver.driver_type != DriverType.permanent else 0),
         )
         db.add(cycle)
         db.flush()
@@ -233,7 +232,11 @@ def _remove_trip_log(load_id: int, db: Session):
 
 
 def _sync_split_driver(driver_id: int, load_date: datetime, db: Session):
-    """Re-sync split load counts for a driver based on TruckLoad.driver_id (new split model)."""
+    """Re-sync split-load credit for a driver from their truck_load_driver_splits lines.
+
+    Each line is 0.5 of a load. We store the line COUNT in the pay cycle (an integer
+    number of half-loads); calculate_pay_cycle applies the ×0.5 — so one line → 0.5 load,
+    two lines in the month → 1.0 load. Casual lines bucket by their own mine's casual_group."""
     driver = db.query(Driver).filter(Driver.id == driver_id).first()
     if not driver:
         return
@@ -243,13 +246,18 @@ def _sync_split_driver(driver_id: int, load_date: datetime, db: Session):
     month_end = (datetime(year + 1, 1, 1, tzinfo=timezone.utc)
                  if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc))
 
-    split_loads = db.query(TruckLoad).filter(
-        TruckLoad.driver_id == driver_id,
-        TruckLoad.entity_id == driver.entity_id,
-        TruckLoad.is_split_load == True,
-        TruckLoad.load_date >= month_start,
-        TruckLoad.load_date < month_end,
-    ).all()
+    split_loads = (
+        db.query(TruckLoadDriverSplit)
+        .join(TruckLoad, TruckLoadDriverSplit.truck_load_id == TruckLoad.id)
+        .filter(
+            TruckLoadDriverSplit.driver_id == driver_id,
+            TruckLoad.entity_id == driver.entity_id,
+            TruckLoad.is_archived != True,
+            TruckLoad.load_date >= month_start,
+            TruckLoad.load_date < month_end,
+        )
+        .all()
+    )
     split_count = len(split_loads)
 
     cycle = db.query(DriverPayCycle).filter(
@@ -285,6 +293,28 @@ def _sync_split_driver(driver_id: int, load_date: datetime, db: Session):
             )
             db.add(cycle)
             db.flush()
+
+
+def _add_split_trip_logs(load: TruckLoad, db: Session):
+    """Create one DriverTripLog per driver line on a split load (pay cycles must exist)."""
+    for s in load.driver_splits:
+        if not s.driver_id:
+            continue
+        cycle = db.query(DriverPayCycle).filter(
+            DriverPayCycle.driver_id == s.driver_id,
+            DriverPayCycle.pay_month == load.load_date.month,
+            DriverPayCycle.pay_year  == load.load_date.year,
+        ).first()
+        if not cycle:
+            continue
+        mine_name = s.mine.name if s.mine else (load.mine.name if load.mine else "Unknown")
+        db.add(DriverTripLog(
+            pay_cycle_id=cycle.id,
+            trip_date=load.load_date,
+            mine_name=mine_name,
+            truck_load_id=load.id,
+            notes=f"Auto: split load #{load.id} (0.5)",
+        ))
 
 
 # ── List loads ────────────────────────────────────────────────────────────────
@@ -444,11 +474,8 @@ def create_truck_load(
     db.add(load)
     db.flush()
 
-    # Sync pay cycle: split loads track by driver_id; regular loads track by truck
-    if load.is_split_load and load.driver_id:
-        _sync_split_driver(load.driver_id, load.load_date, db)
-    else:
-        _sync_driver_pay_cycle(load.truck_id, load.load_date, db)
+    # Regular single load: credit the truck's driver. Splits go through POST /split.
+    _sync_driver_pay_cycle(load.truck_id, load.load_date, db)
     db.flush()
 
     # Add trip log entry (pay cycle now exists)
@@ -545,7 +572,7 @@ def bulk_create_truck_loads(
     return [TruckLoadOut(**_enrich(l)) for l in created]
 
 
-# ── Create split load pair ────────────────────────────────────────────────────
+# ── Create split load ─────────────────────────────────────────────────────────
 
 @router.post("/split", response_model=SplitLoadOut)
 def create_split_load(
@@ -553,55 +580,59 @@ def create_split_load(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create two TruckLoad records as a split pair, atomically."""
-    _check_entity_access(payload.load_a.entity_id, current_user)
+    """Create ONE truck load (full tonnes/rate/amount) plus its driver lines.
 
-    def _build(item: TruckLoadCreate) -> TruckLoad:
-        rate = item.rate_per_ton
+    The main load is the billing/revenue record and counts as one load. Each driver
+    line credits 0.5 of a load to that driver's payroll — tonnes play no role."""
+    item = payload.load
+    _check_entity_access(item.entity_id, current_user)
+
+    rate = item.rate_per_ton
+    if rate is None:
+        rate = _resolve_rate(db, item.mine_id, item.entity_id)
         if rate is None:
-            rate = _resolve_rate(db, item.mine_id, item.entity_id)
-            if rate is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"No active mine rate for mine {item.mine_id}/entity {item.entity_id}. Provide rate_per_ton.",
-                )
-        ent = db.query(BusinessEntity).filter(BusinessEntity.id == item.entity_id).first()
-        load = TruckLoad(**item.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
-        load.is_split_load = True
-        _compute_amounts(load, vat_registered=ent.vat_registered if ent else True)
-        _compute_subcontractor_amounts(load, db)
-        return load
+            raise HTTPException(
+                status_code=400,
+                detail=f"No active mine rate for mine {item.mine_id}/entity {item.entity_id}. Provide rate_per_ton.",
+            )
+    ent = db.query(BusinessEntity).filter(BusinessEntity.id == item.entity_id).first()
 
-    load_a = _build(payload.load_a)
-    db.add(load_a)
+    load = TruckLoad(**item.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
+    load.is_split_load = True
+    load.driver_id = None  # the main load is not tied to a single driver
+    _compute_amounts(load, vat_registered=ent.vat_registered if ent else True)
+    _compute_subcontractor_amounts(load, db)
+    db.add(load)
     db.flush()
 
-    load_b = _build(payload.load_b)
-    load_b.split_group_id = load_a.id
-    db.add(load_b)
+    for order, sp in enumerate(payload.splits):
+        db.add(TruckLoadDriverSplit(
+            truck_load_id=load.id,
+            driver_id=sp.driver_id,
+            mine_id=sp.mine_id,
+            share=sp.share if sp.share is not None else Decimal("0.5"),
+            slip_number=sp.slip_number,
+            sort_order=order,
+        ))
+    db.flush()
+    db.refresh(load)
+
+    # Credit each distinct driver's payroll (0.5 per line)
+    for did in {sp.driver_id for sp in payload.splits if sp.driver_id}:
+        _sync_split_driver(did, load.load_date, db)
     db.flush()
 
-    load_a.split_group_id = load_a.id
-    db.flush()
-
-    if load_a.driver_id:
-        _sync_split_driver(load_a.driver_id, load_a.load_date, db)
-    if load_b.driver_id:
-        _sync_split_driver(load_b.driver_id, load_b.load_date, db)
+    _add_split_trip_logs(load, db)
 
     log_action(
         db, "truck_load.split_created", user_id=current_user.id,
-        entity_id=payload.load_a.entity_id, resource_type="truck_load",
-        resource_id=load_a.id,
-        description=f"Created split load pair #{load_a.id}/{load_b.id}",
+        entity_id=item.entity_id, resource_type="truck_load",
+        resource_id=load.id,
+        description=f"Created split load #{load.id} with {len(payload.splits)} drivers",
     )
     db.commit()
-    db.refresh(load_a)
-    db.refresh(load_b)
-    return SplitLoadOut(
-        load_a=TruckLoadOut(**_enrich(load_a)),
-        load_b=TruckLoadOut(**_enrich(load_b)),
-    )
+    db.refresh(load)
+    return SplitLoadOut(load=TruckLoadOut(**_enrich(load)))
 
 
 # ── Update load ───────────────────────────────────────────────────────────────
@@ -620,7 +651,6 @@ def update_truck_load(
 
     old_truck_id   = load.truck_id
     old_load_date  = load.load_date
-    old_driver_id  = load.driver_id
     old_is_split   = load.is_split_load
 
     updated_fields = payload.model_dump(exclude_none=True)
@@ -647,32 +677,29 @@ def update_truck_load(
 
     new_truck_id  = load.truck_id
     new_load_date = load.load_date
-    new_driver_id = load.driver_id
     new_is_split  = load.is_split_load
 
     # Sync pay cycles for affected drivers/trucks
     dates_to_sync = {old_load_date, new_load_date}
-    if new_is_split and new_driver_id:
-        # Split load: sync by driver_id
-        for ld in dates_to_sync:
-            _sync_split_driver(new_driver_id, ld, db)
-        if old_driver_id and old_driver_id != new_driver_id:
+    if new_is_split:
+        # Split load: re-sync every driver line for both old and new dates
+        for did in {s.driver_id for s in load.driver_splits if s.driver_id}:
             for ld in dates_to_sync:
-                _sync_split_driver(old_driver_id, ld, db)
+                _sync_split_driver(did, ld, db)
     else:
         # Regular load: sync by truck
         for truck_id in {old_truck_id, new_truck_id}:
             for ld in dates_to_sync:
                 _sync_driver_pay_cycle(truck_id, ld, db)
 
-    # Update the linked trip log entry date/mine if it moved
-    trip_entry = db.query(DriverTripLog).filter(
+    # Keep linked trip log entries aligned with the (possibly new) load date
+    trip_entries = db.query(DriverTripLog).filter(
         DriverTripLog.truck_load_id == load_id
-    ).first()
-    if trip_entry:
-        trip_entry.trip_date = new_load_date
-        if load.mine:
-            trip_entry.mine_name = load.mine.name
+    ).all()
+    for te in trip_entries:
+        te.trip_date = new_load_date
+    if len(trip_entries) == 1 and load.mine:
+        trip_entries[0].mine_name = load.mine.name
 
     log_action(
         db, "truck_load.updated", user_id=current_user.id,
@@ -724,8 +751,8 @@ def delete_truck_load(
 
     truck_id   = load.truck_id
     load_date  = load.load_date
-    driver_id  = load.driver_id
     is_split   = load.is_split_load
+    split_driver_ids = [s.driver_id for s in load.driver_splits if s.driver_id] if is_split else []
 
     _remove_trip_log(load_id, db)
 
@@ -734,11 +761,12 @@ def delete_truck_load(
         entity_id=load.entity_id, resource_type="truck_load",
         resource_id=load_id, description=f"Deleted truck load {load_id}",
     )
-    db.delete(load)
+    db.delete(load)  # cascade removes truck_load_driver_splits
     db.flush()
 
-    if is_split and driver_id:
-        _sync_split_driver(driver_id, load_date, db)
+    if is_split:
+        for did in set(split_driver_ids):
+            _sync_split_driver(did, load_date, db)
     else:
         _sync_driver_pay_cycle(truck_id, load_date, db)
 

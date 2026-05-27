@@ -1337,7 +1337,11 @@ export default function TruckLoadProfilePage() {
   // Add Load prompt + split modal
   const [addPromptOpen, setAddPromptOpen]   = useState(false)
   const [splitModalOpen, setSplitModalOpen] = useState(false)
-  const [splitForms, setSplitForms] = useState({ a: { ...EMPTY_LOAD }, b: { ...EMPTY_LOAD } })
+  const [splitForm, setSplitForm] = useState({ ...EMPTY_LOAD })
+  const [splitDrivers, setSplitDrivers] = useState([
+    { driver_id: null, mine_id: '' },
+    { driver_id: null, mine_id: '' },
+  ])
   const [splitSaving, setSplitSaving] = useState(false)
   const [openSplitGroups, setOpenSplitGroups] = useState(new Set())
 
@@ -1529,22 +1533,20 @@ export default function TruckLoadProfilePage() {
     setDeleteTarget(load)
   }
 
-  const syncBFromA = (key, val) => {
-    setSplitForms(f => ({
-      ...f,
-      a: { ...f.a, [key]: val },
-      b: { ...f.b, [key]: f.b[key] === f.a[key] ? val : f.b[key] },
-    }))
-  }
-
   const handleSaveSplit = async () => {
-    if (!splitForms.a.mine_id || !splitForms.b.mine_id) return toast.error('Select a mine for both loads')
-    if (!splitForms.a.load_date || !splitForms.b.load_date) return toast.error('Load date required for both')
-    if (!splitForms.a.tonnes || isNaN(splitForms.a.tonnes)) return toast.error('Valid tonnes required for Load A')
-    if (!splitForms.b.tonnes || isNaN(splitForms.b.tonnes)) return toast.error('Valid tonnes required for Load B')
+    if (!splitForm.mine_id) return toast.error('Select a mine for the load')
+    if (!splitForm.load_date) return toast.error('Load date required')
+    if (!splitForm.tonnes || isNaN(splitForm.tonnes)) return toast.error('Valid tonnes required')
+    if (splitDrivers.some(d => !d.driver_id)) return toast.error('Select a driver for both lines')
     setSplitSaving(true)
     try {
-      await createSplitLoad({ load_a: buildPayload(splitForms.a), load_b: buildPayload(splitForms.b) })
+      await createSplitLoad({
+        load: buildPayload(splitForm),
+        splits: splitDrivers.map(d => ({
+          driver_id: parseInt(d.driver_id),
+          mine_id: parseInt(d.mine_id || splitForm.mine_id),
+        })),
+      })
       toast.success('Split load saved')
       setSplitModalOpen(false)
       fetchLoads()
@@ -1578,28 +1580,9 @@ export default function TruckLoadProfilePage() {
     const n = new Set(s); n.has(gid) ? n.delete(gid) : n.add(gid); return n
   })
 
-  const displayRows = useMemo(() => {
-    const groups = new Map()
-    const items = []
-    sortedLoads.forEach(l => {
-      if (l.is_split_load && l.split_group_id) {
-        if (!groups.has(l.split_group_id)) groups.set(l.split_group_id, [])
-        groups.get(l.split_group_id).push(l)
-      } else {
-        items.push({ type: 'single', load: l })
-      }
-    })
-    groups.forEach((pair, gid) => {
-      const [first] = pair
-      items.push({ type: 'split', loads: pair.sort((a, b) => a.id - b.id), gid, load_date: first.load_date })
-    })
-    return items.sort((a, b) => {
-      const da = a.type === 'single' ? a.load.load_date : a.load_date
-      const db2 = b.type === 'single' ? b.load.load_date : b.load_date
-      if (loadSort.dir === 'asc') return new Date(da) - new Date(db2)
-      return new Date(db2) - new Date(da)
-    })
-  }, [sortedLoads, loadSort.dir])
+  const displayRows = useMemo(() => sortedLoads.map(l => (
+    l.is_split_load ? { type: 'split', load: l } : { type: 'single', load: l }
+  )), [sortedLoads])
 
   const TABS = isSubcontractorEntity
     ? [{ key: 'loads', label: 'Loads' }, { key: 'diesel', label: 'Diesel' }]
@@ -1772,7 +1755,11 @@ export default function TruckLoadProfilePage() {
                   <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }}
                     onClick={() => {
                       setAddPromptOpen(false)
-                      setSplitForms({ a: { ...EMPTY_LOAD }, b: { ...EMPTY_LOAD } })
+                      setSplitForm({ ...EMPTY_LOAD, statement_month: month, statement_year: year })
+                      setSplitDrivers([
+                        { driver_id: null, mine_id: '' },
+                        { driver_id: null, mine_id: '' },
+                      ])
                       setSplitModalOpen(true)
                     }}>
                     Split load
@@ -1930,101 +1917,82 @@ export default function TruckLoadProfilePage() {
                   )
                 }
 
-                // Split group row
-                const { loads: pair, gid } = row
-                const [a, b] = pair
-                const isOpen = openSplitGroups.has(gid)
-                const sumExcl = ((+a.amount_excl_vat || 0) + (+b?.amount_excl_vat || 0))
-                const sumIncl = ((+a.amount_incl_vat || 0) + (+b?.amount_incl_vat || 0))
-                const sumTonnes = ((+a.tonnes || 0) + (+b?.tonnes || 0))
+                // Split load: one main load (full tonnes/amount) + driver lines (0.5 each)
+                const l = row.load
+                const splits = l.driver_splits || []
+                const isOpen = openSplitGroups.has(l.id)
                 return [
-                  <tr key={`sg-${gid}`} style={{ background: 'var(--bg-surface)', cursor: 'pointer' }}
-                    onClick={() => toggleSplitGroup(gid)}>
-                    <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(a.load_date)}</td>
+                  <tr key={`split-${l.id}`} style={{ background: 'var(--bg-surface)', cursor: 'pointer', opacity: l.is_paid ? 0.7 : 1 }}
+                    onClick={() => toggleSplitGroup(l.id)} className="hoverable-row">
+                    <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(l.load_date)}</td>
                     <td style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                      {a.statement_month ? `${MONTHS[a.statement_month - 1]?.slice(0, 3)} ${a.statement_year}` : '—'}
+                      {l.statement_month ? `${MONTHS[l.statement_month - 1]?.slice(0, 3)} ${l.statement_year}` : '—'}
                     </td>
-                    <td style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                      {a.slip_number || '—'}{b ? ` / ${b.slip_number || '—'}` : ''}
-                    </td>
-                    <td style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                      {a.diesel_invoice || b?.diesel_invoice || '—'}
-                    </td>
-                    {showPo && <td>—</td>}
-                    <td style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                      {a.driver_name || '—'}{b ? ` / ${b.driver_name || '—'}` : ''}
-                    </td>
-                    <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                    <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.slip_number || '—'}</td>
+                    <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{l.diesel_invoice || '—'}</td>
+                    {showPo && <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.po_number || '—'}</td>}
+                    {!isSubcontractorEntity && <td style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        Split — {splits.length} drivers
+                        <button onClick={e => { e.stopPropagation(); toggleSplitGroup(l.id) }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--text-muted)', verticalAlign: 'middle' }}>
+                          {isOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        </button>
+                      </span>
+                    </td>}
+                    {!isSubcontractorEntity && <td style={{ fontSize: 12 }}>
                       <span className="badge badge-quote" style={{ fontSize: 9, padding: '1px 5px' }}>½ split</span>
-                      <button onClick={e => { e.stopPropagation(); toggleSplitGroup(gid) }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', color: 'var(--text-muted)', verticalAlign: 'middle' }}>
-                        {isOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                      </button>
+                    </td>}
+                    <td style={{ fontSize: 13 }}>{l.mine_name || '—'}</td>
+                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(l.tonnes)}</td>
+                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(l.rate_per_ton)}</td>
+                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(l.amount_excl_vat)}</td>
+                    {vatRegistered && <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmt(l.amount_incl_vat)}</td>}
+                    {showSub && <>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_rate)}</td>
+                      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_amount_excl_vat)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmt(l.subcontractor_amount_incl_vat)}</td>
+                    </>}
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {l.notes || '—'}
                     </td>
-                    <td style={{ fontSize: 13 }}>{a.mine_name || '—'}{b && a.mine_name !== b.mine_name ? ` / ${b.mine_name || '—'}` : ''}</td>
-                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(sumTonnes)}</td>
-                    <td>—</td>
-                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(sumExcl)}</td>
-                    {vatRegistered && <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmt(sumIncl)}</td>}
-                    {showSub && <><td /><td /><td /></>}
-                    <td />
-                    <td />
+                    <td onClick={e => e.stopPropagation()}>
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                        onClick={e => handleDelete(l, e)}><Trash2 size={13} /></button>
+                    </td>
                   </tr>,
-                  ...(isOpen ? pair.map(sl => {
-                    const isEditing = editingId === sl.id
-                    if (isEditing) return (
-                      <tr key={sl.id}>
-                        <td colSpan={COLS} style={{ padding: '12px 16px', background: 'var(--accent-subtle)', borderTop: '2px solid var(--accent)', borderBottom: '2px solid var(--accent)', borderLeft: '3px solid var(--accent)' }}>
-                          <LoadForm editForm={editForm} setEditForm={setEditForm} mines={mines} drivers={drivers}
-                            vatRate={vatRate} rateSource={rateSource} setRateSource={setRateSource}
-                            saving={saving} onSave={handleSave} onCancel={cancelEdit} firstInputRef={firstInputRef}
-                            showPo={showPo} isSubcontractorEntity={isSubcontractorEntity} fmt={fmt} MONTHS={MONTHS} />
-                        </td>
-                      </tr>
-                    )
-                    return (
-                      <tr key={sl.id} onClick={() => startEdit(sl)}
-                        style={{ background: 'var(--bg-base)', borderLeft: '3px solid var(--accent)', cursor: 'pointer', opacity: sl.is_paid ? 0.7 : 1 }}
-                        className="hoverable-row">
-                        <td />
-                        <td />
-                        <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{sl.slip_number || '—'}</td>
-                        <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{sl.diesel_invoice || '—'}</td>
-                        {showPo && <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{sl.po_number || '—'}</td>}
-                        <td style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                          {sl.driver_name ? (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                              {sl.driver_name}
-                              {driverTypeByName[sl.driver_name] && (
-                                <span className={`badge ${driverTypeByName[sl.driver_name] === 'permanent' ? 'badge-paid' : 'badge-quote'}`}
-                                  style={{ fontSize: 9, padding: '1px 5px' }}>
-                                  {driverTypeByName[sl.driver_name] === 'permanent' ? 'P' : 'C'}
-                                </span>
-                              )}
-                            </span>
-                          ) : '—'}
-                        </td>
-                        <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>½</td>
-                        <td style={{ fontSize: 13 }}>{sl.mine_name || '—'}</td>
-                        <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(sl.tonnes)}</td>
-                        <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(sl.rate_per_ton)}</td>
-                        <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(sl.amount_excl_vat)}</td>
-                        {vatRegistered && <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmt(sl.amount_incl_vat)}</td>}
-                        {showSub && <>
-                          <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--accent)' }}>{fmt(sl.subcontractor_rate)}</td>
-                          <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--accent)' }}>{fmt(sl.subcontractor_amount_excl_vat)}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmt(sl.subcontractor_amount_incl_vat)}</td>
-                        </>}
-                        <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {sl.notes || '—'}
-                        </td>
-                        <td onClick={e => e.stopPropagation()}>
-                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
-                            onClick={e => handleDelete(sl, e)}><Trash2 size={13} /></button>
-                        </td>
-                      </tr>
-                    )
-                  }) : []),
+                  ...(isOpen ? splits.map(sp => (
+                    <tr key={`sp-${sp.id}`}
+                      style={{ background: 'var(--bg-base)', borderLeft: '3px solid var(--accent)', opacity: l.is_paid ? 0.7 : 1 }}>
+                      <td />
+                      <td />
+                      <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{sp.slip_number || '—'}</td>
+                      <td />
+                      {showPo && <td />}
+                      {!isSubcontractorEntity && <td style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        {sp.driver_name ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            {sp.driver_name}
+                            {driverTypeByName[sp.driver_name] && (
+                              <span className={`badge ${driverTypeByName[sp.driver_name] === 'permanent' ? 'badge-paid' : 'badge-quote'}`}
+                                style={{ fontSize: 9, padding: '1px 5px' }}>
+                                {driverTypeByName[sp.driver_name] === 'permanent' ? 'P' : 'C'}
+                              </span>
+                            )}
+                          </span>
+                        ) : '—'}
+                      </td>}
+                      {!isSubcontractorEntity && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>0.5 load</td>}
+                      <td style={{ fontSize: 13 }}>{sp.mine_name || '—'}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>—</td>
+                      <td />
+                      <td />
+                      {vatRegistered && <td />}
+                      {showSub && <><td /><td /><td /></>}
+                      <td />
+                      <td />
+                    </tr>
+                  )) : []),
                 ]
               })}
             </tbody>
@@ -2087,121 +2055,98 @@ export default function TruckLoadProfilePage() {
               </div>
               <button className="btn btn-ghost btn-sm" onClick={() => setSplitModalOpen(false)}><X size={15} /></button>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-              {['a', 'b'].map(side => {
-                const f = splitForms[side]
-                const label = side === 'a' ? 'Driver A' : 'Driver B'
-                const setField = (k, v) => {
-                  if (k === 'mine_id') {
+            {/* Main load — the billing record. Counts as ONE load with full tonnes. */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Mine</label>
+                <SearchableSelect
+                  value={String(splitForm.mine_id || '')}
+                  onChange={v => {
                     const mine = mines.find(m => String(m.id) === v)
                     const rate = mine?.rates?.find(r => r.entity_id === truck.entity_id && !r.effective_to)
-                    if (side === 'a') {
-                      setSplitForms(f => {
-                        const mineSync  = f.b.mine_id  === f.a.mine_id
-                        const rateSync  = !f.b.rate_per_ton || f.b.rate_per_ton === f.a.rate_per_ton
-                        return {
-                          a: { ...f.a, mine_id: v, ...(rate ? { rate_per_ton: String(rate.rate_per_ton) } : {}) },
-                          b: {
-                            ...f.b,
-                            ...(mineSync ? { mine_id: v } : {}),
-                            ...(rate && rateSync ? { rate_per_ton: String(rate.rate_per_ton) } : {}),
-                          },
-                        }
-                      })
-                    } else {
-                      setSplitForms(prev => ({
-                        ...prev,
-                        b: { ...prev.b, mine_id: v, ...(rate ? { rate_per_ton: String(rate.rate_per_ton) } : {}) },
-                      }))
-                    }
-                  } else if (side === 'a') {
-                    syncBFromA(k, v)
-                  } else {
-                    setSplitForms(prev => ({ ...prev, b: { ...prev.b, [k]: v } }))
-                  }
-                }
-                const exclVat = f.tonnes && f.rate_per_ton
-                  ? (parseFloat(f.tonnes) * parseFloat(f.rate_per_ton)).toFixed(2) : null
-                const inclVat = exclVat ? (parseFloat(exclVat) * (1 + vatRate)).toFixed(2) : null
-                return (
-                  <div key={side} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12, color: 'var(--accent)' }}>{label}</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <div>
-                        <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Driver</label>
-                        <SearchableSelect
-                          value={f.driver_id ? String(f.driver_id) : ''}
-                          onChange={v => {
-                            const d = drivers.find(x => String(x.id) === v)
-                            setField('driver_id', v ? parseInt(v) : null)
-                            setField('driver_name', d ? `${d.first_name} ${d.last_name}`.trim() : '')
-                          }}
-                          options={drivers}
-                          getValue={d => String(d.id)}
-                          getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
-                          placeholder="Driver…"
-                          style={{ width: '100%' }} />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Slip #</label>
-                        <input value={f.slip_number} onChange={e => setField('slip_number', e.target.value)}
-                          placeholder="Slip #" style={{ ...S.input, width: '100%' }} />
-                      </div>
-                      {showPo && (
-                        <div>
-                          <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>PO #</label>
-                          <input value={f.po_number} onChange={e => setField('po_number', e.target.value)}
-                            placeholder="PO #" style={{ ...S.input, width: '100%' }} />
-                        </div>
-                      )}
-                      <div>
-                        <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Mine</label>
-                        <SearchableSelect
-                          value={String(f.mine_id)}
-                          onChange={v => setField('mine_id', v)}
-                          options={mines.filter(m => m.is_active)}
-                          getValue={m => String(m.id)}
-                          getLabel={m => m.name}
-                          placeholder="Mine…"
-                          style={{ width: '100%' }} />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Date</label>
-                        <DateInput value={f.load_date} onChange={e => setField('load_date', e.target.value)}
-                          style={{ ...S.input, width: '100%' }} />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Tonnes</label>
-                        <input type="number" step="0.001" min="0" value={f.tonnes}
-                          onChange={e => setField('tonnes', e.target.value)}
-                          placeholder="0.000" style={{ ...S.input, width: '100%', textAlign: 'right' }} />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
-                          Rate/t
-                          {f.mine_id && f.rate_per_ton && mines.find(m => String(m.id) === String(f.mine_id))?.rates?.find(r => r.entity_id === truck.entity_id && !r.effective_to && String(r.rate_per_ton) === String(f.rate_per_ton)) && (
-                            <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: 'var(--accent)' }}>auto</span>
-                          )}
-                        </label>
-                        <input type="number" step="0.01" min="0" value={f.rate_per_ton}
-                          onChange={e => setField('rate_per_ton', e.target.value)}
-                          placeholder="0.00" style={{ ...S.input, width: '100%', textAlign: 'right' }} />
-                      </div>
-                      {exclVat && (
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'right' }}>
-                          Excl VAT: <strong style={{ color: 'var(--text-primary)' }}>R {parseFloat(exclVat).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
-                          {vatRegistered && inclVat && <> · Incl VAT: <strong style={{ color: 'var(--accent)' }}>R {parseFloat(inclVat).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong></>}
-                        </div>
-                      )}
-                      <div>
-                        <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Notes</label>
-                        <input value={f.notes} onChange={e => setField('notes', e.target.value)}
-                          placeholder="Notes" style={{ ...S.input, width: '100%' }} />
-                      </div>
-                    </div>
+                    setSplitForm(prev => ({ ...prev, mine_id: v, ...(rate ? { rate_per_ton: String(rate.rate_per_ton) } : {}) }))
+                    setSplitDrivers(prev => prev.map(d => d.mine_id ? d : { ...d, mine_id: v }))
+                  }}
+                  options={mines.filter(m => m.is_active)}
+                  getValue={m => String(m.id)} getLabel={m => m.name}
+                  placeholder="Mine…" style={{ width: '100%' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Date</label>
+                <DateInput value={splitForm.load_date} onChange={e => setSplitForm(p => ({ ...p, load_date: e.target.value }))}
+                  style={{ ...S.input, width: '100%' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Tonnes</label>
+                <input type="number" step="0.001" min="0" value={splitForm.tonnes}
+                  onChange={e => setSplitForm(p => ({ ...p, tonnes: e.target.value }))}
+                  placeholder="0.000" style={{ ...S.input, width: '100%', textAlign: 'right' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
+                  Rate/t
+                  {splitForm.mine_id && splitForm.rate_per_ton && mines.find(m => String(m.id) === String(splitForm.mine_id))?.rates?.find(r => r.entity_id === truck.entity_id && !r.effective_to && String(r.rate_per_ton) === String(splitForm.rate_per_ton)) && (
+                    <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: 'var(--accent)' }}>auto</span>
+                  )}
+                </label>
+                <input type="number" step="0.01" min="0" value={splitForm.rate_per_ton}
+                  onChange={e => setSplitForm(p => ({ ...p, rate_per_ton: e.target.value }))}
+                  placeholder="0.00" style={{ ...S.input, width: '100%', textAlign: 'right' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Slip #</label>
+                <input value={splitForm.slip_number} onChange={e => setSplitForm(p => ({ ...p, slip_number: e.target.value }))}
+                  placeholder="Slip #" style={{ ...S.input, width: '100%' }} />
+              </div>
+              {showPo && (
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>PO #</label>
+                  <input value={splitForm.po_number} onChange={e => setSplitForm(p => ({ ...p, po_number: e.target.value }))}
+                    placeholder="PO #" style={{ ...S.input, width: '100%' }} />
+                </div>
+              )}
+            </div>
+            {splitForm.tonnes && splitForm.rate_per_ton && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'right', marginTop: 10 }}>
+                Excl VAT: <strong style={{ color: 'var(--text-primary)' }}>R {(parseFloat(splitForm.tonnes) * parseFloat(splitForm.rate_per_ton)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
+                {vatRegistered && <> · Incl VAT: <strong style={{ color: 'var(--accent)' }}>R {(parseFloat(splitForm.tonnes) * parseFloat(splitForm.rate_per_ton) * (1 + vatRate)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong></>}
+              </div>
+            )}
+            <div style={{ marginTop: 12 }}>
+              <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Notes</label>
+              <input value={splitForm.notes} onChange={e => setSplitForm(p => ({ ...p, notes: e.target.value }))}
+                placeholder="Notes" style={{ ...S.input, width: '100%' }} />
+            </div>
+
+            {/* Driver lines — each credits 0.5 load to that driver's payroll. */}
+            <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>Drivers</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
+                Both drivers were responsible for this load. Each gets 0.5 load on their payroll — tonnes are not split.
+              </div>
+              {splitDrivers.map((d, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 10, alignItems: 'end', marginBottom: 10 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Driver {i + 1}</label>
+                    <SearchableSelect
+                      value={d.driver_id ? String(d.driver_id) : ''}
+                      onChange={v => setSplitDrivers(prev => prev.map((x, idx) => idx === i ? { ...x, driver_id: v ? parseInt(v) : null } : x))}
+                      options={drivers} getValue={x => String(x.id)}
+                      getLabel={x => `${x.first_name} ${x.last_name} (${x.driver_type === 'permanent' ? 'P' : 'C'})`}
+                      placeholder="Driver…" style={{ width: '100%' }} />
                   </div>
-                )
-              })}
+                  <div>
+                    <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Mine</label>
+                    <SearchableSelect
+                      value={String(d.mine_id || '')}
+                      onChange={v => setSplitDrivers(prev => prev.map((x, idx) => idx === i ? { ...x, mine_id: v } : x))}
+                      options={mines.filter(m => m.is_active)}
+                      getValue={m => String(m.id)} getLabel={m => m.name}
+                      placeholder="Mine…" style={{ width: '100%' }} />
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', paddingBottom: 7 }}>0.5</div>
+                </div>
+              ))}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
               <button className="btn btn-ghost" onClick={() => setSplitModalOpen(false)}>Cancel</button>
