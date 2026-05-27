@@ -223,11 +223,25 @@ def get_dashboard_summary(
     total_current = sum(x.total_outstanding for x in current_list)
     total_30 = sum(x.total_outstanding for x in days30_list)
 
+    paid_q = db.query(SupplierInvoice).filter(
+        SupplierInvoice.is_paid == True,
+        SupplierInvoice.paid_date != None,
+    )
+    if accessible is not None:
+        paid_q = paid_q.filter(SupplierInvoice.entity_id.in_(accessible))
+    if entity_id:
+        paid_q = paid_q.filter(SupplierInvoice.entity_id == entity_id)
+    paid_this_month = sum(
+        inv.amount for inv in paid_q.all()
+        if inv.paid_date and inv.paid_date.month == now.month and inv.paid_date.year == now.year
+    )
+
     return SupplierPayablesDashboard(
         current_payables=current_list,
         days_30_payables=days30_list,
         total_current=total_current,
         total_30_days=total_30,
+        total_paid_this_month=Decimal(str(paid_this_month)),
     )
 
 

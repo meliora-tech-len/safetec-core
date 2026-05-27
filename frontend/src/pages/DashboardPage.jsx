@@ -103,7 +103,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Supplier Payables */}
-          {payables && (payables.current_payables.length > 0 || payables.days_30_payables.length > 0) && (
+          {payables && (payables.current_payables.length > 0 || payables.days_30_payables.length > 0 || payables.total_paid_this_month > 0) && (
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <span style={{ fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -116,9 +116,12 @@ export default function DashboardPage() {
                   {payables.total_30_days > 0 && (
                     <span>30 Days: <strong style={{ color: '#d97706' }}>{formatCurrency(payables.total_30_days)}</strong></span>
                   )}
+                  {payables.total_paid_this_month > 0 && (
+                    <span>Paid this month: <strong style={{ color: 'var(--accent)' }}>{formatCurrency(payables.total_paid_this_month)}</strong></span>
+                  )}
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              {(payables.current_payables.length > 0 || payables.days_30_payables.length > 0) && <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                 {payables.current_payables.length > 0 && (
                   <div className="card" style={{ flex: 1, minWidth: 260 }}>
                     <div style={styles.cardHeader}>
@@ -164,7 +167,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 )}
-              </div>
+              </div>}
             </div>
           )}
 

@@ -12,7 +12,7 @@ const STATUS_FLOW = {
   draft:     ['ready', 'cancelled'],
   ready:     ['sent', 'cancelled'],
   sent:      ['accepted', 'overdue', 'cancelled'],
-  accepted:  ['cancelled'],
+  accepted:  ['overdue', 'cancelled'],
   overdue:   ['cancelled'],
   paid:      [],
   cancelled: [],
@@ -97,7 +97,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   if (!invoice) return null
 
   const nextStatuses = STATUS_FLOW[invoice.status] || []
-  const canRecordPayment = invoice.status === 'sent' || invoice.status === 'overdue'
+  const canRecordPayment = ['sent', 'overdue', 'accepted'].includes(invoice.status)
 
   return (
     <div style={styles.page}>

@@ -126,7 +126,7 @@ def dashboard_stats(
     now = datetime.now(timezone.utc)
     outstanding = sum(
         inv.total for inv in invoices
-        if inv.status in ("sent", "overdue") and inv.document_type == "invoice"
+        if inv.status in ("sent", "overdue", "accepted") and inv.document_type == "invoice"
     )
     paid_this_month = sum(
         inv.total for inv in invoices
