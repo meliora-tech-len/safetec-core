@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader, Fuel, UtensilsCrossed, BarChart3,
+  CheckCheck,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import SearchableSelect from '../components/SearchableSelect'
@@ -32,7 +33,16 @@ const EMPTY_LOAD = {
   load_date: today, slip_number: '', po_number: '',
   driver_id: null, driver_name: '',
   mine_id: '', supplier_id: '', tonnes: '', rate_per_ton: '', is_paid: false,
+  is_projection: false, driver_already_paid: false,
   notes: '', checked_by: '',
+}
+
+const EMPTY_PROJ = {
+  load_date: today,
+  driver_id: null, driver_name: '',
+  mine_id: '',
+  notes: '',
+  statement_month: null, statement_year: null,
 }
 const EMPTY_DIESEL = {
   fillup_date: today, supplier_id: '', invoice_number: '', slip_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
@@ -45,72 +55,87 @@ function LoadForm({ editForm, setEditForm, mines, drivers, vatRate, rateSource, 
   saving, onSave, onCancel, firstInputRef, showPo, isSubcontractorEntity, fmt, MONTHS }) {
   const lbl = { fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 3 }
   const inp = { padding: '5px 8px', fontSize: 12, borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }
-  const cardExcl = editForm.tonnes && editForm.rate_per_ton ? (parseFloat(editForm.tonnes) * parseFloat(editForm.rate_per_ton)).toFixed(2) : null
+  const isProj = !!editForm.is_projection
+  const cardExcl = !isProj && editForm.tonnes && editForm.rate_per_ton ? (parseFloat(editForm.tonnes) * parseFloat(editForm.rate_per_ton)).toFixed(2) : null
   const cardIncl = cardExcl ? (parseFloat(cardExcl) * (1 + vatRate)).toFixed(2) : null
   const vatRegistered = vatRate > 0
   const onKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave() } if (e.key === 'Escape') onCancel() }
   const set = (k, v) => setEditForm(f => ({ ...f, [k]: v }))
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 14px', alignItems: 'flex-end' }}>
-      <div>
-        <div style={lbl}>Date</div>
-        <DateInput ref={firstInputRef} value={editForm.load_date} onChange={e => set('load_date', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 112 }} />
-      </div>
-      <div>
-        <div style={lbl}>Period</div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <select value={editForm.statement_month || ''} onChange={e => set('statement_month', parseInt(e.target.value))} style={{ ...inp, width: 60, padding: '5px 4px' }}>
-            {MONTHS.map((m, i) => <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>)}
-          </select>
-          <input type="number" min="2020" max="2099" value={editForm.statement_year || ''} onChange={e => set('statement_year', parseInt(e.target.value))} onKeyDown={onKey} style={{ ...inp, width: 64 }} />
+    <div>
+      {isProj && (
+        <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 6, background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)', fontSize: 12, color: '#92400e', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontWeight: 700, fontSize: 11, background: '#f59e0b', color: '#fff', padding: '1px 6px', borderRadius: 3 }}>PROJECTION</span>
+          Fill in Tonnes to convert this to a real load, then uncheck below.
         </div>
-      </div>
-      <div>
-        <div style={lbl}>Slip #</div>
-        <input value={editForm.slip_number || ''} placeholder="Slip #" onChange={e => set('slip_number', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80 }} />
-      </div>
-      {showPo && <div>
-        <div style={lbl}>PO #</div>
-        <input value={editForm.po_number || ''} placeholder="PO #" onChange={e => set('po_number', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80 }} />
-      </div>}
-      {!isSubcontractorEntity && <div>
-        <div style={lbl}>Driver</div>
-        <SearchableSelect
-          value={editForm.driver_id != null ? String(editForm.driver_id) : ''}
-          onChange={v => { const d = drivers.find(x => String(x.id) === v); set('driver_id', v || null); set('driver_name', d ? `${d.first_name} ${d.last_name}`.trim() : (editForm.driver_name || '')) }}
-          options={drivers} getValue={d => String(d.id)}
-          getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
-          placeholder="Driver…" style={{ minWidth: 140 }} />
-      </div>}
-      <div>
-        <div style={lbl}>Mine</div>
-        <SearchableSelect value={String(editForm.mine_id)} onChange={v => { set('mine_id', v); setRateSource(null) }}
-          options={mines.filter(m => m.is_active)} getValue={m => String(m.id)} getLabel={m => m.name}
-          placeholder="Mine…" style={{ minWidth: 120 }} />
-      </div>
-      <div>
-        <div style={lbl}>Tonnes</div>
-        <input type="number" step="0.001" min="0" placeholder="0.000" value={editForm.tonnes || ''} onChange={e => set('tonnes', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80, textAlign: 'right' }} />
-      </div>
-      <div>
-        <div style={lbl}>Rate/t {rateSource === 'mine' && <span style={{ fontSize: 9, color: 'var(--accent)', marginLeft: 3 }}>auto</span>}</div>
-        <input type="number" step="0.01" min="0" placeholder="Rate" value={editForm.rate_per_ton || ''} onChange={e => { set('rate_per_ton', e.target.value); setRateSource('manual') }} onKeyDown={onKey} style={{ ...inp, width: 75, textAlign: 'right' }} />
-      </div>
-      <div>
-        <div style={lbl}>Excl VAT</div>
-        <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: cardExcl ? 'var(--text-primary)' : 'var(--text-muted)' }}>{cardExcl ? fmt(cardExcl) : '—'}</div>
-      </div>
-      {vatRegistered && <div>
-        <div style={lbl}>Incl VAT</div>
-        <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: 'var(--accent)', fontWeight: 700 }}>{cardIncl ? fmt(cardIncl) : '—'}</div>
-      </div>}
-      <div style={{ flex: 1, minWidth: 100 }}>
-        <div style={lbl}>Notes</div>
-        <input value={editForm.notes || ''} placeholder="Notes" onChange={e => set('notes', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: '100%' }} />
-      </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button onClick={onSave} disabled={saving} className="btn btn-primary btn-sm"><Save size={13} /> Save</button>
-        <button onClick={onCancel} className="btn btn-ghost btn-sm"><X size={13} /> Cancel</button>
+      )}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 14px', alignItems: 'flex-end' }}>
+        <div>
+          <div style={lbl}>Date</div>
+          <DateInput ref={firstInputRef} value={editForm.load_date} onChange={e => set('load_date', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 112 }} />
+        </div>
+        <div>
+          <div style={lbl}>Period</div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <select value={editForm.statement_month || ''} onChange={e => set('statement_month', parseInt(e.target.value))} style={{ ...inp, width: 60, padding: '5px 4px' }}>
+              {MONTHS.map((m, i) => <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>)}
+            </select>
+            <input type="number" min="2020" max="2099" value={editForm.statement_year || ''} onChange={e => set('statement_year', parseInt(e.target.value))} onKeyDown={onKey} style={{ ...inp, width: 64 }} />
+          </div>
+        </div>
+        <div>
+          <div style={lbl}>Slip #</div>
+          <input value={editForm.slip_number || ''} placeholder="Slip #" onChange={e => set('slip_number', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80 }} />
+        </div>
+        {showPo && <div>
+          <div style={lbl}>PO #</div>
+          <input value={editForm.po_number || ''} placeholder="PO #" onChange={e => set('po_number', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80 }} />
+        </div>}
+        {!isSubcontractorEntity && <div>
+          <div style={lbl}>Driver</div>
+          <SearchableSelect
+            value={editForm.driver_id != null ? String(editForm.driver_id) : ''}
+            onChange={v => { const d = drivers.find(x => String(x.id) === v); set('driver_id', v || null); set('driver_name', d ? `${d.first_name} ${d.last_name}`.trim() : (editForm.driver_name || '')) }}
+            options={drivers} getValue={d => String(d.id)}
+            getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
+            placeholder="Driver…" style={{ minWidth: 140 }} />
+        </div>}
+        <div>
+          <div style={lbl}>Mine</div>
+          <SearchableSelect value={String(editForm.mine_id)} onChange={v => { set('mine_id', v); setRateSource(null) }}
+            options={mines.filter(m => m.is_active)} getValue={m => String(m.id)} getLabel={m => m.name}
+            placeholder="Mine…" style={{ minWidth: 120 }} />
+        </div>
+        {!isProj && <>
+          <div>
+            <div style={lbl}>Tonnes</div>
+            <input type="number" step="0.001" min="0" placeholder="0.000" value={editForm.tonnes || ''} onChange={e => set('tonnes', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80, textAlign: 'right' }} />
+          </div>
+          <div>
+            <div style={lbl}>Rate/t {rateSource === 'mine' && <span style={{ fontSize: 9, color: 'var(--accent)', marginLeft: 3 }}>auto</span>}</div>
+            <input type="number" step="0.01" min="0" placeholder="Rate" value={editForm.rate_per_ton || ''} onChange={e => { set('rate_per_ton', e.target.value); setRateSource('manual') }} onKeyDown={onKey} style={{ ...inp, width: 75, textAlign: 'right' }} />
+          </div>
+          <div>
+            <div style={lbl}>Excl VAT</div>
+            <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: cardExcl ? 'var(--text-primary)' : 'var(--text-muted)' }}>{cardExcl ? fmt(cardExcl) : '—'}</div>
+          </div>
+          {vatRegistered && <div>
+            <div style={lbl}>Incl VAT</div>
+            <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: 'var(--accent)', fontWeight: 700 }}>{cardIncl ? fmt(cardIncl) : '—'}</div>
+          </div>}
+        </>}
+        <div style={{ flex: 1, minWidth: 100 }}>
+          <div style={lbl}>Notes</div>
+          <input value={editForm.notes || ''} placeholder="Notes" onChange={e => set('notes', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: '100%' }} />
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 12, color: isProj ? '#d97706' : 'var(--text-muted)', userSelect: 'none', padding: '5px 0' }}>
+            <input type="checkbox" checked={isProj} onChange={e => set('is_projection', e.target.checked)} style={{ accentColor: '#f59e0b', width: 13, height: 13 }} />
+            Projection
+          </label>
+          <button onClick={onSave} disabled={saving} className="btn btn-primary btn-sm"><Save size={13} /> Save</button>
+          <button onClick={onCancel} className="btn btn-ghost btn-sm"><X size={13} /> Cancel</button>
+        </div>
       </div>
     </div>
   )
@@ -1353,6 +1378,11 @@ export default function TruckLoadProfilePage() {
   const [dupWarning, setDupWarning] = useState(null)
   const firstInputRef = useRef(null)
 
+  // Projection form
+  const [addingProjection, setAddingProjection] = useState(false)
+  const [projForm, setProjForm]                 = useState({ ...EMPTY_PROJ })
+  const [projSaving, setProjSaving]             = useState(false)
+
   // Add Load prompt + split modal
   const [addPromptOpen, setAddPromptOpen]   = useState(false)
   const [splitModalOpen, setSplitModalOpen] = useState(false)
@@ -1469,9 +1499,11 @@ export default function TruckLoadProfilePage() {
       driver_name:  load.driver_name  || '',
       mine_id:      String(load.mine_id || ''),
       supplier_id:  load.supplier_id ? String(load.supplier_id) : '',
-      tonnes:       load.tonnes    != null ? String(load.tonnes)    : '',
+      tonnes:       load.is_projection ? '' : (load.tonnes != null ? String(load.tonnes) : ''),
       rate_per_ton: load.rate_per_ton != null ? String(load.rate_per_ton) : '',
-      is_paid:         !!load.is_paid,
+      is_paid:            !!load.is_paid,
+      is_projection:      !!load.is_projection,
+      driver_already_paid: !!load.driver_already_paid,
       notes:           load.notes      || '',
       checked_by:      load.checked_by || '',
       statement_month: load.statement_month || month,
@@ -1491,9 +1523,11 @@ export default function TruckLoadProfilePage() {
     po_number:    form.po_number   || null,
     driver_id:    form.driver_id   ? parseInt(form.driver_id) : null,
     driver_name:  form.driver_name || null,
-    tonnes:       parseFloat(form.tonnes),
+    tonnes:       form.is_projection ? 0 : parseFloat(form.tonnes),
     rate_per_ton: form.rate_per_ton ? parseFloat(form.rate_per_ton) : null,
-    is_paid:         form.is_paid,
+    is_paid:            form.is_paid,
+    is_projection:      !!form.is_projection,
+    driver_already_paid: !!form.driver_already_paid,
     notes:           form.notes      || null,
     checked_by:      form.checked_by || null,
     statement_month: form.statement_month || null,
@@ -1521,7 +1555,7 @@ export default function TruckLoadProfilePage() {
   const handleSave = async () => {
     if (!editForm.mine_id)  return toast.error('Select a mine')
     if (!editForm.load_date) return toast.error('Load date required')
-    if (!editForm.tonnes || isNaN(editForm.tonnes)) return toast.error('Valid tonnes required')
+    if (!editForm.is_projection && (!editForm.tonnes || isNaN(editForm.tonnes))) return toast.error('Valid tonnes required')
     if (editingId === 'new' && editForm.slip_number?.trim()) {
       const slip = editForm.slip_number.trim().toLowerCase()
       const dup = loads.find(l =>
@@ -1543,6 +1577,44 @@ export default function TruckLoadProfilePage() {
       await updateTruckLoad(load.id, { ...load, is_paid: !load.is_paid, date_paid: load.is_paid ? null : new Date().toISOString() })
       fetchLoads()
     } catch { toast.error('Failed to update') }
+  }
+
+  const handleToggleDriverPaid = async (load, e) => {
+    e.stopPropagation()
+    try {
+      await updateTruckLoad(load.id, { driver_already_paid: !load.driver_already_paid })
+      fetchLoads()
+      toast.success(load.driver_already_paid ? 'Driver payment flag removed' : 'Marked: driver already paid')
+    } catch { toast.error('Failed to update') }
+  }
+
+  const handleSaveProjection = async () => {
+    if (!projForm.mine_id) return toast.error('Select a mine')
+    if (!projForm.load_date) return toast.error('Load date required')
+    const d = drivers.find(x => String(x.id) === String(projForm.driver_id))
+    const driverName = d ? `${d.first_name} ${d.last_name}`.trim() : projForm.driver_name
+    setProjSaving(true)
+    try {
+      await createTruckLoad({
+        entity_id:    truck.entity_id,
+        truck_id:     truck.id,
+        mine_id:      parseInt(projForm.mine_id),
+        load_date:    new Date(projForm.load_date + 'T12:00:00').toISOString(),
+        driver_id:    projForm.driver_id ? parseInt(projForm.driver_id) : null,
+        driver_name:  driverName || null,
+        tonnes:       0,
+        is_projection: true,
+        notes:        projForm.notes || null,
+        statement_month: projForm.statement_month || month,
+        statement_year:  projForm.statement_year  || year,
+      })
+      toast.success('Projection added')
+      setAddingProjection(false)
+      setProjForm({ ...EMPTY_PROJ })
+      fetchLoads()
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Failed to save projection')
+    } finally { setProjSaving(false) }
   }
 
   const handleDelete = (load, e) => {
@@ -1781,6 +1853,22 @@ export default function TruckLoadProfilePage() {
                     }}>
                     Split load
                   </button>
+                  <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
+                  <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start', color: '#d97706' }}
+                    onClick={() => {
+                      setAddPromptOpen(false)
+                      const d = drivers.find(x => String(x.id) === selectedDriverId)
+                      setProjForm({
+                        ...EMPTY_PROJ,
+                        driver_id: selectedDriverId || null,
+                        driver_name: d ? `${d.first_name} ${d.last_name}`.trim() : '',
+                        statement_month: month,
+                        statement_year: year,
+                      })
+                      setAddingProjection(true)
+                    }}>
+                    Projection
+                  </button>
                 </div>
               )}
             </div>
@@ -1826,6 +1914,62 @@ export default function TruckLoadProfilePage() {
           </div>
         </div>
       )}
+
+      {/* ── Add Projection form ──────────────────────────────────────────────────── */}
+      {activeTab === 'loads' && addingProjection && (() => {
+        const lbl = { fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 3 }
+        const inp = { padding: '5px 8px', fontSize: 12, borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }
+        const set = (k, v) => setProjForm(f => ({ ...f, [k]: v }))
+        const pDriver = drivers.find(x => String(x.id) === String(projForm.driver_id))
+        return (
+          <div className="card" style={{ marginBottom: 16, padding: '14px 16px', borderLeft: '3px solid #f59e0b' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#d97706', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ background: '#f59e0b', color: '#fff', fontSize: 10, padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>PROJECTION</span>
+              Placeholder load — driver confirmed upcoming loads, details TBC
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 14px', alignItems: 'flex-end' }}>
+              <div>
+                <div style={lbl}>Date</div>
+                <DateInput value={projForm.load_date} onChange={e => set('load_date', e.target.value)} style={{ ...inp, width: 112 }} />
+              </div>
+              <div>
+                <div style={lbl}>Period</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <select value={projForm.statement_month || ''} onChange={e => set('statement_month', parseInt(e.target.value))} style={{ ...inp, width: 60, padding: '5px 4px' }}>
+                    {MONTHS.map((m, i) => <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>)}
+                  </select>
+                  <input type="number" min="2020" max="2099" value={projForm.statement_year || ''} onChange={e => set('statement_year', parseInt(e.target.value))} style={{ ...inp, width: 64 }} />
+                </div>
+              </div>
+              {!isSubcontractorEntity && <div>
+                <div style={lbl}>Driver</div>
+                <SearchableSelect
+                  value={projForm.driver_id != null ? String(projForm.driver_id) : ''}
+                  onChange={v => { const d = drivers.find(x => String(x.id) === v); set('driver_id', v || null); set('driver_name', d ? `${d.first_name} ${d.last_name}`.trim() : '') }}
+                  options={drivers} getValue={d => String(d.id)}
+                  getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
+                  placeholder="Driver…" style={{ minWidth: 140 }} />
+              </div>}
+              <div>
+                <div style={lbl}>Mine *</div>
+                <SearchableSelect value={String(projForm.mine_id)} onChange={v => set('mine_id', v)}
+                  options={mines.filter(m => m.is_active)} getValue={m => String(m.id)} getLabel={m => m.name}
+                  placeholder="Mine…" style={{ minWidth: 120 }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 120 }}>
+                <div style={lbl}>Notes</div>
+                <input value={projForm.notes || ''} placeholder={pDriver ? `Projection — ${pDriver.first_name} ${pDriver.last_name}` : 'e.g. Projection — Piet'} onChange={e => set('notes', e.target.value)} style={{ ...inp, width: '100%' }} />
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={handleSaveProjection} disabled={projSaving} className="btn btn-sm" style={{ background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 12px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <Save size={13} /> {projSaving ? 'Saving…' : 'Save Projection'}
+                </button>
+                <button onClick={() => setAddingProjection(false)} className="btn btn-ghost btn-sm"><X size={13} /> Cancel</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── Add Load card form (new loads only, at top) ────────────────────────── */}
       {activeTab === 'loads' && editingId === 'new' && (
@@ -1890,18 +2034,27 @@ export default function TruckLoadProfilePage() {
                   )
                   return (
                     <tr key={l.id} onClick={() => startEdit(l)}
-                      style={{ cursor: 'pointer', opacity: l.is_paid ? 0.7 : 1 }}
+                      style={{
+                        cursor: 'pointer',
+                        opacity: l.is_paid ? 0.7 : 1,
+                        background: l.is_projection ? 'rgba(245,158,11,0.05)' : undefined,
+                        fontStyle: l.is_projection ? 'italic' : undefined,
+                      }}
                       className="hoverable-row">
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(l.load_date)}</td>
                       <td style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                         {l.statement_month ? `${MONTHS[l.statement_month - 1]?.slice(0, 3)} ${l.statement_year}` : '—'}
                       </td>
-                      <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.slip_number || '—'}</td>
+                      <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                        {l.is_projection
+                          ? <span style={{ background: '#f59e0b', color: '#fff', fontSize: 9, padding: '1px 6px', borderRadius: 3, fontWeight: 800, fontStyle: 'normal' }}>PROJ</span>
+                          : (l.slip_number || '—')}
+                      </td>
                       <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{l.diesel_invoice || '—'}</td>
                       {showPo && <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--text-muted)' }}>{l.po_number || '—'}</td>}
                       {!isSubcontractorEntity && <td style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                         {l.driver_name ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontStyle: 'normal' }}>
                             {l.driver_name}
                             {driverTypeByName[l.driver_name] && (
                               <span className={`badge ${driverTypeByName[l.driver_name] === 'permanent' ? 'badge-paid' : 'badge-quote'}`}
@@ -1909,15 +2062,22 @@ export default function TruckLoadProfilePage() {
                                 {driverTypeByName[l.driver_name] === 'permanent' ? 'P' : 'C'}
                               </span>
                             )}
+                            {l.driver_already_paid && (
+                              <span title="Driver already paid for this load" style={{ background: '#16a34a', color: '#fff', fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 700, fontStyle: 'normal', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                                <CheckCheck size={9} /> paid
+                              </span>
+                            )}
                           </span>
                         ) : '—'}
                       </td>}
                       {!isSubcontractorEntity && <td style={{ fontSize: 12 }}>—</td>}
                       <td style={{ fontSize: 13 }}>{l.mine_name || '—'}</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(l.tonnes)}</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(l.rate_per_ton)}</td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(l.amount_excl_vat)}</td>
-                      {vatRegistered && <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmt(l.amount_incl_vat)}</td>}
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: l.is_projection ? 'var(--text-muted)' : undefined }}>
+                        {l.is_projection ? '—' : fmtNum(l.tonnes)}
+                      </td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{l.is_projection ? '—' : fmt(l.rate_per_ton)}</td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{l.is_projection ? '—' : fmt(l.amount_excl_vat)}</td>
+                      {vatRegistered && <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{l.is_projection ? '—' : fmt(l.amount_incl_vat)}</td>}
                       {showSub && <>
                         <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_rate)}</td>
                         <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_amount_excl_vat)}</td>
@@ -1926,7 +2086,14 @@ export default function TruckLoadProfilePage() {
                       <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {l.notes || '—'}
                       </td>
-                      <td onClick={e => e.stopPropagation()}>
+                      <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          title={l.driver_already_paid ? 'Driver already paid — click to remove flag' : 'Mark: driver already paid (paid in prior period)'}
+                          style={{ color: l.driver_already_paid ? '#16a34a' : 'var(--text-muted)', marginRight: 2 }}
+                          onClick={e => handleToggleDriverPaid(l, e)}>
+                          <CheckCheck size={13} />
+                        </button>
                         <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
                           onClick={e => handleDelete(l, e)}><Trash2 size={13} /></button>
                       </td>

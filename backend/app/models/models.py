@@ -915,6 +915,8 @@ class TruckLoad(Base):
     is_paid = Column(Boolean, default=False)
     is_archived = Column(Boolean, nullable=False, default=False)
     is_split_load = Column(Boolean, nullable=False, default=False)
+    is_projection = Column(Boolean, nullable=False, default=False, server_default='0')
+    driver_already_paid = Column(Boolean, nullable=False, default=False, server_default='0')
     driver_id     = Column(Integer, ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True)
     split_group_id = Column(Integer, nullable=True)
     notes = Column(Text)

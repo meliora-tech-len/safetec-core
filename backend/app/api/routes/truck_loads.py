@@ -155,8 +155,11 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
 
     # Full loads only. Split loads are credited via truck_load_driver_splits and
     # owned by _sync_split_driver — this function never touches the split columns.
+    # Loads marked driver_already_paid were paid in a prior period (projection),
+    # so they must not be counted again in this pay cycle.
     full_loads = db.query(func.count(TruckLoad.id)).filter(
         *base_filter, TruckLoad.is_split_load != True,
+        TruckLoad.driver_already_paid != True,
     ).scalar() or 0
 
     if driver.driver_type == DriverType.permanent:
@@ -213,13 +216,14 @@ def _add_trip_log(load: TruckLoad, db: Session):
         # Will be created by _sync_driver_pay_cycle — flush needed first
         return
 
-    mine_name = load.mine.name if load.mine else "Unknown"
+    prefix = "PROJ: " if load.is_projection else ""
+    mine_name = f"{prefix}{load.mine.name}" if load.mine else ("PROJECTION" if load.is_projection else "Unknown")
     entry = DriverTripLog(
         pay_cycle_id=cycle.id,
         trip_date=load.load_date,
         mine_name=mine_name,
         truck_load_id=load.id,
-        notes=f"Auto: truck load #{load.id}",
+        notes=f"Auto: {'projection' if load.is_projection else 'truck load'} #{load.id}",
     )
     db.add(entry)
 
@@ -470,10 +474,13 @@ def create_truck_load(
     if rate is None:
         rate = _resolve_rate(db, payload.mine_id, payload.entity_id)
         if rate is None:
-            raise HTTPException(
-                status_code=400,
-                detail="No active mine rate found for this mine/entity. Provide rate_per_ton explicitly.",
-            )
+            if payload.is_projection:
+                rate = Decimal("0")
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No active mine rate found for this mine/entity. Provide rate_per_ton explicitly.",
+                )
 
     entity = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
     vat_reg = entity.vat_registered if entity else True
