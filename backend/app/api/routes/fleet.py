@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck, BusinessEntity
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, CasualTruckAssignment, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck, BusinessEntity
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
     PersonalVehicleCreate, PersonalVehicleUpdate, PersonalVehicleOut,
@@ -329,12 +329,21 @@ def list_truck_food_payments(
         raise HTTPException(status_code=404, detail="Truck not found")
     _check_entity_access(truck.entity_id, current_user)
 
+    casual_driver_ids = (
+        db.query(CasualTruckAssignment.driver_id)
+        .filter(CasualTruckAssignment.truck_id == truck_id)
+        .subquery()
+    )
+
     rows = (
         db.query(DriverFoodPayment, Driver)
         .join(DriverPayCycle, DriverFoodPayment.pay_cycle_id == DriverPayCycle.id)
         .join(Driver, DriverPayCycle.driver_id == Driver.id)
         .filter(
-            Driver.truck_id == truck_id,
+            or_(
+                Driver.truck_id == truck_id,
+                Driver.id.in_(casual_driver_ids),
+            ),
             DriverPayCycle.pay_year == year,
             DriverPayCycle.pay_month == month,
         )

@@ -1068,10 +1068,23 @@ const EXPENSE_ROWS = [
   { key: 'loss_of_use',          label: 'Loss of Use' },
   { key: 'personal_accident',    label: 'Personal Accident' },
   { key: 'communication_device', label: 'Communication Device' },
-  { key: 'sauma',                label: 'SAUMA / SASRIA' },
+  { key: 'sauma',                label: 'SASRIA' },
   { key: 'diesel',               label: 'Diesel' },
   { key: 'tyre_maintenance',     label: 'Tyre Maintenance' },
   { key: 'other_suppliers',      label: 'Other Suppliers' },
+]
+
+const DEFAULT_PRESET_LINES = [
+  { description: 'Casual Wages' },
+  { description: 'Insurance Truck' },
+  { description: 'Contract' },
+  { description: 'Theft Truck' },
+  { description: 'Theft Trailer' },
+  { description: '5% of Sum Insured' },
+  { description: 'Trailer Maintenance' },
+  { description: 'Truck Monthly Payment' },
+  { description: 'Trailers Monthly Payment' },
+  { description: 'Sasfin' },
 ]
 
 const psInput = {
@@ -1091,8 +1104,6 @@ function ProfitSheetSection({ truck, year, month, summary }) {
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
   const [dirty, setDirty]       = useState(false)
-  const [addingLine, setAddingLine] = useState(false)
-  const [newLine, setNewLine]   = useState({ description: '', amount: '' })
 
   const setField = (k, v) => { setData(d => ({ ...d, [k]: v })); setDirty(true) }
 
@@ -1103,7 +1114,11 @@ function ProfitSheetSection({ truck, year, month, summary }) {
         getTruckMonthlyExpenses(truck.id, { year, month }),
         truck.registration ? getSupplierInvoicesByVehicle({ vehicle_reg: truck.registration, month, year }) : Promise.resolve({ data: [] }),
       ])
-      setData(expRes.data)
+      const expData = expRes.data
+      if (!expData.custom_lines || expData.custom_lines.length === 0) {
+        expData.custom_lines = DEFAULT_PRESET_LINES.map(d => ({ id: crypto.randomUUID(), description: d.description, amount: null }))
+      }
+      setData(expData)
       setSupplierInvs(invRes.data)
       setDirty(false)
     } catch { toast.error('Failed to load profit sheet') }
@@ -1122,18 +1137,20 @@ function ProfitSheetSection({ truck, year, month, summary }) {
     finally { setSaving(false) }
   }
 
-  const addCustomLine = () => {
-    const amt = parseFloat(newLine.amount) || 0
-    if (!newLine.description.trim()) return toast.error('Enter a description')
-    if (amt <= 0) return toast.error('Enter an amount')
-    const lines = [...(data.custom_lines || []), { id: crypto.randomUUID(), description: newLine.description.trim(), amount: amt }]
-    setField('custom_lines', lines)
-    setNewLine({ description: '', amount: '' })
-    setAddingLine(false)
+  const updateCustomLine = (id, field, value) => {
+    setField('custom_lines', (data.custom_lines || []).map(l => l.id === id ? { ...l, [field]: value } : l))
   }
 
   const removeCustomLine = (id) => {
     setField('custom_lines', (data.custom_lines || []).filter(l => l.id !== id))
+  }
+
+  const addBlankLine = () => {
+    setField('custom_lines', [...(data.custom_lines || []), { id: crypto.randomUUID(), description: '', amount: null }])
+  }
+
+  const addCasualWagesLine = () => {
+    setField('custom_lines', [...(data.custom_lines || []), { id: crypto.randomUUID(), description: 'Casual Wages', amount: null }])
   }
 
   // Income: use manual override if saved, otherwise fall back to loads summary
@@ -1226,13 +1243,24 @@ function ProfitSheetSection({ truck, year, month, summary }) {
             </div>
           ))}
 
-          {/* Custom lines under same card */}
+          {/* Editable additional expense lines */}
           <SectionHead>Additional Expenses</SectionHead>
           {(data.custom_lines || []).map(l => (
-            <div key={l.id} style={psRow}>
-              <span style={psLabel}>{l.description}</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={psAmt}>{fmt(l.amount)}</span>
+            <div key={l.id} style={{ ...psRow, gap: 8 }}>
+              <input
+                style={{ ...psInput, flex: 1, textAlign: 'left', minWidth: 0 }}
+                value={l.description}
+                placeholder="Description"
+                onChange={e => updateCustomLine(l.id, 'description', e.target.value)}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <input
+                  type="number" step="0.01" min="0"
+                  style={{ ...psInput, width: 130 }}
+                  value={l.amount ?? ''}
+                  placeholder="—"
+                  onChange={e => updateCustomLine(l.id, 'amount', e.target.value === '' ? null : e.target.value)}
+                />
                 <button onClick={() => removeCustomLine(l.id)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: '2px 4px', lineHeight: 1 }}>
                   <X size={13} />
@@ -1240,23 +1268,14 @@ function ProfitSheetSection({ truck, year, month, summary }) {
               </div>
             </div>
           ))}
-
-          {addingLine && (
-            <div style={{ display: 'flex', gap: 8, padding: '8px 16px', borderTop: '1px solid var(--border)', alignItems: 'center' }}>
-              <input autoFocus style={{ ...psInput, flex: 1, textAlign: 'left' }} placeholder="Description"
-                value={newLine.description} onChange={e => setNewLine(l => ({ ...l, description: e.target.value }))}
-                onKeyDown={e => { if (e.key === 'Enter') addCustomLine(); if (e.key === 'Escape') setAddingLine(false) }} />
-              <input type="number" step="0.01" min="0" style={{ ...psInput, width: 120 }} placeholder="Amount"
-                value={newLine.amount} onChange={e => setNewLine(l => ({ ...l, amount: e.target.value }))}
-                onKeyDown={e => { if (e.key === 'Enter') addCustomLine(); if (e.key === 'Escape') setAddingLine(false) }} />
-              <button className="btn btn-primary btn-sm" onClick={addCustomLine}><Save size={13} /></button>
-              <button className="btn btn-ghost btn-sm" onClick={() => { setAddingLine(false); setNewLine({ description: '', amount: '' }) }}><X size={13} /></button>
-            </div>
-          )}
-          <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)' }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => setAddingLine(true)} disabled={addingLine}
+          <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-ghost btn-sm" onClick={addBlankLine}
               style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12 }}>
-              <Plus size={12} /> Add Expense Line
+              <Plus size={12} /> Add Row
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={addCasualWagesLine}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12 }}>
+              <Plus size={12} /> Add Casual Wages
             </button>
           </div>
 

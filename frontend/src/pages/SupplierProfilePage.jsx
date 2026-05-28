@@ -767,6 +767,8 @@ export default function SupplierProfilePage() {
   // Suppliers with requires_registration=false (e.g. Axxess) don't use vehicle regs on invoices
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
+  const supplierEntityCode = entities.find(e => e.id === supplier?.entity_id)?.code?.toUpperCase()
+  const isObhiSupplier = supplierEntityCode === 'OBHI' && !supplier?.name?.toLowerCase().includes('wbg')
 
   const isDuplicateInvoiceNumber = (invoiceNumber, excludeId = null) =>
     allInvoices.some(inv =>
@@ -1004,6 +1006,7 @@ export default function SupplierProfilePage() {
           onKeyDown={handleKeyDown}
           showVehicleReg={showVehicleReg}
           isDiesel={isDiesel}
+          showReg={isObhiSupplier}
           dieselRate={dieselRate}
           amountAutoFilled={amountAutoFilled}
           onAmountEdit={() => setAmountAutoFilled(false)}
@@ -1494,11 +1497,13 @@ export default function SupplierProfilePage() {
                                         items={editForm.line_items || []}
                                         onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
                                         vatApplicable={editForm.vat_applicable !== false}
+                                        showReg={isObhiSupplier}
+                                        trucks={trucks}
                                       />
                                 ) : (
                                   isDiesel
                                     ? <DieselLineItemsViewer items={inv.line_items || []} total={inv.amount} />
-                                    : <LineItemsViewer items={inv.line_items || []} total={inv.amount} />
+                                    : <LineItemsViewer items={inv.line_items || []} total={inv.amount} showReg={isObhiSupplier} />
                                 )}
                               </td>
                             </tr>
@@ -1546,7 +1551,7 @@ const CS = {
 }
 
 
-function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [], fillups = [] }) {
+function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, showReg = false, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [], fillups = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
   const lineTotal = (form.line_items || []).reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
@@ -1755,6 +1760,8 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
                 items={form.line_items || []}
                 onChange={items => setForm(f => ({ ...f, line_items: items }))}
                 vatApplicable={form.vat_applicable !== false}
+                showReg={showReg}
+                trucks={trucks}
               />
           }
         </div>
@@ -1764,7 +1771,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
 }
 
 
-function LineItemsEditor({ items, onChange, vatApplicable = true }) {
+function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = false, trucks = [] }) {
   const vatMult = vatApplicable ? 1.15 : 1
   const addLine = () => onChange([...items, blankLineItem()])
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
@@ -1789,6 +1796,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
         <colgroup>
           <col style={{ width: 80 }} />
           <col />
+          {showReg && <col style={{ width: 120 }} />}
           <col style={{ width: 65 }} />
           <col style={{ width: 105 }} />
           <col style={{ width: 95 }} />
@@ -1799,6 +1807,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
           <tr style={{ background: 'var(--bg-surface)' }}>
             <th style={liStyles.th}>Item Code</th>
             <th style={liStyles.th}>Description</th>
+            {showReg && <th style={liStyles.th}>Reg</th>}
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
@@ -1819,6 +1828,25 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
                   onChange={e => updateLine(idx, 'item_description', e.target.value)}
                   style={{ ...liStyles.input, width: '100%' }} />
               </td>
+              {showReg && (
+                <td style={liStyles.td}>
+                  {trucks.length > 0 ? (
+                    <SearchableSelect
+                      value={li.unit ?? ''}
+                      onChange={v => updateLine(idx, 'unit', v)}
+                      options={[{ id: '', registration: '', fleet_number: null }, ...trucks]}
+                      getValue={t => t.registration}
+                      getLabel={t => t.registration === '' ? '— Select —' : t.registration}
+                      placeholder="Reg…"
+                      style={{ minWidth: 110 }}
+                    />
+                  ) : (
+                    <input value={li.unit ?? ''} placeholder="e.g. DDM652NC"
+                      onChange={e => updateLine(idx, 'unit', e.target.value.toUpperCase())}
+                      style={{ ...liStyles.input, width: '100%', textTransform: 'uppercase' }} />
+                  )}
+                </td>
+              )}
               <td style={liStyles.td}>
                 <input type="number" step="0.001" value={li.quantity ?? ''} placeholder="0"
                   onChange={e => updateLine(idx, 'quantity', e.target.value)}
@@ -1846,7 +1874,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={3} style={{ padding: '8px 6px' }}>
+            <td colSpan={showReg ? 4 : 3} style={{ padding: '8px 6px' }}>
               <button onClick={addLine}
                 style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none',
                   cursor: 'pointer', color: 'var(--accent)', fontWeight: 600, fontSize: 12, padding: 0 }}>
@@ -1869,7 +1897,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true }) {
 }
 
 
-function LineItemsViewer({ items, total }) {
+function LineItemsViewer({ items, total, showReg = false }) {
   if (!items || items.length === 0) {
     return <p style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>No line items.</p>
   }
@@ -1880,6 +1908,7 @@ function LineItemsViewer({ items, total }) {
         <colgroup>
           <col style={{ width: 80 }} />
           <col />
+          {showReg && <col style={{ width: 110 }} />}
           <col style={{ width: 65 }} />
           <col style={{ width: 105 }} />
           <col style={{ width: 95 }} />
@@ -1889,6 +1918,7 @@ function LineItemsViewer({ items, total }) {
           <tr style={{ background: 'var(--bg-surface)' }}>
             <th style={liStyles.th}>Item Code</th>
             <th style={liStyles.th}>Description</th>
+            {showReg && <th style={liStyles.th}>Reg</th>}
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
@@ -1904,6 +1934,11 @@ function LineItemsViewer({ items, total }) {
               <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={liStyles.td}>{li.item_code || '—'}</td>
                 <td style={liStyles.td}>{li.item_description || '—'}</td>
+                {showReg && (
+                  <td style={liStyles.td}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{li.unit || '—'}</span>
+                  </td>
+                )}
                 <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
                   {rate != null ? rate.toFixed(4) : '—'}
@@ -1920,7 +1955,7 @@ function LineItemsViewer({ items, total }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={3} style={liStyles.td} />
+            <td colSpan={showReg ? 4 : 3} style={liStyles.td} />
             <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
               R {totalExcl.toFixed(2)}
