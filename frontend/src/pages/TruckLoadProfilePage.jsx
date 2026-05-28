@@ -1405,13 +1405,11 @@ export default function TruckLoadProfilePage() {
     if (assigned) setSelectedDriverId(prev => prev || String(assigned.id))
   }, [drivers, truck])
 
-  // ── Load loads for current month ─────────────────────────────────────────────
+  // ── Load loads for current statement period ──────────────────────────────────
   const fetchLoads = useCallback(async () => {
     if (!truck) return
     setLoading(true)
-    const dateFrom = new Date(year, month - 1, 1).toISOString()
-    const dateTo   = new Date(year, month, 0, 23, 59, 59).toISOString()
-    const params   = { truck_id: truck.id, date_from: dateFrom, date_to: dateTo, limit: 500 }
+    const params = { truck_id: truck.id, statement_month: month, statement_year: year, limit: 500 }
     try {
       const [loadsRes, summaryRes] = await Promise.all([
         getTruckLoads(params),
@@ -2024,7 +2022,7 @@ export default function TruckLoadProfilePage() {
                   <td style={{ textAlign: 'right', padding: '10px 12px', whiteSpace: 'nowrap' }}>{fmtNum(summary.total_tonnes)}</td>
                   <td />
                   <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap' }}>{fmt(summary.total_excl_vat)}</td>
-                  {vatRegistered && <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap', color: 'var(--accent)' }}>{fmt(summary.total_incl_vat)}</td>}
+                  {vatRegistered && <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap' }}>{fmt(summary.total_incl_vat)}</td>}
                   {showSub && <td />}
                   {showSub && <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap', color: 'var(--accent)' }}>{fmt(summary.total_subcontractor_excl_vat)}</td>}
                   {showSub && <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap', fontWeight: 700, color: 'var(--accent)' }}>{fmt(summary.total_subcontractor_incl_vat)}</td>}

@@ -328,6 +328,8 @@ def list_truck_loads(
     is_paid: Optional[bool] = Query(None),
     date_from: Optional[datetime] = Query(None),
     date_to: Optional[datetime] = Query(None),
+    statement_month: Optional[int] = Query(None),
+    statement_year: Optional[int] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(500, le=2000),
     db: Session = Depends(get_db),
@@ -349,10 +351,13 @@ def list_truck_loads(
         q = q.filter(TruckLoad.supplier_id == supplier_id)
     if is_paid is not None:
         q = q.filter(TruckLoad.is_paid.is_(is_paid))
-    if date_from:
-        q = q.filter(TruckLoad.load_date >= date_from)
-    if date_to:
-        q = q.filter(TruckLoad.load_date <= date_to)
+    if statement_month is not None and statement_year is not None:
+        q = q.filter(TruckLoad.statement_month == statement_month, TruckLoad.statement_year == statement_year)
+    else:
+        if date_from:
+            q = q.filter(TruckLoad.load_date >= date_from)
+        if date_to:
+            q = q.filter(TruckLoad.load_date <= date_to)
     q = q.filter(TruckLoad.is_archived != True)
 
     loads = q.order_by(TruckLoad.load_date.desc()).offset(skip).limit(limit).all()
@@ -374,6 +379,8 @@ def get_truck_load_summary(
     is_paid: Optional[bool] = Query(None),
     date_from: Optional[datetime] = Query(None),
     date_to: Optional[datetime] = Query(None),
+    statement_month: Optional[int] = Query(None),
+    statement_year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -400,10 +407,13 @@ def get_truck_load_summary(
         q = q.filter(TruckLoad.mine_id == mine_id)
     if is_paid is not None:
         q = q.filter(TruckLoad.is_paid.is_(is_paid))
-    if date_from:
-        q = q.filter(TruckLoad.load_date >= date_from)
-    if date_to:
-        q = q.filter(TruckLoad.load_date <= date_to)
+    if statement_month is not None and statement_year is not None:
+        q = q.filter(TruckLoad.statement_month == statement_month, TruckLoad.statement_year == statement_year)
+    else:
+        if date_from:
+            q = q.filter(TruckLoad.load_date >= date_from)
+        if date_to:
+            q = q.filter(TruckLoad.load_date <= date_to)
     q = q.filter(TruckLoad.is_archived != True)
 
     row = q.one()
