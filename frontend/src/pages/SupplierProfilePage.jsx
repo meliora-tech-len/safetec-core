@@ -75,6 +75,22 @@ function matchingSheets(sheetNames, entityName) {
   return matches.length > 0 ? matches : sheetNames
 }
 
+function fmtLocalDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function parseSlipDate(val) {
+  if (val instanceof Date) return fmtLocalDate(val)
+  if (typeof val === 'string') {
+    // DD/MM/YYYY or D/M/YYYY
+    const m = val.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+    if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+    // Already ISO YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10)
+  }
+  return null
+}
+
 function parseWBGSheet(ws) {
   // raw: true (default) keeps numbers as numbers and dates as Dates via cellDates.
   // raw: false would stringify everything, breaking the typeof check below.
@@ -89,7 +105,7 @@ function parseWBGSheet(ws) {
     if (!siteOrDate && !invNo) continue
     if (invNo && typeof siteOrDate !== 'string') {
       invoices.push({
-        invoice_date:   invDate instanceof Date ? invDate.toISOString() : invDate,
+        invoice_date:   invDate instanceof Date ? fmtLocalDate(invDate) : parseSlipDate(invDate) || invDate,
         invoice_number: String(invNo).trim(),
         amount:         parseFloat(invTotal) || 0,
         line_items:     pending,
@@ -97,8 +113,8 @@ function parseWBGSheet(ws) {
       pending = []
       continue
     }
-    if (typeof siteOrDate === 'string' && slip) {
-      // Col 3 may contain "REG — DRIVER" — split on any dash with surrounding spaces
+    // Col 0 can be a date string ("01/05/2025") or a Date object — both are valid detail rows
+    if ((typeof siteOrDate === 'string' || siteOrDate instanceof Date) && slip) {
       const rawRegStr = String(rawReg || '').trim()
       const parts = rawRegStr.split(/ [-–—] /)
       const cleanReg = parts[0].trim().toUpperCase()
@@ -115,6 +131,7 @@ function parseWBGSheet(ws) {
         amount_excl_vat:  excl,
         amount_incl_vat:  excl,
         sort_order:       pending.length,
+        slip_date:        parseSlipDate(siteOrDate),
       })
     }
   }
@@ -338,7 +355,7 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
                             {expanded[i] ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                           </td>
                           <td style={_td}>{inv.invoice_number}</td>
-                          <td style={_td}>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-ZA') : '—'}</td>
+                          <td style={_td}>{formatDate(inv.invoice_date)}</td>
                           <td style={{ ..._td, textAlign: 'right' }}>{inv.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
                           <td style={{ ..._td, textAlign: 'right' }}>{inv.line_items.length}</td>
                         </tr>
@@ -354,6 +371,7 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
                                 </span>
                               </td>
                               <td style={{ ..._td, color: 'var(--text-muted)', paddingLeft: 8 }}>{li.item_code}</td>
+                              <td style={{ ..._td, color: 'var(--text-muted)', fontSize: 11 }}>{formatDate(li.slip_date)}</td>
                               <td style={{ ..._td }}>
                                 <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{li.unit}</span>
                                 {li.driver_name && <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 11 }}>{li.driver_name}</span>}
@@ -1909,6 +1927,7 @@ function LineItemsViewer({ items, total, showReg = false }) {
           <col style={{ width: 80 }} />
           <col />
           {showReg && <col style={{ width: 110 }} />}
+          <col style={{ width: 82 }} />
           <col style={{ width: 65 }} />
           <col style={{ width: 105 }} />
           <col style={{ width: 95 }} />
@@ -1919,6 +1938,7 @@ function LineItemsViewer({ items, total, showReg = false }) {
             <th style={liStyles.th}>Item Code</th>
             <th style={liStyles.th}>Description</th>
             {showReg && <th style={liStyles.th}>Reg</th>}
+            <th style={liStyles.th}>Date</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
@@ -1939,6 +1959,7 @@ function LineItemsViewer({ items, total, showReg = false }) {
                     <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{li.unit || '—'}</span>
                   </td>
                 )}
+                <td style={{ ...liStyles.td, color: 'var(--text-muted)' }}>{formatDate(li.line_date)}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
                   {rate != null ? rate.toFixed(4) : '—'}
@@ -2136,6 +2157,7 @@ function DieselLineItemsViewer({ items, total }) {
           <tr style={{ background: 'var(--bg-surface)' }}>
             <th style={liStyles.th}>Slip #</th>
             <th style={liStyles.th}>Vehicle Reg</th>
+            <th style={liStyles.th}>Date</th>
             <th style={liStyles.th}>Subbie Name</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Litres</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate/L</th>
@@ -2152,6 +2174,7 @@ function DieselLineItemsViewer({ items, total }) {
               <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ ...liStyles.td, fontWeight: 600 }}>{li.item_code || '—'}</td>
                 <td style={liStyles.td}><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{li.unit || '—'}</span></td>
+                <td style={{ ...liStyles.td, color: 'var(--text-muted)', fontSize: 11 }}>{formatDate(li.line_date)}</td>
                 <td style={{ ...liStyles.td, color: 'var(--text-muted)' }}>{li.item_description || '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right' }}>{litres ? `${litres.toFixed(1)}L` : '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>{rate != null ? rate.toFixed(4) : '—'}</td>
@@ -2163,7 +2186,7 @@ function DieselLineItemsViewer({ items, total }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={2} style={liStyles.td} />
+            <td colSpan={3} style={liStyles.td} />
             <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>{totalLitres.toFixed(1)}L</td>
             <td style={liStyles.td} />

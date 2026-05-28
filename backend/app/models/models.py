@@ -426,6 +426,7 @@ class SupplierInvoiceLineItem(Base):
     unit = Column(String(50))
     amount_excl_vat = Column(Numeric(12, 2), nullable=False, default=0)
     amount_incl_vat = Column(Numeric(12, 2), nullable=False, default=0)
+    line_date = Column(Date)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     invoice = relationship("SupplierInvoice", back_populates="line_items")

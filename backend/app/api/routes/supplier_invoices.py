@@ -784,9 +784,17 @@ def bulk_import_invoices(
         db.add(inv)
         db.flush()
 
-        inv_date_obj = inv_date.date() if hasattr(inv_date, 'date') else inv_date
+        inv_date_obj = inv_date
 
         for li in item.line_items:
+            slip_date_obj: Optional[date_type] = None
+            if li.slip_date:
+                try:
+                    slip_date_obj = date_type.fromisoformat(li.slip_date[:10])
+                except (ValueError, TypeError):
+                    pass
+            line_date_val = slip_date_obj or inv_date_obj
+
             db.add(SupplierInvoiceLineItem(
                 invoice_id=inv.id,
                 item_code=li.item_code,
@@ -796,6 +804,7 @@ def bulk_import_invoices(
                 amount_excl_vat=li.amount_excl_vat,
                 amount_incl_vat=li.amount_incl_vat,
                 sort_order=li.sort_order,
+                line_date=slip_date_obj,
             ))
 
             # Create DieselFillUp per line item
@@ -845,7 +854,9 @@ def bulk_import_invoices(
                 entity_id=payload.entity_id,
                 truck_id=truck.id,
                 supplier_id=payload.supplier_id,
-                fillup_date=inv_date_obj,
+                fillup_date=line_date_val,
+                statement_month=stmt_month,
+                statement_year=stmt_year,
                 litres=litres_d,
                 rate_per_litre=rate_per_litre,
                 invoice_number=num or None,

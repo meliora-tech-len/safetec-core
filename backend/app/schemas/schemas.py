@@ -1419,6 +1419,7 @@ class SupplierInvoiceLineItemBase(BaseModel):
     amount_excl_vat: Decimal = Decimal('0')
     amount_incl_vat: Decimal = Decimal('0')
     sort_order: int = 0
+    line_date: Optional[date] = None
 
 
 class SupplierInvoiceLineItemCreate(SupplierInvoiceLineItemBase):
@@ -1442,10 +1443,11 @@ class InvoiceLineItemImport(BaseModel):
     amount_incl_vat: Decimal = Decimal('0')
     sort_order: int = 0
     driver_name: Optional[str] = None
+    slip_date: Optional[str] = None
 
 
 class InvoiceImportItem(BaseModel):
-    invoice_date: datetime
+    invoice_date: date
     invoice_number: str
     amount: Decimal = Decimal('0')
     line_items: List[InvoiceLineItemImport] = []
