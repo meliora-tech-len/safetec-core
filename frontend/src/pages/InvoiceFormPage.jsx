@@ -149,7 +149,14 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             offloading_number: '',
           })))
         } else if (poImportPayload) {
-          const defaultEntity = activeEntity || entsRes.data[0]
+          // Match entity from supplier_code prefix (e.g. SFT003 → SFT entity)
+          let matchedEntity = null
+          if (poImportPayload.supplier_code) {
+            matchedEntity = entsRes.data.find(e =>
+              poImportPayload.supplier_code.toUpperCase().startsWith(e.code?.toUpperCase() ?? '')
+            )
+          }
+          const defaultEntity = matchedEntity || activeEntity || entsRes.data[0]
           if (defaultEntity) {
             setEntityId(String(defaultEntity.id))
             setVatRate(defaultEntity.vat_rate != null ? parseFloat(defaultEntity.vat_rate) : 0.15)
@@ -205,6 +212,13 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
       .catch(() => {})
     return () => { ignore = true }
   }, [entityId])
+
+  // Auto-select Tradekor as customer when this is a PO import and customers have loaded
+  useEffect(() => {
+    if (!poImportPayload || !customers.length || customerId) return
+    const match = customers.find(c => c.name?.toLowerCase().includes('tradekor'))
+    if (match) { setRecipientType('customer'); setCustomerId(String(match.id)) }
+  }, [customers, customerId])
 
   // ── Fetch next invoice number when entity changes (new only) ──────
   useEffect(() => {
@@ -356,7 +370,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           <span>
             Imported from PO: <strong>{poImportPayload.po_number}</strong>
             {poImportPayload.project_code && <> | Project: <strong>{poImportPayload.project_code}</strong></>}
-            {' — '}Select entity and customer below, then save.
+            {' — '}Verify entity and select customer, then save.
           </span>
         </div>
       )}

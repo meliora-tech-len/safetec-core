@@ -273,7 +273,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
         </table>
       </div>
 
-      {showImportPO && <ImportPOModal onClose={() => setShowImportPO(false)} />}
+      {showImportPO && <ImportPOModal onClose={() => setShowImportPO(false)} entities={entities} />}
 
       <DeleteModal
         isOpen={!!deleteTarget}
