@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getInvoices, getEntities, downloadInvoicePdf, updateInvoice, deleteInvoice } from '../services/api'
 import { formatCurrency, formatDate, statusBadgeClass, statusLabel } from '../utils/helpers'
-import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2 } from 'lucide-react'
+import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2, Upload } from 'lucide-react'
+import ImportPOModal from '../components/ImportPOModal'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
 import { useTheme } from '../hooks/useTheme'
@@ -22,6 +23,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const [filterStatus, setFilterStatus] = useState('')
   const [showCancelled, setShowCancelled] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [showImportPO, setShowImportPO] = useState(false)
   const navigate = useNavigate()
   const { theme } = useTheme()
 
@@ -123,6 +125,11 @@ export default function InvoicesPage({ docType = 'invoice' }) {
               { header: 'Total',       value: r => parseFloat(r.total || 0).toFixed(2) },
             ]}
           />
+          {isInvoice && (
+            <button className="btn-ghost btn-sm" onClick={() => setShowImportPO(true)} title="Generate invoice from a PO Excel file">
+              <Upload size={14} /> Import PO
+            </button>
+          )}
           <button className="btn-primary" onClick={() => navigate(`/${docPath}/new`)}>
             <Plus size={15} /> New {title.slice(0, -1)}
           </button>
@@ -265,6 +272,8 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           </tbody>
         </table>
       </div>
+
+      {showImportPO && <ImportPOModal onClose={() => setShowImportPO(false)} />}
 
       <DeleteModal
         isOpen={!!deleteTarget}

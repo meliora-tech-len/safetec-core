@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X } from 'lucide-react'
+import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X, FileText } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { getEntities, getSuppliers, getCustomers, createCustomer, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
 import DateInput from '../components/DateInput'
@@ -54,6 +54,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
   const { user, activeEntity } = useAuth()
   const isEdit = !!id
   const templatePayload = !isEdit ? location.state?.templatePayload : null
+  const poImportPayload = !isEdit ? location.state?.poImportPayload : null
   const isInvoice = docType === 'invoice'
   const isPO      = docType === 'purchase_order'
   const docLabel  = isInvoice ? 'Invoice' : isPO ? 'Purchase Order' : 'Quote'
@@ -146,6 +147,30 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             line_type: li.line_type || 'item',
             loading_number: '',
             offloading_number: '',
+          })))
+        } else if (poImportPayload) {
+          const defaultEntity = activeEntity || entsRes.data[0]
+          if (defaultEntity) {
+            setEntityId(String(defaultEntity.id))
+            setVatRate(defaultEntity.vat_rate != null ? parseFloat(defaultEntity.vat_rate) : 0.15)
+            if (defaultEntity.vat_registered === false) setIsVatExempt(true)
+          }
+          if (poImportPayload.po_date) setIssueDate(poImportPayload.po_date)
+          const noteParts = []
+          if (poImportPayload.po_number) noteParts.push(`PO Ref: ${poImportPayload.po_number}`)
+          if (poImportPayload.project_code) noteParts.push(`Project: ${poImportPayload.project_code}`)
+          if (noteParts.length) setNotes(noteParts.join(' | '))
+          setLines(poImportPayload.line_items.map((li, i) => ({
+            _id: `po-${i}`,
+            description: li.description || '',
+            quantity: li.quantity || '',
+            unit_price: li.unit_price || '',
+            amount: li.amount || '',
+            is_vat_exempt: false,
+            sort_order: i,
+            line_type: li.line_type || 'item',
+            loading_number: li.loading_number || '',
+            offloading_number: li.offloading_number || '',
           })))
         } else {
           const defaultEntity = activeEntity || entsRes.data[0]
@@ -322,6 +347,17 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
       {error && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'rgba(220,38,38,0.08)', color: '#dc2626', padding: '10px 14px', borderRadius: 8, marginBottom: 20, fontSize: 13 }}>
           <AlertCircle size={15} /> {error}
+        </div>
+      )}
+
+      {poImportPayload && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'rgba(16,185,129,0.08)', color: '#059669', padding: '10px 14px', borderRadius: 8, marginBottom: 20, fontSize: 13 }}>
+          <FileText size={15} />
+          <span>
+            Imported from PO: <strong>{poImportPayload.po_number}</strong>
+            {poImportPayload.project_code && <> | Project: <strong>{poImportPayload.project_code}</strong></>}
+            {' — '}Select entity and customer below, then save.
+          </span>
         </div>
       )}
 
