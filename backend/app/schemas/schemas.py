@@ -1459,10 +1459,7 @@ class InvoiceLineItemImport(BaseModel):
 
 
 class InvoiceImportItem(BaseModel):
-    # Raw date string from the sheet (may carry a time component, e.g.
-    # "2025-05-28T00:00:00"); the time is cut and the date parsed server-side
-    # so a single bad/blank date can't 422 the whole batch.
-    invoice_date: Optional[str] = None
+    invoice_date: date
     invoice_number: str
     amount: Decimal = Decimal('0')
     line_items: List[InvoiceLineItemImport] = []
@@ -1474,21 +1471,12 @@ class BulkImportPayload(BaseModel):
     invoices: List[InvoiceImportItem]
 
 
-class BulkImportFailure(BaseModel):
-    invoice_number: Optional[str] = None
-    invoice_date: Optional[str] = None
-    amount: Decimal = Decimal('0')
-    line_count: int = 0
-    reason: str
-
-
 class BulkImportResult(BaseModel):
     created: int
     skipped: int
     skipped_numbers: List[str] = []
     fillups_created: int = 0
     fillups_skipped: int = 0
-    failed: List[BulkImportFailure] = []
 
 
 class SupplierInvoiceCreate(BaseModel):

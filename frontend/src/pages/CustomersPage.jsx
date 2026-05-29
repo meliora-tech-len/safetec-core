@@ -206,7 +206,6 @@ function CustomerModal({ mode, customer, entities, activeEntity, onSave, onClose
   const defaultEntityId = customer?.entity_id?.toString() || activeEntity?.id?.toString() || ''
   const [form, setForm] = useState({
     ...BLANK,
-    entity_id: defaultEntityId,
     ...(customer || {}),
     entity_id: defaultEntityId,
   })

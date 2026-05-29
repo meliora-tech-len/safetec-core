@@ -105,10 +105,7 @@ function parseWBGSheet(ws) {
     if (!siteOrDate && !invNo) continue
     if (invNo && typeof siteOrDate !== 'string') {
       invoices.push({
-        // parseSlipDate handles Date objects, DD/MM/YYYY and ISO strings, and
-        // cuts any time component — always a clean YYYY-MM-DD string or null
-        // (never a raw Excel serial), so the backend can report bad dates.
-        invoice_date:   parseSlipDate(invDate),
+        invoice_date:   invDate instanceof Date ? fmtLocalDate(invDate) : parseSlipDate(invDate) || invDate,
         invoice_number: String(invNo).trim(),
         amount:         parseFloat(invTotal) || 0,
         line_items:     pending,
@@ -431,37 +428,6 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
                 )}
               </p>
             </div>
-
-            {importResult.failed?.length > 0 && (
-              <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 4, background: 'rgba(220,38,38,0.06)', border: '1px solid rgba(220,38,38,0.25)' }}>
-                <p style={{ margin: '0 0 8px', fontSize: 13, color: '#dc2626', fontWeight: 600 }}>
-                  ✕ {importResult.failed.length} invoice{importResult.failed.length !== 1 ? 's' : ''} could not be imported — please capture {importResult.failed.length !== 1 ? 'them' : 'it'} manually:
-                </p>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ background: 'var(--bg-surface)' }}>
-                      <th style={_th}>Invoice #</th>
-                      <th style={_th}>Date in file</th>
-                      <th style={{ ..._th, textAlign: 'right' }}>Amount</th>
-                      <th style={{ ..._th, textAlign: 'right' }}>Lines</th>
-                      <th style={_th}>Reason</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {importResult.failed.map((f, i) => (
-                      <tr key={i} style={{ borderTop: '1px solid var(--border)' }}>
-                        <td style={_td}>{f.invoice_number || '—'}</td>
-                        <td style={{ ..._td, color: 'var(--text-muted)' }}>{f.invoice_date || '—'}</td>
-                        <td style={{ ..._td, textAlign: 'right' }}>{Number(f.amount).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-                        <td style={{ ..._td, textAlign: 'right' }}>{f.line_count}</td>
-                        <td style={{ ..._td, color: '#dc2626' }}>{f.reason}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button className="btn-primary" onClick={onClose}>Done</button>
             </div>
