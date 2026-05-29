@@ -64,62 +64,50 @@ export default function DashboardPage() {
 
       {loading ? (
         <div className="loading-center"><div className="spinner" /></div>
-      ) : stats && (
+      ) : (stats || payables) && (
         <>
-          {/* Stat Cards */}
+          {/* ── PRIMARY: Supplier Payables ───────────────────────────── */}
+          <SectionLabel icon={<CreditCard size={13} />} label="Supplier Payables" />
           <div className="grid-4" style={{ marginBottom: 24 }}>
             <StatCard
-              icon={<FileText size={20} />}
-              iconBg="#4f8ef720"
-              iconColor="var(--accent)"
-              label="Outstanding"
-              value={formatCurrency(stats.outstanding_total)}
-              sub={`${stats.total_invoices} invoices total`}
+              icon={<CreditCard size={20} />}
+              iconBg="#ef444420"
+              iconColor="var(--danger)"
+              label="Total Outstanding"
+              value={formatCurrency((payables?.total_current || 0) + (payables?.total_30_days || 0))}
+              sub="All unpaid supplier invoices"
             />
             <StatCard
               icon={<TrendingUp size={20} />}
               iconBg="#22c55e20"
               iconColor="var(--success)"
               label="Paid This Month"
-              value={formatCurrency(stats.paid_this_month)}
-              sub="Collected revenue"
-            />
-            <StatCard
-              icon={<AlertCircle size={20} />}
-              iconBg="#ef444420"
-              iconColor="var(--danger)"
-              label="Overdue"
-              value={stats.overdue_count}
-              sub="Require attention"
+              value={formatCurrency(payables?.total_paid_this_month || 0)}
+              sub="Supplier payments made"
             />
             <StatCard
               icon={<Clock size={20} />}
+              iconBg="#22c55e20"
+              iconColor="#16a34a"
+              label="Current / Cash"
+              value={formatCurrency(payables?.total_current || 0)}
+              sub="Due this month"
+            />
+            <StatCard
+              icon={<AlertCircle size={20} />}
               iconBg="#f59e0b20"
               iconColor="var(--warning)"
-              label="Drafts"
-              value={stats.draft_count}
-              sub={`+ ${stats.total_quotes} quotes`}
+              label="30-Day"
+              value={formatCurrency(payables?.total_30_days || 0)}
+              sub="Due 7th of next month"
             />
           </div>
 
-          {/* Supplier Payables */}
+          {/* Supplier Payables Breakdown */}
           {payables && (payables.current_payables.length > 0 || payables.days_30_payables.length > 0 || payables.total_paid_this_month > 0) && (
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <span style={{ fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <CreditCard size={15} color="var(--text-muted)" /> Supplier Payables
-                </span>
-                <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--text-muted)' }}>
-                  {payables.total_current > 0 && (
-                    <span>Current: <strong style={{ color: '#16a34a' }}>{formatCurrency(payables.total_current)}</strong></span>
-                  )}
-                  {payables.total_30_days > 0 && (
-                    <span>30 Days: <strong style={{ color: '#d97706' }}>{formatCurrency(payables.total_30_days)}</strong></span>
-                  )}
-                  {payables.total_paid_this_month > 0 && (
-                    <span>Paid this month: <strong style={{ color: 'var(--accent)' }}>{formatCurrency(payables.total_paid_this_month)}</strong></span>
-                  )}
-                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>Breakdown by supplier</span>
               </div>
               {(payables.current_payables.length > 0 || payables.days_30_payables.length > 0) && <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                 {payables.current_payables.length > 0 && (
@@ -239,7 +227,48 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <div style={styles.grid}>
+          {/* ── SECONDARY: Outgoing Invoices ────────────────────────── */}
+          {stats && (
+            <>
+              <SectionLabel icon={<FileText size={13} />} label="Outgoing Invoices" />
+              <div className="grid-4" style={{ marginBottom: 24 }}>
+                <StatCard
+                  icon={<FileText size={20} />}
+                  iconBg="#4f8ef720"
+                  iconColor="var(--accent)"
+                  label="Outstanding"
+                  value={formatCurrency(stats.outstanding_total)}
+                  sub={`${stats.total_invoices} invoices total`}
+                />
+                <StatCard
+                  icon={<TrendingUp size={20} />}
+                  iconBg="#22c55e20"
+                  iconColor="var(--success)"
+                  label="Collected This Month"
+                  value={formatCurrency(stats.paid_this_month)}
+                  sub="Revenue received"
+                />
+                <StatCard
+                  icon={<AlertCircle size={20} />}
+                  iconBg="#ef444420"
+                  iconColor="var(--danger)"
+                  label="Overdue"
+                  value={stats.overdue_count}
+                  sub="Require attention"
+                />
+                <StatCard
+                  icon={<Clock size={20} />}
+                  iconBg="#f59e0b20"
+                  iconColor="var(--warning)"
+                  label="Drafts"
+                  value={stats.draft_count}
+                  sub={`+ ${stats.total_quotes} quotes`}
+                />
+              </div>
+            </>
+          )}
+
+          {stats && <div style={styles.grid}>
             {/* Recent Invoices */}
             <div className="card" style={{ flex: 2 }}>
               <div style={styles.cardHeader}>
@@ -305,9 +334,17 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
-          </div>
+          </div>}
         </>
       )}
+    </div>
+  )
+}
+
+function SectionLabel({ icon, label }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+      {icon}{label}
     </div>
   )
 }
