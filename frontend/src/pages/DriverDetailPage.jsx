@@ -911,6 +911,9 @@ export default function DriverDetailPage() {
                   ['Tax Number',     driver.tax_number      || '—'],
                   ['Bank',           driver.bank_name       || '—'],
                   ['Account',        driver.bank_account_number || '—'],
+                  ['Branch Code',    driver.branch_code     || '—'],
+                  ['Job Title',      driver.job_title       || '—'],
+                  ['Date Engaged',   driver.date_engaged ? new Date(driver.date_engaged).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'],
                   ['Truck',          driver.truck_registration  || '—'],
                 ].map(([l, v]) => (
                   <div key={l}>
@@ -919,6 +922,12 @@ export default function DriverDetailPage() {
                   </div>
                 ))}
               </div>
+              {driver.address && (
+                <div style={{ marginTop: 10, fontSize: 12 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>Address</div>
+                  <div style={{ fontWeight: 500, whiteSpace: 'pre-line' }}>{driver.address}</div>
+                </div>
+              )}
               {driver.notes && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>{driver.notes}</div>}
             </div>
           </div>
@@ -993,6 +1002,10 @@ function EditDriverModal({ driver, entities, onSave, onClose }) {
     tax_number:          driver.tax_number || '',
     bank_name:           driver.bank_name || '',
     bank_account_number: driver.bank_account_number || '',
+    branch_code:         driver.branch_code || '',
+    job_title:           driver.job_title || '',
+    date_engaged:        driver.date_engaged ? driver.date_engaged.slice(0, 10) : '',
+    address:             driver.address || '',
     is_active:           driver.is_active,
     notes:               driver.notes || '',
   })
@@ -1041,6 +1054,22 @@ function EditDriverModal({ driver, entities, onSave, onClose }) {
         <div>
           <label className="form-label">Account Number</label>
           <input className="form-input" value={form.bank_account_number} onChange={e => set('bank_account_number', e.target.value)} />
+        </div>
+        <div>
+          <label className="form-label">Branch Code</label>
+          <input className="form-input" value={form.branch_code} onChange={e => set('branch_code', e.target.value)} placeholder="e.g. 470010" />
+        </div>
+        <div>
+          <label className="form-label">Job Title</label>
+          <input className="form-input" value={form.job_title} onChange={e => set('job_title', e.target.value)} placeholder="e.g. Code 14 Driver" />
+        </div>
+        <div>
+          <label className="form-label">Date Engaged</label>
+          <input type="date" className="form-input" value={form.date_engaged} onChange={e => set('date_engaged', e.target.value)} />
+        </div>
+        <div style={{ gridColumn: '1/-1' }}>
+          <label className="form-label">Employee Address</label>
+          <textarea className="form-input" value={form.address} onChange={e => set('address', e.target.value)} rows={3} style={{ resize: 'vertical' }} placeholder="Street, Suburb, City, Postal Code" />
         </div>
         <div style={{ gridColumn: '1/-1', display: 'flex', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" id="edit-active" checked={form.is_active} onChange={e => set('is_active', e.target.checked)} />

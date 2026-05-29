@@ -622,6 +622,11 @@ class Driver(Base):
     bank_name = Column(String(200))
     bank_account_number = Column(String(100))
 
+    date_engaged = Column(Date, nullable=True)
+    address = Column(Text, nullable=True)
+    branch_code = Column(String(20), nullable=True)
+    job_title = Column(String(200), nullable=True)
+
     is_active = Column(Boolean, default=True, nullable=False)
     notes = Column(Text)
 

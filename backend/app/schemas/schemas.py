@@ -904,6 +904,10 @@ class DriverBase(BaseModel):
     tax_number: Optional[str] = None
     bank_name: Optional[str] = None
     bank_account_number: Optional[str] = None
+    date_engaged: Optional[date_type] = None
+    address: Optional[str] = None
+    branch_code: Optional[str] = None
+    job_title: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -922,6 +926,10 @@ class DriverUpdate(BaseModel):
     tax_number: Optional[str] = None
     bank_name: Optional[str] = None
     bank_account_number: Optional[str] = None
+    date_engaged: Optional[date_type] = None
+    address: Optional[str] = None
+    branch_code: Optional[str] = None
+    job_title: Optional[str] = None
     is_active: Optional[bool] = None
     notes: Optional[str] = None
 

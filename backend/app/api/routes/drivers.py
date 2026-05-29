@@ -907,10 +907,51 @@ def download_payslip_pdf(
     calc = calculate_pay_cycle(cycle, settings, driver_type=driver_type)
     calc_f = {k: float(v) if isinstance(v, Decimal) else v for k, v in calc.items()}
 
-    entity = driver.entity
-    pdf_bytes = generate_payslip_pdf(driver, cycle, calc_f, entity)
+    # ── Casual: load breakdown for individual lines on the payslip ──────────────
+    if driver_type == "casual":
+        loads_a = getattr(cycle, "casual_group_a_loads", 0) or 0
+        loads_b = getattr(cycle, "casual_group_b_loads", 0) or 0
+        split_a = getattr(cycle, "casual_split_group_a_loads", 0) or 0
+        split_b = getattr(cycle, "casual_split_group_b_loads", 0) or 0
+        eff_a   = loads_a + split_a * 0.5
+        eff_b   = loads_b + split_b * 0.5
+        rate_a  = float(settings.casual_rate_group_a or 0)
+        rate_b  = float(settings.casual_rate_group_b or 0)
+        breakdown = []
+        if eff_a > 0:
+            breakdown.append({"loads": eff_a, "rate": rate_a, "amount": rate_a * eff_a})
+        if eff_b > 0:
+            breakdown.append({"loads": eff_b, "rate": rate_b, "amount": rate_b * eff_b})
+        calc_f["casual_breakdown"] = breakdown
 
-    from calendar import month_abbr
+    # ── YTD from prior PayrollEntries (same driver, same year, months before current) ──
+    ytd: dict = {}
+    if driver_type == "permanent":
+        prior_entries = db.query(PayrollEntry).filter(
+            PayrollEntry.driver_id == driver_id,
+            PayrollEntry.pay_year == year,
+            PayrollEntry.pay_month < month,
+        ).all()
+
+        def _pe_taxable(e) -> float:
+            # taxable earnings = gross excl subsistence + statutory accruals (sick/holiday/leave)
+            return (float(e.gross or 0) - float(e.subsistence or 0)
+                    + float(e.sick_fund or 0) + float(e.holiday_fund or 0) + float(e.leave_pay or 0))
+
+        cur_taxable = (
+            calc_f.get("gross", 0) - calc_f.get("total_subsistence", 0)
+            + calc_f.get("sick_fund", 0) + calc_f.get("holiday_fund", 0) + calc_f.get("leave_pay", 0)
+        )
+        ytd = {
+            "taxable_earnings": sum(_pe_taxable(e) for e in prior_entries) + cur_taxable,
+            "taxable_perks":    sum(float(e.provident or 0) for e in prior_entries) + calc_f.get("provident", 0),
+            "provident":        sum(float(e.provident or 0) for e in prior_entries) + calc_f.get("provident", 0),
+            "tax_paid":         sum(float(e.paye or 0)      for e in prior_entries) + calc_f.get("paye", 0),
+        }
+
+    entity = driver.entity
+    pdf_bytes = generate_payslip_pdf(driver, cycle, calc_f, entity, ytd=ytd)
+
     filename = f"payslip_{driver.last_name}_{driver.first_name}_{year}_{month:02d}.pdf"
     return Response(
         content=pdf_bytes,

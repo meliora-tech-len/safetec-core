@@ -51,23 +51,29 @@ function StatCards({ stats }) {
 const BLANK = {
   entity_id: '', employee_number: '',
   first_name: '', last_name: '', driver_type: 'casual',
-  id_number: '', tax_number: '', bank_name: '', bank_account_number: '', notes: '',
+  id_number: '', tax_number: '', bank_name: '', bank_account_number: '',
+  branch_code: '', job_title: '', date_engaged: '', address: '',
+  notes: '',
 }
 
 function DriverModal({ driver, entities, onSave, onClose }) {
   const isEdit = !!driver?.id
   const api = useApi()
   const [form, setForm] = useState(() => driver ? {
-    entity_id:          driver.entity_id,
-    employee_number:    driver.employee_number || '',
-    first_name:         driver.first_name,
-    last_name:          driver.last_name,
-    driver_type:        driver.driver_type,
-    id_number:          driver.id_number || '',
-    tax_number:         driver.tax_number || '',
-    bank_name:          driver.bank_name || '',
-    bank_account_number:driver.bank_account_number || '',
-    notes:              driver.notes || '',
+    entity_id:           driver.entity_id,
+    employee_number:     driver.employee_number || '',
+    first_name:          driver.first_name,
+    last_name:           driver.last_name,
+    driver_type:         driver.driver_type,
+    id_number:           driver.id_number || '',
+    tax_number:          driver.tax_number || '',
+    bank_name:           driver.bank_name || '',
+    bank_account_number: driver.bank_account_number || '',
+    branch_code:         driver.branch_code || '',
+    job_title:           driver.job_title || '',
+    date_engaged:        driver.date_engaged ? driver.date_engaged.slice(0, 10) : '',
+    address:             driver.address || '',
+    notes:               driver.notes || '',
   } : { ...BLANK })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -165,6 +171,32 @@ function DriverModal({ driver, entities, onSave, onClose }) {
                     <label>Account Number</label>
                     <input value={form.bank_account_number} onChange={e => set('bank_account_number', e.target.value)} style={{ fontFamily: 'monospace' }} />
                   </div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Branch Code</label>
+                    <input value={form.branch_code} onChange={e => set('branch_code', e.target.value)} placeholder="e.g. 470010" style={{ fontFamily: 'monospace' }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div style={sectionLabel}>Payslip Details</div>
+              <div style={{ padding: 12, background: 'var(--bg-base)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Job Title</label>
+                    <input value={form.job_title} onChange={e => set('job_title', e.target.value)} placeholder="e.g. Code 14 Driver" />
+                  </div>
+                  <div className="form-group">
+                    <label>Date Engaged</label>
+                    <input type="date" value={form.date_engaged} onChange={e => set('date_engaged', e.target.value)} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Employee Address</label>
+                  <textarea value={form.address} onChange={e => set('address', e.target.value)} rows={3} placeholder="Street, Suburb, City, Postal Code" />
                 </div>
               </div>
             </div>
