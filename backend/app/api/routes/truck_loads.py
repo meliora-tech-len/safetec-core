@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+import logging
+
+logger = logging.getLogger("safetec.truck_loads")
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, or_
 from typing import List, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -157,9 +160,12 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     # owned by _sync_split_driver — this function never touches the split columns.
     # Loads marked driver_already_paid were paid in a prior period (projection),
     # so they must not be counted again in this pay cycle.
+    # Loads attributed to another driver on the load record (driver_id) are that
+    # driver's — they belong to _sync_casual_driver, not the truck's permanent driver.
     full_loads = db.query(func.count(TruckLoad.id)).filter(
         *base_filter, TruckLoad.is_split_load != True,
         TruckLoad.driver_already_paid != True,
+        or_(TruckLoad.driver_id.is_(None), TruckLoad.driver_id == driver.id),
     ).scalar() or 0
 
     if driver.driver_type == DriverType.permanent:
@@ -194,12 +200,76 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     return driver, cycle
 
 
-def _add_trip_log(load: TruckLoad, db: Session):
-    """Create a DriverTripLog entry for this load if a driver is assigned to the truck."""
-    driver = db.query(Driver).filter(
-        Driver.truck_id == load.truck_id,
-        Driver.is_active == True,
+def _sync_casual_driver(driver_id: int, load_date: datetime, db: Session):
+    """Re-sync a casual driver's full-load credit from the TruckLoad rows attributed
+    to them (TruckLoad.driver_id), for the affected month.
+
+    Casual pay is per-load by mine group: each load buckets into casual_group_a_loads
+    (group 'A' mines) or casual_group_b_loads (group 'B' or ungrouped mines) — these
+    are the only load fields the casual payroll path reads. No-ops for permanent
+    drivers (their loads are owned by _sync_driver_pay_cycle via the truck)."""
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver or driver.driver_type != DriverType.casual:
+        return
+
+    year, month = load_date.year, load_date.month
+    month_start = datetime(year, month, 1, tzinfo=timezone.utc)
+    month_end = (datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+                 if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc))
+
+    # Always count by driver_id — casual loads are attributed per-load.
+    load_filter = TruckLoad.driver_id == driver_id
+    logger.info("[sync_casual] driver_id=%s — filtering by driver_id", driver_id)
+
+    loads = db.query(TruckLoad).filter(
+        load_filter,
+        TruckLoad.entity_id == driver.entity_id,
+        TruckLoad.is_split_load != True,
+        TruckLoad.is_archived != True,
+        TruckLoad.driver_already_paid != True,
+        TruckLoad.load_date >= month_start,
+        TruckLoad.load_date < month_end,
+    ).all()
+    logger.info("[sync_casual] driver_id=%s %s/%s → %s loads found", driver_id, year, month, len(loads))
+
+    group_a = sum(1 for l in loads if l.mine and l.mine.casual_group == 'A')
+    group_b = len(loads) - group_a
+
+    cycle = db.query(DriverPayCycle).filter(
+        DriverPayCycle.driver_id == driver_id,
+        DriverPayCycle.pay_month == month,
+        DriverPayCycle.pay_year  == year,
     ).first()
+
+    if cycle:
+        cycle.casual_group_a_loads = group_a
+        cycle.casual_group_b_loads = group_b
+    else:
+        settings = db.query(PayrollSettings).order_by(PayrollSettings.id.desc()).first()
+        cycle = DriverPayCycle(
+            driver_id=driver_id, pay_month=month, pay_year=year,
+            payroll_settings_id=settings.id if settings else None,
+            casual_group_a_loads=group_a,
+            casual_group_b_loads=group_b,
+        )
+        db.add(cycle)
+        db.flush()
+
+
+def _add_trip_log(load: TruckLoad, db: Session):
+    """Create a DriverTripLog entry for this load.
+
+    Uses load.driver_id (the driver who actually drove) when set; falls back to the
+    active driver assigned to the truck. This ensures casual drivers attributed on the
+    load record get the trip, not the truck's permanent driver.
+    """
+    if load.driver_id:
+        driver = db.query(Driver).filter(Driver.id == load.driver_id).first()
+    else:
+        driver = db.query(Driver).filter(
+            Driver.truck_id == load.truck_id,
+            Driver.is_active == True,
+        ).first()
     if not driver:
         return
 
@@ -491,8 +561,11 @@ def create_truck_load(
     db.add(load)
     db.flush()
 
-    # Regular single load: credit the truck's driver. Splits go through POST /split.
+    # Regular single load: credit the truck's permanent driver, plus the casual
+    # driver named on the load record (if any). Splits go through POST /split.
     _sync_driver_pay_cycle(load.truck_id, load.load_date, db)
+    if load.driver_id:
+        _sync_casual_driver(load.driver_id, load.load_date, db)
     db.flush()
 
     # Add trip log entry (pay cycle now exists)
@@ -573,6 +646,17 @@ def bulk_create_truck_loads(
             _sync_driver_pay_cycle(load.truck_id, load.load_date, db)
             db.flush()
             seen.add(key)
+
+    # Sync each casual driver named on a load once per affected month
+    seen_casual = set()
+    for load in created:
+        if not load.driver_id:
+            continue
+        key = (load.driver_id, load.load_date.year, load.load_date.month)
+        if key not in seen_casual:
+            _sync_casual_driver(load.driver_id, load.load_date, db)
+            db.flush()
+            seen_casual.add(key)
 
     for load in created:
         _add_trip_log(load, db)
@@ -669,6 +753,7 @@ def update_truck_load(
     old_truck_id   = load.truck_id
     old_load_date  = load.load_date
     old_is_split   = load.is_split_load
+    old_driver_id  = load.driver_id
 
     updated_fields = payload.model_dump(exclude_none=True)
     for field, value in updated_fields.items():
@@ -695,6 +780,7 @@ def update_truck_load(
     new_truck_id  = load.truck_id
     new_load_date = load.load_date
     new_is_split  = load.is_split_load
+    new_driver_id = load.driver_id
 
     # Sync pay cycles for affected drivers/trucks
     dates_to_sync = {old_load_date, new_load_date}
@@ -704,10 +790,16 @@ def update_truck_load(
             for ld in dates_to_sync:
                 _sync_split_driver(did, ld, db)
     else:
-        # Regular load: sync by truck
+        # Regular load: sync by truck (permanent driver) ...
         for truck_id in {old_truck_id, new_truck_id}:
             for ld in dates_to_sync:
                 _sync_driver_pay_cycle(truck_id, ld, db)
+        # ... and re-sync the casual driver named on the load (old + new, in case
+        # the attribution or date changed) so both sides reflect the move.
+        for did in {old_driver_id, new_driver_id}:
+            if did:
+                for ld in dates_to_sync:
+                    _sync_casual_driver(did, ld, db)
 
     # Keep linked trip log entries aligned with the (possibly new) load date
     trip_entries = db.query(DriverTripLog).filter(
@@ -769,6 +861,7 @@ def delete_truck_load(
     truck_id   = load.truck_id
     load_date  = load.load_date
     is_split   = load.is_split_load
+    driver_id  = load.driver_id
     split_driver_ids = [s.driver_id for s in load.driver_splits if s.driver_id] if is_split else []
 
     _remove_trip_log(load_id, db)
@@ -786,6 +879,8 @@ def delete_truck_load(
             _sync_split_driver(did, load_date, db)
     else:
         _sync_driver_pay_cycle(truck_id, load_date, db)
+        if driver_id:
+            _sync_casual_driver(driver_id, load_date, db)
 
     db.commit()
     return {"detail": "Truck load deleted"}
