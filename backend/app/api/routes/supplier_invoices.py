@@ -1,4 +1,5 @@
 import calendar
+import re
 from datetime import datetime, timezone, date as date_type
 from decimal import Decimal
 from collections import defaultdict
@@ -14,13 +15,41 @@ from app.schemas.schemas import (
     SupplierInvoiceLineItemCreate, SupplierInvoiceLineItemOut,
     SupplierStatementGroup, SupplierPayablesDashboard,
     SupplierCurrentPayable, Supplier30DaysPayable,
-    BulkImportPayload, BulkImportResult,
+    BulkImportPayload, BulkImportResult, BulkImportFailure,
 )
 from app.services.audit import log_action
 from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
 from app.services.diesel_service import DieselCalculationService
 
 router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
+
+
+def _parse_import_date(raw: Optional[str]) -> Optional[date_type]:
+    """Parse a date from an import cell, cutting any time component.
+
+    Accepts ISO ("2025-05-28" or "2025-05-28T00:00:00.000Z") and DD/MM/YYYY.
+    Returns None when the value is blank or unrecognisable so the caller can
+    report the record as failed instead of aborting the whole batch.
+    """
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    # ISO date or datetime — keep just the leading date portion.
+    try:
+        return date_type.fromisoformat(s[:10])
+    except (ValueError, TypeError):
+        pass
+    # DD/MM/YYYY or D/M/YYYY
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$", s)
+    if m:
+        d, mth, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        try:
+            return date_type(y, mth, d)
+        except ValueError:
+            return None
+    return None
 
 
 def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, slip_number: str) -> None:
@@ -753,6 +782,7 @@ def bulk_import_invoices(
 
     created, skipped, skipped_numbers = 0, 0, []
     fillups_created, fillups_skipped = 0, 0
+    failed: List[BulkImportFailure] = []
 
     for item in payload.invoices:
         num = (item.invoice_number or '').strip()
@@ -761,7 +791,16 @@ def bulk_import_invoices(
             skipped_numbers.append(num)
             continue
 
-        inv_date = item.invoice_date
+        inv_date = _parse_import_date(item.invoice_date)
+        if inv_date is None:
+            failed.append(BulkImportFailure(
+                invoice_number=num or None,
+                invoice_date=item.invoice_date,
+                amount=item.amount,
+                line_count=len(item.line_items),
+                reason="Invalid or missing invoice date",
+            ))
+            continue
         if supplier.payment_term == PaymentTermType.days_30:
             stmt_month, stmt_year = inv_date.month, inv_date.year
         else:
@@ -880,10 +919,12 @@ def bulk_import_invoices(
         resource_type="supplier_invoice",
         description=(
             f"Bulk imported {created} invoices, {fillups_created} fill-ups for {supplier.name}"
+            + (f" ({len(failed)} failed)" if failed else "")
         ),
     )
     db.commit()
     return BulkImportResult(
         created=created, skipped=skipped, skipped_numbers=skipped_numbers,
         fillups_created=fillups_created, fillups_skipped=fillups_skipped,
+        failed=failed,
     )
