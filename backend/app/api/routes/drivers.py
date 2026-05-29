@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
 import calendar
+import logging
+
+logger = logging.getLogger("safetec.drivers")
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.responses import Response
@@ -52,15 +55,30 @@ def _current_month_bounds():
 
 
 def _build_summary(driver: Driver, month_start: date, db: Session, payment_map: dict) -> dict:
-    if driver.truck_id:
-        start_dt = datetime(month_start.year, month_start.month, 1, tzinfo=timezone.utc)
-        if month_start.month == 12:
-            end_dt = datetime(month_start.year + 1, 1, 1, tzinfo=timezone.utc)
-        else:
-            end_dt = datetime(month_start.year, month_start.month + 1, 1, tzinfo=timezone.utc)
+    start_dt = datetime(month_start.year, month_start.month, 1, tzinfo=timezone.utc)
+    end_dt = (datetime(month_start.year + 1, 1, 1, tzinfo=timezone.utc)
+              if month_start.month == 12
+              else datetime(month_start.year, month_start.month + 1, 1, tzinfo=timezone.utc))
+
+    if driver.driver_type == DriverType.casual:
+        # Casual: count only loads attributed to this driver, not all truck loads
+        load_count = db.query(func.count(TruckLoad.id)).filter(
+            TruckLoad.driver_id == driver.id,
+            TruckLoad.entity_id == driver.entity_id,
+            TruckLoad.is_archived != True,
+            TruckLoad.is_split_load != True,
+            TruckLoad.driver_already_paid != True,
+            TruckLoad.load_date >= start_dt,
+            TruckLoad.load_date < end_dt,
+        ).scalar() or 0
+    elif driver.truck_id:
         load_count = db.query(func.count(TruckLoad.id)).filter(
             TruckLoad.truck_id == driver.truck_id,
             TruckLoad.entity_id == driver.entity_id,
+            TruckLoad.is_archived != True,
+            TruckLoad.is_split_load != True,
+            TruckLoad.driver_already_paid != True,
+            or_(TruckLoad.driver_id.is_(None), TruckLoad.driver_id == driver.id),
             TruckLoad.load_date >= start_dt,
             TruckLoad.load_date < end_dt,
         ).scalar() or 0
@@ -118,40 +136,72 @@ def _cycle_with_calc(
 
 def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session) -> dict:
     """
-    Query TruckLoad for the driver's assigned truck in the given month/year.
-    Returns lohatla_base_loads and lohatla_extra_loads derived from the load count.
-    All loads are treated as Lohatla (the only mine group used for payroll).
+    Derive a pay cycle's load counts from TruckLoad rows for the given month/year.
+
+    Permanent drivers: count loads on their assigned truck (7-load floor, rest extra).
+    Casual drivers: count loads attributed to them on the load record (TruckLoad.driver_id),
+    bucketed by mine group into casual_group_a/b_loads — the fields the casual payroll
+    path reads. (Casuals have no truck_id; they're named per-load instead.)
     """
-    if not driver.truck_id:
-        return {"lohatla_base_loads": 0, "lohatla_extra_loads": 0, "prefill_count": 0}
+    empty = {
+        "lohatla_base_loads":   0,
+        "lohatla_extra_loads":  0,
+        "casual_group_a_loads": 0,
+        "casual_group_b_loads": 0,
+        "prefill_count":        0,
+    }
 
     first_day = datetime(year, month, 1, tzinfo=timezone.utc)
     last_day_num = calendar.monthrange(year, month)[1]
     last_day = datetime(year, month, last_day_num, 23, 59, 59, tzinfo=timezone.utc)
 
-    load_count = db.query(TruckLoad).filter(
+    if driver.driver_type == DriverType.casual:
+        # Always count by driver_id — casual loads are attributed per-load, not by truck.
+        # Brian shares JPL694EC with Kabelo; only loads with driver_id=Brian's id are his.
+        logger.info("[prefill] casual driver_id=%s truck_id=%s — filtering by driver_id", driver.id, driver.truck_id)
+        load_filter = TruckLoad.driver_id == driver.id
+        loads = db.query(TruckLoad).filter(
+            load_filter,
+            TruckLoad.entity_id == driver.entity_id,
+            TruckLoad.is_split_load != True,
+            TruckLoad.is_archived != True,
+            TruckLoad.driver_already_paid != True,
+            TruckLoad.load_date >= first_day,
+            TruckLoad.load_date <= last_day,
+        ).all()
+        group_a = sum(1 for l in loads if l.mine and l.mine.casual_group == 'A')
+        group_b = len(loads) - group_a
+        logger.info("[prefill] casual driver_id=%s year=%s month=%s → total=%s group_a=%s group_b=%s",
+                    driver.id, year, month, len(loads), group_a, group_b)
+        return {
+            **empty,
+            "casual_group_a_loads": group_a,
+            "casual_group_b_loads": group_b,
+            "prefill_count":        len(loads),
+        }
+
+    # Permanent: 7-load floor, rest are extra
+    if not driver.truck_id:
+        return empty
+
+    load_count = db.query(func.count(TruckLoad.id)).filter(
         TruckLoad.truck_id == driver.truck_id,
         TruckLoad.entity_id == driver.entity_id,
+        TruckLoad.is_archived != True,
+        TruckLoad.is_split_load != True,
+        TruckLoad.driver_already_paid != True,
+        or_(TruckLoad.driver_id.is_(None), TruckLoad.driver_id == driver.id),
         TruckLoad.load_date >= first_day,
         TruckLoad.load_date <= last_day,
-    ).count()
-
-    if driver.driver_type == DriverType.casual:
-        # Casual: all loads in the base bucket; extra bucket unused
-        return {
-            "lohatla_base_loads":  load_count,
-            "lohatla_extra_loads": 0,
-            "prefill_count":       load_count,
-        }
-    else:
-        # Permanent: 7-load floor, rest are extra
-        base  = min(7, load_count)
-        extra = max(0, load_count - 7)
-        return {
-            "lohatla_base_loads":  base,
-            "lohatla_extra_loads": extra,
-            "prefill_count":       load_count,
-        }
+    ).scalar() or 0
+    base  = min(7, load_count)
+    extra = max(0, load_count - 7)
+    return {
+        **empty,
+        "lohatla_base_loads":  base,
+        "lohatla_extra_loads": extra,
+        "prefill_count":       load_count,
+    }
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -466,9 +516,12 @@ def get_or_create_cycle(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    logger.info("[get_or_create_cycle] HIT driver_id=%s year=%s month=%s", driver_id, year, month)
     driver = db.query(Driver).filter(Driver.id == driver_id).first()
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
+    logger.info("[get_or_create_cycle] driver=%s %s type=%s truck_id=%s",
+                driver_id, f"{driver.first_name} {driver.last_name}", driver.driver_type, driver.truck_id)
     _check_access(driver.entity_id, current_user)
 
     cycle = db.query(DriverPayCycle).filter(
@@ -488,11 +541,24 @@ def get_or_create_cycle(
             payroll_settings_id=settings.id,
             lohatla_base_loads=prefill["lohatla_base_loads"],
             lohatla_extra_loads=prefill["lohatla_extra_loads"],
+            casual_group_a_loads=prefill["casual_group_a_loads"],
+            casual_group_b_loads=prefill["casual_group_b_loads"],
         )
         db.add(cycle)
         db.commit()
         db.refresh(cycle)
         was_prefilled = prefill["prefill_count"] > 0
+    elif driver.driver_type == DriverType.casual:
+        # Always resync casual load counts from truck data — the cycle may have
+        # been created before loads were entered, or before this sync logic existed.
+        logger.info("[cycle-open] existing casual cycle found — resyncing driver_id=%s %s/%s", driver_id, year, month)
+        prefill = _prefill_from_truckloads(driver, year, month, db)
+        cycle.casual_group_a_loads = prefill["casual_group_a_loads"]
+        cycle.casual_group_b_loads = prefill["casual_group_b_loads"]
+        logger.info("[cycle-open] resync done driver_id=%s → group_a=%s group_b=%s",
+                    driver_id, cycle.casual_group_a_loads, cycle.casual_group_b_loads)
+        db.commit()
+        db.refresh(cycle)
 
     return _cycle_with_calc(cycle, driver, db, was_prefilled=was_prefilled)
 
