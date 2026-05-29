@@ -1573,6 +1573,63 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
   const lineTotal = (form.line_items || []).reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
+  const [splitMode, setSplitMode] = useState(false)
+  const [splitDesc, setSplitDesc] = useState('')
+  const [splitTotalExcl, setSplitTotalExcl] = useState('')
+  const [splitSelected, setSplitSelected] = useState([]) // truck IDs
+  const [splitSearch, setSplitSearch] = useState('')
+
+  const currentMode = splitMode ? 'split' : form.is_multi_line ? 'multi' : 'single'
+  const vatMult = form.vat_applicable !== false ? 1.15 : 1
+
+  const setMode = (v) => {
+    setSplitMode(v === 'split')
+    setSplitDesc(''); setSplitTotalExcl(''); setSplitSelected([]); setSplitSearch('')
+    setForm(f => ({ ...f, is_multi_line: v !== 'single', line_items: [] }))
+  }
+
+  // Recompute split line items and sync to form whenever desc/total/selection changes
+  const applySplit = (desc, total, selected) => {
+    const n = selected.length
+    const totalNum = parseFloat(total) || 0
+    const excl = n > 0 && totalNum > 0 ? Math.round(totalNum / n * 100) / 100 : 0
+    const incl = Math.round(excl * vatMult * 100) / 100
+    setForm(f => ({
+      ...f,
+      line_items: trucks
+        .filter(t => selected.includes(t.id))
+        .map((t, i) => ({
+          _key: t.id,
+          item_code: '',
+          item_description: desc,
+          unit: t.registration,
+          quantity: 1,
+          _rate: excl ? String(excl) : '',
+          amount_excl_vat: excl || '',
+          amount_incl_vat: incl || '',
+          sort_order: i,
+        })),
+    }))
+  }
+
+  const setSplitDescVal = (v) => { setSplitDesc(v); applySplit(v, splitTotalExcl, splitSelected) }
+  const setSplitTotalVal = (v) => { setSplitTotalExcl(v); applySplit(splitDesc, v, splitSelected) }
+  const toggleSplitTruck = (id) => {
+    const next = splitSelected.includes(id)
+      ? splitSelected.filter(x => x !== id)
+      : [...splitSelected, id]
+    setSplitSelected(next)
+    applySplit(splitDesc, splitTotalExcl, next)
+  }
+
+  const splitN = splitSelected.length
+  const splitTotal = parseFloat(splitTotalExcl) || 0
+  const perTruckExcl = splitN > 0 && splitTotal > 0 ? Math.round(splitTotal / splitN * 100) / 100 : 0
+  const perTruckIncl = Math.round(perTruckExcl * vatMult * 100) / 100
+
+  const filteredSplitTrucks = splitSearch
+    ? trucks.filter(t => t.registration?.toLowerCase().includes(splitSearch.toLowerCase()) || t.fleet_number?.toLowerCase().includes(splitSearch.toLowerCase()))
+    : trucks
 
   return (
     <div style={{
@@ -1595,17 +1652,17 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
-            {['single', 'multi'].map(v => (
+            {(isDiesel ? ['single', 'multi'] : ['single', 'multi', 'split']).map((v, i, arr) => (
               <button key={v}
-                onClick={() => setForm(f => ({ ...f, is_multi_line: v === 'multi', line_items: [] }))}
+                onClick={() => setMode(v)}
                 style={{
                   padding: '5px 12px', border: 'none',
-                  borderRight: v === 'single' ? '1px solid var(--border)' : 'none',
-                  background: (form.is_multi_line ? v === 'multi' : v === 'single') ? 'var(--accent)' : 'var(--bg-card)',
-                  color: (form.is_multi_line ? v === 'multi' : v === 'single') ? '#fff' : 'var(--text)',
+                  borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
+                  background: currentMode === v ? 'var(--accent)' : 'var(--bg-card)',
+                  color: currentMode === v ? '#fff' : 'var(--text)',
                   fontWeight: 600, fontSize: 11, cursor: 'pointer',
                 }}>
-                {v === 'single' ? 'Single' : 'Multi-line'}
+                {v === 'single' ? 'Single' : v === 'multi' ? 'Multi-line' : 'Split'}
               </button>
             ))}
           </div>
@@ -1652,7 +1709,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
             style={CS.input} />
         </div>
 
-        {showVehicleReg && !isDiesel && (
+        {showVehicleReg && !isDiesel && !splitMode && (
           <div style={CS.field(170)}>
             <label style={CS.label}>Vehicle Reg</label>
             <SearchableSelect
@@ -1667,7 +1724,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
           </div>
         )}
 
-        {!isDiesel && (
+        {!isDiesel && !splitMode && (
           <div style={CS.field(110)}>
             <label style={CS.label}>Litres</label>
             <input type="number" step="0.001" min="0" placeholder="0.000"
@@ -1678,7 +1735,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
           </div>
         )}
 
-        {!isDiesel && (
+        {!isDiesel && !splitMode && (
           <div style={CS.field(130)}>
             <label style={CS.label}>
               Rate/L
@@ -1765,23 +1822,137 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
 
       {form.is_multi_line && (
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-          {isDiesel
-            ? <DieselLineItemsEditor
-                items={form.line_items || []}
-                onChange={items => setForm(f => ({ ...f, line_items: items }))}
-                vatApplicable={form.vat_applicable !== false}
-                subbies={subbies}
-                trucks={trucks}
-                fillups={fillups}
-              />
-            : <LineItemsEditor
-                items={form.line_items || []}
-                onChange={items => setForm(f => ({ ...f, line_items: items }))}
-                vatApplicable={form.vat_applicable !== false}
-                showReg={showReg}
-                trucks={trucks}
-              />
-          }
+          {splitMode ? (
+            /* ── Split mode: description + total + truck multi-select ── */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Description + Total */}
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ ...CS.field(), flex: '2 1 200px' }}>
+                  <label style={CS.label}>Description</label>
+                  <input value={splitDesc} onChange={e => setSplitDescVal(e.target.value)}
+                    placeholder="e.g. Trailer Maintenance"
+                    style={CS.input} />
+                </div>
+                <div style={{ ...CS.field(160), flex: '1 1 160px' }}>
+                  <label style={CS.label}>Total excl. VAT (R)</label>
+                  <input type="number" min="0" step="0.01"
+                    value={splitTotalExcl} onChange={e => setSplitTotalVal(e.target.value)}
+                    placeholder="0.00" style={CS.input} />
+                </div>
+              </div>
+
+              {/* Truck picker */}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <label style={CS.label}>
+                    Trucks
+                    {splitN > 0 && (
+                      <span style={{ marginLeft: 6, background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>
+                        {splitN}
+                      </span>
+                    )}
+                  </label>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" className="btn btn-ghost btn-sm"
+                      style={{ fontSize: 11, padding: '2px 10px' }}
+                      onClick={() => { const all = trucks.map(t => t.id); setSplitSelected(all); applySplit(splitDesc, splitTotalExcl, all) }}>
+                      Select all
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm"
+                      style={{ fontSize: 11, padding: '2px 10px' }}
+                      onClick={() => { setSplitSelected([]); applySplit(splitDesc, splitTotalExcl, []) }}>
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <input value={splitSearch} onChange={e => setSplitSearch(e.target.value)}
+                  placeholder="Search registration or fleet number…"
+                  style={{ ...CS.input, marginBottom: 6 }} />
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                  {/* Column header */}
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '32px 100px 70px 1fr',
+                    padding: '5px 10px', borderBottom: '1px solid var(--border)',
+                    background: 'var(--bg-secondary)',
+                    fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5,
+                  }}>
+                    <span />
+                    <span>Reg</span>
+                    <span>Fleet #</span>
+                    <span>Model</span>
+                  </div>
+                  <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                    {filteredSplitTrucks.length === 0
+                      ? <div style={{ padding: '12px 14px', fontSize: 13, color: 'var(--text-muted)' }}>No trucks found</div>
+                      : filteredSplitTrucks.map(t => {
+                          const isSelected = splitSelected.includes(t.id)
+                          return (
+                            <label key={t.id} style={{
+                              display: 'grid', gridTemplateColumns: '32px 100px 70px 1fr',
+                              alignItems: 'center', padding: '7px 10px', cursor: 'pointer',
+                              borderBottom: '1px solid var(--border)',
+                              background: isSelected ? 'rgba(59,130,246,0.07)' : 'transparent',
+                              borderLeft: isSelected ? '3px solid var(--accent)' : '3px solid transparent',
+                              transition: 'background 0.1s',
+                            }}>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSplitTruck(t.id)}
+                                style={{ width: 14, height: 14, cursor: 'pointer', margin: 0, accentColor: 'var(--accent)' }}
+                              />
+                              <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>
+                                {t.registration}
+                              </span>
+                              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                {t.fleet_number || '—'}
+                              </span>
+                              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                {t.model || ''}
+                              </span>
+                            </label>
+                          )
+                        })
+                    }
+                  </div>
+                </div>
+              </div>
+
+              {/* Per-truck summary */}
+              {splitN > 0 && splitTotal > 0 && (
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 14px', fontSize: 12, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    Per truck excl. VAT: <strong style={{ color: 'var(--text-primary)' }}>R {perTruckExcl.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
+                  </span>
+                  {form.vat_applicable !== false && (
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Incl. VAT: <strong style={{ color: 'var(--text-primary)' }}>R {perTruckIncl.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
+                    </span>
+                  )}
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    Total: <strong style={{ color: 'var(--accent)' }}>R {(perTruckIncl * splitN).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : isDiesel ? (
+            <DieselLineItemsEditor
+              items={form.line_items || []}
+              onChange={items => setForm(f => ({ ...f, line_items: items }))}
+              vatApplicable={form.vat_applicable !== false}
+              subbies={subbies}
+              trucks={trucks}
+              fillups={fillups}
+            />
+          ) : (
+            <LineItemsEditor
+              items={form.line_items || []}
+              onChange={items => setForm(f => ({ ...f, line_items: items }))}
+              vatApplicable={form.vat_applicable !== false}
+              showReg={showReg || (form.line_items || []).some(li => li.unit)}
+              trucks={trucks}
+            />
+          )}
         </div>
       )}
     </div>
