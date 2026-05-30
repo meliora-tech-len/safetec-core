@@ -7,7 +7,7 @@ import {
   verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
   addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
   getSubcontractors, getDieselFillUps,
-  finalizeSupplierInvoice, bulkImportSupplierInvoices,
+  finalizeSupplierInvoice, bulkImportSupplierInvoices, resolveSupplierDieselConflicts,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
@@ -139,6 +139,93 @@ function invLineStatus(li, trucks, entityId) {
   return found ? 'ok' : 'no_truck'
 }
 
+function DieselConflictStep({ conflicts, onDone }) {
+  const [choices, setChoices] = useState(() =>
+    Object.fromEntries(conflicts.map(c => [c.fillup_id, 'existing']))
+  )
+  const [resolving, setResolving] = useState(false)
+
+  const fmt = (v) => v != null ? parseFloat(v).toLocaleString('en-ZA', { minimumFractionDigits: 2 }) : '—'
+  const fmtDate = (d) => d ? String(d).slice(0, 10).split('-').reverse().join('-') : '—'
+
+  async function handleResolve() {
+    setResolving(true)
+    try {
+      const resolutions = conflicts.map(c => ({
+        fillup_id:        c.fillup_id,
+        invoice_id:       c.invoice_id,
+        use_import_values: choices[c.fillup_id] === 'import',
+        litres:            choices[c.fillup_id] === 'import' ? c.incoming.litres : undefined,
+        rate_per_litre:    choices[c.fillup_id] === 'import' ? c.incoming.rate_per_litre : undefined,
+        fillup_date:       choices[c.fillup_id] === 'import' ? c.incoming.fillup_date : undefined,
+      }))
+      await resolveSupplierDieselConflicts(resolutions)
+      toast.success(`${conflicts.length} conflict${conflicts.length !== 1 ? 's' : ''} resolved`)
+      onDone()
+    } catch (e) {
+      toast.error('Failed to resolve conflicts')
+      setResolving(false)
+    }
+  }
+
+  return (
+    <>
+      <p style={{ margin:'0 0 12px', fontSize:13, color:'var(--text-muted)' }}>
+        {conflicts.length} diesel record{conflicts.length !== 1 ? 's' : ''} already exist with different values.
+        Choose which values to keep for each slip:
+      </p>
+      <div style={{ maxHeight:420, overflowY:'auto', marginBottom:16 }}>
+        {conflicts.map(c => {
+          const choice = choices[c.fillup_id]
+          return (
+            <div key={c.fillup_id} style={{ marginBottom:12, border:'1px solid var(--border)', borderRadius:6, overflow:'hidden' }}>
+              <div style={{ padding:'6px 12px', background:'var(--bg-surface)', fontWeight:700, fontSize:12, display:'flex', justifyContent:'space-between' }}>
+                <span>Slip # {c.slip_number}</span>
+                {c.invoice_number && <span style={{ color:'var(--text-muted)', fontWeight:400 }}>Invoice {c.invoice_number}</span>}
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:0 }}>
+                {[
+                  { key: 'existing', label: 'Existing record', side: c.existing },
+                  { key: 'import',   label: 'From import',     side: c.incoming },
+                ].map(({ key, label, side }) => (
+                  <label key={key} style={{
+                    padding:'10px 12px', cursor:'pointer',
+                    background: choice === key ? 'rgba(59,130,246,0.07)' : 'var(--bg-card)',
+                    borderLeft: choice === key ? '3px solid var(--accent)' : '3px solid transparent',
+                    borderTop: '1px solid var(--border)',
+                    borderRight: key === 'existing' ? '1px solid var(--border)' : 'none',
+                  }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                      <input type="radio" name={`conflict-${c.fillup_id}`} value={key}
+                        checked={choice === key}
+                        onChange={() => setChoices(p => ({ ...p, [c.fillup_id]: key }))}
+                        style={{ accentColor:'var(--accent)' }} />
+                      <span style={{ fontWeight:600, fontSize:12 }}>{label}</span>
+                    </div>
+                    <div style={{ fontSize:12, color:'var(--text-muted)', lineHeight:1.7, paddingLeft:20 }}>
+                      <div>Truck: <strong style={{ color:'var(--text-primary)', fontFamily:'monospace' }}>{side.truck_registration || '—'}</strong></div>
+                      <div>Date: <strong style={{ color:'var(--text-primary)' }}>{fmtDate(side.fillup_date)}</strong></div>
+                      <div>Litres: <strong style={{ color:'var(--text-primary)' }}>{fmt(side.litres)} L</strong></div>
+                      <div>Rate/L: <strong style={{ color:'var(--text-primary)' }}>R {fmt(side.rate_per_litre)}</strong></div>
+                      <div>Amount: <strong style={{ color:'var(--text-primary)' }}>R {fmt(side.amount)}</strong></div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
+        <button className="btn-ghost" onClick={onDone}>Skip</button>
+        <button className="btn-primary" onClick={handleResolve} disabled={resolving}>
+          {resolving ? 'Saving…' : 'Save choices'}
+        </button>
+      </div>
+    </>
+  )
+}
+
 function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImported }) {
   const [step, setStep]           = useState('idle')
   const [workbook, setWorkbook]   = useState(null)
@@ -148,6 +235,7 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
   const [selectedNums, setSelectedNums] = useState(new Set())
   const [expanded, setExpanded]   = useState({})
   const [importing, setImporting] = useState(false)
+  const [conflicts, setConflicts] = useState([])
   const fileRef = useRef(null)
 
   const selectedEntity  = entities?.find(e => e.id === parseInt(entityId))
@@ -197,14 +285,21 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
         entity_id:   parseInt(entityId),
         invoices:    invoices.filter(inv => selectedNums.has(inv.invoice_number)),
       })
-      const { created, skipped } = r.data
-      if (created > 0) {
-        toast.success(`${created} invoice${created !== 1 ? 's' : ''} imported${skipped > 0 ? `, ${skipped} skipped (already exist)` : ''}`)
-      } else {
-        toast(`All ${skipped} invoices already exist — nothing imported`)
-      }
+      const { created, skipped, diesel_created, diesel_linked, conflicts: cfts } = r.data
+      const parts = []
+      if (created > 0) parts.push(`${created} invoice${created !== 1 ? 's' : ''} imported`)
+      if (skipped > 0)  parts.push(`${skipped} skipped`)
+      if (diesel_created > 0) parts.push(`${diesel_created} diesel record${diesel_created !== 1 ? 's' : ''} created`)
+      if (diesel_linked > 0)  parts.push(`${diesel_linked} linked`)
+      if (parts.length) toast.success(parts.join(', '))
+      else toast('All invoices already exist — nothing imported')
       onImported()
-      onClose()
+      if (cfts?.length > 0) {
+        setConflicts(cfts)
+        setStep('conflicts')
+      } else {
+        onClose()
+      }
     } catch (e) {
       const msg = errorMessage(e)
       toast.error(typeof msg === 'string' ? msg : JSON.stringify(msg))
@@ -371,6 +466,13 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
           </>
         )
         })()}
+
+        {step === 'conflicts' && (
+          <DieselConflictStep
+            conflicts={conflicts}
+            onDone={onClose}
+          />
+        )}
       </div>
     </div>
   )

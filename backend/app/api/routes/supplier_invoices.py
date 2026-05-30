@@ -15,6 +15,7 @@ from app.schemas.schemas import (
     SupplierStatementGroup, SupplierPayablesDashboard,
     SupplierCurrentPayable, Supplier30DaysPayable,
     BulkImportPayload, BulkImportResult,
+    DieselConflict, DieselConflictSide, DieselConflictResolution,
 )
 from app.services.audit import log_action
 from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
@@ -752,6 +753,13 @@ def bulk_import_invoices(
     }
 
     created, skipped, skipped_numbers = 0, 0, []
+    diesel_created, diesel_linked = 0, 0
+    conflicts: List[DieselConflict] = []
+
+    # Load diesel settings once per entity for fill-up creation
+    diesel_settings = DieselCalculationService.get_diesel_settings(db, payload.entity_id)
+    admin_fee_pct = Decimal(str(diesel_settings.admin_fee_pct)) if diesel_settings else Decimal("0")
+    apply_admin_fee = diesel_settings.apply_admin_fee if diesel_settings else False
 
     for item in payload.invoices:
         num = (item.invoice_number or '').strip()
@@ -791,6 +799,7 @@ def bulk_import_invoices(
                     slip_date_obj = date_type.fromisoformat(li.slip_date[:10])
                 except (ValueError, TypeError):
                     pass
+
             db.add(SupplierInvoiceLineItem(
                 invoice_id=inv.id,
                 item_code=li.item_code,
@@ -802,6 +811,85 @@ def bulk_import_invoices(
                 sort_order=li.sort_order,
                 line_date=slip_date_obj,
             ))
+
+            # ── Diesel fill-up sync ──────────────────────────────────────────
+            slip = (li.item_code or '').strip()
+            if not slip or not li.unit or not li.quantity or li.quantity <= 0:
+                continue
+            if not li.amount_excl_vat or li.amount_excl_vat <= 0:
+                continue
+
+            litres_d = Decimal(str(li.quantity))
+            excl_d   = Decimal(str(li.amount_excl_vat))
+            rate_d   = (excl_d / litres_d).quantize(Decimal("0.0001"))
+            fillup_date = slip_date_obj or inv_date
+
+            existing_fillup = db.query(DieselFillUp).filter(
+                DieselFillUp.slip_number == slip,
+                DieselFillUp.entity_id == payload.entity_id,
+            ).first()
+
+            if existing_fillup:
+                if abs(float(existing_fillup.litres or 0) - float(litres_d)) > 0.01:
+                    # Values differ — flag as a conflict for user to resolve
+                    truck_reg = existing_fillup.truck.registration if existing_fillup.truck else None
+                    conflicts.append(DieselConflict(
+                        slip_number=slip,
+                        fillup_id=existing_fillup.id,
+                        invoice_id=inv.id,
+                        invoice_number=num or None,
+                        existing=DieselConflictSide(
+                            litres=Decimal(str(existing_fillup.litres)),
+                            rate_per_litre=Decimal(str(existing_fillup.rate_per_litre)),
+                            amount=Decimal(str(existing_fillup.amount)),
+                            fillup_date=existing_fillup.fillup_date,
+                            truck_registration=truck_reg,
+                        ),
+                        incoming=DieselConflictSide(
+                            litres=litres_d,
+                            rate_per_litre=rate_d,
+                            amount=excl_d,
+                            fillup_date=fillup_date,
+                            truck_registration=(li.unit or '').strip().upper(),
+                        ),
+                    ))
+                else:
+                    # Same litres — just stamp the invoice number
+                    existing_fillup.invoice_number = num or None
+                    existing_fillup.supplier_invoice_id = inv.id
+                    diesel_linked += 1
+                continue
+
+            # No existing record — create a new fill-up
+            truck = db.query(Truck).filter(
+                Truck.registration.ilike(li.unit.strip()),
+                Truck.entity_id == payload.entity_id,
+            ).first()
+            if not truck:
+                continue
+
+            amounts = DieselCalculationService.calculate_fillup_amounts(
+                litres=litres_d,
+                rate_per_litre=rate_d,
+                admin_fee_pct=admin_fee_pct,
+                apply_admin_fee=apply_admin_fee,
+            )
+            db.add(DieselFillUp(
+                entity_id=payload.entity_id,
+                truck_id=truck.id,
+                supplier_id=payload.supplier_id,
+                fillup_date=fillup_date,
+                litres=litres_d,
+                rate_per_litre=rate_d,
+                invoice_number=num or None,
+                slip_number=slip,
+                supplier_invoice_id=inv.id,
+                admin_fee_pct=admin_fee_pct,
+                created_by=current_user.id,
+                **amounts,
+            ))
+            diesel_created += 1
+
         db.flush()
         _recalc_invoice_total(db, inv)
         existing_numbers.add(num)
@@ -811,7 +899,59 @@ def bulk_import_invoices(
         db, "supplier_invoice.bulk_imported",
         user_id=current_user.id, entity_id=payload.entity_id,
         resource_type="supplier_invoice",
-        description=f"Bulk imported {created} invoices for {supplier.name}",
+        description=(
+            f"Bulk imported {created} invoices for {supplier.name}; "
+            f"{diesel_created} diesel records created, {diesel_linked} linked"
+        ),
     )
     db.commit()
-    return BulkImportResult(created=created, skipped=skipped, skipped_numbers=skipped_numbers)
+    return BulkImportResult(
+        created=created, skipped=skipped, skipped_numbers=skipped_numbers,
+        diesel_created=diesel_created, diesel_linked=diesel_linked,
+        conflicts=conflicts,
+    )
+
+
+# ── Diesel conflict resolution ────────────────────────────────────────────────
+
+@router.post("/resolve-diesel-conflicts")
+def resolve_diesel_conflicts(
+    resolutions: List[DieselConflictResolution],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    resolved = 0
+    for res in resolutions:
+        fillup = db.query(DieselFillUp).filter_by(id=res.fillup_id).first()
+        invoice = db.query(SupplierInvoice).filter_by(id=res.invoice_id).first()
+        if not fillup or not invoice:
+            continue
+        _check_entity_access(fillup.entity_id, current_user)
+
+        fillup.invoice_number = invoice.invoice_number
+        fillup.supplier_invoice_id = invoice.id
+
+        if res.use_import_values and res.litres and res.rate_per_litre:
+            litres_d = Decimal(str(res.litres))
+            rate_d   = Decimal(str(res.rate_per_litre))
+            settings = DieselCalculationService.get_diesel_settings(db, fillup.entity_id)
+            admin_fee_pct  = Decimal(str(settings.admin_fee_pct)) if settings else Decimal("0")
+            apply_admin_fee = settings.apply_admin_fee if settings else False
+            amounts = DieselCalculationService.calculate_fillup_amounts(
+                litres=litres_d,
+                rate_per_litre=rate_d,
+                admin_fee_pct=admin_fee_pct,
+                apply_admin_fee=apply_admin_fee,
+            )
+            fillup.litres = litres_d
+            fillup.rate_per_litre = rate_d
+            if res.fillup_date:
+                fillup.fillup_date = res.fillup_date
+            for k, v in amounts.items():
+                setattr(fillup, k, v)
+
+        resolved += 1
+
+    db.commit()
+    return {"resolved": resolved}
+

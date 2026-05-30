@@ -218,6 +218,7 @@ export const verifyDieselFillUp       = (id) => api.patch(`/diesel/fillups/${id}
 export const finalizeDieselFillUp     = (id) => api.patch(`/diesel/fillups/${id}/finalize`)
 export const getDieselWarnings        = (params = {}) => api.get('/diesel/warnings', { params })
 export const bulkImportSupplierInvoices = (data) => api.post('/supplier-invoices/bulk-import', data)
+export const resolveSupplierDieselConflicts = (resolutions) => api.post('/supplier-invoices/resolve-diesel-conflicts', resolutions)
 export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)
 export const verifySupplierInvoice    = (id) => api.patch(`/supplier-invoices/${id}/verify`)
 export const finalizeSupplierInvoice  = (id) => api.patch(`/supplier-invoices/${id}/finalize`)

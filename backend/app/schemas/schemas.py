@@ -1470,10 +1470,39 @@ class BulkImportPayload(BaseModel):
     invoices: List[InvoiceImportItem]
 
 
+class DieselConflictSide(BaseModel):
+    litres: Decimal
+    rate_per_litre: Decimal
+    amount: Decimal
+    fillup_date: Optional[date] = None
+    truck_registration: Optional[str] = None
+
+
+class DieselConflict(BaseModel):
+    slip_number: str
+    fillup_id: int
+    invoice_id: int
+    invoice_number: Optional[str] = None
+    existing: DieselConflictSide
+    incoming: DieselConflictSide
+
+
+class DieselConflictResolution(BaseModel):
+    fillup_id: int
+    invoice_id: int
+    use_import_values: bool
+    litres: Optional[Decimal] = None
+    rate_per_litre: Optional[Decimal] = None
+    fillup_date: Optional[date] = None
+
+
 class BulkImportResult(BaseModel):
     created: int
     skipped: int
     skipped_numbers: List[str] = []
+    diesel_created: int = 0
+    diesel_linked: int = 0
+    conflicts: List[DieselConflict] = []
 
 
 class SupplierInvoiceCreate(BaseModel):
