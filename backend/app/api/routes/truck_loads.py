@@ -3,7 +3,7 @@ import logging
 
 logger = logging.getLogger("safetec.truck_loads")
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, case
 from typing import List, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -17,7 +17,7 @@ from app.models.models import (
 )
 from app.schemas.schemas import (
     TruckLoadCreate, TruckLoadUpdate, TruckLoadOut,
-    TruckLoadBulkCreate, TruckLoadSummary,
+    TruckLoadBulkCreate, TruckLoadSummary, TruckFleetSummaryRow,
     SplitLoadCreate, SplitLoadOut,
 )
 from app.services.audit import log_action
@@ -500,6 +500,82 @@ def get_truck_load_summary(
         total_subcontractor_excl_vat=Decimal(str(row[5])),
         total_subcontractor_incl_vat=Decimal(str(row[6])),
     )
+
+
+# ── Fleet summary (cross-truck overview) ─────────────────────────────────────
+
+@router.get("/fleet-summary", response_model=List[TruckFleetSummaryRow])
+def get_fleet_summary(
+    entity_id: Optional[int] = Query(None),
+    statement_month: Optional[int] = Query(None),
+    statement_year: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    accessible = _accessible_entity_ids(current_user)
+    if entity_id is not None and accessible is not None and entity_id not in accessible:
+        raise HTTPException(status_code=403, detail="Access denied to this entity")
+
+    missing_invoice_expr = func.sum(
+        case(
+            (or_(TruckLoad.diesel_invoice.is_(None), TruckLoad.diesel_invoice == ""), 1),
+            else_=0,
+        )
+    )
+
+    q = (
+        db.query(
+            Truck.id.label("truck_id"),
+            Truck.registration.label("truck_registration"),
+            Truck.fleet_number.label("fleet_number"),
+            Truck.entity_id.label("entity_id"),
+            BusinessEntity.name.label("entity_name"),
+            BusinessEntity.code.label("entity_code"),
+            func.count(TruckLoad.id).label("total_loads"),
+            func.coalesce(func.sum(TruckLoad.tonnes), 0).label("total_tonnes"),
+            func.coalesce(func.sum(TruckLoad.amount_excl_vat), 0).label("total_excl_vat"),
+            func.coalesce(func.sum(TruckLoad.amount_incl_vat), 0).label("total_incl_vat"),
+            func.coalesce(missing_invoice_expr, 0).label("loads_missing_invoice"),
+        )
+        .join(BusinessEntity, BusinessEntity.id == Truck.entity_id)
+        .join(TruckLoad, TruckLoad.truck_id == Truck.id)
+        .filter(TruckLoad.is_archived.is_(False))
+    )
+
+    if entity_id is not None:
+        q = q.filter(Truck.entity_id == entity_id, TruckLoad.entity_id == entity_id)
+    elif accessible is not None:
+        q = q.filter(Truck.entity_id.in_(accessible))
+    if statement_month is not None:
+        q = q.filter(TruckLoad.statement_month == statement_month)
+    if statement_year is not None:
+        q = q.filter(TruckLoad.statement_year == statement_year)
+
+    rows = (
+        q.group_by(
+            Truck.id, Truck.registration, Truck.fleet_number,
+            Truck.entity_id, BusinessEntity.name, BusinessEntity.code,
+        )
+        .order_by(BusinessEntity.name, Truck.fleet_number, Truck.registration)
+        .all()
+    )
+
+    return [
+        TruckFleetSummaryRow(
+            truck_id=r.truck_id,
+            truck_registration=r.truck_registration,
+            fleet_number=r.fleet_number,
+            entity_id=r.entity_id,
+            entity_name=r.entity_name,
+            entity_code=r.entity_code,
+            total_loads=r.total_loads,
+            total_tonnes=Decimal(str(r.total_tonnes)),
+            total_excl_vat=Decimal(str(r.total_excl_vat)),
+            total_incl_vat=Decimal(str(r.total_incl_vat)),
+            loads_missing_invoice=int(r.loads_missing_invoice),
+        )
+        for r in rows
+    ]
 
 
 # ── Recalculate sub amounts ───────────────────────────────────────────────────

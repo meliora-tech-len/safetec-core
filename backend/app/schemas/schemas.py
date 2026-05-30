@@ -1380,6 +1380,20 @@ class TruckLoadSummary(BaseModel):
     total_subcontractor_incl_vat: Decimal = Decimal("0")
 
 
+class TruckFleetSummaryRow(BaseModel):
+    truck_id: int
+    truck_registration: str
+    fleet_number: Optional[str] = None
+    entity_id: int
+    entity_name: str
+    entity_code: Optional[str] = None
+    total_loads: int
+    total_tonnes: Decimal
+    total_excl_vat: Decimal
+    total_incl_vat: Decimal
+    loads_missing_invoice: int
+
+
 # ── Driver Salary Config Schemas ──────────────────────────────────────────────
 
 class DriverSalaryConfigBase(BaseModel):
@@ -1786,6 +1800,17 @@ class DieselSupplierReconciliation(BaseModel):
     total_amount: Decimal
     verified_amount: Decimal
     unverified_amount: Decimal
+
+
+class DieselInvoiceReconciliationRow(BaseModel):
+    supplier_id: int
+    supplier_name: str
+    invoice_count: int
+    invoice_total: Decimal
+    fillup_count: int
+    fillup_total: Decimal
+    difference: Decimal
+    is_matched: bool
 
 
 class DieselAnnualMonthRow(BaseModel):

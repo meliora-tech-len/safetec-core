@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, or_
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -18,6 +18,7 @@ from app.schemas.schemas import (
     DieselFillUpCreate, DieselFillUpUpdate, DieselFillUpOut,
     DieselFillUpSummary,
     DieselSummaryByTruck, DieselSupplierReconciliation, DieselAnnualMonthRow,
+    DieselInvoiceReconciliationRow,
 )
 from app.services.diesel_service import DieselCalculationService
 from app.services.audit import log_action
@@ -859,3 +860,84 @@ def repair_invoice_links(
             skipped.append({"fillup_id": f.id, "error": str(exc)})
 
     return {"linked": linked, "skipped": skipped, "total_checked": len(unlinked)}
+
+
+# ── Invoice vs fill-up reconciliation ────────────────────────────────────────
+
+@router.get("/invoice-reconciliation", response_model=List[DieselInvoiceReconciliationRow])
+def diesel_invoice_reconciliation(
+    entity_id: int = Query(...),
+    statement_month: int = Query(...),
+    statement_year: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Per diesel supplier: compare supplier invoice total against the sum of
+    linked DieselFillUp records for the same period.
+    """
+    accessible = (
+        None if current_user.role == "admin"
+        else [a.entity_id for a in current_user.entity_access]
+    )
+    if accessible is not None and entity_id not in accessible:
+        raise HTTPException(status_code=403, detail="Access denied to this entity")
+
+    # ── Invoice totals per diesel supplier for the period ─────────────────────
+    inv_rows = (
+        db.query(
+            Supplier.id.label("supplier_id"),
+            Supplier.name.label("supplier_name"),
+            func.count(SupplierInvoice.id).label("invoice_count"),
+            func.coalesce(func.sum(SupplierInvoice.amount), 0).label("invoice_total"),
+        )
+        .join(SupplierInvoice, SupplierInvoice.supplier_id == Supplier.id)
+        .filter(
+            Supplier.is_diesel_supplier.is_(True),
+            SupplierInvoice.entity_id == entity_id,
+            SupplierInvoice.statement_month == statement_month,
+            SupplierInvoice.statement_year == statement_year,
+            SupplierInvoice.is_archived.is_(False),
+        )
+        .group_by(Supplier.id, Supplier.name)
+        .all()
+    )
+
+    # ── Fill-up totals per supplier for invoices in the same period ───────────
+    fillup_rows = (
+        db.query(
+            DieselFillUp.supplier_id.label("supplier_id"),
+            func.count(DieselFillUp.id).label("fillup_count"),
+            func.coalesce(func.sum(DieselFillUp.total_amount), 0).label("fillup_total"),
+        )
+        .join(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
+        .filter(
+            DieselFillUp.entity_id == entity_id,
+            SupplierInvoice.statement_month == statement_month,
+            SupplierInvoice.statement_year == statement_year,
+            DieselFillUp.is_archived.is_(False),
+        )
+        .group_by(DieselFillUp.supplier_id)
+        .all()
+    )
+
+    fillup_by_supplier = {r.supplier_id: r for r in fillup_rows}
+
+    result = []
+    for inv in inv_rows:
+        fu = fillup_by_supplier.get(inv.supplier_id)
+        invoice_total = Decimal(str(inv.invoice_total))
+        fillup_total  = Decimal(str(fu.fillup_total)) if fu else Decimal("0")
+        diff = invoice_total - fillup_total
+        result.append(DieselInvoiceReconciliationRow(
+            supplier_id=inv.supplier_id,
+            supplier_name=inv.supplier_name,
+            invoice_count=inv.invoice_count,
+            invoice_total=invoice_total.quantize(Decimal("0.01")),
+            fillup_count=fu.fillup_count if fu else 0,
+            fillup_total=fillup_total.quantize(Decimal("0.01")),
+            difference=diff.quantize(Decimal("0.01")),
+            is_matched=abs(diff) < Decimal("0.10"),
+        ))
+
+    return result
