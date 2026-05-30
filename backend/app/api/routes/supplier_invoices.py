@@ -421,19 +421,10 @@ def create_supplier_invoice(
     inv_date = payload.invoice_date
     due_date = calculate_supplier_due_date(inv_date, supplier.payment_term)
 
-    # Costing month allocation:
-    # 30-day suppliers → same month as invoice date
-    # Cash (current) suppliers → previous month (cost belongs to the prior period)
-    if supplier.payment_term == PaymentTermType.days_30:
-        stmt_month = inv_date.month
-        stmt_year = inv_date.year
-    else:  # current / cash
-        if inv_date.month == 1:
-            stmt_month = 12
-            stmt_year = inv_date.year - 1
-        else:
-            stmt_month = inv_date.month - 1
-            stmt_year = inv_date.year
+    # Use whatever statement period the user sent; fall back to the invoice date's
+    # own month/year. Payment-term costing offsets belong in reports only.
+    stmt_month = payload.statement_month if payload.statement_month is not None else inv_date.month
+    stmt_year  = payload.statement_year  if payload.statement_year  is not None else inv_date.year
 
     inv = SupplierInvoice(
         **payload.model_dump(exclude={'statement_month', 'statement_year'}),
@@ -489,21 +480,15 @@ def update_supplier_invoice(
     if updates.get("is_verified") is True and not inv.is_verified:
         updates["verified_at"] = datetime.now(tz=timezone.utc)
 
-    # Recalculate due date and costing month if invoice_date changed
+    # Recalculate due date if invoice_date changed; only update statement period
+    # when the user has not explicitly provided one in this request.
     if "invoice_date" in updates:
         supplier = db.query(Supplier).filter(Supplier.id == inv.supplier_id).first()
         new_date = updates["invoice_date"]
         updates["payment_due_date"] = calculate_supplier_due_date(new_date, supplier.payment_term)
-        if supplier.payment_term == PaymentTermType.days_30:
+        if "statement_month" not in updates:
             updates["statement_month"] = new_date.month
             updates["statement_year"] = new_date.year
-        else:  # current / cash
-            if new_date.month == 1:
-                updates["statement_month"] = 12
-                updates["statement_year"] = new_date.year - 1
-            else:
-                updates["statement_month"] = new_date.month - 1
-                updates["statement_year"] = new_date.year
 
     for field, value in updates.items():
         setattr(inv, field, value)
@@ -770,11 +755,7 @@ def bulk_import_invoices(
 
         inv_date = item.invoice_date
         inv_dt = datetime(inv_date.year, inv_date.month, inv_date.day)
-        if supplier.payment_term == PaymentTermType.days_30:
-            stmt_month, stmt_year = inv_date.month, inv_date.year
-        else:
-            stmt_month = 12 if inv_date.month == 1 else inv_date.month - 1
-            stmt_year = inv_date.year - 1 if inv_date.month == 1 else inv_date.year
+        stmt_month, stmt_year = inv_date.month, inv_date.year
 
         inv = SupplierInvoice(
             supplier_id=payload.supplier_id,
