@@ -158,14 +158,19 @@ export default function DieselRatesPage() {
       return
     }
     try {
-      await updateDieselSettings(entityIdToSave, {
+      const res = await updateDieselSettings(entityIdToSave, {
         admin_fee_pct: (pct / 100).toFixed(4),
         apply_admin_fee: edit.apply_admin_fee,
         additional_charge_per_ton: parseFloat(edit.additional_charge_per_ton) || 0,
         subcontractor_monthly_admin_fee: parseFloat(edit.subcontractor_monthly_admin_fee) || 0,
       })
-      setSavedFee(p => ({ ...p, [key]: true }))
-      setTimeout(() => setSavedFee(p => ({ ...p, [key]: false })), 2000)
+      const loadsUpdated = res.data?.loads_updated ?? 0
+      if (loadsUpdated > 0) {
+        toast.success(`Settings saved · ${loadsUpdated} unpaid subcontractor load${loadsUpdated !== 1 ? 's' : ''} recalculated`)
+      } else {
+        setSavedFee(p => ({ ...p, [key]: true }))
+        setTimeout(() => setSavedFee(p => ({ ...p, [key]: false })), 2000)
+      }
       const dsRes = await getDieselSettings()
       const ds = dsRes.data || []
       setDieselSettings(ds)

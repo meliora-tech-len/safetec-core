@@ -1645,6 +1645,7 @@ class DieselSettingsOut(BaseModel):
     subcontractor_monthly_admin_fee: Decimal = Decimal("0")
     updated_by: Optional[int] = None
     updated_at: Optional[datetime] = None
+    loads_updated: int = 0
 
     class Config:
         from_attributes = True

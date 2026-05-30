@@ -213,14 +213,60 @@ def update_diesel_settings(
     settings.updated_by = current_user.id
     settings.updated_at = datetime.now(tz=timezone.utc)
 
+    # Recalculate all unpaid, non-archived subcontractor loads for this entity
+    # so the new additional_charge_per_ton takes effect immediately.
+    new_fee = Decimal(str(payload.additional_charge_per_ton))
+    TWO_DP = Decimal("0.01")
+    VAT = Decimal("1.15")
+
+    sub_loads = (
+        db.query(TruckLoad)
+        .join(Truck, Truck.id == TruckLoad.truck_id)
+        .filter(
+            TruckLoad.entity_id == entity_id,
+            TruckLoad.is_paid.is_(False),
+            TruckLoad.is_archived.is_(False),
+            Truck.is_subcontractor.is_(True),
+        )
+        .all()
+    )
+
+    # Cache truck-entity VAT status to avoid repeated queries
+    _entity_vat: dict = {}
+
+    def _sub_vat(truck: Truck) -> bool:
+        if truck.entity_id not in _entity_vat:
+            te = db.query(BusinessEntity).filter(BusinessEntity.id == truck.entity_id).first()
+            _entity_vat[truck.entity_id] = te.vat_registered if te else True
+        return _entity_vat[truck.entity_id]
+
+    loads_updated = 0
+    for load in sub_loads:
+        load.subcontractor_admin_fee_per_ton = new_fee
+        if load.tonnes is not None and load.rate_per_ton is not None:
+            sub_rate = Decimal(str(load.rate_per_ton)) - new_fee
+            excl     = Decimal(str(load.tonnes)) * sub_rate
+            load.subcontractor_rate            = sub_rate.quantize(TWO_DP)
+            load.subcontractor_amount_excl_vat = excl.quantize(TWO_DP)
+            load.subcontractor_amount_incl_vat = (
+                (excl * VAT) if _sub_vat(load.truck) else excl
+            ).quantize(TWO_DP)
+            loads_updated += 1
+
     log_action(
         db, "diesel_settings.updated", user_id=current_user.id,
         entity_id=entity_id, resource_type="diesel_settings",
-        description=f"Updated diesel admin fee to {payload.admin_fee_pct}% for entity {entity_id}",
+        description=(
+            f"Updated diesel admin fee to {payload.admin_fee_pct}% for entity {entity_id}; "
+            f"{loads_updated} unpaid subcontractor loads recalculated"
+        ),
     )
     db.commit()
     db.refresh(settings)
-    return settings
+
+    out = DieselSettingsOut.model_validate(settings)
+    out.loads_updated = loads_updated
+    return out
 
 
 # ── Diesel Rates ──────────────────────────────────────────────────────────────
