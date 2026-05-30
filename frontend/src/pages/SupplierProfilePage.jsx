@@ -1597,6 +1597,20 @@ const CS = {
 function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, showReg = false, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [], fillups = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
+  const cardRef = useRef(null)
+
+  // Move focus to the next visible input/select in the card when → is pressed
+  const focusNext = (e) => {
+    if (e.key !== 'ArrowRight') return
+    e.preventDefault()
+    if (!cardRef.current) return
+    const els = Array.from(
+      cardRef.current.querySelectorAll('input:not([disabled]):not([type=checkbox]), select:not([disabled])')
+    ).filter(el => el.offsetParent !== null)
+    const idx = els.indexOf(document.activeElement)
+    if (idx >= 0 && idx < els.length - 1) els[idx + 1].focus()
+  }
+  const handleField = (e) => { focusNext(e); onKeyDown(e, onSave, onCancel) }
   const lineTotal = (form.line_items || []).reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
   const [splitMode, setSplitMode] = useState(false)
   const [splitDesc, setSplitDesc] = useState('')
@@ -1657,7 +1671,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
     : trucks
 
   return (
-    <div style={{
+    <div ref={cardRef} style={{
       background: 'var(--bg-card)',
       border: '1px solid var(--accent)',
       borderRadius: 12,
@@ -1706,7 +1720,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
           <label style={CS.label}>Date</label>
           <DateInput ref={firstInputRef} value={form.invoice_date}
             onChange={e => set('invoice_date', e.target.value)}
-            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            onKeyDown={handleField}
             inputStyle={CS.input} />
         </div>
 
@@ -1721,7 +1735,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
             </select>
             <input type="number" min="2020" max="2099" value={form.statement_year}
               onChange={e => set('statement_year', parseInt(e.target.value))}
-              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              onKeyDown={handleField}
               style={{ ...CS.input, width: 68, flex: 'none' }} />
           </div>
         </div>
@@ -1730,7 +1744,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
           <label style={CS.label}>Invoice #</label>
           <input value={form.invoice_number} placeholder={isDiesel ? 'Fill in when received' : 'e.g. TM1794'}
             onChange={e => set('invoice_number', e.target.value)}
-            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            onKeyDown={handleField}
             style={CS.input} />
         </div>
 
@@ -1755,7 +1769,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
             <input type="number" step="0.001" min="0" placeholder="0.000"
               value={form.litres}
               onChange={e => set('litres', e.target.value)}
-              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              onKeyDown={handleField}
               style={{ ...CS.input, textAlign: 'right' }} />
           </div>
         )}
@@ -1773,7 +1787,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
             <input type="number" step="0.0001" min="0" placeholder="0.0000"
               value={form._rate || ''}
               onChange={e => { set('_rate', e.target.value); onAmountEdit?.() }}
-              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              onKeyDown={handleField}
               style={{ ...CS.input, textAlign: 'right' }} />
           </div>
         )}
@@ -1791,7 +1805,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
             <input type="number" step="0.01" placeholder="0.00"
               value={form.amount}
               onChange={e => { set('amount', e.target.value); onAmountEdit?.() }}
-              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              onKeyDown={handleField}
               style={{ ...CS.input, textAlign: 'right' }} />
           )}
         </div>
@@ -1801,7 +1815,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
           <input type="number" step="0.01" min="0" placeholder="0.00"
             value={form.deposit_paid || ''}
             onChange={e => set('deposit_paid', e.target.value)}
-            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            onKeyDown={handleField}
             style={{ ...CS.input, textAlign: 'right' }} />
         </div>
 
@@ -1831,7 +1845,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
             <input value={form.description}
               placeholder={isDiesel ? 'Subbie name…' : 'Description'}
               onChange={e => set('description', e.target.value)}
-              onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+              onKeyDown={handleField}
               style={CS.input} />
           )}
         </div>
@@ -1840,7 +1854,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
           <label style={CS.label}>Notes</label>
           <input value={form.notes} placeholder="Optional notes"
             onChange={e => set('notes', e.target.value)}
-            onKeyDown={e => onKeyDown(e, onSave, onCancel)}
+            onKeyDown={handleField}
             style={CS.input} />
         </div>
       </div>

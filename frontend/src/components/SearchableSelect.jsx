@@ -73,7 +73,10 @@ export default function SearchableSelect({
         else if (filtered.length === 1) pick(filtered[0])
         break
       case 'Tab':
-        closeDrop()
+        // Auto-select on Tab if there's a highlighted item or exactly one match
+        if (hoverIdx >= 0 && filtered[hoverIdx]) pick(filtered[hoverIdx])
+        else if (query.trim() && filtered.length === 1) pick(filtered[0])
+        else closeDrop()
         break
       default:
         break
@@ -152,6 +155,7 @@ export default function SearchableSelect({
         value={open ? query : (selected ? getLabel(selected) : value || '')}
         placeholder={open ? 'Type to search…' : placeholder}
         onClick={open ? undefined : openDrop}
+        onFocus={() => { if (!open) openDrop() }}
         onKeyDown={open
           ? handleKeyDown
           : (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrop() } }
