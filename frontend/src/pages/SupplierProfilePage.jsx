@@ -57,6 +57,7 @@ const blankLineItem = () => ({
   amount_excl_vat: '',
   amount_incl_vat: '',
   sort_order: 0,
+  line_date: '',
 })
 
 // ── WBG Excel import helpers & modal ─────────────────────────────────────────
@@ -75,37 +76,35 @@ function matchingSheets(sheetNames, entityName) {
   return matches.length > 0 ? matches : sheetNames
 }
 
-function fmtLocalDate(d) {
+function fmtISODate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function parseSlipDate(val) {
-  if (val instanceof Date) return fmtLocalDate(val)
+  if (val instanceof Date) return fmtISODate(val)
   if (typeof val === 'string') {
-    // DD/MM/YYYY or D/M/YYYY
     const m = val.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
     if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
-    // Already ISO YYYY-MM-DD
     if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10)
   }
   return null
 }
 
 function parseWBGSheet(ws) {
-  // raw: true (default) keeps numbers as numbers and dates as Dates via cellDates.
-  // raw: false would stringify everything, breaking the typeof check below.
+  // raw: true (default) keeps numbers as numbers and dates as Date objects via
+  // cellDates — raw: false would stringify numbers and break the typeof check below.
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, cellDates: true })
   const invoices = []
   let pending = []
   for (const row of rows.slice(3)) {
-    const [siteOrDate,,slip,rawReg,,colDriver,ltr,,txnVal] = row
+    const [siteOrDate, slipDate, slip, reg, , driver, ltr, , txnVal] = row
     const invDate  = row[9]
     const invNo    = row[10]
     const invTotal = row[11]
     if (!siteOrDate && !invNo) continue
     if (invNo && typeof siteOrDate !== 'string') {
       invoices.push({
-        invoice_date:   invDate instanceof Date ? fmtLocalDate(invDate) : parseSlipDate(invDate) || invDate,
+        invoice_date:   invDate instanceof Date ? fmtISODate(invDate) : invDate,
         invoice_number: String(invNo).trim(),
         amount:         parseFloat(invTotal) || 0,
         line_items:     pending,
@@ -113,69 +112,42 @@ function parseWBGSheet(ws) {
       pending = []
       continue
     }
-    // Col 0 can be a date string ("01/05/2025") or a Date object — both are valid detail rows
+    // Col 0 is the site/location; col 1 is the Date column (next to Slip# at col 2)
     if ((typeof siteOrDate === 'string' || siteOrDate instanceof Date) && slip) {
-      const rawRegStr = String(rawReg || '').trim()
-      const parts = rawRegStr.split(/ [-–—] /)
-      const cleanReg = parts[0].trim().toUpperCase()
-      const driverFromReg = (parts[1] || '').trim()
-      const cleanDriver = driverFromReg || String(colDriver || '').trim()
-
       const excl = parseFloat(txnVal) || 0
       pending.push({
         item_code:        String(slip).replace(/^INV/i, '').trim(),
-        unit:             cleanReg,
-        item_description: '',
-        driver_name:      cleanDriver,
+        unit:             String(reg || '').trim().toUpperCase(),
+        item_description: String(driver || '').trim(),
         quantity:         parseFloat(ltr) || 0,
         amount_excl_vat:  excl,
         amount_incl_vat:  excl,
         sort_order:       pending.length,
-        slip_date:        parseSlipDate(siteOrDate),
+        slip_date:        parseSlipDate(slipDate),
       })
     }
   }
   return invoices
 }
 
-const _modalOverlay = {
-  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000,
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-}
-const _modalBox = {
-  background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
-  padding: 24, width: 680, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto',
-  boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
-}
-const _th = { padding: '6px 10px', textAlign: 'left', fontWeight: 600, fontSize: 11, borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }
-const _td = { padding: '5px 10px', verticalAlign: 'middle' }
-const _btnSm = { padding: '3px 10px', fontSize: 11, borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: 'pointer' }
-
-function lineStatus(li, trucks, entityId) {
-  if (!li.item_code || !(li.quantity > 0)) return 'missing'
-  const reg = (li.unit || '').toLowerCase()
+function invLineStatus(li, trucks, entityId) {
+  if (!li.unit || !(li.quantity > 0)) return 'missing'
+  const reg = li.unit.toLowerCase()
   const found = (trucks || []).some(
     t => t.registration?.toLowerCase() === reg && t.entity_id === parseInt(entityId)
   )
-  return found ? 'valid' : 'no_truck'
-}
-
-const _statusBadge = {
-  valid:    { color: '#16a34a', label: '✓' },
-  no_truck: { color: '#d97706', label: '! Truck not found' },
-  missing:  { color: '#dc2626', label: '! Missing data' },
+  return found ? 'ok' : 'no_truck'
 }
 
 function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImported }) {
-  const [step, setStep]         = useState('idle')
-  const [workbook, setWorkbook] = useState(null)
-  const [entityId, setEntityId] = useState(supplier?.entity_id || '')
+  const [step, setStep]           = useState('idle')
+  const [workbook, setWorkbook]   = useState(null)
+  const [entityId, setEntityId]   = useState(supplier?.entity_id || '')
   const [sheetName, setSheetName] = useState('')
-  const [invoices, setInvoices] = useState([])
+  const [invoices, setInvoices]   = useState([])
   const [selectedNums, setSelectedNums] = useState(new Set())
-  const [expanded, setExpanded] = useState({})
+  const [expanded, setExpanded]   = useState({})
   const [importing, setImporting] = useState(false)
-  const [importResult, setImportResult] = useState(null)
   const fileRef = useRef(null)
 
   const selectedEntity  = entities?.find(e => e.id === parseInt(entityId))
@@ -225,60 +197,61 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
         entity_id:   parseInt(entityId),
         invoices:    invoices.filter(inv => selectedNums.has(inv.invoice_number)),
       })
-      setImportResult(r.data)
-      setStep('results')
+      const { created, skipped } = r.data
+      if (created > 0) {
+        toast.success(`${created} invoice${created !== 1 ? 's' : ''} imported${skipped > 0 ? `, ${skipped} skipped (already exist)` : ''}`)
+      } else {
+        toast(`All ${skipped} invoices already exist — nothing imported`)
+      }
       onImported()
+      onClose()
     } catch (e) {
-      toast.error(errorMessage(e))
+      const msg = errorMessage(e)
+      toast.error(typeof msg === 'string' ? msg : JSON.stringify(msg))
       setImporting(false)
     }
   }
 
   const totalLines = invoices.reduce((s, inv) => s + inv.line_items.length, 0)
-  const allLineItems = invoices.flatMap(inv => inv.line_items)
-  const statusCounts = allLineItems.reduce((acc, li) => {
-    const s = lineStatus(li, trucks, entityId)
-    acc[s] = (acc[s] || 0) + 1
-    return acc
-  }, {})
 
   return (
-    <div style={_modalOverlay} onClick={onClose}>
-      <div style={_modalBox} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Import WBG Excel</h3>
-          <button className="btn-ghost" onClick={onClose} style={{ padding: '2px 6px' }}><X size={14} /></button>
+    <div style={wbgModalOverlay} onClick={onClose}>
+      <div style={wbgModalBox} onClick={e => e.stopPropagation()}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+          <h3 style={{ margin:0, fontSize:16 }}>Import WBG Excel</h3>
+          <button className="btn-ghost" onClick={onClose} style={{ padding:'2px 6px' }}><X size={14}/></button>
         </div>
 
         {step === 'idle' && (
           <>
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Entity</label>
+            <div style={{ marginBottom:12 }}>
+              <label style={{ display:'block', marginBottom:4, fontSize:13, fontWeight:600 }}>Entity</label>
               <select value={entityId} onChange={e => handleEntityChange(e.target.value)}
-                style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', fontSize: 13 }}>
+                      style={{ width:'100%', padding:'6px 8px', borderRadius:4, border:'1px solid var(--border)', fontSize:13 }}>
                 <option value="">— select entity —</option>
                 {(entities || []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
               </select>
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Excel file (.xlsx)</label>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ fontSize: 13 }} />
+            <div style={{ marginBottom:12 }}>
+              <label style={{ display:'block', marginBottom:4, fontSize:13, fontWeight:600 }}>Excel file (.xlsx)</label>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile}
+                     style={{ fontSize:13 }} />
             </div>
             {workbook && (
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Sheet</label>
+              <div style={{ marginBottom:16 }}>
+                <label style={{ display:'block', marginBottom:4, fontSize:13, fontWeight:600 }}>Sheet</label>
                 <select value={sheetName} onChange={e => setSheetName(e.target.value)}
-                  style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--border)', fontSize: 13 }}>
+                        style={{ width:'100%', padding:'6px 8px', borderRadius:4, border:'1px solid var(--border)', fontSize:13 }}>
                   {availableSheets.map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
                 {availableSheets.length < workbook.SheetNames.length && (
-                  <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
-                    Showing {availableSheets.length} of {workbook.SheetNames.length} sheets matching &ldquo;{selectedEntity?.name}&rdquo;
+                  <p style={{ margin:'4px 0 0', fontSize:11, color:'var(--text-muted)' }}>
+                    Showing {availableSheets.length} of {workbook.SheetNames.length} sheets matching "{selectedEntity?.name}"
                   </p>
                 )}
               </div>
             )}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
               <button className="btn-ghost" onClick={onClose}>Cancel</button>
               <button className="btn-primary" onClick={handlePreview} disabled={!workbook || !entityId}>
                 Preview
@@ -287,98 +260,94 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
           </>
         )}
 
-        {step === 'preview' && (
+        {step === 'preview' && (() => {
+          const allLineItems = invoices.flatMap(inv => inv.line_items)
+          const noTruckCount = allLineItems.filter(li => invLineStatus(li, trucks, entityId) === 'no_truck').length
+          const missingCount = allLineItems.filter(li => invLineStatus(li, trucks, entityId) === 'missing').length
+          return (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)' }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
+              <p style={{ margin:0, fontSize:13, color:'var(--text-muted)' }}>
                 Sheet: <strong>{sheetName}</strong> — {invoices.length} invoice{invoices.length !== 1 ? 's' : ''}, {totalLines} line items
               </p>
-              <div style={{ display: 'flex', gap: 8, fontSize: 12 }}>
-                <button className="btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }}
-                  onClick={() => setSelectedNums(new Set(invoices.map(inv => inv.invoice_number)))}>
+              <div style={{ display:'flex', gap:6 }}>
+                <button className="btn-ghost" style={{ padding:'2px 8px', fontSize:12 }}
+                        onClick={() => setSelectedNums(new Set(invoices.map(inv => inv.invoice_number)))}>
                   Select All
                 </button>
-                <button className="btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }}
-                  onClick={() => setSelectedNums(new Set())}>
+                <button className="btn-ghost" style={{ padding:'2px 8px', fontSize:12 }}
+                        onClick={() => setSelectedNums(new Set())}>
                   Deselect All
                 </button>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, minHeight: 28 }}>
-              {(statusCounts.no_truck > 0 || statusCounts.missing > 0) ? (
-                <div style={{ padding: '5px 10px', borderRadius: 4, background: 'rgba(217,119,6,0.08)', border: '1px solid rgba(217,119,6,0.25)', fontSize: 12 }}>
-                  {statusCounts.no_truck > 0 && <span style={{ color: '#d97706', marginRight: 12 }}>⚠ {statusCounts.no_truck} truck registration{statusCounts.no_truck !== 1 ? 's' : ''} not found — fill-ups will be skipped</span>}
-                  {statusCounts.missing > 0 && <span style={{ color: '#dc2626' }}>✕ {statusCounts.missing} line{statusCounts.missing !== 1 ? 's' : ''} with missing data</span>}
-                </div>
-              ) : <div />}
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button style={_btnSm} onClick={() => setExpanded(Object.fromEntries(invoices.map((_, i) => [i, true])))}>Expand All</button>
-                <button style={_btnSm} onClick={() => setExpanded({})}>Collapse All</button>
+            {(noTruckCount > 0 || missingCount > 0) && (
+              <div style={{ marginBottom:10, padding:'6px 12px', borderRadius:4, background:'rgba(217,119,6,0.08)', border:'1px solid rgba(217,119,6,0.3)', fontSize:12 }}>
+                {noTruckCount > 0 && <span style={{ color:'#d97706', marginRight:12 }}>⚠ {noTruckCount} truck reg{noTruckCount !== 1 ? 's' : ''} not found in this entity</span>}
+                {missingCount > 0 && <span style={{ color:'#dc2626' }}>✕ {missingCount} line{missingCount !== 1 ? 's' : ''} missing data</span>}
               </div>
-            </div>
-            <div style={{ maxHeight: 380, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, marginBottom: 16 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            )}
+            <div style={{ maxHeight:400, overflowY:'auto', border:'1px solid var(--border)', borderRadius:4, marginBottom:16 }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
                 <thead>
-                  <tr style={{ background: 'var(--bg-surface)' }}>
-                    <th style={{ ..._th, width: 28 }}></th>
-                    <th style={_th}></th>
-                    <th style={_th}>Invoice No</th>
-                    <th style={_th}>Invoice Date</th>
-                    <th style={{ ..._th, textAlign: 'right' }}>Total</th>
-                    <th style={{ ..._th, textAlign: 'right' }}>Lines</th>
+                  <tr style={{ background:'var(--bg-secondary)' }}>
+                    <th style={{ ...wbgTh, width:28 }}></th>
+                    <th style={{ ...wbgTh, width:24 }}></th>
+                    <th style={wbgTh}>Invoice No</th>
+                    <th style={wbgTh}>Date</th>
+                    <th style={wbgTh}>Truck Reg</th>
+                    <th style={{...wbgTh, textAlign:'right'}}>Amount</th>
+                    <th style={{...wbgTh, textAlign:'right'}}>Lines / L</th>
                   </tr>
                 </thead>
                 <tbody>
                   {invoices.map((inv, i) => {
                     const isSelected = selectedNums.has(inv.invoice_number)
-                    const invStatuses = inv.line_items.map(li => lineStatus(li, trucks, entityId))
-                    const invHasMissing = invStatuses.includes('missing')
-                    const invHasNoTruck = invStatuses.includes('no_truck')
-                    const invRowBg = invHasMissing
+                    const statuses   = inv.line_items.map(li => invLineStatus(li, trucks, entityId))
+                    const hasMissing = statuses.includes('missing')
+                    const hasNoTruck = statuses.includes('no_truck')
+                    const rowBg = hasMissing
                       ? 'rgba(220,38,38,0.07)'
-                      : invHasNoTruck
-                        ? 'rgba(217,119,6,0.08)'
-                        : 'transparent'
+                      : hasNoTruck ? 'rgba(217,119,6,0.08)' : 'transparent'
                     return (
                       <Fragment key={i}>
-                        <tr style={{ borderBottom: '1px solid var(--border)', opacity: isSelected ? 1 : 0.45, background: invRowBg }}>
-                          <td style={{ ..._td, width: 28 }}>
+                        <tr style={{ borderBottom:'1px solid var(--border)', background: rowBg, opacity: isSelected ? 1 : 0.45 }}>
+                          <td style={{ ...wbgTd, width:28 }}>
                             <input type="checkbox" checked={isSelected}
-                              onChange={() => setSelectedNums(prev => {
-                                const next = new Set(prev)
-                                isSelected ? next.delete(inv.invoice_number) : next.add(inv.invoice_number)
-                                return next
-                              })} />
+                                   onChange={() => setSelectedNums(prev => {
+                                     const next = new Set(prev)
+                                     isSelected ? next.delete(inv.invoice_number) : next.add(inv.invoice_number)
+                                     return next
+                                   })} />
                           </td>
-                          <td style={{ ..._td, width: 24, cursor: 'pointer' }}
-                            onClick={() => setExpanded(p => ({ ...p, [i]: !p[i] }))}>
-                            {expanded[i] ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                          <td style={{ ...wbgTd, width:24, cursor:'pointer' }}
+                              onClick={() => setExpanded(p => ({ ...p, [i]: !p[i] }))}>
+                            {expanded[i] ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
                           </td>
-                          <td style={_td}>{inv.invoice_number}</td>
-                          <td style={_td}>{formatDate(inv.invoice_date)}</td>
-                          <td style={{ ..._td, textAlign: 'right' }}>{inv.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-                          <td style={{ ..._td, textAlign: 'right' }}>{inv.line_items.length}</td>
+                          <td style={{ ...wbgTd, fontWeight:600 }}>{inv.invoice_number}</td>
+                          <td style={wbgTd}>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-ZA') : '—'}</td>
+                          <td style={{ ...wbgTd, color:'var(--text-muted)' }}></td>
+                          <td style={{...wbgTd, textAlign:'right', fontWeight:600}}>{inv.amount.toLocaleString('en-ZA', { minimumFractionDigits:2 })}</td>
+                          <td style={{...wbgTd, textAlign:'right', color:'var(--text-muted)'}}>{inv.line_items.length}</td>
                         </tr>
                         {expanded[i] && inv.line_items.map((li, j) => {
-                          const st = lineStatus(li, trucks, entityId)
-                          const badge = _statusBadge[st]
+                          const st = invLineStatus(li, trucks, entityId)
+                          const lineBg = st === 'missing'
+                            ? 'rgba(220,38,38,0.07)'
+                            : st === 'no_truck' ? 'rgba(217,119,6,0.06)' : 'var(--bg-secondary)'
                           return (
-                            <tr key={j} style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', opacity: isSelected ? 1 : 0.45 }}>
-                              <td style={_td}></td>
-                              <td style={{ ..._td, width: 24 }}>
-                                <span style={{ fontSize: 10, fontWeight: 700, color: badge.color }} title={badge.label}>
-                                  {st === 'valid' ? '✓' : '!'}
-                                </span>
+                            <tr key={j} style={{ background: lineBg, borderBottom:'1px solid var(--border)', opacity: isSelected ? 1 : 0.45 }}>
+                              <td style={wbgTd}></td>
+                              <td style={wbgTd}></td>
+                              <td style={{ ...wbgTd, color:'var(--text-muted)', paddingLeft:16 }}>{li.item_code}</td>
+                              <td style={{ ...wbgTd, color:'var(--text-muted)' }}>{li.slip_date ? new Date(li.slip_date + 'T00:00:00').toLocaleDateString('en-ZA') : '—'}</td>
+                              <td style={{ ...wbgTd, fontFamily:'monospace', fontSize:11 }}>
+                                {li.unit}
+                                {st === 'no_truck' && <span style={{ marginLeft:6, color:'#d97706', fontSize:10, fontWeight:700 }}>⚠ not found</span>}
+                                {st === 'missing' && <span style={{ marginLeft:6, color:'#dc2626', fontSize:10, fontWeight:700 }}>✕ missing</span>}
                               </td>
-                              <td style={{ ..._td, color: 'var(--text-muted)', paddingLeft: 8 }}>{li.item_code}</td>
-                              <td style={{ ..._td, color: 'var(--text-muted)', fontSize: 11 }}>{formatDate(li.slip_date)}</td>
-                              <td style={{ ..._td }}>
-                                <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{li.unit}</span>
-                                {li.driver_name && <span style={{ color: 'var(--text-muted)', marginLeft: 6, fontSize: 11 }}>{li.driver_name}</span>}
-                                {st !== 'valid' && <span style={{ marginLeft: 8, fontSize: 10, color: badge.color, fontWeight: 600 }}>{badge.label}</span>}
-                              </td>
-                              <td style={{ ..._td, textAlign: 'right', color: 'var(--text-muted)' }}>{li.amount_excl_vat.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
-                              <td style={{ ..._td, textAlign: 'right', color: 'var(--text-muted)' }}>{li.quantity}L</td>
+                              <td style={{ ...wbgTd, textAlign:'right', color:'var(--text-muted)' }}>{li.amount_excl_vat.toLocaleString('en-ZA', { minimumFractionDigits:2 })}</td>
+                              <td style={{ ...wbgTd, textAlign:'right', color:'var(--text-muted)' }}>{li.quantity}L</td>
                             </tr>
                           )
                         })}
@@ -388,11 +357,11 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
                 </tbody>
               </table>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <span style={{ fontSize:12, color:'var(--text-muted)' }}>
                 {selectedNums.size} of {invoices.length} selected
               </span>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display:'flex', gap:8 }}>
                 <button className="btn-ghost" onClick={() => setStep('idle')}>Back</button>
                 <button className="btn-primary" onClick={handleImport} disabled={importing || selectedNums.size === 0}>
                   {importing ? 'Importing…' : `Import ${selectedNums.size} invoice${selectedNums.size !== 1 ? 's' : ''}`}
@@ -400,43 +369,25 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
               </div>
             </div>
           </>
-        )}
-
-        {step === 'results' && importResult && (
-          <>
-            <div style={{ marginBottom: 16 }}>
-              {importResult.created > 0 ? (
-                <p style={{ margin: '0 0 8px', fontSize: 14, color: '#16a34a', fontWeight: 600 }}>
-                  ✓ {importResult.created} invoice{importResult.created !== 1 ? 's' : ''} imported successfully
-                </p>
-              ) : (
-                <p style={{ margin: '0 0 8px', fontSize: 14, color: 'var(--text-muted)' }}>
-                  All invoices already exist — nothing new imported
-                </p>
-              )}
-              {importResult.skipped > 0 && (
-                <p style={{ margin: '0 0 4px', fontSize: 13, color: 'var(--text-muted)' }}>
-                  {importResult.skipped} invoice{importResult.skipped !== 1 ? 's' : ''} skipped (already exist)
-                </p>
-              )}
-              <p style={{ margin: '8px 0 4px', fontSize: 13 }}>
-                <span style={{ color: '#16a34a', fontWeight: 600 }}>{importResult.fillups_created}</span> diesel fill-up record{importResult.fillups_created !== 1 ? 's' : ''} created
-                {importResult.fillups_skipped > 0 && (
-                  <span style={{ color: '#d97706', marginLeft: 10 }}>
-                    ⚠ {importResult.fillups_skipped} skipped — truck not found or missing data
-                  </span>
-                )}
-              </p>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn-primary" onClick={onClose}>Done</button>
-            </div>
-          </>
-        )}
+        )
+        })()}
       </div>
     </div>
   )
 }
+
+const wbgModalOverlay = {
+  position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000,
+  display:'flex', alignItems:'center', justifyContent:'center',
+}
+const wbgModalBox = {
+  background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:8,
+  padding:24, width:680, maxWidth:'95vw', maxHeight:'90vh', overflowY:'auto',
+  boxShadow:'0 8px 32px rgba(0,0,0,0.25)',
+}
+const wbgTh = { padding:'6px 10px', textAlign:'left', fontWeight:600, fontSize:11,
+                borderBottom:'1px solid var(--border)', whiteSpace:'nowrap' }
+const wbgTd = { padding:'5px 10px', verticalAlign:'middle' }
 
 function PaymentTermBadge({ term }) {
   const is30 = term === '30_days'
@@ -608,7 +559,7 @@ export default function SupplierProfilePage() {
       line_items: inv.line_items ? inv.line_items.map(li => {
         const qty = parseFloat(li.quantity) || 0
         const excl = parseFloat(li.amount_excl_vat) || 0
-        return { ...li, _key: li.id, _rate: qty > 0 ? String(Math.round(excl / qty * 10000) / 10000) : '' }
+        return { ...li, _key: li.id, _rate: qty > 0 ? String(Math.round(excl / qty * 10000) / 10000) : '', line_date: li.line_date ? String(li.line_date).slice(0, 10) : '' }
       }) : [],
       statement_month: inv.statement_month || currentMonth(),
       statement_year: inv.statement_year || currentYear(),
@@ -653,6 +604,7 @@ export default function SupplierProfilePage() {
     amount_excl_vat: parseFloat(li.amount_excl_vat) || 0,
     amount_incl_vat: parseFloat(li.amount_incl_vat) || 0,
     sort_order: idx,
+    line_date: li.line_date || null,
   })
 
   const validate = (form) => {
@@ -785,6 +737,7 @@ export default function SupplierProfilePage() {
   // Suppliers with requires_registration=false (e.g. Axxess) don't use vehicle regs on invoices
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
+  const isWBGDiesel = isDiesel && supplier?.name?.toLowerCase().includes('wbg')
   const supplierEntityCode = entities.find(e => e.id === supplier?.entity_id)?.code?.toUpperCase()
   const isObhiSupplier = supplierEntityCode === 'OBHI' && !supplier?.name?.toLowerCase().includes('wbg')
 
@@ -1113,28 +1066,23 @@ export default function SupplierProfilePage() {
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('invoice_number')}>
                         Invoice #{sortArrow('invoice_number')}
                       </th>
-                      {isDiesel && (
-                        <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('slip_number')}>
-                          Slip #{sortArrow('slip_number')}
-                        </th>
-                      )}
-                      {showVehicleReg && (
+                      {showVehicleReg && !isWBGDiesel && (
                         <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('vehicle_reg')}>
                           Vehicle Reg{sortArrow('vehicle_reg')}
                         </th>
                       )}
-                      <th style={styles.th}>{isDiesel ? 'Subbie Name' : 'Description'}</th>
+                      {!isDiesel && <th style={styles.th}>Description</th>}
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('amount')}>
                         Amount{sortArrow('amount')}
                       </th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>Deposit</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>Outstanding</th>
-                      {isDiesel && (
+                      {isDiesel && !isWBGDiesel && (
                         <th style={{ ...styles.th, textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('litres')}>
                           Litres{sortArrow('litres')}
                         </th>
                       )}
-                      {isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
+                      {isDiesel && !isWBGDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
                       <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
@@ -1147,7 +1095,7 @@ export default function SupplierProfilePage() {
                       const isEditing = editingId === inv.id
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
-                      const totalCols = 12 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0) + (isDiesel ? 3 : 0)
+                      const totalCols = 12 + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 1 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
 
                       return (
                         <Fragment key={inv.id}>
@@ -1228,19 +1176,9 @@ export default function SupplierProfilePage() {
                               )}
                             </td>
 
-                            {/* Slip # — diesel only, read-only from linked DieselFillUp */}
-                            {isDiesel && (
-                              <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 11 }}>
-                                {inv.slip_number ? (
-                                  <span>{inv.slip_number}</span>
-                                ) : (
-                                  <span style={{ color: 'var(--danger)', fontWeight: 600, fontSize: 10 }}>⚠ missing</span>
-                                )}
-                              </td>
-                            )}
 
                             {/* Vehicle Reg */}
-                            {showVehicleReg && (
+                            {showVehicleReg && !isWBGDiesel && (
                               <td style={styles.td}>
                                 {isEditing ? (
                                   <div onClick={e => e.stopPropagation()}>
@@ -1262,39 +1200,27 @@ export default function SupplierProfilePage() {
                               </td>
                             )}
 
-                            {/* Description / Subbie Name */}
-                            <td style={{ ...styles.td, maxWidth: 200 }}>
-                              {isEditing ? (
-                                isDiesel && subbies.length > 0 ? (
-                                  <div onClick={e => e.stopPropagation()}>
-                                    <SearchableSelect
-                                      value={f.description}
-                                      onChange={v => setEditForm(p => ({ ...p, description: v }))}
-                                      options={[{ id: '', name: '' }, ...subbies]}
-                                      getValue={s => s.name}
-                                      getLabel={s => s.name || '— None —'}
-                                      placeholder="Subbie name…"
-                                      style={{ width: 160 }}
-                                    />
-                                  </div>
-                                ) : (
+                            {/* Description (non-diesel only) */}
+                            {!isDiesel && (
+                              <td style={{ ...styles.td, maxWidth: 200 }}>
+                                {isEditing ? (
                                   <input
                                     value={f.description}
                                     onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
                                     onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
                                     onClick={e => e.stopPropagation()}
                                     style={{ ...styles.cellInput, minWidth: 140 }}
-                                    placeholder={isDiesel ? 'Subbie name…' : 'Description'}
+                                    placeholder="Description"
                                   />
-                                )
-                              ) : (
-                                <span style={{ color: 'var(--text-muted)', fontSize: 12 }} title={inv.description}>
-                                  {inv.description
-                                    ? inv.description.length > 40 ? inv.description.slice(0, 40) + '…' : inv.description
-                                    : '—'}
-                                </span>
-                              )}
-                            </td>
+                                ) : (
+                                  <span style={{ color: 'var(--text-muted)', fontSize: 12 }} title={inv.description}>
+                                    {inv.description
+                                      ? inv.description.length > 40 ? inv.description.slice(0, 40) + '…' : inv.description
+                                      : '—'}
+                                  </span>
+                                )}
+                              </td>
+                            )}
 
                             {/* Amount */}
                             <td style={{
@@ -1313,9 +1239,6 @@ export default function SupplierProfilePage() {
                               ) : (
                                 <>
                                   {formatCurrency(inv.amount)}
-                                  {inv.is_multi_line && !isEditing && (
-                                    <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-muted)', fontWeight: 700 }}>ML</span>
-                                  )}
                                 </>
                               )}
                             </td>
@@ -1350,8 +1273,8 @@ export default function SupplierProfilePage() {
                               })()}
                             </td>
 
-                            {/* Litres — diesel suppliers only */}
-                            {isDiesel && (
+                            {/* Litres — diesel suppliers only (not WBG bulk-import) */}
+                            {isDiesel && !isWBGDiesel && (
                               <td style={{ ...styles.td, textAlign: 'right' }}>
                                 {isEditing ? (
                                   <input
@@ -1382,8 +1305,8 @@ export default function SupplierProfilePage() {
                               </td>
                             )}
 
-                            {/* Rate/L — diesel suppliers only */}
-                            {isDiesel && (
+                            {/* Rate/L — diesel suppliers only (not WBG bulk-import) */}
+                            {isDiesel && !isWBGDiesel && (
                               <td style={{ ...styles.td, textAlign: 'right' }}>
                                 {isEditing ? (
                                   <input
@@ -2130,7 +2053,7 @@ function LineItemsViewer({ items, total, showReg = false }) {
                     <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{li.unit || '—'}</span>
                   </td>
                 )}
-                <td style={{ ...liStyles.td, color: 'var(--text-muted)' }}>{formatDate(li.line_date)}</td>
+                <td style={{ ...liStyles.td, color: 'var(--text-muted)' }}>{li.line_date ? String(li.line_date).slice(0, 10).split('-').reverse().join('-') : '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
                   {rate != null ? rate.toFixed(4) : '—'}
@@ -2164,8 +2087,8 @@ function LineItemsViewer({ items, total, showReg = false }) {
 
 
 // Diesel sub-line columns mirror the main invoice table:
-// Slip # | Vehicle Reg | Subbie Name | Litres | Rate/L | Excl. VAT | Incl. VAT
-// Stored as: item_code | unit | item_description | quantity | _rate(computed) | amount_excl_vat | amount_incl_vat
+// Slip # | Slip Date | Vehicle Reg | Litres | Rate/L | Excl. VAT | Incl. VAT
+// Stored as: item_code | line_date | unit | quantity | _rate(computed) | amount_excl_vat | amount_incl_vat
 
 function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies = [], trucks = [], fillups = [] }) {
   const vatMult = vatApplicable ? 1.15 : 1
@@ -2207,9 +2130,9 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ background: 'var(--bg-surface)' }}>
+            <th style={liStyles.th}>Slip Date</th>
             <th style={liStyles.th}>Slip #</th>
             <th style={liStyles.th}>Vehicle Reg</th>
-            <th style={liStyles.th}>Subbie Name</th>
             <th style={liStyles.th}>Litres</th>
             <th style={liStyles.th}>Rate/L</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
@@ -2220,6 +2143,11 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
         <tbody>
           {items.map((li, idx) => (
             <tr key={li._key ?? li.id ?? idx} style={{ borderBottom: '1px solid var(--border)' }}>
+              <td style={liStyles.td}>
+                <input type="date" value={li.line_date ?? ''}
+                  onChange={e => updateLine(idx, 'line_date', e.target.value)}
+                  style={{ ...liStyles.input, minWidth: 120 }} />
+              </td>
               <td style={liStyles.td}>
                 {fillups.length > 0 ? (
                   <SearchableSelect
@@ -2252,23 +2180,6 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
                   <input value={li.unit ?? ''} placeholder="e.g. DDM652NC"
                     onChange={e => updateLine(idx, 'unit', e.target.value.toUpperCase())}
                     style={{ ...liStyles.input, minWidth: 100, textTransform: 'uppercase' }} />
-                )}
-              </td>
-              <td style={liStyles.td}>
-                {subbies.length > 0 ? (
-                  <SearchableSelect
-                    value={li.item_description ?? ''}
-                    onChange={v => updateLine(idx, 'item_description', v)}
-                    options={[{ id: '', name: '' }, ...subbies]}
-                    getValue={s => s.name}
-                    getLabel={s => s.name || '— None —'}
-                    placeholder="Subbie name…"
-                    style={{ minWidth: 130 }}
-                  />
-                ) : (
-                  <input value={li.item_description ?? ''} placeholder="Subbie name…"
-                    onChange={e => updateLine(idx, 'item_description', e.target.value)}
-                    style={{ ...liStyles.input, minWidth: 120 }} />
                 )}
               </td>
               <td style={liStyles.td}>
@@ -2326,10 +2237,9 @@ function DieselLineItemsViewer({ items, total }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead>
           <tr style={{ background: 'var(--bg-surface)' }}>
+            <th style={liStyles.th}>Date</th>
             <th style={liStyles.th}>Slip #</th>
             <th style={liStyles.th}>Vehicle Reg</th>
-            <th style={liStyles.th}>Date</th>
-            <th style={liStyles.th}>Subbie Name</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Litres</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate/L</th>
             <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
@@ -2343,10 +2253,9 @@ function DieselLineItemsViewer({ items, total }) {
             const rate = litres > 0 ? excl / litres : null
             return (
               <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ ...liStyles.td, color: 'var(--text-muted)', fontSize: 11 }}>{li.line_date ? String(li.line_date).slice(0, 10).split('-').reverse().join('-') : '—'}</td>
                 <td style={{ ...liStyles.td, fontWeight: 600 }}>{li.item_code || '—'}</td>
                 <td style={liStyles.td}><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{li.unit || '—'}</span></td>
-                <td style={{ ...liStyles.td, color: 'var(--text-muted)', fontSize: 11 }}>{formatDate(li.line_date)}</td>
-                <td style={{ ...liStyles.td, color: 'var(--text-muted)' }}>{li.item_description || '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right' }}>{litres ? `${litres.toFixed(1)}L` : '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>{rate != null ? rate.toFixed(4) : '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>R {excl.toFixed(2)}</td>
@@ -2357,7 +2266,7 @@ function DieselLineItemsViewer({ items, total }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={3} style={liStyles.td} />
+            <td colSpan={2} style={liStyles.td} />
             <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>{totalLitres.toFixed(1)}L</td>
             <td style={liStyles.td} />

@@ -1,4 +1,6 @@
 from pathlib import Path
+import logging
+import logging.handlers
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +16,27 @@ from app.api.routes import auth, users, entities, suppliers, invoices, audit, ro
 from app.api.routes import settings as settings_router
 
 Base.metadata.create_all(bind=engine)
+
+# ── File logger ───────────────────────────────────────────────────────────────
+_log_dir = Path(__file__).resolve().parents[1] / "logs"
+_log_dir.mkdir(exist_ok=True)
+_log_file = _log_dir / "safetec.log"
+
+def _setup_file_logging():
+    """Wire up the file handler. Called at startup AFTER uvicorn configures logging."""
+    fh = logging.handlers.RotatingFileHandler(
+        _log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s — %(message)s"))
+    fh.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    root.addHandler(fh)
+    for name in ("safetec", "safetec.drivers", "safetec.truck_loads"):
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.DEBUG)
+        lg.addHandler(fh)
+        lg.propagate = True
+    logging.getLogger("safetec").info("=== Safetec logging initialised (post-uvicorn) ===")
 
 
 def _seed_default_roles():
@@ -103,6 +126,11 @@ app.include_router(payroll_entries.router)
 app.include_router(reports.router)
 app.include_router(feedback.router)
 app.include_router(invoice_templates.router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    _setup_file_logging()
 
 
 @app.get("/health")

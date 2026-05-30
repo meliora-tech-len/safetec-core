@@ -63,7 +63,6 @@ def salary_config_history(
     current_user: User = Depends(get_current_user),
 ):
     """Last HISTORY_LIMIT records (active + inactive) for a driver, newest first."""
-    _require_admin(current_user)
     configs = (
         db.query(DriverSalaryConfig)
         .filter(

@@ -284,9 +284,11 @@ export default function DriverDetailPage() {
       setEntities(ents)
       // Fetch salary config history for this driver once we have driver data
       const name = `${d.first_name} ${d.last_name}`.trim()
-      api.get(`/api/driver-salary-configs/history?entity_id=${d.entity_id}&driver_name=${encodeURIComponent(name)}`)
-        .then(setSalaryHistory)
-        .catch(() => {})
+      if (isAdmin) {
+        api.get(`/api/driver-salary-configs/history?entity_id=${d.entity_id}&driver_name=${encodeURIComponent(name)}`)
+          .then(setSalaryHistory)
+          .catch(() => {})
+      }
     }).catch(() => toast.error('Failed to load driver'))
   }, [driverId])
 

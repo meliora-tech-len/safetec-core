@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, CasualTruckAssignment, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck, BusinessEntity
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, CasualTruckAssignment, TruckLoad, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck, BusinessEntity
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
     PersonalVehicleCreate, PersonalVehicleUpdate, PersonalVehicleOut,
@@ -329,9 +329,19 @@ def list_truck_food_payments(
         raise HTTPException(status_code=404, detail="Truck not found")
     _check_entity_access(truck.entity_id, current_user)
 
+    # Casual drivers linked to this truck: either formally assigned (CasualTruckAssignment)
+    # or named on one of the truck's load records (TruckLoad.driver_id). The latter means
+    # food added against a casual you selected on a load shows up here without a separate
+    # truck assignment step — i.e. it "just works" like a permanent driver.
     casual_driver_ids = (
         db.query(CasualTruckAssignment.driver_id)
         .filter(CasualTruckAssignment.truck_id == truck_id)
+        .subquery()
+    )
+    load_driver_ids = (
+        db.query(TruckLoad.driver_id)
+        .filter(TruckLoad.truck_id == truck_id, TruckLoad.driver_id.isnot(None))
+        .distinct()
         .subquery()
     )
 
@@ -343,6 +353,7 @@ def list_truck_food_payments(
             or_(
                 Driver.truck_id == truck_id,
                 Driver.id.in_(casual_driver_ids),
+                Driver.id.in_(load_driver_ids),
             ),
             DriverPayCycle.pay_year == year,
             DriverPayCycle.pay_month == month,

@@ -1454,7 +1454,6 @@ class InvoiceLineItemImport(BaseModel):
     amount_excl_vat: Decimal = Decimal('0')
     amount_incl_vat: Decimal = Decimal('0')
     sort_order: int = 0
-    driver_name: Optional[str] = None
     slip_date: Optional[str] = None
 
 
@@ -1475,8 +1474,6 @@ class BulkImportResult(BaseModel):
     created: int
     skipped: int
     skipped_numbers: List[str] = []
-    fillups_created: int = 0
-    fillups_skipped: int = 0
 
 
 class SupplierInvoiceCreate(BaseModel):
