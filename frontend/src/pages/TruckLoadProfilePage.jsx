@@ -30,7 +30,7 @@ const today = new Date().toISOString().slice(0, 10)
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
 const EMPTY_LOAD = {
-  load_date: today, slip_number: '', po_number: '',
+  load_date: '', slip_number: '', po_number: '',
   driver_id: null, driver_name: '',
   mine_id: '', supplier_id: '', tonnes: '', rate_per_ton: '', is_paid: false,
   is_projection: false, driver_already_paid: false,
@@ -38,16 +38,16 @@ const EMPTY_LOAD = {
 }
 
 const EMPTY_PROJ = {
-  load_date: today,
+  load_date: '',
   driver_id: null, driver_name: '',
   mine_id: '',
   notes: '',
   statement_month: null, statement_year: null,
 }
 const EMPTY_DIESEL = {
-  fillup_date: today, supplier_id: '', invoice_number: '', slip_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
+  fillup_date: '', supplier_id: '', invoice_number: '', slip_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
 }
-const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: today, notes: '' }
+const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: '', notes: '' }
 
 
 // ── Shared load form (card-style flex-wrap, used for both new and inline edit) ──
@@ -694,7 +694,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
   const [addingNew, setAddingNew] = useState(false)
   const [saving, setSaving]     = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
-  const [form, setForm]         = useState({ driver_id: '', route_name: '', amount: '', load_date: today, notes: '' })
+  const [form, setForm]         = useState({ driver_id: '', route_name: '', amount: '', load_date: '', notes: '' })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const [editingEntryId, setEditingEntryId] = useState(null)
@@ -761,7 +761,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
         notes: form.notes || null,
       })
       toast.success('Additional load added')
-      setForm({ driver_id: selectedDriverId || '', route_name: '', amount: '', load_date: today, notes: '' })
+      setForm({ driver_id: selectedDriverId || '', route_name: '', amount: '', load_date: '', notes: ''})
       setAddingNew(false)
       fetchEntries()
     } catch (e) {
@@ -793,7 +793,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
         </div>
         <button className="btn btn-ghost btn-sm"
           onClick={() => {
-            setForm({ driver_id: selectedDriverId || '', route_name: '', amount: '', load_date: today, notes: '' })
+            setForm({ driver_id: selectedDriverId || '', route_name: '', amount: '', load_date: '', notes: ''})
             setAddingNew(v => !v)
           }}
           style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
