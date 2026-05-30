@@ -1002,11 +1002,13 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
             </div>
             <div>
               <label className="form-label">Amount (R) *</label>
-              <input className="form-input" type="number" step="0.01" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
+              <input className="form-input" type="number" step="0.01" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00"
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAdd() } }} />
             </div>
             <div>
               <label className="form-label">Notes</label>
-              <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
+              <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional"
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAdd() } }} />
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
