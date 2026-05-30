@@ -59,10 +59,21 @@ function LoadForm({ editForm, setEditForm, mines, drivers, vatRate, rateSource, 
   const cardExcl = !isProj && editForm.tonnes && editForm.rate_per_ton ? (parseFloat(editForm.tonnes) * parseFloat(editForm.rate_per_ton)).toFixed(2) : null
   const cardIncl = cardExcl ? (parseFloat(cardExcl) * (1 + vatRate)).toFixed(2) : null
   const vatRegistered = vatRate > 0
-  const onKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave() } if (e.key === 'Escape') onCancel() }
+  const formRef = useRef(null)
+  const focusNext = (e) => {
+    if (e.key !== 'ArrowRight') return
+    e.preventDefault()
+    if (!formRef.current) return
+    const els = Array.from(formRef.current.querySelectorAll(
+      'input:not([disabled]):not([type=checkbox]), select:not([disabled])'
+    )).filter(el => el.offsetParent !== null)
+    const idx = els.indexOf(document.activeElement)
+    if (idx >= 0 && idx < els.length - 1) els[idx + 1].focus()
+  }
+  const onKey = (e) => { focusNext(e); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave() } if (e.key === 'Escape') onCancel() }
   const set = (k, v) => setEditForm(f => ({ ...f, [k]: v }))
   return (
-    <div>
+    <div ref={formRef}>
       {isProj && (
         <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 6, background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)', fontSize: 12, color: '#92400e', display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontWeight: 700, fontSize: 11, background: '#f59e0b', color: '#fff', padding: '1px 6px', borderRadius: 3 }}>PROJECTION</span>
@@ -150,13 +161,25 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
     ? (parseFloat(form.tonnes) * parseFloat(form.rate_per_ton)).toFixed(2) : null
   const inclVat = exclVat ? (parseFloat(exclVat) * (1 + vatRate)).toFixed(2) : null
 
+  const rowRef = useRef(null)
+  const focusNext = (e) => {
+    if (e.key !== 'ArrowRight') return
+    e.preventDefault()
+    if (!rowRef.current) return
+    const els = Array.from(rowRef.current.querySelectorAll(
+      'input:not([disabled]):not([type=checkbox]), select:not([disabled])'
+    )).filter(el => el.offsetParent !== null)
+    const idx = els.indexOf(document.activeElement)
+    if (idx >= 0 && idx < els.length - 1) els[idx + 1].focus()
+  }
   const handleKey = (e) => {
+    focusNext(e)
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSave() }
     if (e.key === 'Escape') onCancel()
   }
 
   return (
-    <tr style={{ background: 'var(--accent-subtle)', outline: '2px solid var(--accent)', outlineOffset: -1 }}
+    <tr ref={rowRef} style={{ background: 'var(--accent-subtle)', outline: '2px solid var(--accent)', outlineOffset: -1 }}
       onClick={e => e.stopPropagation()}>
       <td style={S.td}>
         <DateInput ref={firstInputRef} value={form.load_date}
@@ -387,6 +410,23 @@ function DieselSection({ truck, year, month, suppliers }) {
     doAdd()
   }
 
+  const dieselFormRef = useRef(null)
+  const dieselFocusNext = (e) => {
+    if (e.key !== 'ArrowRight') return
+    e.preventDefault()
+    if (!dieselFormRef.current) return
+    const els = Array.from(dieselFormRef.current.querySelectorAll(
+      'input:not([disabled]):not([type=checkbox]), select:not([disabled])'
+    )).filter(el => el.offsetParent !== null)
+    const idx = els.indexOf(document.activeElement)
+    if (idx >= 0 && idx < els.length - 1) els[idx + 1].focus()
+  }
+  const dieselKey = (e) => {
+    dieselFocusNext(e)
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAdd() }
+    if (e.key === 'Escape') setAddingNew(false)
+  }
+
   const handleDelete = (f) => setDeleteTarget(f)
 
   // Group by supplier name
@@ -410,12 +450,12 @@ function DieselSection({ truck, year, month, suppliers }) {
       </div>
 
       {addingNew && (
-        <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+        <div ref={dieselFormRef} className="card" style={{ padding: 20, marginBottom: 20 }}>
           <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 14 }}>New Diesel Entry</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
             <div>
               <label className="form-label">Date *</label>
-              <DateInput className="form-input" value={form.fillup_date} onChange={e => set('fillup_date', e.target.value)} />
+              <DateInput className="form-input" value={form.fillup_date} onChange={e => set('fillup_date', e.target.value)} onKeyDown={dieselKey} />
             </div>
             <div>
               <label className="form-label">Supplier *</label>
@@ -424,11 +464,11 @@ function DieselSection({ truck, year, month, suppliers }) {
             </div>
             <div>
               <label className="form-label">Invoice #</label>
-              <input className="form-input" value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" />
+              <input className="form-input" value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" onKeyDown={dieselKey} />
             </div>
             <div>
               <label className="form-label">Slip #</label>
-              <input className="form-input" value={form.slip_number} onChange={e => set('slip_number', e.target.value)} placeholder="SLP-001" />
+              <input className="form-input" value={form.slip_number} onChange={e => set('slip_number', e.target.value)} placeholder="SLP-001" onKeyDown={dieselKey} />
             </div>
             <div>
               <label className="form-label">Type</label>
@@ -447,7 +487,7 @@ function DieselSection({ truck, year, month, suppliers }) {
             </div>
             <div>
               <label className="form-label">Litres *</label>
-              <input className="form-input" type="number" step="0.01" min="0" value={form.litres} onChange={e => set('litres', e.target.value)} placeholder="0.00" />
+              <input className="form-input" type="number" step="0.01" min="0" value={form.litres} onChange={e => set('litres', e.target.value)} placeholder="0.00" onKeyDown={dieselKey} />
             </div>
             <div>
               <label className="form-label">
@@ -461,7 +501,7 @@ function DieselSection({ truck, year, month, suppliers }) {
               <input className="form-input" type="number" step="0.01" min="0"
                 value={form.rate_per_litre}
                 onChange={e => { set('rate_per_litre', e.target.value); setRateEdited(true) }}
-                placeholder="0.00" />
+                placeholder="0.00" onKeyDown={dieselKey} />
             </div>
             <div>
               <label className="form-label">Amount</label>
@@ -472,7 +512,7 @@ function DieselSection({ truck, year, month, suppliers }) {
           </div>
           <div style={{ marginTop: 12 }}>
             <label className="form-label">Mine / Notes</label>
-            <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
+            <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" onKeyDown={dieselKey} />
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
             <button className="btn btn-ghost" onClick={() => { setAddingNew(false); setForm({ ...EMPTY_DIESEL }) }}>Cancel</button>
@@ -921,6 +961,22 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
 
   const formDriver = drivers.find(d => String(d.id) === String(form.driver_id))
 
+  const foodFormRef = useRef(null)
+  const foodFocusNext = (e) => {
+    if (e.key !== 'ArrowRight') return
+    e.preventDefault()
+    if (!foodFormRef.current) return
+    const els = Array.from(foodFormRef.current.querySelectorAll(
+      'input:not([disabled]):not([type=checkbox]), select:not([disabled])'
+    )).filter(el => el.offsetParent !== null)
+    const idx = els.indexOf(document.activeElement)
+    if (idx >= 0 && idx < els.length - 1) els[idx + 1].focus()
+  }
+  const foodKey = (e) => {
+    foodFocusNext(e)
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAdd() }
+  }
+
   const fetchEntries = useCallback(async () => {
     setLoading(true)
     try {
@@ -983,7 +1039,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
       </div>
 
       {addingNew && (
-        <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+        <div ref={foodFormRef} className="card" style={{ padding: 20, marginBottom: 20 }}>
           <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>New Food Allowance Entry</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16, background: 'var(--accent-subtle)', borderRadius: 6, padding: '8px 10px' }}>
             Saved to the driver's Food Allowance (Kosgelde) section on their payslip.
@@ -998,17 +1054,17 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
             </div>
             <div>
               <label className="form-label">Date</label>
-              <DateInput className="form-input" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} />
+              <DateInput className="form-input" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} onKeyDown={foodKey} />
             </div>
             <div>
               <label className="form-label">Amount (R) *</label>
               <input className="form-input" type="number" step="0.01" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00"
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAdd() } }} />
+                onKeyDown={foodKey} />
             </div>
             <div>
               <label className="form-label">Notes</label>
               <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional"
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAdd() } }} />
+                onKeyDown={foodKey} />
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
