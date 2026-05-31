@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link2, ChevronDown, ChevronUp, AlertTriangle, Search, X, UserCheck } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
@@ -411,16 +411,22 @@ export default function DriverAssignmentsPage() {
 
   useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
 
+  const loadSeq = useRef(0)
   const load = useCallback(() => {
     setLoading(true)
+    const seq = ++loadSeq.current
     const params = filterEntity ? { entity_id: filterEntity, limit: 500 } : { limit: 500 }
     Promise.all([
       getFleetTrucks(params).then(r => r.data),
       getDrivers(params).then(r => r.data),
     ])
-      .then(([t, d]) => { setTrucks(t); setDrivers(d) })
-      .catch(() => toast.error('Failed to load assignments'))
-      .finally(() => setLoading(false))
+      .then(([t, d]) => {
+        if (seq !== loadSeq.current) return   // stale — a newer load has since started
+        setTrucks(t)
+        setDrivers(d)
+      })
+      .catch(() => { if (seq === loadSeq.current) toast.error('Failed to load assignments') })
+      .finally(() => { if (seq === loadSeq.current) setLoading(false) })
   }, [filterEntity])
 
   useEffect(() => { load() }, [load])
@@ -496,7 +502,7 @@ export default function DriverAssignmentsPage() {
   const slot3Map = slotMapsBySlot[3]
 
   const ownTrucks = useMemo(() =>
-    trucks.sort((a, b) => {
+    [...trucks].sort((a, b) => {
       const fa = parseInt(a.fleet_number) || 9999
       const fb = parseInt(b.fleet_number) || 9999
       return fa - fb || a.registration.localeCompare(b.registration)

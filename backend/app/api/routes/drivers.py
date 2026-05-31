@@ -418,22 +418,31 @@ def add_truck_assignment(
     if driver.driver_type != DriverType.casual:
         raise HTTPException(status_code=400, detail="Multi-truck assignments are only for casual drivers")
 
-    conflict = db.query(CasualTruckAssignment).filter(
-        CasualTruckAssignment.truck_id == payload.truck_id,
-        CasualTruckAssignment.driver_slot == payload.driver_slot,
-    ).first()
-    if conflict:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Driver {payload.driver_slot} slot on this truck is already taken",
-        )
+    # Idempotency: if this exact assignment already exists, just return it
     existing = db.query(CasualTruckAssignment).filter(
         CasualTruckAssignment.driver_id == driver_id,
         CasualTruckAssignment.truck_id == payload.truck_id,
         CasualTruckAssignment.driver_slot == payload.driver_slot,
     ).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Already assigned to this truck/slot")
+        return {
+            "id": existing.id,
+            "truck_id": existing.truck_id,
+            "driver_slot": existing.driver_slot,
+            "truck_registration": existing.truck.registration if existing.truck else None,
+        }
+
+    # Conflict: another driver already occupies this slot on this truck
+    conflict = db.query(CasualTruckAssignment).filter(
+        CasualTruckAssignment.truck_id == payload.truck_id,
+        CasualTruckAssignment.driver_slot == payload.driver_slot,
+        CasualTruckAssignment.driver_id != driver_id,
+    ).first()
+    if conflict:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Driver {payload.driver_slot} slot on this truck is already taken",
+        )
 
     assignment = CasualTruckAssignment(
         driver_id=driver_id,
