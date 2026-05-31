@@ -201,7 +201,10 @@ def get_dashboard_summary(
             continue
 
         if term == PaymentTermType.current:
-            if inv.invoice_date.month == now.month and inv.invoice_date.year == now.year:
+            # Use statement_month/year (user-set) not invoice_date for bucket assignment
+            stmt_m = inv.statement_month or inv.invoice_date.month
+            stmt_y = inv.statement_year  or inv.invoice_date.year
+            if stmt_m == now.month and stmt_y == now.year:
                 # This month — normal current/cash bucket
                 key = inv.supplier_id
                 if key not in current_payables:
@@ -209,15 +212,13 @@ def get_dashboard_summary(
                 current_payables[key]["total"] += outstanding
                 current_payables[key]["count"] += 1
             else:
-                # Different month — flag separately
-                inv_m = inv.invoice_date.month
-                inv_y = inv.invoice_date.year
-                key = (inv.supplier_id, inv_y, inv_m)
+                # Different period — flag separately so user can investigate
+                key = (inv.supplier_id, stmt_y, stmt_m)
                 if key not in other_period_payables:
                     other_period_payables[key] = {
                         "supplier_name": supplier.name,
-                        "invoice_month": inv_m,
-                        "invoice_year": inv_y,
+                        "invoice_month": stmt_m,
+                        "invoice_year": stmt_y,
                         "total": Decimal("0"),
                         "count": 0,
                     }
