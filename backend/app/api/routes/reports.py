@@ -250,3 +250,136 @@ def income_expenses_report(
         'totals':             totals,
         'has_payroll_entries': bool(payroll_from_entries),
     }
+
+
+def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
+    """Build per-invoice detail dict for one month (shared by single and annual endpoints)."""
+    from collections import defaultdict
+
+    loads = (
+        db.query(TruckLoad)
+        .filter(
+            TruckLoad.entity_id == entity_id,
+            TruckLoad.statement_year == year,
+            TruckLoad.statement_month == month,
+            TruckLoad.is_archived != True,
+            TruckLoad.is_projection != True,
+        )
+        .order_by(TruckLoad.load_date)
+        .all()
+    )
+
+    mine_groups: dict = defaultdict(lambda: {'mine_name': '', 'date': None, 'incl': 0.0, 'excl': 0.0})
+    for load in loads:
+        g = mine_groups[load.mine_id]
+        g['mine_name'] = load.mine.name if load.mine else str(load.mine_id)
+        d = load.load_date
+        if g['date'] is None or d > g['date']:
+            g['date'] = d
+        g['incl'] += float(load.amount_incl_vat or 0)
+        g['excl'] += float(load.amount_excl_vat or 0)
+
+    output_invoices = sorted([
+        {
+            'date':        g['date'].strftime('%Y-%m-%d') if g['date'] else None,
+            'description': g['mine_name'],
+            'amount_incl': round(g['incl'], 2),
+            'amount_excl': round(g['excl'], 2),
+            'vat':         round(g['incl'] - g['excl'], 2),
+        }
+        for g in mine_groups.values()
+    ], key=lambda x: x['date'] or '')
+
+    sup_invoices = (
+        db.query(SupplierInvoice)
+        .filter(
+            SupplierInvoice.entity_id == entity_id,
+            SupplierInvoice.statement_year == year,
+            SupplierInvoice.statement_month == month,
+            SupplierInvoice.is_archived != True,
+        )
+        .order_by(SupplierInvoice.invoice_date)
+        .all()
+    )
+
+    inv_ids = [inv.id for inv in sup_invoices]
+    line_excl_by_inv: dict[int, float] = {}
+    if inv_ids:
+        li_rows = (
+            db.query(
+                SupplierInvoiceLineItem.invoice_id,
+                func.coalesce(func.sum(SupplierInvoiceLineItem.amount_excl_vat), 0).label('excl'),
+            )
+            .filter(SupplierInvoiceLineItem.invoice_id.in_(inv_ids))
+            .group_by(SupplierInvoiceLineItem.invoice_id)
+            .all()
+        )
+        line_excl_by_inv = {r.invoice_id: float(r.excl) for r in li_rows}
+
+    input_invoices = []
+    for inv in sup_invoices:
+        incl = float(inv.amount)
+        if inv.id in line_excl_by_inv:
+            excl = line_excl_by_inv[inv.id]
+        elif inv.vat_applicable:
+            excl = incl / 1.15
+        else:
+            excl = incl
+        name = ''
+        if inv.supplier_id and inv.supplier:
+            name = inv.supplier.name
+        elif inv.subcontractor_id and inv.subcontractor:
+            name = inv.subcontractor.name
+        input_invoices.append({
+            'date':           inv.invoice_date.strftime('%Y-%m-%d') if inv.invoice_date else None,
+            'invoice_number': inv.invoice_number or '',
+            'supplier_name':  name,
+            'description':    inv.description or name,
+            'amount_incl':    round(incl, 2),
+            'amount_excl':    round(excl, 2),
+            'vat':            round(incl - excl, 2),
+            'vat_applicable': inv.vat_applicable,
+        })
+
+    out_incl = sum(x['amount_incl'] for x in output_invoices)
+    out_excl = sum(x['amount_excl'] for x in output_invoices)
+    out_vat  = round(out_incl - out_excl, 2)
+    in_incl  = sum(x['amount_incl'] for x in input_invoices)
+    in_excl  = sum(x['amount_excl'] for x in input_invoices)
+    in_vat   = round(in_incl - in_excl, 2)
+
+    return {
+        'month':           month,
+        'month_name':      MONTH_NAMES[month - 1],
+        'output_invoices': output_invoices,
+        'input_invoices':  input_invoices,
+        'output_totals':   {'amount_incl': round(out_incl, 2), 'amount_excl': round(out_excl, 2), 'vat': out_vat},
+        'input_totals':    {'amount_incl': round(in_incl, 2),  'amount_excl': round(in_excl, 2),  'vat': in_vat},
+        'vat_payable':     round(out_vat - in_vat, 2),
+    }
+
+
+@router.get("/sars-vat-detail")
+def sars_vat_detail(
+    entity_id: int = Query(...),
+    year: int = Query(...),
+    month: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _check_entity_access(entity_id, current_user)
+    detail = _build_month_detail(db, entity_id, year, month)
+    return {'year': year, 'entity_id': entity_id, **detail}
+
+
+@router.get("/sars-vat-detail-annual")
+def sars_vat_detail_annual(
+    entity_id: int = Query(...),
+    year: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Full per-invoice breakdown for all 12 months — used for annual export."""
+    _check_entity_access(entity_id, current_user)
+    months = [_build_month_detail(db, entity_id, year, m) for m in range(1, 13)]
+    return {'year': year, 'entity_id': entity_id, 'months': months}

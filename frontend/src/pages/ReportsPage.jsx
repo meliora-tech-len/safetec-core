@@ -2,9 +2,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
-  getIncomeExpensesReport,
+  getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
 } from '../services/api'
 import toast from 'react-hot-toast'
+import * as XLSX from 'xlsx'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const MONTH_OPTS = Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: MONTHS[i] }))
@@ -35,16 +38,32 @@ export default function ReportsPage() {
   // Diesel reports use an array; income report uses a structured object
   const [dieselData, setDieselData]   = useState([])
   const [incomeData, setIncomeData]   = useState(null)
+  const [detailData, setDetailData]   = useState(null)
 
   useEffect(() => {
     if (!isAdmin && activeEntity?.id) setEntityId(activeEntity.id)
   }, [isAdmin, activeEntity])
+
+  const loadDetail = useCallback(async (m) => {
+    if (!entityId) return
+    setLoading(true)
+    setDetailData(null)
+    try {
+      const res = await getSarsVatDetail({ entity_id: entityId, year, month: m })
+      setDetailData(res.data)
+    } catch {
+      toast.error('Failed to load detail')
+    } finally {
+      setLoading(false)
+    }
+  }, [entityId, year])
 
   const load = useCallback(async () => {
     if (!entityId) return
     setLoading(true)
     setDieselData([])
     setIncomeData(null)
+    setDetailData(null)
     try {
       if (tab === 'income') {
         const res = await getIncomeExpensesReport({ entity_id: entityId, year })
@@ -105,6 +124,275 @@ export default function ReportsPage() {
     }
   }
 
+  const [showExportMenu, setShowExportMenu] = useState(false)
+
+  const handleDetailExportExcel = () => {
+    if (!detailData) return
+    setShowExportMenu(false)
+    const { month_name, output_invoices, input_invoices, output_totals, input_totals, vat_payable } = detailData
+    const title   = `SARS VAT Return — ${month_name} ${year}`
+    const slug    = `sars-vat-${month_name}-${year}`
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+    const now     = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' })
+    const wb      = XLSX.utils.book_new()
+
+    const ws1 = XLSX.utils.aoa_to_sheet([
+      [title], [`Generated: ${now}`], [],
+      ['VAT POSITION', '', '', ''],
+      ['', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT'],
+      ['Income',   output_totals.amount_incl, output_totals.amount_excl, output_totals.vat],
+      ['Expenses', input_totals.amount_incl,  input_totals.amount_excl,  input_totals.vat],
+      [],
+      [vat_payable >= 0 ? 'VAT PAYABLE TO SARS' : 'VAT REFUND DUE', Math.abs(vat_payable)],
+    ])
+    ws1['!cols'] = [{ wch: 28 }, { wch: 20 }, { wch: 20 }, { wch: 16 }]
+    XLSX.utils.book_append_sheet(wb, ws1, 'Summary')
+
+    const ws2 = XLSX.utils.aoa_to_sheet([
+      [title], [`Generated: ${now}`], [],
+      ['Date', 'Mine / Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT'],
+      ...output_invoices.map(r => [fmtDate(r.date), r.description, r.amount_incl, r.amount_excl, r.vat]),
+      [],
+      ['TOTAL INCOME', '', output_totals.amount_incl, output_totals.amount_excl, output_totals.vat],
+    ])
+    ws2['!cols'] = [{ wch: 16 }, { wch: 48 }, { wch: 20 }, { wch: 20 }, { wch: 16 }]
+    XLSX.utils.book_append_sheet(wb, ws2, 'Income Invoices')
+
+    const ws3 = XLSX.utils.aoa_to_sheet([
+      [title], [`Generated: ${now}`], [],
+      ['Date', 'Invoice #', 'Supplier', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT'],
+      ...input_invoices.map(r => [
+        fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '',
+        r.amount_incl, r.amount_excl, r.vat_applicable ? r.vat : 'Non-VAT',
+      ]),
+      [],
+      ['TOTAL EXPENSES', '', '', '', input_totals.amount_incl, input_totals.amount_excl, input_totals.vat],
+    ])
+    ws3['!cols'] = [{ wch: 16 }, { wch: 24 }, { wch: 32 }, { wch: 40 }, { wch: 20 }, { wch: 20 }, { wch: 14 }]
+    XLSX.utils.book_append_sheet(wb, ws3, 'Expense Invoices')
+
+    XLSX.writeFile(wb, `${slug}.xlsx`)
+  }
+
+  const handleDetailExportPdf = () => {
+    if (!detailData) return
+    setShowExportMenu(false)
+    const { month_name, output_invoices, input_invoices, output_totals, input_totals, vat_payable } = detailData
+    const title   = `SARS VAT Return — ${month_name} ${year}`
+    const slug    = `sars-vat-${month_name}-${year}`
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+    const fmtAmt  = (n) => `R ${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const now     = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
+    const doc     = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const pw      = doc.internal.pageSize.getWidth()
+
+    doc.setFontSize(15); doc.setFont('helvetica', 'bold')
+    doc.text(title, 14, 15)
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(120)
+    doc.text(`Generated ${now}`, 14, 21)
+    doc.setTextColor(0)
+
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold')
+    doc.text('INCOME INVOICES', 14, 28)
+    autoTable(doc, {
+      head: [['Date', 'Mine / Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT']],
+      body: [
+        ...output_invoices.map(r => [fmtDate(r.date), r.description, fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), fmtAmt(r.vat)]),
+        ['TOTAL INCOME', '', fmtAmt(output_totals.amount_incl), fmtAmt(output_totals.amount_excl), fmtAmt(output_totals.vat)],
+      ],
+      startY: 31,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [22, 163, 74], textColor: 255, fontStyle: 'bold' },
+      columnStyles: { 0: { cellWidth: 26 }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold' } },
+      didParseCell: (d) => { if (d.section === 'body' && d.row.index === output_invoices.length) { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fillColor = [235, 235, 235] } },
+      margin: { left: 14, right: 14 },
+    })
+
+    const y2 = doc.lastAutoTable.finalY + 8
+    doc.setFontSize(9); doc.setFont('helvetica', 'bold')
+    doc.text('EXPENSE INVOICES', 14, y2)
+    autoTable(doc, {
+      head: [['Date', 'Invoice #', 'Supplier', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT']],
+      body: [
+        ...input_invoices.map(r => [
+          fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '',
+          fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), r.vat_applicable ? fmtAmt(r.vat) : 'Non-VAT',
+        ]),
+        ['TOTAL EXPENSES', '', '', '', fmtAmt(input_totals.amount_incl), fmtAmt(input_totals.amount_excl), fmtAmt(input_totals.vat)],
+      ],
+      startY: y2 + 3,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [71, 85, 105], textColor: 255, fontStyle: 'bold' },
+      columnStyles: { 0: { cellWidth: 24 }, 1: { cellWidth: 28 }, 2: { cellWidth: 34 }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right', fontStyle: 'bold' } },
+      didParseCell: (d) => { if (d.section === 'body' && d.row.index === input_invoices.length) { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fillColor = [235, 235, 235] } },
+      margin: { left: 14, right: 14 },
+    })
+
+    const y3 = doc.lastAutoTable.finalY + 8
+    const bx = pw - 14 - 108, bw = 108
+    const summaryRows = [
+      { label: 'Income VAT:',   value: fmtAmt(output_totals.vat), rgb: [22, 163, 74] },
+      { label: 'Expenses VAT:', value: fmtAmt(input_totals.vat),  rgb: [50, 50, 50]  },
+      { label: vat_payable >= 0 ? 'VAT Payable to SARS:' : 'VAT Refund Due:', value: fmtAmt(Math.abs(vat_payable)), rgb: vat_payable > 0 ? [220, 38, 38] : [22, 163, 74] },
+    ]
+    doc.setFillColor(245, 247, 250)
+    doc.rect(bx, y3 - 4, bw, summaryRows.length * 8 + 6, 'F')
+    summaryRows.forEach((row, i) => {
+      const ry = y3 + i * 8
+      doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(80)
+      doc.text(row.label, bx + 4, ry)
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(...row.rgb)
+      doc.text(row.value, bx + bw - 4, ry, { align: 'right' })
+    })
+    doc.setTextColor(0)
+    doc.save(`${slug}.pdf`)
+  }
+
+  const handleAnnualExportExcel = async () => {
+    if (!incomeData || !entityId) return
+    setShowExportMenu(false)
+    const { months, totals } = incomeData
+    const title = `SARS VAT Annual Report — ${year}`
+    const now   = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' })
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+
+    let detail = null
+    try {
+      const res = await getSarsVatDetailAnnual({ entity_id: entityId, year })
+      detail = res.data
+    } catch { /* export summary only if detail fails */ }
+
+    const wb = XLSX.utils.book_new()
+
+    // Sheet 1: Monthly Summary
+    const sumHdrs = ['Month', 'Revenue Incl VAT', 'Revenue Excl VAT', 'Output VAT', 'Expenses Incl VAT', 'Expenses Excl VAT', 'Diesel Input VAT', 'Input VAT', 'VAT Payable', 'Diesel', 'Payroll', 'Net Profit / Loss']
+    const sumRows = months.map(r => [r.month_name, r.income_incl_vat, r.income_excl_vat, r.output_vat, r.supplier_incl_vat, r.supplier_excl_vat, r.diesel_input_vat, r.input_vat, r.vat_payable, r.diesel, r.payroll, r.net])
+    const sumTotal = ['YEAR TOTAL', totals.income_incl_vat, totals.income_excl_vat, totals.output_vat, totals.supplier_incl_vat, totals.supplier_excl_vat, totals.diesel_input_vat, totals.input_vat, totals.vat_payable, totals.diesel, totals.payroll, totals.net]
+    const ws1 = XLSX.utils.aoa_to_sheet([[title], [`Generated: ${now}`], [], sumHdrs, ...sumRows, [], sumTotal])
+    ws1['!cols'] = [{ wch: 14 }, { wch: 20 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 20 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 18 }]
+    XLSX.utils.book_append_sheet(wb, ws1, 'Monthly Summary')
+
+    if (detail) {
+      // Sheet 2: All Income Invoices
+      const incHdrs = ['Month', 'Date', 'Mine / Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT']
+      const incRows = []
+      detail.months.forEach(m => {
+        m.output_invoices.forEach(r => incRows.push([m.month_name, fmtDate(r.date), r.description, r.amount_incl, r.amount_excl, r.vat]))
+        if (m.output_invoices.length) incRows.push([`${m.month_name} TOTAL`, '', '', m.output_totals.amount_incl, m.output_totals.amount_excl, m.output_totals.vat])
+        incRows.push([])
+      })
+      const ws2 = XLSX.utils.aoa_to_sheet([[title], [`Generated: ${now}`], [], incHdrs, ...incRows])
+      ws2['!cols'] = [{ wch: 14 }, { wch: 16 }, { wch: 48 }, { wch: 20 }, { wch: 20 }, { wch: 16 }]
+      XLSX.utils.book_append_sheet(wb, ws2, 'Income Invoices')
+
+      // Sheet 3: All Expense Invoices
+      const expHdrs = ['Month', 'Date', 'Invoice #', 'Supplier', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT']
+      const expRows = []
+      detail.months.forEach(m => {
+        m.input_invoices.forEach(r => expRows.push([m.month_name, fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '', r.amount_incl, r.amount_excl, r.vat_applicable ? r.vat : 'Non-VAT']))
+        if (m.input_invoices.length) expRows.push([`${m.month_name} TOTAL`, '', '', '', '', m.input_totals.amount_incl, m.input_totals.amount_excl, m.input_totals.vat])
+        expRows.push([])
+      })
+      const ws3 = XLSX.utils.aoa_to_sheet([[title], [`Generated: ${now}`], [], expHdrs, ...expRows])
+      ws3['!cols'] = [{ wch: 14 }, { wch: 16 }, { wch: 24 }, { wch: 32 }, { wch: 40 }, { wch: 20 }, { wch: 20 }, { wch: 14 }]
+      XLSX.utils.book_append_sheet(wb, ws3, 'Expense Invoices')
+    }
+
+    XLSX.writeFile(wb, `sars-vat-annual-${year}.xlsx`)
+  }
+
+  const handleAnnualExportPdf = async () => {
+    if (!incomeData || !entityId) return
+    setShowExportMenu(false)
+    const { months, totals } = incomeData
+    const title  = `SARS VAT Annual Report — ${year}`
+    const now    = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
+    const fmtAmt = (n) => `R ${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+
+    let detail = null
+    try {
+      const res = await getSarsVatDetailAnnual({ entity_id: entityId, year })
+      detail = res.data
+    } catch { /* fall back to summary only */ }
+
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+
+    doc.setFontSize(15); doc.setFont('helvetica', 'bold')
+    doc.text(title, 14, 15)
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(120)
+    doc.text(`Generated ${now}`, 14, 21)
+    doc.setTextColor(0)
+
+    // Page 1: Monthly summary
+    autoTable(doc, {
+      head: [['Month', 'Revenue\n(Incl VAT)', 'Revenue\n(Excl VAT)', 'Output\nVAT', 'Expenses\n(Incl VAT)', 'Expenses\n(Excl VAT)', 'Input\nVAT', 'VAT\nPayable', 'Diesel', 'Payroll', 'Net Profit/Loss']],
+      body: [
+        ...months.map(r => [
+          r.month_name,
+          r.income_incl_vat > 0 ? fmtAmt(r.income_incl_vat) : '—', r.income_excl_vat > 0 ? fmtAmt(r.income_excl_vat) : '—', r.output_vat > 0 ? fmtAmt(r.output_vat) : '—',
+          r.supplier_incl_vat > 0 ? fmtAmt(r.supplier_incl_vat) : '—', r.supplier_excl_vat > 0 ? fmtAmt(r.supplier_excl_vat) : '—', r.input_vat > 0 ? fmtAmt(r.input_vat) : '—',
+          fmtAmt(r.vat_payable), r.diesel > 0 ? fmtAmt(r.diesel) : '—', r.payroll > 0 ? fmtAmt(r.payroll) : '—', fmtAmt(r.net),
+        ]),
+        ['YEAR TOTAL', fmtAmt(totals.income_incl_vat), fmtAmt(totals.income_excl_vat), fmtAmt(totals.output_vat), fmtAmt(totals.supplier_incl_vat), fmtAmt(totals.supplier_excl_vat), fmtAmt(totals.input_vat), fmtAmt(totals.vat_payable), fmtAmt(totals.diesel), fmtAmt(totals.payroll), fmtAmt(totals.net)],
+      ],
+      startY: 26,
+      styles: { fontSize: 7, cellPadding: 2, halign: 'right' },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold', halign: 'center' },
+      columnStyles: { 0: { halign: 'left', cellWidth: 22, fontStyle: 'bold' } },
+      didParseCell: (d) => {
+        if (d.section === 'body' && d.row.index === months.length) { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fillColor = [235, 235, 235] }
+        const r = months[d.row.index]
+        if (d.section === 'body' && r && r.income_incl_vat === 0 && r.supplier_incl_vat === 0) d.cell.styles.textColor = [180, 180, 180]
+      },
+      margin: { left: 14, right: 14 },
+    })
+
+    // Subsequent pages: per-month invoice detail
+    if (detail) {
+      detail.months.filter(m => m.output_invoices.length || m.input_invoices.length).forEach(m => {
+        doc.addPage()
+        doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(0)
+        doc.text(`${m.month_name} ${year} — Invoice Detail`, 14, 14)
+
+        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(22, 163, 74)
+        doc.text('INCOME INVOICES', 14, 22)
+        autoTable(doc, {
+          head: [['Date', 'Mine / Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT']],
+          body: [
+            ...m.output_invoices.map(r => [fmtDate(r.date), r.description, fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), fmtAmt(r.vat)]),
+            ['TOTAL', '', fmtAmt(m.output_totals.amount_incl), fmtAmt(m.output_totals.amount_excl), fmtAmt(m.output_totals.vat)],
+          ],
+          startY: 25,
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [22, 163, 74], textColor: 255, fontStyle: 'bold' },
+          columnStyles: { 0: { cellWidth: 26 }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right', fontStyle: 'bold' } },
+          didParseCell: (d) => { if (d.section === 'body' && d.row.index === m.output_invoices.length) { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fillColor = [235, 235, 235] } },
+          margin: { left: 14, right: 14 },
+        })
+
+        const y2 = doc.lastAutoTable.finalY + 8
+        doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(71, 85, 105)
+        doc.text('EXPENSE INVOICES', 14, y2)
+        autoTable(doc, {
+          head: [['Date', 'Invoice #', 'Supplier', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT']],
+          body: [
+            ...m.input_invoices.map(r => [fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '', fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), r.vat_applicable ? fmtAmt(r.vat) : 'Non-VAT']),
+            ['TOTAL', '', '', '', fmtAmt(m.input_totals.amount_incl), fmtAmt(m.input_totals.amount_excl), fmtAmt(m.input_totals.vat)],
+          ],
+          startY: y2 + 3,
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [71, 85, 105], textColor: 255, fontStyle: 'bold' },
+          columnStyles: { 0: { cellWidth: 24 }, 1: { cellWidth: 28 }, 2: { cellWidth: 34 }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right', fontStyle: 'bold' } },
+          didParseCell: (d) => { if (d.section === 'body' && d.row.index === m.input_invoices.length) { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fillColor = [235, 235, 235] } },
+          margin: { left: 14, right: 14 },
+        })
+      })
+    }
+
+    doc.save(`sars-vat-annual-${year}.pdf`)
+  }
+
   const hasData = tab === 'income' ? !!incomeData : dieselData.length > 0
 
   return (
@@ -114,9 +402,49 @@ export default function ReportsPage() {
           <h1 style={styles.title}>Reports</h1>
           <p style={styles.subtitle}>Business reports and reconciliations</p>
         </div>
-        <button onClick={exportCsv} style={styles.btnSecondary} disabled={!hasData}>
-          Export CSV
-        </button>
+        <div style={{ position: 'relative' }}>
+          {tab === 'income' ? (
+            <>
+              <button
+                onClick={() => setShowExportMenu(v => !v)}
+                style={styles.btnSecondary}
+                disabled={!hasData && !detailData}
+              >
+                Export ▾
+              </button>
+              {showExportMenu && (
+                <>
+                  <div onClick={() => setShowExportMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
+                  <div style={{
+                    position: 'absolute', right: 0, top: '110%', zIndex: 20,
+                    background: 'var(--bg-card)', border: '1px solid var(--border)',
+                    borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', minWidth: 180, overflow: 'hidden',
+                  }}>
+                    {(detailData
+                      ? [{ label: 'Export Excel (.xlsx)', action: handleDetailExportExcel }, { label: 'Export PDF', action: handleDetailExportPdf }]
+                      : [{ label: 'Export Excel (.xlsx)', action: handleAnnualExportExcel }, { label: 'Export PDF', action: handleAnnualExportPdf }]
+                    ).map(item => (
+                      <button key={item.label} onClick={item.action} style={{
+                        display: 'block', width: '100%', textAlign: 'left',
+                        padding: '10px 16px', fontSize: 13, fontWeight: 500,
+                        background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <button onClick={exportCsv} style={styles.btnSecondary} disabled={!hasData}>
+              Export
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tabs + filters */}
@@ -150,9 +478,11 @@ export default function ReportsPage() {
       {loading ? (
         <div style={{ ...styles.card, ...styles.empty }}>Loading…</div>
       ) : tab === 'income' ? (
-        incomeData
-          ? <IncomeExpensesReport data={incomeData} year={year} />
-          : <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
+        detailData
+          ? <SarsVatDetail data={detailData} year={year} onBack={() => setDetailData(null)} />
+          : incomeData
+            ? <IncomeExpensesReport data={incomeData} year={year} onViewDetail={loadDetail} />
+            : <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
       ) : (
         <div style={styles.card}>
           {dieselData.length === 0 ? (
@@ -171,15 +501,15 @@ export default function ReportsPage() {
 }
 
 // ── Income vs Expenses / SARS VAT ─────────────────────────────────────────────
-function IncomeExpensesReport({ data, year }) {
+function IncomeExpensesReport({ data, year, onViewDetail }) {
   const { months, totals, has_payroll_entries } = data
 
   const vatPayableColor = (n) => n > 0 ? 'var(--danger)' : n < 0 ? '#16a34a' : 'var(--text-muted)'
   const netColor = (n) => n > 0 ? '#16a34a' : n < 0 ? 'var(--danger)' : 'var(--text-muted)'
 
   const vatCards = [
-    { label: 'Total Output VAT',  value: totals.output_vat,   color: '#16a34a' },
-    { label: 'Total Input VAT',   value: totals.input_vat,    color: 'var(--text-secondary)' },
+    { label: 'Income VAT',  value: totals.output_vat,   color: '#16a34a' },
+    { label: 'Expenses VAT', value: totals.input_vat,   color: 'var(--text-secondary)' },
     {
       label: totals.vat_payable >= 0 ? 'VAT Payable to SARS' : 'VAT Refund Due',
       value: Math.abs(totals.vat_payable),
@@ -228,16 +558,6 @@ function IncomeExpensesReport({ data, year }) {
         ))}
       </div>
 
-      {/* Payroll source notice */}
-      {!has_payroll_entries && totals.payroll > 0 && (
-        <div style={{
-          margin: '0 20px 16px', padding: '8px 12px', background: 'rgba(245,158,11,0.1)',
-          border: '1px solid rgba(245,158,11,0.3)', borderRadius: 6,
-          fontSize: 12, color: '#92400e',
-        }}>
-          Payroll figures are calculated from in-progress pay cycles. Finalize payroll to lock in these amounts.
-        </div>
-      )}
 
       {/* Monthly SARS VAT table */}
       <div style={{ overflowX: 'auto' }}>
@@ -246,14 +566,15 @@ function IncomeExpensesReport({ data, year }) {
             <tr>
               <th style={styles.th} rowSpan={2}>Month</th>
               <th style={{ ...styles.th, textAlign: 'center', color: '#16a34a', borderLeft: '2px solid var(--border)' }} colSpan={3}>
-                Output (Income)
+                Income
               </th>
               <th style={{ ...styles.th, textAlign: 'center', borderLeft: '2px solid var(--border)' }} colSpan={3}>
-                Input (Expenses)
+                Expenses
               </th>
               <th style={{ ...styles.th, textAlign: 'right', borderLeft: '2px solid var(--border)' }} rowSpan={2}>
                 VAT Payable
               </th>
+              <th style={styles.th} rowSpan={2}></th>
             </tr>
             <tr>
               <th style={{ ...styles.th, textAlign: 'right', color: '#16a34a', borderLeft: '2px solid var(--border)', fontSize: 10 }}>Incl VAT</th>
@@ -295,6 +616,20 @@ function IncomeExpensesReport({ data, year }) {
                   }}>
                     {hasActivity ? fmtR(r.vat_payable) : '—'}
                   </td>
+                  <td style={{ ...styles.td, textAlign: 'center' }}>
+                    {hasActivity && (
+                      <button
+                        onClick={() => onViewDetail(r.month)}
+                        style={{
+                          padding: '3px 10px', fontSize: 11, fontWeight: 600,
+                          background: 'var(--bg-hover)', color: 'var(--accent)',
+                          border: '1px solid var(--accent)', borderRadius: 6, cursor: 'pointer',
+                        }}
+                      >
+                        Detail
+                      </button>
+                    )}
+                  </td>
                 </tr>
               )
             })}
@@ -313,6 +648,7 @@ function IncomeExpensesReport({ data, year }) {
                 borderLeft: '2px solid var(--border)',
                 color: vatPayableColor(totals.vat_payable),
               }}>{fmtR(totals.vat_payable)}</td>
+              <td style={styles.td}></td>
             </tr>
           </tfoot>
         </table>
@@ -321,7 +657,7 @@ function IncomeExpensesReport({ data, year }) {
       {/* Diesel input VAT footnote */}
       {totals.diesel_input_vat > 0 && (
         <div style={{ padding: '8px 20px', fontSize: 11, color: 'var(--text-muted)' }}>
-          * Input VAT includes {fmtR(totals.diesel_input_vat)} diesel admin fee VAT (diesel is zero-rated; only the admin fee carries VAT).
+          * Expenses VAT includes {fmtR(totals.diesel_input_vat)} diesel admin fee VAT (diesel is zero-rated; only the admin fee carries VAT).
         </div>
       )}
     </div>
@@ -474,6 +810,155 @@ function AnnualReport({ data, year }) {
     </>
   )
 }
+
+// ── SARS VAT Monthly Detail ────────────────────────────────────────────────────
+function SarsVatDetail({ data, year, onBack }) {
+  const { month_name, output_invoices, input_invoices, output_totals, input_totals, vat_payable } = data
+  const vatColor = vat_payable > 0 ? 'var(--danger)' : vat_payable < 0 ? '#16a34a' : 'var(--text-muted)'
+  const fmtDate  = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+  const title    = `SARS VAT Return — ${month_name} ${year}`
+
+  return (
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button onClick={onBack} style={{
+            padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            background: 'var(--bg-hover)', color: 'var(--text-primary)',
+            border: '1px solid var(--border)', borderRadius: 6,
+          }}>
+            ← Back
+          </button>
+          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+            {title}
+          </span>
+        </div>
+        <div style={{
+          fontSize: 14, fontWeight: 700, color: vatColor,
+          padding: '5px 16px', borderRadius: 8,
+          border: `1px solid ${vatColor}`, background: 'var(--bg-surface)',
+        }}>
+          VAT {vat_payable >= 0 ? 'Payable' : 'Refund'}: {fmtR(Math.abs(vat_payable))}
+        </div>
+      </div>
+
+      {/* Summary row */}
+      <div style={{ display: 'flex', gap: 32, padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', flexWrap: 'wrap' }}>
+        {[
+          { label: 'Income VAT',        value: output_totals.vat,        color: '#16a34a' },
+          { label: 'Income Incl VAT',   value: output_totals.amount_incl },
+          { label: 'Income Excl VAT',   value: output_totals.amount_excl },
+          { label: 'Expenses VAT',      value: input_totals.vat,         color: 'var(--text-secondary)' },
+          { label: 'Expenses Incl VAT', value: input_totals.amount_incl },
+          { label: 'Expenses Excl VAT', value: input_totals.amount_excl },
+        ].map(c => (
+          <div key={c.label} style={{ fontSize: 12 }}>
+            <div style={{ color: 'var(--text-muted)', marginBottom: 2, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{c.label}</div>
+            <div style={{ fontWeight: 700, color: c.color || 'var(--text-primary)' }}>{fmtR(c.value)}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Income invoices */}
+      <div style={{ padding: '12px 20px 4px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#16a34a' }}>
+        Income Invoices ({output_invoices.length})
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              {['Date', 'Mine / Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT'].map((h, i) => (
+                <th key={h} style={{ ...styles.th, textAlign: i >= 2 ? 'right' : 'left', color: '#16a34a' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {output_invoices.length === 0 ? (
+              <tr><td colSpan={5} style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }}>No income invoices for this month.</td></tr>
+            ) : output_invoices.map((r, i) => (
+              <tr key={i} style={styles.row}>
+                <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>{fmtDate(r.date)}</td>
+                <td style={{ ...styles.td, fontWeight: 600 }}>{r.description}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_incl)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_excl)}</td>
+                <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmtR(r.vat)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={styles.totalRow}>
+              <td style={{ ...styles.td, fontWeight: 700 }} colSpan={2}>TOTAL INCOME</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(output_totals.amount_incl)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(output_totals.amount_excl)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, color: '#16a34a' }}>{fmtR(output_totals.vat)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* Expense invoices */}
+      <div style={{ padding: '16px 20px 4px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', borderTop: '2px solid var(--border)', marginTop: 8 }}>
+        Expense Invoices ({input_invoices.length})
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              {['Date', 'Invoice #', 'Supplier', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT'].map((h, i) => (
+                <th key={h} style={{ ...styles.th, textAlign: i >= 4 ? 'right' : 'left' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {input_invoices.length === 0 ? (
+              <tr><td colSpan={7} style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }}>No expense invoices for this month.</td></tr>
+            ) : input_invoices.map((r, i) => (
+              <tr key={i} style={styles.row}>
+                <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>{fmtDate(r.date)}</td>
+                <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>{r.invoice_number || '—'}</td>
+                <td style={{ ...styles.td, fontWeight: 600 }}>{r.supplier_name || '—'}</td>
+                <td style={{ ...styles.td, color: 'var(--text-muted)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description || '—'}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_incl)}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_excl)}</td>
+                <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: r.vat_applicable ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+                  {r.vat_applicable ? fmtR(r.vat) : <span style={{ fontSize: 10 }}>Non-VAT</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={styles.totalRow}>
+              <td style={{ ...styles.td, fontWeight: 700 }} colSpan={4}>TOTAL EXPENSES</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(input_totals.amount_incl)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(input_totals.amount_excl)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800 }}>{fmtR(input_totals.vat)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* VAT payable footer */}
+      <div style={{
+        display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 32,
+        padding: '14px 20px', borderTop: '2px solid var(--border)', background: 'var(--bg-surface)',
+      }}>
+        <div style={{ fontSize: 13 }}>
+          <span style={{ color: 'var(--text-muted)' }}>Income VAT: </span>
+          <span style={{ fontWeight: 700, color: '#16a34a' }}>{fmtR(output_totals.vat)}</span>
+        </div>
+        <div style={{ fontSize: 13 }}>
+          <span style={{ color: 'var(--text-muted)' }}>Expenses VAT: </span>
+          <span style={{ fontWeight: 700 }}>{fmtR(input_totals.vat)}</span>
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: vatColor }}>
+          VAT {vat_payable >= 0 ? 'Payable to SARS' : 'Refund Due'}: {fmtR(Math.abs(vat_payable))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 
 const styles = {
   page: { padding: '28px 32px', flex: 1 },

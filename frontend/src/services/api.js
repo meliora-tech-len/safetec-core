@@ -240,6 +240,8 @@ export const getPayrollSettings = () => api.get('/payroll-settings')
 
 // ── Business Reports ──────────────────────────────────────────────────────────
 export const getIncomeExpensesReport = (params) => api.get('/reports/income-expenses', { params })
+export const getSarsVatDetail = (params) => api.get('/reports/sars-vat-detail', { params })
+export const getSarsVatDetailAnnual = (params) => api.get('/reports/sars-vat-detail-annual', { params })
 export const getPayrollEntries = (params = {}) => api.get('/payroll-entries/', { params })
 export const getPayrollEntriesSummary = (params) => api.get('/payroll-entries/summary', { params })
 
