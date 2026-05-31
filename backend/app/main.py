@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.limiter import limiter
 from app.db.database import engine, SessionLocal
 from app.models.models import Base, Role
-from app.api.routes import auth, users, entities, suppliers, invoices, audit, roles, fleet, drivers, payroll_settings, payroll_mine_groups, mines, truck_loads, driver_salary_configs, supplier_invoices, diesel, payroll_entries, reports, feedback, subcontractors, customers, invoice_templates
+from app.api.routes import auth, users, entities, suppliers, invoices, audit, roles, fleet, drivers, payroll_settings, payroll_mine_groups, mines, truck_loads, driver_salary_configs, supplier_invoices, diesel, payroll_entries, reports, feedback, subcontractors, customers, invoice_templates  # , statements
 from app.api.routes import settings as settings_router
 
 Base.metadata.create_all(bind=engine)
@@ -127,6 +127,7 @@ app.include_router(payroll_entries.router)
 app.include_router(reports.router)
 app.include_router(feedback.router)
 app.include_router(invoice_templates.router)
+# app.include_router(statements.router)
 
 
 @app.on_event("startup")

@@ -1167,6 +1167,58 @@ class PayrollEntry(Base):
 
 # ── Licence Alert Acknowledgments ─────────────────────────────────────────────
 
+# ── Statements ────────────────────────────────────────────────────────────────
+
+class Statement(Base):
+    __tablename__ = "statements"
+
+    id             = Column(Integer, primary_key=True)
+    entity_id      = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
+    customer_id    = Column(Integer, ForeignKey("customers.id",          ondelete="RESTRICT"), nullable=True)
+    statement_type = Column(String(50), nullable=False, default="invoice")
+    statement_date = Column(Date, nullable=False)
+    title          = Column(String(200), nullable=True)
+    notes          = Column(Text, nullable=True)
+    created_by_id  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at     = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at     = Column(DateTime(timezone=True), onupdate=func.now())
+
+    entity     = relationship("BusinessEntity")
+    customer   = relationship("Customer")
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    lines      = relationship("StatementLine", back_populates="statement",
+                              order_by="StatementLine.sort_order",
+                              cascade="all, delete-orphan")
+
+    @property
+    def customer_name(self):
+        return self.customer.name if self.customer else None
+
+    @property
+    def entity_code(self):
+        return self.entity.code if self.entity else None
+
+    @property
+    def total(self):
+        return float(sum(l.amount or 0 for l in self.lines))
+
+
+class StatementLine(Base):
+    __tablename__ = "statement_lines"
+
+    id             = Column(Integer, primary_key=True)
+    statement_id   = Column(Integer, ForeignKey("statements.id", ondelete="CASCADE"), nullable=False)
+    line_date      = Column(Date, nullable=True)
+    description    = Column(Text, nullable=True)
+    invoice_number = Column(String(100), nullable=True)
+    amount         = Column(Numeric(15, 2), nullable=False, default=0)
+    sort_order     = Column(Integer, default=0)
+
+    statement = relationship("Statement", back_populates="lines")
+
+
+# ── Licence Alert Acknowledgments ─────────────────────────────────────────────
+
 class LicenceAlertAck(Base):
     __tablename__ = "licence_alert_acks"
 

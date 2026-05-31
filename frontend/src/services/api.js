@@ -275,6 +275,13 @@ export const getTruckMonthlyExpenses = (truckId, params) =>
 export const upsertTruckMonthlyExpenses = (truckId, params, data) =>
   api.put(`/fleet/trucks/${truckId}/monthly-expenses`, data, { params })
 
+// ── Statements ────────────────────────────────────────────────────────────────
+export const getStatements    = (params = {}) => api.get('/statements/',   { params })
+export const getStatement     = (id)          => api.get(`/statements/${id}`)
+export const createStatement  = (data)        => api.post('/statements/',  data)
+export const updateStatement  = (id, data)    => api.put(`/statements/${id}`, data)
+export const deleteStatement  = (id)          => api.delete(`/statements/${id}`)
+
 // ── Feedback ──────────────────────────────────────────────────────────────────
 export const submitFeedback = (data) => api.post('/feedback/', data)
 

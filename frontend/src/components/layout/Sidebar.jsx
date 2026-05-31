@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Users, Building2, FileText,
   LogOut, Shield, Sun, Moon, Settings, ChevronDown, Truck,
   FileCheck, FilePlus, ShoppingCart, Package, MapPin, Fuel, BarChart2, Link2,
-  Key, Eye, EyeOff, X, UserCheck, LayoutTemplate,
+  Key, Eye, EyeOff, X, UserCheck, LayoutTemplate, LayoutList,
 } from 'lucide-react'
 
 function hexToRgb(hex) {
@@ -41,10 +41,11 @@ const NAV = [
 ]
 
 const DOCUMENTS_NAV = [
-  { to: '/quotes',              icon: FileCheck,      label: 'Quotes',     module: 'invoices' },
-  { to: '/invoices',            icon: FileText,       label: 'Invoices',   module: 'invoices' },
-  { to: '/purchase-orders',     icon: ShoppingCart,   label: 'PO\'s',      module: 'invoices' },
-  { to: '/invoice-templates',   icon: LayoutTemplate, label: 'Templates',  module: 'invoices' },
+  { to: '/quotes',              icon: FileCheck,      label: 'Quotes',      module: 'invoices' },
+  { to: '/invoices',            icon: FileText,       label: 'Invoices',    module: 'invoices' },
+  { to: '/purchase-orders',     icon: ShoppingCart,   label: 'PO\'s',       module: 'invoices' },
+  { to: '/invoice-templates',   icon: LayoutTemplate, label: 'Templates',   module: 'invoices' },
+  // { to: '/statements',       icon: LayoutList,     label: 'Statements',  module: 'invoices' },
 ]
 
 const ADMIN_NAV = [

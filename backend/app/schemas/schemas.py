@@ -1962,6 +1962,55 @@ class SubcontractorCostingSummary(BaseModel):
     net_payable: Decimal
 
 
+# ── Statements ────────────────────────────────────────────────────────────────
+
+class StatementLineBase(BaseModel):
+    line_date:      Optional[date] = None
+    description:    Optional[str]  = None
+    invoice_number: Optional[str]  = None
+    amount:         Decimal        = Decimal("0")
+    sort_order:     int            = 0
+
+class StatementLineCreate(StatementLineBase):
+    pass
+
+class StatementLineOut(StatementLineBase):
+    id:           int
+    statement_id: int
+    class Config:
+        from_attributes = True
+
+class StatementBase(BaseModel):
+    entity_id:      int
+    customer_id:    Optional[int] = None
+    statement_type: str           = "invoice"
+    statement_date: date
+    title:          Optional[str] = None
+    notes:          Optional[str] = None
+
+class StatementCreate(StatementBase):
+    lines: List[StatementLineCreate] = []
+
+class StatementUpdate(BaseModel):
+    customer_id:    Optional[int]                    = None
+    statement_type: Optional[str]                    = None
+    statement_date: Optional[date]                   = None
+    title:          Optional[str]                    = None
+    notes:          Optional[str]                    = None
+    lines:          Optional[List[StatementLineCreate]] = None
+
+class StatementOut(StatementBase):
+    id:            int
+    lines:         List[StatementLineOut] = []
+    created_at:    datetime
+    updated_at:    Optional[datetime]     = None
+    customer_name: Optional[str]          = None
+    entity_code:   Optional[str]          = None
+    total:         Optional[float]        = None
+    class Config:
+        from_attributes = True
+
+
 class SubcontractorCostingOut(BaseModel):
     subcontractor: SubcontractorOut
     month: int
