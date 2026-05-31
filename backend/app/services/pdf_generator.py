@@ -155,7 +155,7 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
     gray_light  = colors.HexColor("#f3f4f6")
     white       = colors.white
     divider     = colors.HexColor("#e5e7eb")
-    col_hdr_bg  = colors.HexColor("#1e293b")   # dark slate — column headers & grand total
+    col_hdr_bg  = colors.HexColor("#4B5563")   # neutral gray — column headers & grand total
     sec_hdr_bg  = colors.HexColor("#f1f5f9")   # light blue-gray — section header rows
 
     # ── Document ──────────────────────────────────────────────────────────────
@@ -186,9 +186,9 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
     s_inv_label     = st("inv_lbl", fontSize=8,   textColor=gray_mid, alignment=TA_RIGHT, leading=11)
     s_inv_value     = st("inv_val", fontSize=9,   fontName=_FONT_BOLD, textColor=black,
                          alignment=TA_RIGHT, leading=12)
-    s_col_header    = st("col_hdr", fontSize=9,   fontName=_FONT_BOLD, textColor=white,
+    s_col_header    = st("col_hdr", fontSize=9,   fontName=_FONT_BOLD, textColor=accent,
                          alignment=TA_CENTER, leading=12)
-    s_col_hdr_r     = st("col_hdr_r", fontSize=9, fontName=_FONT_BOLD, textColor=white,
+    s_col_hdr_r     = st("col_hdr_r", fontSize=9, fontName=_FONT_BOLD, textColor=accent,
                          alignment=TA_RIGHT, leading=12)
     s_line_desc     = st("ln_desc", fontSize=9,   textColor=gray_dark, leading=12)
     s_line_num      = st("ln_num",  fontSize=9,   textColor=gray_dark, alignment=TA_RIGHT, leading=12)
@@ -218,7 +218,7 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
             try:
                 letterhead_img = RLImage(
                     io.BytesIO(lh_bytes),
-                    width=174*mm, height=65*mm,
+                    width=174*mm, height=90*mm,
                     kind="proportional",
                 )
             except Exception:

@@ -614,12 +614,20 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                         )}
                         <input
                           className="form-input"
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
                           placeholder="—"
-                          value={line.quantity}
-                          onChange={e => updateLine(idx, 'quantity', e.target.value)}
-                          min="0" step="any"
+                          value={line.quantity !== '' && line.quantity != null
+                            ? (() => {
+                                const n = parseFloat(line.quantity)
+                                if (isNaN(n)) return line.quantity
+                                return Number.isInteger(n)
+                                  ? n.toLocaleString('en-US')
+                                  : n.toLocaleString('en-US', { maximumFractionDigits: 4 })
+                              })()
+                            : ''}
+                          onChange={e => updateLine(idx, 'quantity', e.target.value.replace(/,/g, ''))}
                         />
                         <input
                           className="form-input"
