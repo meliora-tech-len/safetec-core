@@ -384,12 +384,12 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
         col_widths    = [col_desc_w, col_load_w, col_offload_w, col_qty_w, col_rate_w, col_total_w]
         last_col      = 5
         line_rows = [[
-            Paragraph("DESCRIPTION",   s_col_header),
-            Paragraph("LOADING #",     s_col_hdr_r),
-            Paragraph("OFF-LOADING #", s_col_hdr_r),
-            Paragraph("QTY",           s_col_hdr_r),
-            Paragraph("RATE",          s_col_hdr_r),
-            Paragraph("TOTAL",         s_col_hdr_r),
+            Paragraph("DESCRIPTION", s_col_header),
+            Paragraph("",            s_col_hdr_r),
+            Paragraph("",            s_col_hdr_r),
+            Paragraph("QTY",         s_col_hdr_r),
+            Paragraph("RATE",        s_col_hdr_r),
+            Paragraph("TOTAL",       s_col_hdr_r),
         ]]
     else:
         # Standard: DESCRIPTION | QTY | RATE | TOTAL
