@@ -101,6 +101,7 @@ app.add_middleware(
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 STATIC_DIR.mkdir(exist_ok=True)
 (STATIC_DIR / "logos").mkdir(exist_ok=True)
+(STATIC_DIR / "letterheads").mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(auth.router)

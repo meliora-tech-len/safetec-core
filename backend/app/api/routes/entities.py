@@ -23,6 +23,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 IS_LOCAL = DATABASE_URL.startswith("sqlite") or not SUPABASE_URL
 
 LOCAL_LOGO_DIR = Path(__file__).resolve().parents[3] / "static" / "logos"
+LOCAL_LETTERHEAD_DIR = Path(__file__).resolve().parents[3] / "static" / "letterheads"
 
 
 def _ensure_local_dir() -> None:
@@ -34,6 +35,13 @@ def _save_local(file_bytes: bytes, file_name: str, base_url: str) -> str:
     _ensure_local_dir()
     (LOCAL_LOGO_DIR / file_name).write_bytes(file_bytes)
     return f"{base_url}static/logos/{file_name}"
+
+
+def _save_local_letterhead(file_bytes: bytes, file_name: str, base_url: str) -> str:
+    """Save letterhead to backend/static/letterheads/, return absolute URL."""
+    LOCAL_LETTERHEAD_DIR.mkdir(parents=True, exist_ok=True)
+    (LOCAL_LETTERHEAD_DIR / file_name).write_bytes(file_bytes)
+    return f"{base_url}static/letterheads/{file_name}"
 
 
 def _supabase_upload(file_bytes: bytes, file_name: str, content_type: str) -> str:
@@ -195,6 +203,46 @@ async def upload_logo(
 
     log_action(db, "entity.logo_uploaded", user_id=current_user.id, resource_type="entity",
                resource_id=entity_id, description=f"Uploaded logo for {entity.name}")
+    db.commit()
+    db.refresh(entity)
+    return entity
+
+
+# ── Letterhead upload ─────────────────────────────────────────────────────────
+
+@router.post("/{entity_id}/letterhead", response_model=EntityOut)
+async def upload_letterhead(
+    request: Request,
+    entity_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    allowed_types = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only PNG, JPG, or WebP images are allowed")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Letterhead must be under 5MB")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "png"
+    file_name = f"{entity.code.lower()}_letterhead.{ext}"
+
+    if IS_LOCAL:
+        base_url = str(request.base_url)
+        letterhead_url = _save_local_letterhead(file_bytes, file_name, base_url)
+    else:
+        letterhead_url = _supabase_upload(file_bytes, file_name, file.content_type)
+
+    entity.letterhead_url = letterhead_url
+
+    log_action(db, "entity.letterhead_uploaded", user_id=current_user.id, resource_type="entity",
+               resource_id=entity_id, description=f"Uploaded letterhead for {entity.name}")
     db.commit()
     db.refresh(entity)
     return entity

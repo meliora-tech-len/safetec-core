@@ -71,15 +71,25 @@ export default function ReportsPage() {
   const exportCsv = () => {
     if (tab === 'income') {
       if (!incomeData?.months) return
-      const headers = ['Month', 'Revenue', 'Diesel', 'Suppliers', 'Payroll', 'Total Expenses', 'Net']
+      const headers = [
+        'Month',
+        'Revenue (Incl VAT)', 'Revenue (Excl VAT)', 'Output VAT',
+        'Expenses (Incl VAT)', 'Expenses (Excl VAT)', 'Diesel Input VAT', 'Input VAT',
+        'VAT Payable',
+        'Diesel', 'Payroll', 'Net Profit/Loss',
+      ]
       const rows = incomeData.months.map(r => [
-        r.month_name, r.truck_income, r.diesel, r.suppliers, r.payroll, r.total_expenses, r.net,
+        r.month_name,
+        r.income_incl_vat, r.income_excl_vat, r.output_vat,
+        r.supplier_incl_vat, r.supplier_excl_vat, r.diesel_input_vat, r.input_vat,
+        r.vat_payable,
+        r.diesel, r.payroll, r.net,
       ].map(v => `"${v}"`).join(','))
       const csv = [headers.join(','), ...rows].join('\n')
       const blob = new Blob([csv], { type: 'text/csv' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a'); a.href = url
-      a.download = `income-expenses-${year}.csv`; a.click()
+      a.download = `sars-vat-${year}.csv`; a.click()
       URL.revokeObjectURL(url)
     } else {
       if (!dieselData.length) return
@@ -160,24 +170,31 @@ export default function ReportsPage() {
   )
 }
 
-// ── Income vs Expenses ─────────────────────────────────────────────────────────
+// ── Income vs Expenses / SARS VAT ─────────────────────────────────────────────
 function IncomeExpensesReport({ data, year }) {
   const { months, totals, has_payroll_entries } = data
 
+  const vatPayableColor = (n) => n > 0 ? 'var(--danger)' : n < 0 ? '#16a34a' : 'var(--text-muted)'
   const netColor = (n) => n > 0 ? '#16a34a' : n < 0 ? 'var(--danger)' : 'var(--text-muted)'
 
-  // Summary cards
-  const cards = [
-    { label: 'Total Revenue',   value: totals.total_income,   color: '#16a34a' },
-    { label: 'Total Expenses',  value: totals.total_expenses,  color: 'var(--danger)' },
-    { label: 'Net Profit / Loss', value: totals.net,           color: netColor(totals.net) },
+  const vatCards = [
+    { label: 'Total Output VAT',  value: totals.output_vat,   color: '#16a34a' },
+    { label: 'Total Input VAT',   value: totals.input_vat,    color: 'var(--text-secondary)' },
+    {
+      label: totals.vat_payable >= 0 ? 'VAT Payable to SARS' : 'VAT Refund Due',
+      value: Math.abs(totals.vat_payable),
+      color: vatPayableColor(totals.vat_payable),
+    },
   ]
 
   return (
     <div>
-      {/* Summary cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: 20 }}>
-        {cards.map(c => (
+      {/* VAT summary cards */}
+      <div style={{ padding: '16px 20px 4px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+        VAT Position
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: '0 20px 16px' }}>
+        {vatCards.map(c => (
           <div key={c.label} style={{
             background: 'var(--bg-surface)', border: '1px solid var(--border)',
             borderRadius: 10, padding: '16px 20px',
@@ -192,16 +209,21 @@ function IncomeExpensesReport({ data, year }) {
         ))}
       </div>
 
-      {/* Expense breakdown pills */}
-      <div style={{ padding: '0 20px 16px', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+      {/* Business summary pills */}
+      <div style={{ padding: '0 20px 4px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+        Business Summary
+      </div>
+      <div style={{ padding: '0 20px 16px', display: 'flex', gap: 24, flexWrap: 'wrap' }}>
         {[
-          { label: 'Diesel',     value: totals.diesel    },
-          { label: 'Suppliers',  value: totals.suppliers  },
-          { label: 'Payroll',    value: totals.payroll    },
+          { label: 'Revenue (Incl VAT)', value: totals.total_income },
+          { label: 'Diesel',             value: totals.diesel        },
+          { label: 'Suppliers',          value: totals.suppliers     },
+          { label: 'Payroll',            value: totals.payroll       },
+          { label: 'Net Profit / Loss',  value: totals.net, color: netColor(totals.net) },
         ].map(c => (
           <div key={c.label} style={{ fontSize: 13 }}>
             <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>{c.label}:</span>
-            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{fmtR(c.value)}</span>
+            <span style={{ fontWeight: 600, color: c.color || 'var(--text-primary)' }}>{fmtR(c.value)}</span>
           </div>
         ))}
       </div>
@@ -217,46 +239,61 @@ function IncomeExpensesReport({ data, year }) {
         </div>
       )}
 
-      {/* Monthly table */}
+      {/* Monthly SARS VAT table */}
       <div style={{ overflowX: 'auto' }}>
         <table style={styles.table}>
           <thead>
             <tr>
-              <th style={styles.th}>Month</th>
-              <th style={{ ...styles.th, textAlign: 'right', color: '#16a34a' }}>Revenue</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Diesel</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Suppliers</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Payroll</th>
-              <th style={{ ...styles.th, textAlign: 'right', color: 'var(--danger)' }}>Total Expenses</th>
-              <th style={{ ...styles.th, textAlign: 'right' }}>Net</th>
+              <th style={styles.th} rowSpan={2}>Month</th>
+              <th style={{ ...styles.th, textAlign: 'center', color: '#16a34a', borderLeft: '2px solid var(--border)' }} colSpan={3}>
+                Output (Income)
+              </th>
+              <th style={{ ...styles.th, textAlign: 'center', borderLeft: '2px solid var(--border)' }} colSpan={3}>
+                Input (Expenses)
+              </th>
+              <th style={{ ...styles.th, textAlign: 'right', borderLeft: '2px solid var(--border)' }} rowSpan={2}>
+                VAT Payable
+              </th>
+            </tr>
+            <tr>
+              <th style={{ ...styles.th, textAlign: 'right', color: '#16a34a', borderLeft: '2px solid var(--border)', fontSize: 10 }}>Incl VAT</th>
+              <th style={{ ...styles.th, textAlign: 'right', color: '#16a34a', fontSize: 10 }}>Excl VAT</th>
+              <th style={{ ...styles.th, textAlign: 'right', color: '#16a34a', fontSize: 10 }}>VAT</th>
+              <th style={{ ...styles.th, textAlign: 'right', borderLeft: '2px solid var(--border)', fontSize: 10 }}>Incl VAT</th>
+              <th style={{ ...styles.th, textAlign: 'right', fontSize: 10 }}>Excl VAT</th>
+              <th style={{ ...styles.th, textAlign: 'right', fontSize: 10 }}>VAT</th>
             </tr>
           </thead>
           <tbody>
             {months.map(r => {
-              const hasActivity = r.total_income > 0 || r.total_expenses > 0
+              const hasActivity = r.income_incl_vat > 0 || r.supplier_incl_vat > 0
               return (
-                <tr key={r.month} style={{
-                  ...styles.row,
-                  opacity: hasActivity ? 1 : 0.4,
-                }}>
+                <tr key={r.month} style={{ ...styles.row, opacity: hasActivity ? 1 : 0.4 }}>
                   <td style={{ ...styles.td, fontWeight: 600 }}>{r.month_name} {year}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', color: '#16a34a', borderLeft: '2px solid var(--border)' }}>
+                    {hasActivity ? fmtR(r.income_incl_vat) : '—'}
+                  </td>
+                  <td style={{ ...styles.td, textAlign: 'right', color: '#16a34a' }}>
+                    {hasActivity ? fmtR(r.income_excl_vat) : '—'}
+                  </td>
                   <td style={{ ...styles.td, textAlign: 'right', color: '#16a34a', fontWeight: 600 }}>
-                    {hasActivity ? fmtR(r.truck_income) : '—'}
+                    {hasActivity ? fmtR(r.output_vat) : '—'}
+                  </td>
+                  <td style={{ ...styles.td, textAlign: 'right', borderLeft: '2px solid var(--border)' }}>
+                    {r.supplier_incl_vat > 0 ? fmtR(r.supplier_incl_vat) : '—'}
                   </td>
                   <td style={{ ...styles.td, textAlign: 'right' }}>
-                    {r.diesel > 0 ? fmtR(r.diesel) : '—'}
+                    {r.supplier_excl_vat > 0 ? fmtR(r.supplier_excl_vat) : '—'}
                   </td>
-                  <td style={{ ...styles.td, textAlign: 'right' }}>
-                    {r.suppliers > 0 ? fmtR(r.suppliers) : '—'}
+                  <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600 }}>
+                    {r.input_vat > 0 ? fmtR(r.input_vat) : '—'}
                   </td>
-                  <td style={{ ...styles.td, textAlign: 'right' }}>
-                    {r.payroll > 0 ? fmtR(r.payroll) : '—'}
-                  </td>
-                  <td style={{ ...styles.td, textAlign: 'right', color: 'var(--danger)' }}>
-                    {r.total_expenses > 0 ? fmtR(r.total_expenses) : '—'}
-                  </td>
-                  <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: netColor(r.net) }}>
-                    {hasActivity ? fmtR(r.net) : '—'}
+                  <td style={{
+                    ...styles.td, textAlign: 'right', fontWeight: 700,
+                    borderLeft: '2px solid var(--border)',
+                    color: vatPayableColor(r.vat_payable),
+                  }}>
+                    {hasActivity ? fmtR(r.vat_payable) : '—'}
                   </td>
                 </tr>
               )
@@ -265,16 +302,28 @@ function IncomeExpensesReport({ data, year }) {
           <tfoot>
             <tr style={styles.totalRow}>
               <td style={{ ...styles.td, fontWeight: 700 }}>YEAR TOTAL</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmtR(totals.total_income)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.diesel)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.suppliers)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.payroll)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: 'var(--danger)' }}>{fmtR(totals.total_expenses)}</td>
-              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, fontSize: 14, color: netColor(totals.net) }}>{fmtR(totals.net)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#16a34a', borderLeft: '2px solid var(--border)' }}>{fmtR(totals.income_incl_vat)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmtR(totals.income_excl_vat)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmtR(totals.output_vat)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, borderLeft: '2px solid var(--border)' }}>{fmtR(totals.supplier_incl_vat)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.supplier_excl_vat)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.input_vat)}</td>
+              <td style={{
+                ...styles.td, textAlign: 'right', fontWeight: 800, fontSize: 14,
+                borderLeft: '2px solid var(--border)',
+                color: vatPayableColor(totals.vat_payable),
+              }}>{fmtR(totals.vat_payable)}</td>
             </tr>
           </tfoot>
         </table>
       </div>
+
+      {/* Diesel input VAT footnote */}
+      {totals.diesel_input_vat > 0 && (
+        <div style={{ padding: '8px 20px', fontSize: 11, color: 'var(--text-muted)' }}>
+          * Input VAT includes {fmtR(totals.diesel_input_vat)} diesel admin fee VAT (diesel is zero-rated; only the admin fee carries VAT).
+        </div>
+      )}
     </div>
   )
 }

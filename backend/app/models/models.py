@@ -91,6 +91,8 @@ class BusinessEntity(Base):
     logo_path = Column(String(500))        # legacy / local path
     logo_url = Column(String(500))         # Supabase Storage public URL
     primary_color = Column(String(7), default="#2563eb")
+    letterhead_url = Column(String(500))
+    letterhead_path = Column(String(500))
 
     # Invoice config
     invoice_prefix = Column(String(10))

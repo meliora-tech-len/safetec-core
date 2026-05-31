@@ -93,6 +93,8 @@ export const getAuditLogs = (params = {}) => api.get('/audit/', { params })
 // ── Entities (additions) ──────────────────────────────────────────────────────
 export const uploadEntityLogo = (id, formData) =>
   api.post(`/entities/${id}/logo`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+export const uploadEntityLetterhead = (id, formData) =>
+  api.post(`/entities/${id}/letterhead`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
 export const archiveEntity = (id) => api.delete(`/entities/${id}`)
 export const restoreEntity = (id) => api.post(`/entities/${id}/restore`)
 export const getNextInvoiceNumber = (entityId, docType = 'invoice') =>

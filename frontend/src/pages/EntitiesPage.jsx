@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
-import { getEntities, createEntity, updateEntity, uploadEntityLogo, archiveEntity, restoreEntity } from '../services/api'
+import { getEntities, createEntity, updateEntity, uploadEntityLogo, uploadEntityLetterhead, archiveEntity, restoreEntity } from '../services/api'
 
 const TABS = ['General', 'Banking', 'Branding', 'Invoice Config']
 
@@ -38,6 +38,9 @@ export default function EntitiesPage() {
   const [logoFile, setLogoFile] = useState(null)
   const [logoPreview, setLogoPreview] = useState(null)
   const fileInputRef = useRef()
+  const [letterheadFile, setLetterheadFile] = useState(null)
+  const [letterheadPreview, setLetterheadPreview] = useState(null)
+  const letterheadInputRef = useRef()
 
   const load = async () => {
     setLoading(true)
@@ -57,6 +60,8 @@ export default function EntitiesPage() {
     setForm(DEFAULT_FORM)
     setLogoFile(null)
     setLogoPreview(null)
+    setLetterheadFile(null)
+    setLetterheadPreview(null)
     setTab('General')
     setError('')
     setModal({ mode: 'create' })
@@ -87,6 +92,8 @@ export default function EntitiesPage() {
     })
     setLogoFile(null)
     setLogoPreview(entity.logo_url || null)
+    setLetterheadFile(null)
+    setLetterheadPreview(entity.letterhead_url || null)
     setTab('General')
     setError('')
     setModal({ mode: 'edit', entity })
@@ -98,6 +105,15 @@ export default function EntitiesPage() {
     setLogoFile(file)
     const reader = new FileReader()
     reader.onloadend = () => setLogoPreview(reader.result)
+    reader.readAsDataURL(file)
+  }
+
+  const handleLetterheadSelect = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setLetterheadFile(file)
+    const reader = new FileReader()
+    reader.onloadend = () => setLetterheadPreview(reader.result)
     reader.readAsDataURL(file)
   }
 
@@ -131,6 +147,13 @@ export default function EntitiesPage() {
         const formData = new FormData()
         formData.append('file', logoFile)
         await uploadEntityLogo(saved.id, formData)
+      }
+
+      // Upload letterhead if selected
+      if (letterheadFile && saved.id) {
+        const formData = new FormData()
+        formData.append('file', letterheadFile)
+        await uploadEntityLetterhead(saved.id, formData)
       }
 
       await load()
@@ -362,6 +385,43 @@ export default function EntitiesPage() {
                       )}
                     </div>
                     <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleLogoSelect} />
+                  </div>
+                </div>
+
+                {/* Letterhead upload */}
+                <div>
+                  <label className="form-label">Document Letterhead</label>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.4 }}>
+                    Used as the header on invoices, quotes, POs and statements. Should be a wide landscape image (e.g. 2480 × 350 px). When set, the letterhead replaces the logo and company info block on all PDFs.
+                  </div>
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', marginTop: 6 }}>
+                    {/* Preview */}
+                    <div style={{
+                      width: 220, height: 70, border: '1px solid var(--border)', borderRadius: 8,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: 'var(--bg-secondary)', overflow: 'hidden', flexShrink: 0,
+                    }}>
+                      {letterheadPreview
+                        ? <img src={letterheadPreview} alt="letterhead" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                        : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No letterhead</span>
+                      }
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <button className="btn-ghost btn-sm" onClick={() => letterheadInputRef.current?.click()}>
+                        <Upload size={13} /> {letterheadPreview ? 'Replace Letterhead' : 'Upload Letterhead'}
+                      </button>
+                      {letterheadFile && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{letterheadFile.name}</div>}
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                        PNG, JPG or WebP<br />Max 5MB
+                      </div>
+                      {letterheadPreview && !letterheadFile && (
+                        <button className="btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                          onClick={() => { setLetterheadPreview(null); setLetterheadFile(null) }}>
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <input ref={letterheadInputRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={handleLetterheadSelect} />
                   </div>
                 </div>
 

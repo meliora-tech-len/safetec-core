@@ -85,6 +85,8 @@ class EntityOut(EntityBase):
     logo_path: Optional[str] = None
     logo_url: Optional[str] = None
     primary_color: Optional[str] = "#2563eb"
+    letterhead_url: Optional[str] = None
+    letterhead_path: Optional[str] = None
 
     class Config:
         from_attributes = True
