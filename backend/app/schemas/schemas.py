@@ -1627,6 +1627,8 @@ class SupplierCurrentPayable(BaseModel):
     supplier_name: str
     total_outstanding: Decimal
     invoice_count: int
+    invoice_month: Optional[int] = None
+    invoice_year: Optional[int] = None
 
 
 class Supplier30DaysPayable(BaseModel):
@@ -1642,6 +1644,7 @@ class Supplier30DaysPayable(BaseModel):
 class SupplierPayablesDashboard(BaseModel):
     current_payables: List[SupplierCurrentPayable] = []
     days_30_payables: List[Supplier30DaysPayable] = []
+    other_period_payables: List[SupplierCurrentPayable] = []
     total_current: Decimal = Decimal("0")
     total_30_days: Decimal = Decimal("0")
     total_paid_this_month: Decimal = Decimal("0")

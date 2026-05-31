@@ -189,8 +189,9 @@ def get_dashboard_summary(
 
     all_unpaid = q.all()
 
-    current_payables: dict = {}   # supplier_id -> {name, total, count}
-    days_30_payables: dict = {}   # (supplier_id, year, month) -> {name, total, count, due_date}
+    current_payables: dict = {}       # supplier_id -> {name, total, count}
+    days_30_payables: dict = {}       # (supplier_id, year, month) -> {name, total, count, due_date}
+    other_period_payables: dict = {}  # (supplier_id, year, month) -> current/cash from other months
 
     for inv in all_unpaid:
         supplier = inv.supplier
@@ -200,13 +201,28 @@ def get_dashboard_summary(
             continue
 
         if term == PaymentTermType.current:
-            # Only show if invoice is from this calendar month
             if inv.invoice_date.month == now.month and inv.invoice_date.year == now.year:
+                # This month — normal current/cash bucket
                 key = inv.supplier_id
                 if key not in current_payables:
                     current_payables[key] = {"supplier_name": supplier.name, "total": Decimal("0"), "count": 0}
                 current_payables[key]["total"] += outstanding
                 current_payables[key]["count"] += 1
+            else:
+                # Different month — flag separately
+                inv_m = inv.invoice_date.month
+                inv_y = inv.invoice_date.year
+                key = (inv.supplier_id, inv_y, inv_m)
+                if key not in other_period_payables:
+                    other_period_payables[key] = {
+                        "supplier_name": supplier.name,
+                        "invoice_month": inv_m,
+                        "invoice_year": inv_y,
+                        "total": Decimal("0"),
+                        "count": 0,
+                    }
+                other_period_payables[key]["total"] += outstanding
+                other_period_payables[key]["count"] += 1
         else:  # days_30
             key = (inv.supplier_id, inv.statement_year, inv.statement_month)
             if key not in days_30_payables:
@@ -243,6 +259,18 @@ def get_dashboard_summary(
         for k, v in days_30_payables.items()
     ]
 
+    other_period_list = [
+        SupplierCurrentPayable(
+            supplier_id=k[0],
+            supplier_name=v["supplier_name"],
+            total_outstanding=v["total"],
+            invoice_count=v["count"],
+            invoice_month=v["invoice_month"],
+            invoice_year=v["invoice_year"],
+        )
+        for k, v in sorted(other_period_payables.items(), key=lambda x: (x[0][1], x[0][2]))
+    ]
+
     total_current = sum(x.total_outstanding for x in current_list)
     total_30 = sum(x.total_outstanding for x in days30_list)
 
@@ -268,6 +296,7 @@ def get_dashboard_summary(
     return SupplierPayablesDashboard(
         current_payables=current_list,
         days_30_payables=days30_list,
+        other_period_payables=other_period_list,
         total_current=total_current,
         total_30_days=total_30,
         total_paid_this_month=Decimal(str(paid_this_month)),
