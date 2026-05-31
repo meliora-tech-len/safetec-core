@@ -195,6 +195,9 @@ def get_dashboard_summary(
     for inv in all_unpaid:
         supplier = inv.supplier
         term = supplier.payment_term
+        outstanding = Decimal(str(inv.amount)) - Decimal(str(inv.deposit_paid or 0))
+        if outstanding <= 0:
+            continue
 
         if term == PaymentTermType.current:
             # Only show if invoice is from this calendar month
@@ -202,7 +205,7 @@ def get_dashboard_summary(
                 key = inv.supplier_id
                 if key not in current_payables:
                     current_payables[key] = {"supplier_name": supplier.name, "total": Decimal("0"), "count": 0}
-                current_payables[key]["total"] += inv.amount
+                current_payables[key]["total"] += outstanding
                 current_payables[key]["count"] += 1
         else:  # days_30
             key = (inv.supplier_id, inv.statement_year, inv.statement_month)
@@ -215,7 +218,7 @@ def get_dashboard_summary(
                     "count": 0,
                     "due_date": inv.payment_due_date,
                 }
-            days_30_payables[key]["total"] += inv.amount
+            days_30_payables[key]["total"] += outstanding
             days_30_payables[key]["count"] += 1
 
     current_list = [
@@ -243,6 +246,12 @@ def get_dashboard_summary(
     total_current = sum(x.total_outstanding for x in current_list)
     total_30 = sum(x.total_outstanding for x in days30_list)
 
+    # True outstanding: every unpaid invoice regardless of term or date filter
+    total_all_outstanding = sum(
+        max(Decimal(str(inv.amount)) - Decimal(str(inv.deposit_paid or 0)), Decimal("0"))
+        for inv in all_unpaid
+    )
+
     paid_q = db.query(SupplierInvoice).filter(
         SupplierInvoice.is_paid == True,
         SupplierInvoice.paid_date != None,
@@ -262,6 +271,7 @@ def get_dashboard_summary(
         total_current=total_current,
         total_30_days=total_30,
         total_paid_this_month=Decimal(str(paid_this_month)),
+        total_all_outstanding=total_all_outstanding,
     )
 
 

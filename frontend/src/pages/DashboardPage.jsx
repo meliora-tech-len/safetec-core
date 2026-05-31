@@ -74,7 +74,7 @@ export default function DashboardPage() {
               iconBg="#ef444420"
               iconColor="var(--danger)"
               label="Total Outstanding"
-              value={formatCurrency((payables?.total_current || 0) + (payables?.total_30_days || 0))}
+              value={formatCurrency(payables?.total_all_outstanding || 0)}
               sub="All unpaid supplier invoices"
             />
             <StatCard

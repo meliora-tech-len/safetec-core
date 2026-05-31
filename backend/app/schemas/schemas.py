@@ -1645,6 +1645,7 @@ class SupplierPayablesDashboard(BaseModel):
     total_current: Decimal = Decimal("0")
     total_30_days: Decimal = Decimal("0")
     total_paid_this_month: Decimal = Decimal("0")
+    total_all_outstanding: Decimal = Decimal("0")
 
 
 # ── Diesel Schemas ─────────────────────────────────────────────────────────────
