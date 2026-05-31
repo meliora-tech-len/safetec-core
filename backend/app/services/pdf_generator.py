@@ -218,9 +218,10 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
             try:
                 letterhead_img = RLImage(
                     io.BytesIO(lh_bytes),
-                    width=174*mm, height=90*mm,
+                    width=174*mm, height=105*mm,
                     kind="proportional",
                 )
+                letterhead_img.hAlign = 'CENTER'
             except Exception:
                 letterhead_img = None
 
@@ -249,7 +250,7 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
     if letterhead_img:
         # Full-width letterhead replaces all company info
         story.append(letterhead_img)
-        story.append(Spacer(1, 4*mm))
+        story.append(Spacer(1, 10*mm))
     else:
         # Logo right | company info left
         company_name = entity.trading_name or entity.name
