@@ -543,7 +543,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                 <span style={{ flex: 2.5 }}>Description</span>
                 {isPOLayout && <span style={{ flex: 1.5, textAlign: 'right' }}>Loading #</span>}
                 {isPOLayout && <span style={{ flex: 1.5, textAlign: 'right' }}>Offloading #</span>}
-                {!isPOLayout && <span style={{ flex: 1, textAlign: 'right' }}>Qty</span>}
+                <span style={{ flex: 1, textAlign: 'right' }}>Qty</span>
                 <span style={{ flex: 2, textAlign: 'right' }}>Rate</span>
                 <span style={{ flex: 2, textAlign: 'right' }}>Amount</span>
                 <span style={{ width: 54, textAlign: 'center' }}>No VAT</span>
@@ -612,17 +612,15 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                             onChange={e => updateLine(idx, 'offloading_number', e.target.value)}
                           />
                         )}
-                        {!isPOLayout && (
-                          <input
-                            className="form-input"
-                            type="number"
-                            style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
-                            placeholder="—"
-                            value={line.quantity}
-                            onChange={e => updateLine(idx, 'quantity', e.target.value)}
-                            min="0" step="any"
-                          />
-                        )}
+                        <input
+                          className="form-input"
+                          type="number"
+                          style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
+                          placeholder="—"
+                          value={line.quantity}
+                          onChange={e => updateLine(idx, 'quantity', e.target.value)}
+                          min="0" step="any"
+                        />
                         <input
                           className="form-input"
                           type="number"

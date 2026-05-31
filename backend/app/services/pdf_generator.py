@@ -374,21 +374,25 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
     )
 
     if is_po_layout:
-        col_desc_w    = 70*mm
-        col_load_w    = 24*mm
-        col_offload_w = 24*mm
+        # PO import: DESCRIPTION | LOADING # | OFF-LOADING # | QTY | RATE | TOTAL
+        col_desc_w    = 60*mm
+        col_load_w    = 22*mm
+        col_offload_w = 22*mm
+        col_qty_w     = 14*mm
         col_rate_w    = 26*mm
         col_total_w   = 30*mm
-        col_widths    = [col_desc_w, col_load_w, col_offload_w, col_rate_w, col_total_w]
-        last_col      = 4
+        col_widths    = [col_desc_w, col_load_w, col_offload_w, col_qty_w, col_rate_w, col_total_w]
+        last_col      = 5
         line_rows = [[
             Paragraph("DESCRIPTION",   s_col_header),
             Paragraph("LOADING #",     s_col_hdr_r),
             Paragraph("OFF-LOADING #", s_col_hdr_r),
+            Paragraph("QTY",           s_col_hdr_r),
             Paragraph("RATE",          s_col_hdr_r),
             Paragraph("TOTAL",         s_col_hdr_r),
         ]]
     else:
+        # Standard: DESCRIPTION | QTY | RATE | TOTAL
         col_desc_w  = 95*mm
         col_qty_w   = 18*mm
         col_rate_w  = 30*mm
@@ -440,6 +444,9 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
             else:
                 desc_para = Paragraph(desc, s_line_desc)
 
+            qty = Decimal(str(item.quantity)) if item.quantity is not None else Decimal('0')
+            qty_str = f"{qty:.2f}" if qty != qty.to_integral_value() else f"{int(qty)}"
+
             if is_po_layout:
                 load_no    = getattr(item, 'loading_number',    None) or ''
                 offload_no = getattr(item, 'offloading_number', None) or ''
@@ -447,12 +454,11 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
                     desc_para,
                     Paragraph(load_no,    s_line_num),
                     Paragraph(offload_no, s_line_num),
+                    Paragraph(qty_str,    s_line_num),
                     Paragraph(format_currency(item.unit_price), s_line_num),
                     Paragraph(format_currency(item.amount),     s_line_num),
                 ])
             else:
-                qty = Decimal(str(item.quantity)) if item.quantity is not None else Decimal('0')
-                qty_str = f"{qty:.2f}" if qty != qty.to_integral_value() else f"{int(qty)}"
                 line_rows.append([
                     desc_para,
                     Paragraph(qty_str,                         s_line_num),

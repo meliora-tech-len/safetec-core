@@ -223,19 +223,15 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
             const isPO =
               (invoice.notes || '').includes('PO Ref:') ||
               sortedLines.some(l => (l.line_type === 'item' || !l.line_type) && (l.loading_number || l.offloading_number))
-            const colSpan = isPO ? 5 : 4
+            const colSpan = isPO ? 6 : 4
             return (
               <table style={{ marginTop: 20 }}>
                 <thead>
                   <tr style={{ background: 'var(--bg-base)' }}>
                     <th>Description</th>
-                    {isPO
-                      ? <>
-                          <th style={{ textAlign: 'right', width: 100 }}>Loading #</th>
-                          <th style={{ textAlign: 'right', width: 100 }}>Off-loading #</th>
-                        </>
-                      : <th style={{ textAlign: 'right', width: 70 }}>Qty</th>
-                    }
+                    {isPO && <th style={{ textAlign: 'right', width: 90 }}>Loading #</th>}
+                    {isPO && <th style={{ textAlign: 'right', width: 90 }}>Off-loading #</th>}
+                    <th style={{ textAlign: 'right', width: 70 }}>Qty</th>
                     <th style={{ textAlign: 'right', width: 120 }}>Unit Price</th>
                     <th style={{ textAlign: 'right', width: 120 }}>Amount</th>
                   </tr>
@@ -268,13 +264,9 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
                     return (
                       <tr key={li.id}>
                         <td>{li.description}</td>
-                        {isPO
-                          ? <>
-                              <td className="text-right">{li.loading_number || '—'}</td>
-                              <td className="text-right">{li.offloading_number || '—'}</td>
-                            </>
-                          : <td className="text-right">{li.quantity != null ? parseFloat(li.quantity) : '—'}</td>
-                        }
+                        {isPO && <td className="text-right">{li.loading_number || '—'}</td>}
+                        {isPO && <td className="text-right">{li.offloading_number || '—'}</td>}
+                        <td className="text-right">{li.quantity != null ? parseFloat(li.quantity) : '—'}</td>
                         <td className="text-right">{li.unit_price != null ? formatCurrency(li.unit_price) : '—'}</td>
                         <td className="text-right font-bold">{formatCurrency(li.amount)}</td>
                       </tr>
