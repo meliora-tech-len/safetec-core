@@ -107,7 +107,7 @@ export default function DashboardPage() {
           {payables?.other_period_payables?.length > 0 && (
             <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: 'rgba(220,38,38,0.06)', border: '1px solid rgba(220,38,38,0.25)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>⚠ Overdue — invoices from other periods</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>⚠ Invoices found logged under different months</span>
               </div>
               {payables.other_period_payables.map(p => (
                 <div key={`${p.supplier_id}-${p.invoice_year}-${p.invoice_month}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid rgba(220,38,38,0.12)', fontSize: 13 }}>
