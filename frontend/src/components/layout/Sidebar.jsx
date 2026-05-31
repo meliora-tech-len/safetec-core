@@ -105,7 +105,7 @@ export default function Sidebar() {
     return () => document.removeEventListener('mousedown', handler)
   }, [entityMenuOpen])
 
-  const canSwitchEntity = !isAdmin && entities.length > 1
+  const canSwitchEntity = entities.length > 1 || (isAdmin && entities.length >= 1)
 
   // Apply / clear entity branding colors whenever activeEntity changes
   useEffect(() => {
@@ -182,6 +182,26 @@ export default function Sidebar() {
         {/* Entity switcher dropdown */}
         {entityMenuOpen && (
           <div style={styles.entityDropdown}>
+            {isAdmin && (
+              <button
+                style={{
+                  ...styles.entityDropdownItem,
+                  background: !activeEntity ? 'var(--accent-subtle)' : 'transparent',
+                  color: !activeEntity ? 'var(--accent)' : 'var(--text-primary)',
+                  fontWeight: !activeEntity ? 600 : 400,
+                }}
+                onClick={() => { setActiveEntity(null); setEntityMenuOpen(false) }}
+              >
+                <span style={{
+                  width: 22, height: 22, borderRadius: 5, background: 'var(--text-muted)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 10, fontWeight: 800, color: 'white', flexShrink: 0,
+                }}>
+                  All
+                </span>
+                <span style={{ fontSize: 12 }}>All Entities</span>
+              </button>
+            )}
             {entities.map(e => (
               <button
                 key={e.id}

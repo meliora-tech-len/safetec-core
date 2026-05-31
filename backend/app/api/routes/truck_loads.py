@@ -835,6 +835,22 @@ def update_truck_load(
     for field, value in updated_fields.items():
         setattr(load, field, value)
 
+    # When a load is marked paid and its load_date is in a previous month,
+    # flag driver_already_paid so the pay-cycle sync excludes it — the driver's
+    # payroll for that prior period has already been processed.
+    if "is_paid" in updated_fields:
+        now = datetime.now(tz=timezone.utc)
+        ld  = load.load_date
+        in_previous_month = (
+            ld.year < now.year or
+            (ld.year == now.year and ld.month < now.month)
+        )
+        if updated_fields["is_paid"] is True and in_previous_month and not load.driver_already_paid:
+            load.driver_already_paid = True
+        elif updated_fields["is_paid"] is False and load.driver_already_paid:
+            # Unmarked as paid — restore to payroll so it can be counted again
+            load.driver_already_paid = False
+
     load_entity = db.query(BusinessEntity).filter(BusinessEntity.id == load.entity_id).first()
     vat_reg = load_entity.vat_registered if load_entity else True
     _compute_amounts(load, vat_registered=vat_reg)
