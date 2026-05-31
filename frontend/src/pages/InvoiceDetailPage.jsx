@@ -218,51 +218,72 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
           </div>
 
           {/* Line items */}
-          <table style={{ marginTop: 20 }}>
-            <thead>
-              <tr style={{ background: 'var(--bg-base)' }}>
-                <th>Description</th>
-                <th style={{ textAlign: 'right', width: 70 }}>Qty</th>
-                <th style={{ textAlign: 'right', width: 120 }}>Unit Price</th>
-                <th style={{ textAlign: 'right', width: 120 }}>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...invoice.line_items].sort((a, b) => a.sort_order - b.sort_order).map(li => {
-                const lt = li.line_type || 'item'
-                if (lt === 'spacer') {
-                  return <tr key={li.id} style={{ height: 12 }}><td colSpan={4} /></tr>
-                }
-                if (lt === 'header') {
-                  return (
-                    <tr key={li.id} style={{ background: 'var(--bg-base)' }}>
-                      <td colSpan={4} style={{ fontWeight: 700, fontSize: 13, padding: '7px 10px', color: 'var(--accent)', borderBottom: '1px solid var(--border)' }}>
-                        {li.description}
-                      </td>
-                    </tr>
-                  )
-                }
-                if (lt === 'note') {
-                  return (
-                    <tr key={li.id}>
-                      <td colSpan={4} style={{ fontSize: 12, fontStyle: 'italic', color: 'var(--text-muted)', padding: '4px 10px' }}>
-                        {li.description}
-                      </td>
-                    </tr>
-                  )
-                }
-                // item (default)
-                return (
-                  <tr key={li.id}>
-                    <td>{li.description}</td>
-                    <td className="text-right">{li.quantity != null ? parseFloat(li.quantity) : '—'}</td>
-                    <td className="text-right">{li.unit_price != null ? formatCurrency(li.unit_price) : '—'}</td>
-                    <td className="text-right font-bold">{formatCurrency(li.amount)}</td>
+          {(() => {
+            const sortedLines = [...invoice.line_items].sort((a, b) => a.sort_order - b.sort_order)
+            const isPO =
+              (invoice.notes || '').includes('PO Ref:') ||
+              sortedLines.some(l => (l.line_type === 'item' || !l.line_type) && (l.loading_number || l.offloading_number))
+            const colSpan = isPO ? 5 : 4
+            return (
+              <table style={{ marginTop: 20 }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-base)' }}>
+                    <th>Description</th>
+                    {isPO
+                      ? <>
+                          <th style={{ textAlign: 'right', width: 100 }}>Loading #</th>
+                          <th style={{ textAlign: 'right', width: 100 }}>Off-loading #</th>
+                        </>
+                      : <th style={{ textAlign: 'right', width: 70 }}>Qty</th>
+                    }
+                    <th style={{ textAlign: 'right', width: 120 }}>Unit Price</th>
+                    <th style={{ textAlign: 'right', width: 120 }}>Amount</th>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {sortedLines.map(li => {
+                    const lt = li.line_type || 'item'
+                    if (lt === 'spacer') {
+                      return <tr key={li.id} style={{ height: 12 }}><td colSpan={colSpan} /></tr>
+                    }
+                    if (lt === 'header') {
+                      return (
+                        <tr key={li.id} style={{ background: 'var(--bg-base)' }}>
+                          <td colSpan={colSpan} style={{ fontWeight: 700, fontSize: 13, padding: '7px 10px', color: 'var(--accent)', borderBottom: '1px solid var(--border)' }}>
+                            {li.description}
+                          </td>
+                        </tr>
+                      )
+                    }
+                    if (lt === 'note') {
+                      return (
+                        <tr key={li.id}>
+                          <td colSpan={colSpan} style={{ fontSize: 12, fontStyle: 'italic', color: 'var(--text-muted)', padding: '4px 10px' }}>
+                            {li.description}
+                          </td>
+                        </tr>
+                      )
+                    }
+                    // item (default)
+                    return (
+                      <tr key={li.id}>
+                        <td>{li.description}</td>
+                        {isPO
+                          ? <>
+                              <td className="text-right">{li.loading_number || '—'}</td>
+                              <td className="text-right">{li.offloading_number || '—'}</td>
+                            </>
+                          : <td className="text-right">{li.quantity != null ? parseFloat(li.quantity) : '—'}</td>
+                        }
+                        <td className="text-right">{li.unit_price != null ? formatCurrency(li.unit_price) : '—'}</td>
+                        <td className="text-right font-bold">{formatCurrency(li.amount)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )
+          })()}
 
           {/* Totals */}
           <div style={styles.totals}>

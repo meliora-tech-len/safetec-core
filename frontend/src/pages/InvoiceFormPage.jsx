@@ -82,6 +82,13 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
   const [vatRate, setVatRate] = useState(0.15)
   const [lines, setLines] = useState([emptyLine()])
 
+  // PO-import invoices use a different column layout.
+  // Primary detection: any item line has loading/offloading numbers in DB.
+  // Fallback for older imports: notes field contains "PO Ref:" (set by ImportPOModal).
+  const isPOLayout =
+    notes.includes('PO Ref:') ||
+    lines.some(l => (l.line_type === 'item' || !l.line_type) && (l.loading_number || l.offloading_number))
+
   // ── Load initial data ─────────────────────────────────────────────
   useEffect(() => {
     let ignore = false
@@ -534,9 +541,9 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
               {/* Column labels — only relevant for item rows */}
               <div style={{ ...styles.lineHeader, paddingLeft: 62 }}>
                 <span style={{ flex: 2.5 }}>Description</span>
-                <span style={{ flex: 1.5, textAlign: 'right' }}>Loading #</span>
-                <span style={{ flex: 1.5, textAlign: 'right' }}>Offloading #</span>
-                <span style={{ flex: 1, textAlign: 'right' }}>Qty</span>
+                {isPOLayout && <span style={{ flex: 1.5, textAlign: 'right' }}>Loading #</span>}
+                {isPOLayout && <span style={{ flex: 1.5, textAlign: 'right' }}>Offloading #</span>}
+                {!isPOLayout && <span style={{ flex: 1, textAlign: 'right' }}>Qty</span>}
                 <span style={{ flex: 2, textAlign: 'right' }}>Rate</span>
                 <span style={{ flex: 2, textAlign: 'right' }}>Amount</span>
                 <span style={{ width: 54, textAlign: 'center' }}>No VAT</span>
@@ -587,29 +594,35 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
 
                       {/* Financial columns — item rows only */}
                       {isItem && (<>
-                        <input
-                          className="form-input"
-                          style={{ flex: 1.5, fontSize: 13, textAlign: 'right' }}
-                          placeholder="—"
-                          value={line.loading_number}
-                          onChange={e => updateLine(idx, 'loading_number', e.target.value)}
-                        />
-                        <input
-                          className="form-input"
-                          style={{ flex: 1.5, fontSize: 13, textAlign: 'right' }}
-                          placeholder="—"
-                          value={line.offloading_number}
-                          onChange={e => updateLine(idx, 'offloading_number', e.target.value)}
-                        />
-                        <input
-                          className="form-input"
-                          type="number"
-                          style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
-                          placeholder="—"
-                          value={line.quantity}
-                          onChange={e => updateLine(idx, 'quantity', e.target.value)}
-                          min="0" step="any"
-                        />
+                        {isPOLayout && (
+                          <input
+                            className="form-input"
+                            style={{ flex: 1.5, fontSize: 13, textAlign: 'right' }}
+                            placeholder="—"
+                            value={line.loading_number}
+                            onChange={e => updateLine(idx, 'loading_number', e.target.value)}
+                          />
+                        )}
+                        {isPOLayout && (
+                          <input
+                            className="form-input"
+                            style={{ flex: 1.5, fontSize: 13, textAlign: 'right' }}
+                            placeholder="—"
+                            value={line.offloading_number}
+                            onChange={e => updateLine(idx, 'offloading_number', e.target.value)}
+                          />
+                        )}
+                        {!isPOLayout && (
+                          <input
+                            className="form-input"
+                            type="number"
+                            style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
+                            placeholder="—"
+                            value={line.quantity}
+                            onChange={e => updateLine(idx, 'quantity', e.target.value)}
+                            min="0" step="any"
+                          />
+                        )}
                         <input
                           className="form-input"
                           type="number"

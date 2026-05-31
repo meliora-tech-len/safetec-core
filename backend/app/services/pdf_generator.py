@@ -342,23 +342,54 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
     story.append(Spacer(1, 5*mm))
 
     # ── Line Items ────────────────────────────────────────────────────────────
-    col_desc_w = 95*mm
-    col_qty_w = 18*mm
-    col_rate_w = 30*mm
-    col_total_w = 31*mm
+    # Detect PO-import layout.
+    # Primary: any item line carries loading/offloading numbers (new imports).
+    # Fallback: invoice notes contain "PO Ref:" (older imports before the fix).
+    is_po_layout = (
+        "PO Ref:" in (invoice.notes or "")
+        or any(
+            (getattr(it, 'loading_number', None) or getattr(it, 'offloading_number', None))
+            for it in sorted_items
+            if (getattr(it, 'line_type', 'item') or 'item') == 'item'
+        )
+    )
 
-    # Header row
-    line_rows = [[
-        Paragraph("DESCRIPTION", s_col_header),
-        Paragraph("QTY", s_col_hdr_r),
-        Paragraph("RATE", s_col_hdr_r),
-        Paragraph("TOTAL", s_col_hdr_r),
-    ]]
+    if is_po_layout:
+        # Tradekor PO import: DESCRIPTION | LOADING # | OFF-LOADING # | RATE | TOTAL
+        col_desc_w    = 70*mm
+        col_load_w    = 24*mm
+        col_offload_w = 24*mm
+        col_rate_w    = 26*mm
+        col_total_w   = 30*mm
+        col_widths    = [col_desc_w, col_load_w, col_offload_w, col_rate_w, col_total_w]
+        last_col      = 4
+        line_rows = [[
+            Paragraph("DESCRIPTION",   s_col_header),
+            Paragraph("LOADING #",     s_col_hdr_r),
+            Paragraph("OFF-LOADING #", s_col_hdr_r),
+            Paragraph("RATE",          s_col_hdr_r),
+            Paragraph("TOTAL",         s_col_hdr_r),
+        ]]
+    else:
+        # Standard layout: DESCRIPTION | QTY | RATE | TOTAL
+        col_desc_w  = 95*mm
+        col_qty_w   = 18*mm
+        col_rate_w  = 30*mm
+        col_total_w = 31*mm
+        col_widths  = [col_desc_w, col_qty_w, col_rate_w, col_total_w]
+        last_col    = 3
+        line_rows = [[
+            Paragraph("DESCRIPTION", s_col_header),
+            Paragraph("QTY",         s_col_hdr_r),
+            Paragraph("RATE",        s_col_hdr_r),
+            Paragraph("TOTAL",       s_col_hdr_r),
+        ]]
 
     # Accumulators for type-aware row building
     span_cmds      = []   # SPAN directives for full-width rows
     bg_cmds        = []   # per-row background / padding overrides
     item_row_idxs  = []   # indices of 'item' rows (for alternating shading only)
+    empty_row      = [""] * (last_col + 1)
 
     for item in sorted_items:
         row_idx = len(line_rows)   # header is index 0; data starts at 1
@@ -366,8 +397,8 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
         desc = item.description or ""
 
         if lt == 'header':
-            line_rows.append([Paragraph(desc, s_sec_hdr), '', '', ''])
-            span_cmds.append(("SPAN", (0, row_idx), (3, row_idx)))
+            line_rows.append([Paragraph(desc, s_sec_hdr)] + [''] * last_col)
+            span_cmds.append(("SPAN", (0, row_idx), (last_col, row_idx)))
             bg_cmds.extend([
                 ("BACKGROUND",    (0, row_idx), (-1, row_idx), accent_dark),
                 ("TOPPADDING",    (0, row_idx), (-1, row_idx), 5),
@@ -375,12 +406,12 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
             ])
 
         elif lt == 'note':
-            line_rows.append([Paragraph(desc, s_note_ln), '', '', ''])
-            span_cmds.append(("SPAN", (0, row_idx), (3, row_idx)))
+            line_rows.append([Paragraph(desc, s_note_ln)] + [''] * last_col)
+            span_cmds.append(("SPAN", (0, row_idx), (last_col, row_idx)))
 
         elif lt == 'spacer':
-            line_rows.append(['', '', '', ''])
-            span_cmds.append(("SPAN", (0, row_idx), (3, row_idx)))
+            line_rows.append(list(empty_row))
+            span_cmds.append(("SPAN", (0, row_idx), (last_col, row_idx)))
             bg_cmds.extend([
                 ("TOPPADDING",    (0, row_idx), (-1, row_idx), 2),
                 ("BOTTOMPADDING", (0, row_idx), (-1, row_idx), 2),
@@ -393,25 +424,33 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
             else:
                 desc_para = Paragraph(desc, s_line_desc)
 
-            qty = Decimal(str(item.quantity)) if item.quantity is not None else Decimal('0')
-            qty_str = f"{qty:.2f}" if qty != qty.to_integral_value() else f"{int(qty)}"
-            line_rows.append([
-                desc_para,
-                Paragraph(qty_str, s_line_num),
-                Paragraph(format_currency(item.unit_price), s_line_num),
-                Paragraph(format_currency(item.amount), s_line_num),
-            ])
+            if is_po_layout:
+                load_no    = getattr(item, 'loading_number',    None) or ''
+                offload_no = getattr(item, 'offloading_number', None) or ''
+                line_rows.append([
+                    desc_para,
+                    Paragraph(load_no,    s_line_num),
+                    Paragraph(offload_no, s_line_num),
+                    Paragraph(format_currency(item.unit_price), s_line_num),
+                    Paragraph(format_currency(item.amount),     s_line_num),
+                ])
+            else:
+                qty = Decimal(str(item.quantity)) if item.quantity is not None else Decimal('0')
+                qty_str = f"{qty:.2f}" if qty != qty.to_integral_value() else f"{int(qty)}"
+                line_rows.append([
+                    desc_para,
+                    Paragraph(qty_str, s_line_num),
+                    Paragraph(format_currency(item.unit_price), s_line_num),
+                    Paragraph(format_currency(item.amount), s_line_num),
+                ])
             item_row_idxs.append(row_idx)
 
     # Pad to minimum rows (item-type blank rows)
     min_rows = 8
     while len(line_rows) < min_rows + 1:
-        line_rows.append(["", "", "", ""])
+        line_rows.append(list(empty_row))
 
-    items_table = Table(
-        line_rows,
-        colWidths=[col_desc_w, col_qty_w, col_rate_w, col_total_w],
-    )
+    items_table = Table(line_rows, colWidths=col_widths)
     row_styles = [
         # Column header row
         ("BACKGROUND", (0, 0), (-1, 0), accent),

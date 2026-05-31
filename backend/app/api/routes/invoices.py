@@ -265,6 +265,8 @@ def create_invoice(
                 is_vat_exempt=item_data.is_vat_exempt,
                 sort_order=item_data.sort_order or i,
                 line_type=item_data.line_type,
+                loading_number=item_data.loading_number,
+                offloading_number=item_data.offloading_number,
             )
             db.add(item)
 
@@ -323,6 +325,8 @@ def update_invoice(
                     is_vat_exempt=item_data.is_vat_exempt,
                     sort_order=item_data.sort_order or i,
                     line_type=item_data.line_type,
+                    loading_number=item_data.loading_number,
+                    offloading_number=item_data.offloading_number,
                 ))
             subtotal, vat_amount, total = _calculate_totals(payload.line_items, invoice.vat_rate, invoice.is_vat_exempt)
             invoice.subtotal = subtotal
