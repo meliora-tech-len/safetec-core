@@ -445,7 +445,10 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
                 desc_para = Paragraph(desc, s_line_desc)
 
             qty = Decimal(str(item.quantity)) if item.quantity is not None else Decimal('0')
-            qty_str = f"{qty:.2f}" if qty != qty.to_integral_value() else f"{int(qty)}"
+            if qty == qty.to_integral_value():
+                qty_str = f"{int(qty):,}"          # e.g. 38,660
+            else:
+                qty_str = f"{qty:,.3f}".rstrip('0').rstrip('.')  # e.g. 38.66
 
             if is_po_layout:
                 load_no    = getattr(item, 'loading_number',    None) or ''

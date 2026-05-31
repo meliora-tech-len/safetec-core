@@ -30,15 +30,21 @@ def _check_entity_access(entity_id: int, user: User):
 def _line_amount(item) -> Decimal:
     """Return the effective amount for a line item.
     header, note, and spacer rows always contribute R 0.
-    For item rows: qty × price if both given, else the amount field directly.
+    For item rows: use the explicit amount field when provided (non-zero),
+    so PO-import net values are respected; fall back to qty × price only
+    when no amount is supplied.
     """
     if getattr(item, 'line_type', 'item') != 'item':
         return Decimal('0')
+    if item.amount:
+        explicit = Decimal(str(item.amount))
+        if explicit != Decimal('0'):
+            return explicit.quantize(Decimal("0.01"))
     qty   = item.quantity   if item.quantity   is not None else None
     price = item.unit_price if item.unit_price is not None else None
     if qty is not None and price is not None:
         return (Decimal(str(qty)) * Decimal(str(price))).quantize(Decimal("0.01"))
-    return (Decimal(str(item.amount)) if item.amount else Decimal("0")).quantize(Decimal("0.01"))
+    return Decimal("0")
 
 
 def _calculate_totals(line_items_data, vat_rate: Decimal, is_vat_exempt: bool = False):

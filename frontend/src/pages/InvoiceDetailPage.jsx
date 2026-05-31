@@ -266,7 +266,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
                         <td>{li.description}</td>
                         {isPO && <td className="text-right">{li.loading_number || '—'}</td>}
                         {isPO && <td className="text-right">{li.offloading_number || '—'}</td>}
-                        <td className="text-right">{li.quantity != null ? parseFloat(li.quantity) : '—'}</td>
+                        <td className="text-right">{li.quantity != null ? parseFloat(li.quantity).toLocaleString('en-ZA') : '—'}</td>
                         <td className="text-right">{li.unit_price != null ? formatCurrency(li.unit_price) : '—'}</td>
                         <td className="text-right font-bold">{formatCurrency(li.amount)}</td>
                       </tr>
