@@ -116,7 +116,7 @@ export default function DashboardPage() {
                       {p.supplier_name}
                     </Link>
                     <span style={{ marginLeft: 8, fontSize: 11, color: '#dc2626' }}>
-                      {MONTH_NAMES[p.invoice_month - 1]} {p.invoice_year} · {p.invoice_count} invoice{p.invoice_count !== 1 ? 's' : ''}
+                      {MONTH_NAMES[p.invoice_month]} {p.invoice_year} · {p.invoice_count} invoice{p.invoice_count !== 1 ? 's' : ''}
                     </span>
                   </div>
                   <span style={{ fontWeight: 700, color: '#dc2626' }}>{formatCurrency(p.total_outstanding)}</span>

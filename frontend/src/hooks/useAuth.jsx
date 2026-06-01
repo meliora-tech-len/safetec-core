@@ -24,14 +24,7 @@ export function AuthProvider({ children }) {
       const list = res.data
       setEntities(list)
 
-      if (user.role === 'admin') {
-        // Admins always start with "All Entities" view
-        setActiveEntityState(null)
-        localStorage.removeItem('activeEntity')
-        return
-      }
-
-      // Restore previously selected entity for non-admin users
+      // Restore previously selected entity from localStorage
       let stored = null
       try { stored = JSON.parse(localStorage.getItem('activeEntity')) } catch {}
 
@@ -42,22 +35,31 @@ export function AuthProvider({ children }) {
           localStorage.setItem('activeEntity', JSON.stringify(fresh))
           return
         }
-        // Previously selected entity no longer accessible — fall through to auto-select
+        // Previously selected entity no longer accessible
         localStorage.removeItem('activeEntity')
+        setActiveEntityState(null)
+        return
       }
 
-      // No stored entity — auto-select the first accessible entity so branding
-      // and module nav are active immediately without any manual selection step
-      if (list.length > 0) {
-        setActiveEntityState(list[0])
-        localStorage.setItem('activeEntity', JSON.stringify(list[0]))
+      if (user.role !== 'admin') {
+        // Non-admin: auto-select the first accessible entity so branding
+        // and module nav are active immediately without any manual selection step
+        if (list.length > 0) {
+          setActiveEntityState(list[0])
+          localStorage.setItem('activeEntity', JSON.stringify(list[0]))
+        }
       }
+      // Admin with no stored entity: stay on "All Entities" (null)
     }).catch(() => {})
   }, [user])
 
   const setActiveEntity = (entity) => {
     setActiveEntityState(entity)
-    localStorage.setItem('activeEntity', JSON.stringify(entity))
+    if (entity) {
+      localStorage.setItem('activeEntity', JSON.stringify(entity))
+    } else {
+      localStorage.removeItem('activeEntity')
+    }
   }
 
   const refreshEntities = async () => {

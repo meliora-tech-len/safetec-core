@@ -90,6 +90,18 @@ function parseSlipDate(val) {
   return null
 }
 
+// Parse a South African currency/numeric cell that may arrive as a number or as
+// text like "R 24 857,81" (R prefix, space thousands separator, comma decimal).
+function parseZAR(val) {
+  if (typeof val === 'number') return val
+  if (typeof val === 'string') {
+    // strip everything except digits and comma, then treat comma as decimal point
+    const n = parseFloat(val.replace(/[^0-9,]/g, '').replace(',', '.'))
+    return isNaN(n) ? 0 : n
+  }
+  return 0
+}
+
 function parseWBGSheet(ws) {
   // raw: true (default) keeps numbers as numbers and dates as Date objects via
   // cellDates — raw: false would stringify numbers and break the typeof check below.
@@ -97,7 +109,9 @@ function parseWBGSheet(ws) {
   const invoices = []
   let pending = []
   for (const row of rows.slice(3)) {
-    const [siteOrDate, slipDate, slip, reg, , driver, ltr, , txnVal] = row
+    // Col layout: 0=site, 1=datetime, 2=slip#, 3=truck reg, 4=odometer(skip),
+    //             5=driver, 6=litres, 7=rate/L, 8=amount excl
+    const [siteOrDate, slipDate, slip, reg, , driver, ltr, rawRate, txnVal] = row
     const invDate  = row[9]
     const invNo    = row[10]
     const invTotal = row[11]
@@ -106,7 +120,7 @@ function parseWBGSheet(ws) {
       invoices.push({
         invoice_date:   invDate instanceof Date ? fmtISODate(invDate) : invDate,
         invoice_number: String(invNo).trim(),
-        amount:         parseFloat(invTotal) || 0,
+        amount:         parseZAR(invTotal),
         line_items:     pending,
       })
       pending = []
@@ -114,14 +128,16 @@ function parseWBGSheet(ws) {
     }
     // Col 0 is the site/location; col 1 is the Date column (next to Slip# at col 2)
     if ((typeof siteOrDate === 'string' || siteOrDate instanceof Date) && slip) {
-      const excl = parseFloat(txnVal) || 0
+      const excl = parseZAR(txnVal)
+      const rate = parseZAR(rawRate) || null
       pending.push({
         item_code:        String(slip).replace(/^INV/i, '').trim(),
         unit:             String(reg || '').trim().toUpperCase(),
         item_description: String(driver || '').trim(),
-        quantity:         parseFloat(ltr) || 0,
+        quantity:         parseZAR(ltr),
         amount_excl_vat:  excl,
         amount_incl_vat:  excl,
+        rate_per_litre:   rate,
         sort_order:       pending.length,
         slip_date:        parseSlipDate(slipDate),
       })

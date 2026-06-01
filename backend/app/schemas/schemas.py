@@ -1471,6 +1471,7 @@ class InvoiceLineItemImport(BaseModel):
     amount_incl_vat: Decimal = Decimal('0')
     sort_order: int = 0
     slip_date: Optional[str] = None
+    rate_per_litre: Optional[Decimal] = None
 
 
 class InvoiceImportItem(BaseModel):

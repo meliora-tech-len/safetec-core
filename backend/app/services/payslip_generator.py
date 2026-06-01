@@ -116,7 +116,7 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
     white   = colors.white
     gray    = colors.HexColor("#f5f5f5")
     border  = colors.HexColor("#aaaaaa")
-    dark    = colors.HexColor("#1a1a2e")
+    dark    = colors.HexColor("#555555")
     mid     = colors.HexColor("#444444")
 
     def sty(name, **kw):
@@ -128,7 +128,7 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
     s_val   = sty("val",  fontSize=7.5)
     s_bold  = sty("bold", fontName="Helvetica-Bold", fontSize=7.5)
     s_hdr   = sty("hdr",  fontName="Helvetica-Bold", fontSize=7.5, textColor=white, alignment=TA_CENTER)
-    s_chdr  = sty("chdr", fontName="Helvetica-Bold", fontSize=6.5, textColor=mid)
+    s_chdr  = sty("chdr", fontName="Helvetica-Bold", fontSize=7, textColor=black)
     s_r     = sty("r",    fontSize=7.5, alignment=TA_RIGHT)
     s_rb    = sty("rb",   fontName="Helvetica-Bold", fontSize=7.5, alignment=TA_RIGHT)
     s_nll   = sty("nll",  fontName="Helvetica-Bold", fontSize=10, textColor=white, alignment=TA_LEFT,  leading=14)
@@ -192,7 +192,6 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING",(0, 0), (-1, -1), 4),
         ("VALIGN",      (0, 0), (-1, -1), "TOP"),
-        ("BACKGROUND",  (0, 0), (0, -1), gray),
         # emp address row — merge cols 1 & 2
         ("SPAN",        (1, 6), (2, 6)),
     ])
@@ -251,9 +250,9 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
     while len(earn) < n: earn.append(("", ""))
     while len(ded)  < n: ded.append(("", ""))
 
-    # column widths: earn [desc 56, hrs 13, amt 20] | ded [desc 50, hrs 13, amt 20, ob 14] = 186mm
+    # column widths: earn [desc 56, hrs 13, amt 20] | ded [desc 46, hrs 13, amt 20, ob 18] = 186mm
     e_d, e_h, e_a = 56 * mm, 13 * mm, 20 * mm
-    d_d, d_h, d_a, d_o = 50 * mm, 13 * mm, 20 * mm, 14 * mm
+    d_d, d_h, d_a, d_o = 46 * mm, 13 * mm, 20 * mm, 18 * mm
     ed_cols = [e_d, e_h, e_a, d_d, d_h, d_a, d_o]
 
     ed_rows = []
@@ -265,7 +264,7 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
     # row 1: column headings
     ed_rows.append([
         P("Description", s_chdr), P("Hrs/Units", s_chdr), P("Amount", s_chdr),
-        P("Description", s_chdr), P("Hrs/Units", s_chdr), P("Amount", s_chdr), P("O.B.", s_chdr),
+        P("Description", s_chdr), P("Hrs/Units", s_chdr), P("Amount", s_chdr), P("Opening Balance", s_chdr),
     ])
     # data rows
     for e_row, d_row in zip(earn, ded):
@@ -420,13 +419,6 @@ def generate_permanent_payslip_pdf(driver, cycle, calc: dict, entity, ytd: dict 
     avail_w = A4[0] - 24 * mm
 
     story: list = []
-    story.extend(_build_permanent_payslip(driver, cycle, calc, entity, ytd, avail_w))
-    story.append(Spacer(1, 3 * mm))
-    story.append(HRFlowable(
-        width="100%", thickness=0.8,
-        color=colors.HexColor("#999999"), dash=(5, 4),
-    ))
-    story.append(Spacer(1, 3 * mm))
     story.extend(_build_permanent_payslip(driver, cycle, calc, entity, ytd, avail_w))
 
     doc.build(story)
