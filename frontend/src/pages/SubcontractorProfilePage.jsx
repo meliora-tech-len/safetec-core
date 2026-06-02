@@ -1172,7 +1172,14 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                 const label = (inv.supplier_name || `Supplier #${inv.supplier_id}`)
                 return (
                   <tr key={inv.id}>
-                    <td style={{ ...tdStyle, fontSize: 12 }}>{label}</td>
+                    <td style={{ ...tdStyle, fontSize: 12 }}>
+                      <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <span>{label}</span>
+                        {inv.invoice_number && (
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
+                        )}
+                      </span>
+                    </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>

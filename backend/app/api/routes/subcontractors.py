@@ -1,14 +1,14 @@
 import calendar
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, extract
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, SupplierInvoiceLineItem, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
@@ -289,6 +289,41 @@ def _enrich_invoice(db: Session, inv: SupplierInvoice) -> SupplierInvoiceOut:
     })
 
 
+def _truck_invoice_contribution(inv: SupplierInvoice, truck_reg: str):
+    """How much of a non-diesel supplier invoice is attributable to one truck.
+
+    Returns (matched, amount_excl, amount_incl). `matched` is True only when a
+    positive amount applies to this truck.
+
+    - Multi-line / split invoices whose sub-lines carry a per-line vehicle reg
+      (stored in ``unit``) are matched per sub-line: only the sub-lines whose
+      reg matches this truck are summed, so one invoice can cover several trucks
+      with each picking up just its own portion.
+    - Single-line invoices (and legacy multi-line invoices with no per-line reg)
+      fall back to the main-line ``vehicle_reg`` and attribute the full amount.
+    """
+    D0 = Decimal("0")
+    target = (truck_reg or "").strip().upper()
+    if not target:
+        return False, D0, D0
+
+    if inv.is_multi_line and inv.line_items:
+        has_line_reg = any((li.unit or "").strip() for li in inv.line_items)
+        if has_line_reg:
+            m_excl, m_incl = D0, D0
+            for li in inv.line_items:
+                if (li.unit or "").strip().upper() == target:
+                    m_excl += Decimal(str(li.amount_excl_vat or 0))
+                    m_incl += Decimal(str(li.amount_incl_vat or 0))
+            matched = m_excl != 0 or m_incl != 0
+            return matched, m_excl, m_incl
+
+    if (inv.vehicle_reg or "").strip().upper() == target:
+        amt = Decimal(str(inv.amount))
+        return amt != 0, amt, amt
+    return False, D0, D0
+
+
 def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, db: Session, current_user: User) -> SubcontractorCostingOut:
     sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
     if not sub:
@@ -305,6 +340,40 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
 
     ds = db.query(DieselSettings).filter(DieselSettings.entity_id == sub.entity_id).first()
     fixed_admin_fee = Decimal(str(ds.subcontractor_monthly_admin_fee)) if ds else D0
+
+    # Cash/Current invoices belong to the PREVIOUS costing period, so to
+    # populate costing for `month` we fetch their invoices from month+1.
+    # 30-day invoices sit in the same month as their statement period.
+    cash_stmt_month = month + 1 if month < 12 else 1
+    cash_stmt_year  = year      if month < 12 else year + 1
+
+    # All candidate non-diesel invoices for this entity/period, fetched once.
+    # Per-truck matching (main-line reg vs. per-sub-line reg) happens in Python
+    # via `_truck_invoice_contribution`, so a multi-line/split invoice can pull
+    # through to several trucks with each picking up just its own sub-lines.
+    period_invoices = (
+        db.query(SupplierInvoice)
+        .join(Supplier, Supplier.id == SupplierInvoice.supplier_id)
+        .options(joinedload(SupplierInvoice.line_items))
+        .filter(
+            SupplierInvoice.entity_id == sub.entity_id,
+            SupplierInvoice.is_archived == False,
+            Supplier.is_diesel_supplier == False,
+            or_(
+                and_(
+                    Supplier.payment_term == PaymentTermType.days_30,
+                    SupplierInvoice.statement_month == month,
+                    SupplierInvoice.statement_year == year,
+                ),
+                and_(
+                    Supplier.payment_term == PaymentTermType.current,
+                    SupplierInvoice.statement_month == cash_stmt_month,
+                    SupplierInvoice.statement_year == cash_stmt_year,
+                ),
+            ),
+        )
+        .all()
+    )
 
     for truck in trucks:
         loads = (
@@ -328,38 +397,21 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         )
         admin_fee = fixed_admin_fee
 
-        # Cash/Current invoices belong to the PREVIOUS costing period, so to
-        # populate costing for `month` we fetch their invoices from month+1.
-        # 30-day invoices sit in the same month as their statement period.
-        cash_stmt_month = month + 1 if month < 12 else 1
-        cash_stmt_year  = year      if month < 12 else year + 1
-
-        inv_list = (
-            db.query(SupplierInvoice)
-            .join(Supplier, Supplier.id == SupplierInvoice.supplier_id)
-            .filter(
-                SupplierInvoice.vehicle_reg == truck.registration,
-                SupplierInvoice.is_archived == False,
-                Supplier.is_diesel_supplier == False,
-                or_(
-                    and_(
-                        Supplier.payment_term == PaymentTermType.days_30,
-                        SupplierInvoice.statement_month == month,
-                        SupplierInvoice.statement_year == year,
-                    ),
-                    and_(
-                        Supplier.payment_term == PaymentTermType.current,
-                        SupplierInvoice.statement_month == cash_stmt_month,
-                        SupplierInvoice.statement_year == cash_stmt_year,
-                    ),
-                ),
-            )
-            .all()
-            if truck.registration else []
-        )
-
-        exp_incl = admin_fee + sum((Decimal(str(i.amount)) for i in inv_list if i.vat_applicable), D0)
-        exp_excl = sum((Decimal(str(i.amount)) for i in inv_list if not i.vat_applicable), D0)
+        # Match each candidate invoice to this truck — single-line by main-line
+        # reg, multi-line/split by sub-line reg (taking only the matching portion).
+        exp_incl = admin_fee
+        exp_excl = D0
+        inv_contribs = []  # (invoice, amount_for_this_truck)
+        for inv in period_invoices:
+            matched, c_excl, c_incl = _truck_invoice_contribution(inv, truck.registration)
+            if not matched:
+                continue
+            if inv.vat_applicable:
+                exp_incl += c_incl
+                inv_contribs.append((inv, c_incl))
+            else:
+                exp_excl += c_excl
+                inv_contribs.append((inv, c_excl))
 
         # Diesel fill-ups for this truck/month — grouped by supplier
         fillups = (
@@ -422,7 +474,10 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             income_excl_vat=income_excl,
             income_incl_vat=income_incl,
             admin_fee=admin_fee,
-            supplier_invoices=[_enrich_invoice(db, i) for i in inv_list],
+            supplier_invoices=[
+                _enrich_invoice(db, i).model_copy(update={"amount": amt})
+                for (i, amt) in inv_contribs
+            ],
             total_expenses_excl_vat=exp_excl,
             total_expenses_incl_vat=exp_incl,
             net_payable=net_payable,

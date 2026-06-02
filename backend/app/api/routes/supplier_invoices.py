@@ -3,7 +3,8 @@ from datetime import datetime, timezone, date as date_type
 from decimal import Decimal
 from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 
 from app.db.database import get_db
@@ -314,29 +315,60 @@ def list_invoices_by_vehicle(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    target = vehicle_reg.strip().upper()
+
+    # Match single-line invoices on the main-line reg, and multi-line/split
+    # invoices on any of their sub-line regs (stored in line_items.unit).
     invoices = (
         db.query(SupplierInvoice)
+        .options(joinedload(SupplierInvoice.line_items))
         .filter(
-            SupplierInvoice.vehicle_reg.ilike(vehicle_reg),
             SupplierInvoice.statement_month == month,
             SupplierInvoice.statement_year == year,
             SupplierInvoice.is_archived != True,
+            or_(
+                SupplierInvoice.vehicle_reg.ilike(vehicle_reg),
+                SupplierInvoice.line_items.any(
+                    SupplierInvoiceLineItem.unit.ilike(vehicle_reg)
+                ),
+            ),
         )
         .order_by(SupplierInvoice.invoice_date.asc(), SupplierInvoice.id.asc())
         .all()
     )
-    return [
-        {
+
+    def _amount_for_truck(inv: SupplierInvoice) -> float:
+        """Incl-VAT amount of this invoice attributable to the requested reg.
+
+        Multi-line/split invoices with per-sub-line regs contribute only the
+        sub-lines matching this truck; everything else contributes its full total.
+        """
+        if inv.is_multi_line and inv.line_items:
+            has_line_reg = any((li.unit or "").strip() for li in inv.line_items)
+            if has_line_reg:
+                return float(sum(
+                    (Decimal(str(li.amount_incl_vat or 0))
+                     for li in inv.line_items
+                     if (li.unit or "").strip().upper() == target),
+                    Decimal("0"),
+                ))
+        return float(inv.amount)
+
+    result = []
+    for inv in invoices:
+        amount = _amount_for_truck(inv)
+        if amount == 0:
+            continue
+        result.append({
             "id": inv.id,
             "supplier_name": inv.supplier.name if inv.supplier else None,
             "invoice_number": inv.invoice_number,
             "invoice_date": str(inv.invoice_date) if inv.invoice_date else None,
-            "amount": float(inv.amount),
+            "amount": amount,
             "vat_applicable": inv.vat_applicable,
             "description": inv.description,
-        }
-        for inv in invoices
-    ]
+        })
+    return result
 
 
 # ── List invoices grouped by statement ───────────────────────────────────────

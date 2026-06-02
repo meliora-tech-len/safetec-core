@@ -856,8 +856,6 @@ export default function SupplierProfilePage() {
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
   const isWBGDiesel = isDiesel && supplier?.name?.toLowerCase().includes('wbg')
-  const supplierEntityCode = entities.find(e => e.id === supplier?.entity_id)?.code?.toUpperCase()
-  const isObhiSupplier = supplierEntityCode === 'OBHI' && !supplier?.name?.toLowerCase().includes('wbg')
 
   const isDuplicateInvoiceNumber = (invoiceNumber, excludeId = null) =>
     allInvoices.some(inv =>
@@ -1095,7 +1093,7 @@ export default function SupplierProfilePage() {
           onKeyDown={handleKeyDown}
           showVehicleReg={showVehicleReg}
           isDiesel={isDiesel}
-          showReg={isObhiSupplier}
+          showReg={showVehicleReg}
           dieselRate={dieselRate}
           amountAutoFilled={amountAutoFilled}
           onAmountEdit={() => setAmountAutoFilled(false)}
@@ -1556,13 +1554,13 @@ export default function SupplierProfilePage() {
                                         items={editForm.line_items || []}
                                         onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
                                         vatApplicable={editForm.vat_applicable !== false}
-                                        showReg={isObhiSupplier}
+                                        showReg={showVehicleReg}
                                         trucks={trucks}
                                       />
                                 ) : (
                                   isDiesel
                                     ? <DieselLineItemsViewer items={inv.line_items || []} total={inv.amount} />
-                                    : <LineItemsViewer items={inv.line_items || []} total={inv.amount} showReg={isObhiSupplier} />
+                                    : <LineItemsViewer items={inv.line_items || []} total={inv.amount} showReg={showVehicleReg} />
                                 )}
                               </td>
                             </tr>
