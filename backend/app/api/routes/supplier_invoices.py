@@ -864,6 +864,7 @@ def bulk_import_invoices(
                 DieselFillUp.slip_number == slip,
                 DieselFillUp.truck_id == truck.id,
                 DieselFillUp.entity_id == payload.entity_id,
+                DieselFillUp.fillup_date == fillup_date,
             ).first()
 
             if existing_fillup:
