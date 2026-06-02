@@ -2,13 +2,13 @@ import calendar
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, extract
+from sqlalchemy import or_, and_, extract
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
@@ -289,14 +289,7 @@ def _enrich_invoice(db: Session, inv: SupplierInvoice) -> SupplierInvoiceOut:
     })
 
 
-@router.get("/{subcontractor_id}/costing", response_model=SubcontractorCostingOut)
-def get_subcontractor_costing(
-    subcontractor_id: int,
-    month: int = Query(..., ge=1, le=12),
-    year: int = Query(..., ge=2020),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
+def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, db: Session, current_user: User) -> SubcontractorCostingOut:
     sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Subcontractor not found")
@@ -335,15 +328,31 @@ def get_subcontractor_costing(
         )
         admin_fee = fixed_admin_fee
 
+        # Cash/Current invoices belong to the PREVIOUS costing period, so to
+        # populate costing for `month` we fetch their invoices from month+1.
+        # 30-day invoices sit in the same month as their statement period.
+        cash_stmt_month = month + 1 if month < 12 else 1
+        cash_stmt_year  = year      if month < 12 else year + 1
+
         inv_list = (
             db.query(SupplierInvoice)
             .join(Supplier, Supplier.id == SupplierInvoice.supplier_id)
             .filter(
                 SupplierInvoice.vehicle_reg == truck.registration,
-                SupplierInvoice.statement_month == month,
-                SupplierInvoice.statement_year == year,
                 SupplierInvoice.is_archived == False,
                 Supplier.is_diesel_supplier == False,
+                or_(
+                    and_(
+                        Supplier.payment_term == PaymentTermType.days_30,
+                        SupplierInvoice.statement_month == month,
+                        SupplierInvoice.statement_year == year,
+                    ),
+                    and_(
+                        Supplier.payment_term == PaymentTermType.current,
+                        SupplierInvoice.statement_month == cash_stmt_month,
+                        SupplierInvoice.statement_year == cash_stmt_year,
+                    ),
+                ),
             )
             .all()
             if truck.registration else []
@@ -447,6 +456,69 @@ def get_subcontractor_costing(
         summary=summary,
         diesel_suppliers=diesel_supplier_names,
         is_vat_registered=is_vat_registered,
+    )
+
+
+@router.get("/{subcontractor_id}/costing", response_model=SubcontractorCostingOut)
+def get_subcontractor_costing(
+    subcontractor_id: int,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _build_subcontractor_costing(subcontractor_id, month, year, db, current_user)
+
+
+@router.get("/{subcontractor_id}/costing/export/pdf")
+def export_costing_pdf(
+    subcontractor_id: int,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    import io
+    from fastapi.responses import StreamingResponse
+    from app.services.costing_exports import generate_costing_pdf
+
+    costing = _build_subcontractor_costing(subcontractor_id, month, year, db, current_user)
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == sub.entity_id).first()
+
+    pdf_bytes = generate_costing_pdf(costing, entity)
+    name = sub.name.replace(" ", "-").lower()
+    filename = f"costing-{name}-{year}-{month:02d}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{subcontractor_id}/costing/export/excel")
+def export_costing_excel(
+    subcontractor_id: int,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    import io
+    from fastapi.responses import StreamingResponse
+    from app.services.costing_exports import generate_costing_excel
+
+    costing = _build_subcontractor_costing(subcontractor_id, month, year, db, current_user)
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == sub.entity_id).first()
+
+    xl_bytes = generate_costing_excel(costing, entity)
+    name = sub.name.replace(" ", "-").lower()
+    filename = f"costing-{name}-{year}-{month:02d}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(xl_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

@@ -6,12 +6,14 @@ import {
   createSubcontractorInvoice, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice,
   getSubcontractorInvoices, getSubcontractorCosting,
+  downloadSubcontractorCostingPdf, downloadSubcontractorCostingExcel,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, Plus, Trash2, ChevronLeft, ChevronRight,
   Building2, X, Save, CheckCircle, ChevronDown, ChevronUp, FileSpreadsheet,
+  FileDown, Sheet,
 } from 'lucide-react'
 import SearchableSelect from '../components/SearchableSelect'
 import DeleteModal from '../components/DeleteModal'
@@ -80,6 +82,7 @@ export default function SubcontractorProfilePage() {
   // Costing tab state
   const [costing, setCosting]             = useState(null)
   const [costingLoading, setCostingLoading] = useState(false)
+  const [exportLoading, setExportLoading] = useState(null)  // 'pdf' | 'excel' | null
   const [showExpenseModal, setShowExpenseModal] = useState(false)
   const [expenseForm, setExpenseForm]     = useState(blankExpenseForm())
   const [expenseSaving, setExpenseSaving] = useState(false)
@@ -122,6 +125,28 @@ export default function SubcontractorProfilePage() {
 
   useEffect(() => { if (activeTab === 'invoices') loadInvoices() }, [activeTab, loadInvoices])
   useEffect(() => { if (activeTab === 'costing')  loadCosting()  }, [activeTab, loadCosting])
+
+  const handleExport = async (type) => {
+    setExportLoading(type)
+    try {
+      const fn = type === 'pdf' ? downloadSubcontractorCostingPdf : downloadSubcontractorCostingExcel
+      const r  = await fn(id, { month, year })
+      const ext  = type === 'pdf' ? 'pdf' : 'xlsx'
+      const mime = type === 'pdf'
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      const url  = URL.createObjectURL(new Blob([r.data], { type: mime }))
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `costing-${subcontractor?.name?.replace(/\s+/g, '-').toLowerCase() || id}-${year}-${String(month).padStart(2, '0')}.${ext}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error(`Failed to export ${type.toUpperCase()}`)
+    } finally {
+      setExportLoading(null)
+    }
+  }
 
   const prevMonth = () => { if (month === 1) { setMonth(12); setYear(y => y - 1) } else setMonth(m => m - 1) }
   const nextMonth = () => { if (month === 12) { setMonth(1); setYear(y => y + 1) } else setMonth(m => m + 1) }
@@ -600,6 +625,30 @@ export default function SubcontractorProfilePage() {
               {MONTHS[month]} {year}
             </span>
             <button className="btn-ghost btn-sm" onClick={nextMonth}><ChevronRight size={15} /></button>
+            {costing && costing.trucks.length > 0 && (
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => handleExport('excel')}
+                  disabled={!!exportLoading}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12 }}
+                  title="Export Excel"
+                >
+                  <Sheet size={14} />
+                  {exportLoading === 'excel' ? 'Exporting…' : 'Excel'}
+                </button>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => handleExport('pdf')}
+                  disabled={!!exportLoading}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12 }}
+                  title="Export PDF"
+                >
+                  <FileDown size={14} />
+                  {exportLoading === 'pdf' ? 'Exporting…' : 'PDF'}
+                </button>
+              </div>
+            )}
           </div>
 
           {costingLoading ? (

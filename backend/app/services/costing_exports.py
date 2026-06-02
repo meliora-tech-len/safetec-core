@@ -1,0 +1,478 @@
+"""
+Costing export generators — PDF (reportlab) and Excel (openpyxl).
+Both include the entity letterhead/logo as a header.
+"""
+
+import io
+from decimal import Decimal
+from datetime import date
+
+MONTH_NAMES = [
+    "", "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
+
+D0 = Decimal("0")
+
+
+def _fmt(v) -> str:
+    try:
+        return f"R {float(v):,.2f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmtd(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, date):
+        return v.strftime("%d-%m-%Y")
+    return str(v)[:10]
+
+
+# ── PDF ───────────────────────────────────────────────────────────────────────
+
+def generate_costing_pdf(costing, entity) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable,
+        Image as RLImage,
+    )
+    from app.services.pdf_generator import _load_logo, _FONT_NORMAL, _FONT_BOLD, _hex_to_color
+
+    accent_hex = getattr(entity, "primary_color", None) or "#1a1a2e"
+    accent   = _hex_to_color(accent_hex)
+    black    = colors.HexColor("#111111")
+    gray_mid = colors.HexColor("#6b7280")
+    gray_lt  = colors.HexColor("#f3f4f6")
+    white    = colors.white
+    hdr_bg   = colors.HexColor("#4B5563")
+    pos_col  = colors.HexColor("#15803d")
+    neg_col  = colors.HexColor("#dc2626")
+    border_c = colors.HexColor("#e5e7eb")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            rightMargin=16*mm, leftMargin=16*mm,
+                            topMargin=10*mm, bottomMargin=14*mm)
+
+    def sty(name, **kw):
+        d = dict(fontName=_FONT_NORMAL, fontSize=9, textColor=black, leading=12)
+        d.update(kw)
+        return ParagraphStyle(name, **d)
+
+    s_title   = sty("title", fontSize=13, fontName=_FONT_BOLD, leading=17)
+    s_sub     = sty("sub",   fontSize=9,  textColor=gray_mid,  leading=13)
+    s_hdr     = sty("hdr",   fontSize=8,  fontName=_FONT_BOLD, textColor=white,    alignment=TA_CENTER)
+    s_hdr_r   = sty("hdr_r", fontSize=8,  fontName=_FONT_BOLD, textColor=white,    alignment=TA_RIGHT)
+    s_lbl     = sty("lbl",   fontSize=8,  textColor=black)
+    s_val     = sty("val",   fontSize=8,  textColor=black,     alignment=TA_RIGHT)
+    s_bold    = sty("bold",  fontSize=8,  fontName=_FONT_BOLD, textColor=black)
+    s_bold_r  = sty("br",    fontSize=8,  fontName=_FONT_BOLD, textColor=black,    alignment=TA_RIGHT)
+    s_grp     = sty("grp",   fontSize=7.5, textColor=gray_mid, fontName=_FONT_BOLD)
+    s_net_pos = sty("np",    fontSize=9,  fontName=_FONT_BOLD, textColor=pos_col,  alignment=TA_RIGHT)
+    s_net_neg = sty("nn",    fontSize=9,  fontName=_FONT_BOLD, textColor=neg_col,  alignment=TA_RIGHT)
+    s_smry    = sty("sm",    fontSize=9,  fontName=_FONT_BOLD, textColor=white,    alignment=TA_RIGHT)
+    s_smry_l  = sty("sml",   fontSize=9,  fontName=_FONT_BOLD, textColor=white)
+    s_dl      = sty("dl",    fontSize=7.5, textColor=gray_mid)
+    s_dl_r    = sty("dlr",   fontSize=7.5, textColor=gray_mid, alignment=TA_RIGHT)
+
+    story = []
+
+    # ── Letterhead / logo ─────────────────────────────────────────────────────
+    lh_url  = getattr(entity, "letterhead_url",  None)
+    lh_path = getattr(entity, "letterhead_path", None)
+    added_header = False
+    if lh_url or lh_path:
+        lh_bytes = _load_logo(lh_url, lh_path)
+        if lh_bytes:
+            try:
+                img = RLImage(io.BytesIO(lh_bytes), width=174*mm, height=105*mm, kind="proportional")
+                img.hAlign = "CENTER"
+                story.append(img)
+                story.append(Spacer(1, 4*mm))
+                added_header = True
+            except Exception:
+                pass
+
+    if not added_header:
+        logo_url  = getattr(entity, "logo_url",  None)
+        logo_path = getattr(entity, "logo_path", None)
+        if logo_url or logo_path:
+            lb = _load_logo(logo_url, logo_path)
+            if lb:
+                try:
+                    img = RLImage(io.BytesIO(lb), width=55*mm, height=30*mm, kind="proportional")
+                    img.hAlign = "LEFT"
+                    story.append(img)
+                    story.append(Spacer(1, 3*mm))
+                    added_header = True
+                except Exception:
+                    pass
+        if not added_header:
+            ent_name = getattr(entity, "name", "") or ""
+            story.append(Paragraph(ent_name, sty("en", fontSize=14, fontName=_FONT_BOLD)))
+            story.append(Spacer(1, 3*mm))
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    period = f"{MONTH_NAMES[costing.month]} {costing.year}"
+    sub_name = costing.subcontractor.name if costing.subcontractor else ""
+    story.append(Paragraph(f"Subcontractor Costing — {sub_name}", s_title))
+    story.append(Paragraph(f"Period: {period}", s_sub))
+    story.append(Spacer(1, 5*mm))
+
+    # ── Per-truck tables ──────────────────────────────────────────────────────
+    col_w = [68*mm, 26*mm, 26*mm, 26*mm, 26*mm]  # label, income excl, income incl, exp incl, exp excl
+    ts_hdr = TableStyle([
+        ("BACKGROUND",   (0, 0), (-1, 0), hdr_bg),
+        ("TEXTCOLOR",    (0, 0), (-1, 0), white),
+        ("FONTNAME",     (0, 0), (-1, 0), _FONT_BOLD),
+        ("FONTSIZE",     (0, 0), (-1, 0), 7.5),
+        ("ALIGN",        (1, 0), (-1, 0), "RIGHT"),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING",   (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
+        ("GRID",         (0, 0), (-1, -1), 0.4, border_c),
+        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
+    ])
+
+    def P(txt, style): return Paragraph(str(txt), style)
+    dash = P("—", s_val)
+
+    for td in costing.trucks:
+        t = td.truck
+        reg = t.registration or ""
+        fleet = f" · {t.fleet_number}" if t.fleet_number else ""
+        story.append(Paragraph(f"Truck: {reg}{fleet}", sty("trk", fontSize=10, fontName=_FONT_BOLD, spaceBefore=4)))
+        story.append(Spacer(1, 1*mm))
+
+        inc_e = float(td.income_excl_vat or 0)
+        inc_i = float(td.income_incl_vat or 0)
+        exp_i = float(td.total_expenses_incl_vat or 0)
+        exp_e = float(td.total_expenses_excl_vat or 0)
+        net   = float(td.net_payable or 0)
+        is_vat = costing.is_vat_registered
+
+        rows = [
+            [P("", s_hdr), P("Income Excl VAT", s_hdr_r), P("Income Incl VAT", s_hdr_r),
+             P("Expenses Incl VAT", s_hdr_r), P("Expenses Excl VAT", s_hdr_r)],
+            [P(f"Loads ({len(td.loads)})", s_lbl),
+             P(_fmt(inc_e), s_val) if not is_vat else dash,
+             P(_fmt(inc_i), s_val) if is_vat else dash,
+             dash, dash],
+            [P("Admin Fee", s_lbl), dash, dash, P(_fmt(td.admin_fee), s_val), dash],
+        ]
+
+        # Diesel groups
+        for dg in (td.diesel_groups or []):
+            rows.append([P(f"{dg.supplier_name} Diesel", s_lbl), dash, dash, dash, P(_fmt(dg.tot_excl_admin_fee), s_val)])
+            rows.append([P(f"{dg.supplier_name} Diesel Admin Fee", s_lbl), dash, dash, P(_fmt(dg.tot_admin_fee_incl), s_val), dash])
+
+        # Supplier invoices
+        if td.supplier_invoices:
+            rows.append([P("Supplier Invoices", s_grp), P("", s_val), P("", s_val), P("", s_val), P("", s_val)])
+            for inv in td.supplier_invoices:
+                sup = inv.supplier_name or f"Supplier #{inv.supplier_id}"
+                if inv.vat_applicable:
+                    rows.append([P(sup, s_lbl), dash, dash, P(_fmt(inv.amount), s_val), dash])
+                else:
+                    rows.append([P(sup, s_lbl), dash, dash, dash, P(_fmt(inv.amount), s_val)])
+
+        # Totals row
+        net_s = s_net_pos if net >= 0 else s_net_neg
+        rows.append([
+            P("Totals", s_bold),
+            P(_fmt(inc_e), s_bold_r) if not is_vat else dash,
+            P(_fmt(inc_i), s_bold_r) if is_vat else dash,
+            P(_fmt(exp_i), s_bold_r),
+            P(_fmt(exp_e), s_bold_r),
+        ])
+
+        tbl = Table(rows, colWidths=col_w, repeatRows=1)
+        tbl.setStyle(ts_hdr)
+        # Alternate rows
+        for i in range(2, len(rows)):
+            if i % 2 == 0:
+                tbl.setStyle(TableStyle([("BACKGROUND", (0, i), (-1, i), gray_lt)]))
+        # Totals row style
+        last = len(rows) - 1
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND",  (0, last), (-1, last), colors.HexColor("#374151")),
+            ("TEXTCOLOR",   (0, last), (-1, last), white),
+            ("FONTNAME",    (0, last), (-1, last), _FONT_BOLD),
+        ]))
+        story.append(tbl)
+
+        # Net payable
+        net_color = "#15803d" if net >= 0 else "#dc2626"
+        story.append(Spacer(1, 1*mm))
+        net_row = Table(
+            [[P(f"Net Payable: {_fmt(net)}", sty("nr", fontSize=10, fontName=_FONT_BOLD,
+                textColor=colors.HexColor(net_color), alignment=TA_RIGHT))]],
+            colWidths=[sum(col_w)],
+        )
+        story.append(net_row)
+        story.append(Spacer(1, 5*mm))
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    sm = costing.summary
+    smry_rows = [
+        [P("Summary", s_smry_l), P("Income Excl", s_smry), P("Income Incl", s_smry),
+         P("Exp Incl", s_smry), P("Exp Excl", s_smry), P("Net Payable", s_smry)],
+        [P("All Trucks", sty("at", fontSize=9)),
+         P(_fmt(sm.income_excl_vat), s_bold_r),
+         P(_fmt(sm.income_incl_vat), s_bold_r),
+         P(_fmt(sm.total_expenses_incl_vat), s_bold_r),
+         P(_fmt(sm.total_expenses_excl_vat), s_bold_r),
+         P(_fmt(sm.net_payable), s_bold_r)],
+    ]
+    smry_col_w = [42*mm, 26*mm, 26*mm, 26*mm, 26*mm, 26*mm]
+    smry_tbl = Table(smry_rows, colWidths=smry_col_w)
+    smry_tbl.setStyle(TableStyle([
+        ("BACKGROUND",   (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+        ("TEXTCOLOR",    (0, 0), (-1, 0), white),
+        ("FONTNAME",     (0, 0), (-1, 0), _FONT_BOLD),
+        ("ALIGN",        (1, 0), (-1, -1), "RIGHT"),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING",   (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
+        ("GRID",         (0, 0), (-1, -1), 0.4, border_c),
+        ("BACKGROUND",   (0, 1), (-1, 1), gray_lt),
+        ("FONTNAME",     (0, 1), (-1, 1), _FONT_BOLD),
+    ]))
+    story.append(smry_tbl)
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+# ── Excel ─────────────────────────────────────────────────────────────────────
+
+def generate_costing_excel(costing, entity) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import (
+        Font, PatternFill, Alignment, Border, Side, numbers
+    )
+    from openpyxl.utils import get_column_letter
+    from app.services.pdf_generator import _load_logo
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"{MONTH_NAMES[costing.month]} {costing.year}"
+
+    # Style helpers
+    def fill(hex_str):
+        return PatternFill("solid", fgColor=hex_str.lstrip("#"))
+
+    def font(bold=False, color="111111", size=10):
+        return Font(bold=bold, color=color, size=size)
+
+    def align(h="left", v="center", wrap=False):
+        return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
+
+    thin = Side(style="thin", color="D1D5DB")
+    border_all = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    COL_W = [38, 16, 16, 16, 16]
+    for i, w in enumerate(COL_W, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    row = 1
+
+    # ── Letterhead image ──────────────────────────────────────────────────────
+    from openpyxl.drawing.image import Image as XLImage
+    lh_url  = getattr(entity, "letterhead_url",  None)
+    lh_path = getattr(entity, "letterhead_path", None)
+    lh_added = False
+    if lh_url or lh_path:
+        lh_bytes = _load_logo(lh_url, lh_path)
+        if lh_bytes:
+            try:
+                from PIL import Image as PILImage
+                pil_img = PILImage.open(io.BytesIO(lh_bytes))
+                orig_w, orig_h = pil_img.size
+                target_w_px = 600
+                scale = target_w_px / orig_w
+                target_h_px = int(orig_h * scale)
+                # Convert to PNG for openpyxl
+                out = io.BytesIO()
+                pil_img.save(out, format="PNG")
+                out.seek(0)
+                xl_img = XLImage(out)
+                xl_img.width  = target_w_px
+                xl_img.height = target_h_px
+                ws.add_image(xl_img, "A1")
+                # Reserve rows for the image (approx 15px per row)
+                img_rows = max(1, target_h_px // 15)
+                for _ in range(img_rows):
+                    ws.append([])
+                row += img_rows
+                lh_added = True
+            except Exception:
+                pass
+
+    if not lh_added:
+        ent_name = getattr(entity, "name", "") or ""
+        ws.cell(row=row, column=1, value=ent_name).font = font(bold=True, size=14)
+        ws.row_dimensions[row].height = 22
+        row += 1
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    period   = f"{MONTH_NAMES[costing.month]} {costing.year}"
+    sub_name = costing.subcontractor.name if costing.subcontractor else ""
+
+    c = ws.cell(row=row, column=1, value=f"Subcontractor Costing — {sub_name}")
+    c.font = font(bold=True, size=12)
+    row += 1
+    c2 = ws.cell(row=row, column=1, value=f"Period: {period}")
+    c2.font = font(color="6B7280", size=10)
+    row += 2
+
+    HDR_FILL   = fill("4B5563")
+    DARK_FILL  = fill("1F2937")
+    ALT_FILL   = fill("F9FAFB")
+    GRP_FILL   = fill("F3F4F6")
+    TOTAL_FILL = fill("374151")
+    HDR_FONT   = font(bold=True, color="FFFFFF", size=9)
+    LBL_FONT   = font(size=9)
+    VAL_FONT   = font(size=9)
+    TOT_FONT   = font(bold=True, size=9)
+    TOT_WHITE  = font(bold=True, color="FFFFFF", size=9)
+    GRP_FONT   = font(bold=True, color="6B7280", size=8)
+
+    def write_row(values, fnt=None, fills=None, aligns=None, row_h=None):
+        nonlocal row
+        for col, val in enumerate(values, 1):
+            c = ws.cell(row=row, column=col, value=val)
+            if fnt:
+                c.font = fnt
+            if fills and fills[col - 1]:
+                c.fill = fills[col - 1]
+            if aligns and aligns[col - 1]:
+                c.alignment = aligns[col - 1]
+            else:
+                c.alignment = align(h="right" if col > 1 else "left")
+            c.border = border_all
+        if row_h:
+            ws.row_dimensions[row].height = row_h
+        row += 1
+
+    headers = ["", "Income Excl VAT", "Income Incl VAT", "Expenses Incl VAT", "Expenses Excl VAT"]
+    is_vat = costing.is_vat_registered
+
+    def fmt_val(v):
+        try:
+            return round(float(v), 2)
+        except (TypeError, ValueError):
+            return None
+
+    for td in costing.trucks:
+        t = td.truck
+        fleet = f" · {t.fleet_number}" if t.fleet_number else ""
+        reg_label = f"Truck: {t.registration or ''}{fleet}"
+
+        # Truck header
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+        c = ws.cell(row=row, column=1, value=reg_label)
+        c.font = font(bold=True, size=11)
+        c.fill = fill("E5E7EB")
+        c.alignment = align()
+        ws.row_dimensions[row].height = 18
+        row += 1
+
+        # Column headers
+        write_row(headers, fnt=HDR_FONT,
+                  fills=[HDR_FILL] * 5,
+                  aligns=[align(h="left")] + [align(h="right")] * 4,
+                  row_h=16)
+
+        inc_e = fmt_val(td.income_excl_vat)
+        inc_i = fmt_val(td.income_incl_vat)
+        exp_i = fmt_val(td.total_expenses_incl_vat)
+        exp_e = fmt_val(td.total_expenses_excl_vat)
+        net   = fmt_val(td.net_payable)
+
+        # Loads row
+        write_row(
+            [f"Loads ({len(td.loads)})", None if is_vat else inc_e, inc_i if is_vat else None, None, None],
+            fnt=LBL_FONT, fills=[None]*5, row_h=15,
+        )
+        # Admin fee
+        write_row(["Admin Fee", None, None, fmt_val(td.admin_fee), None], fnt=LBL_FONT, row_h=15)
+
+        # Diesel groups
+        for dg in (td.diesel_groups or []):
+            write_row([f"{dg.supplier_name} Diesel", None, None, None, fmt_val(dg.tot_excl_admin_fee)], fnt=LBL_FONT, row_h=15)
+            write_row([f"{dg.supplier_name} Diesel Admin Fee", None, None, fmt_val(dg.tot_admin_fee_incl), None], fnt=LBL_FONT, row_h=15)
+
+        # Supplier invoices
+        if td.supplier_invoices:
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+            c = ws.cell(row=row, column=1, value="Supplier Invoices")
+            c.font = GRP_FONT
+            c.fill = GRP_FILL
+            c.alignment = align()
+            row += 1
+            for inv in td.supplier_invoices:
+                sup = inv.supplier_name or f"Supplier #{inv.supplier_id}"
+                if inv.vat_applicable:
+                    write_row([sup, None, None, fmt_val(inv.amount), None], fnt=LBL_FONT, row_h=15)
+                else:
+                    write_row([sup, None, None, None, fmt_val(inv.amount)], fnt=LBL_FONT, row_h=15)
+
+        # Totals
+        write_row(
+            ["Totals",
+             None if is_vat else inc_e,
+             inc_i if is_vat else None,
+             exp_i, exp_e],
+            fnt=TOT_WHITE,
+            fills=[TOTAL_FILL] * 5,
+            row_h=16,
+        )
+
+        # Net payable
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+        c = ws.cell(row=row, column=1, value=f"Net Payable: {_fmt(net)}")
+        net_color = "15803D" if (net or 0) >= 0 else "DC2626"
+        c.font = font(bold=True, color=net_color, size=10)
+        c.alignment = align(h="right")
+        ws.row_dimensions[row].height = 16
+        row += 2
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    sm = costing.summary
+    sum_headers = ["Summary", "Income Excl VAT", "Income Incl VAT", "Exp Incl VAT", "Exp Excl VAT"]
+    write_row(sum_headers, fnt=HDR_FONT,
+              fills=[DARK_FILL] * 5,
+              aligns=[align(h="left")] + [align(h="right")] * 4,
+              row_h=16)
+    write_row(
+        ["All Trucks",
+         fmt_val(sm.income_excl_vat),
+         fmt_val(sm.income_incl_vat),
+         fmt_val(sm.total_expenses_incl_vat),
+         fmt_val(sm.total_expenses_excl_vat)],
+        fnt=TOT_FONT,
+        fills=[ALT_FILL] * 5,
+        row_h=15,
+    )
+
+    # Net payable summary
+    net_sm = fmt_val(sm.net_payable)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+    c = ws.cell(row=row, column=1, value=f"Total Net Payable: {_fmt(net_sm)}")
+    c.font = font(bold=True, color="15803D" if (net_sm or 0) >= 0 else "DC2626", size=11)
+    c.alignment = align(h="right")
+    ws.row_dimensions[row].height = 18
+    row += 1
+
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()

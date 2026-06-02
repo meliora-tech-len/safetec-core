@@ -844,32 +844,15 @@ def bulk_import_invoices(
             rate_d   = (excl_d / litres_d).quantize(Decimal("0.0001"))
             fillup_date = slip_date_obj or inv_date
 
-            # Resolve truck first so the existing-fillup check is scoped to the
-            # correct truck.  The same slip number can legitimately appear for
-            # different trucks, so matching on slip+entity alone can wrongly
-            # block creation for a truck that has never been imported before.
-            truck = db.query(Truck).filter(
-                Truck.registration.ilike(li.unit.strip()),
-                Truck.entity_id == payload.entity_id,
-            ).first()
-            if not truck:
-                continue
-
-            # Use the rate supplied by the import if available (read directly from
-            # the Excel rate column); fall back to back-computing from amount/litres.
-            if li.rate_per_litre and li.rate_per_litre > 0:
-                rate_d = Decimal(str(li.rate_per_litre)).quantize(Decimal("0.0001"))
-            # rate_d already set above from excl_d / litres_d
-
             existing_fillup = db.query(DieselFillUp).filter(
                 DieselFillUp.slip_number == slip,
-                DieselFillUp.truck_id == truck.id,
                 DieselFillUp.entity_id == payload.entity_id,
             ).first()
 
             if existing_fillup:
                 if abs(float(existing_fillup.litres or 0) - float(litres_d)) > 0.01:
                     # Values differ — flag as a conflict for user to resolve
+                    truck_reg = existing_fillup.truck.registration if existing_fillup.truck else None
                     conflicts.append(DieselConflict(
                         slip_number=slip,
                         fillup_id=existing_fillup.id,
@@ -880,7 +863,7 @@ def bulk_import_invoices(
                             rate_per_litre=Decimal(str(existing_fillup.rate_per_litre)),
                             amount=Decimal(str(existing_fillup.amount)),
                             fillup_date=existing_fillup.fillup_date,
-                            truck_registration=existing_fillup.truck.registration if existing_fillup.truck else None,
+                            truck_registration=truck_reg,
                         ),
                         incoming=DieselConflictSide(
                             litres=litres_d,
@@ -891,14 +874,24 @@ def bulk_import_invoices(
                         ),
                     ))
                 else:
-                    # Same truck, same slip, same litres — stamp the invoice link only.
-                    # The existing fill-up's date and values are left untouched; the
-                    # diesel_linked count in the response tells the user how many were
-                    # matched so they can decide if any dates need correcting.
+                    # Same slip, same litres — stamp the invoice link only.
                     existing_fillup.invoice_number = num or None
                     existing_fillup.supplier_invoice_id = inv.id
                     diesel_linked += 1
                 continue
+
+            # No existing record — create a new fill-up
+            truck = db.query(Truck).filter(
+                Truck.registration.ilike(li.unit.strip()),
+                Truck.entity_id == payload.entity_id,
+            ).first()
+            if not truck:
+                continue
+
+            # Use the rate from the Excel rate column if supplied; fall back to
+            # back-computing from amount÷litres.
+            if li.rate_per_litre and li.rate_per_litre > 0:
+                rate_d = Decimal(str(li.rate_per_litre)).quantize(Decimal("0.0001"))
 
             amounts = DieselCalculationService.calculate_fillup_amounts(
                 litres=litres_d,
