@@ -41,6 +41,8 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
   const lExtra = Number(inputs.lohatla_extra_loads || 0)
   const lTotal = lBase + lExtra
   const additionalTotal = (additionalLoads || []).reduce((sum, al) => sum + parseFloat(al.amount || 0), 0)
+  // Assmang bonus applies only to loads delivered to the ASSMANG mine
+  const assmangEff = Number(inputs.assmang_loads || 0) + Number(inputs.assmang_split_loads || 0) * 0.5
 
   if (driverType === 'casual') {
     const rateA      = parseFloat(s.casual_rate_group_a || 0)
@@ -53,11 +55,11 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
     const earningsB  = rateB * loadsB + (rateB / 2) * splitB
     const loadEarnings = earningsA + earningsB
     const effectiveTotal = loadsA + loadsB + (splitA + splitB) * 0.5
-    const assmang    = parseFloat(s.assmang_bonus_per_load || 0) * effectiveTotal
+    const assmang    = parseFloat(s.assmang_bonus_per_load || 0) * assmangEff
     const gross        = loadEarnings + assmang + additionalTotal
     return {
       grand: effectiveTotal, loadsA, loadsB, splitA, splitB, rateA, rateB,
-      earningsA, earningsB, loadEarnings, assmang, additionalTotal, gross,
+      earningsA, earningsB, loadEarnings, assmang, assmangEff, additionalTotal, gross,
       isCasual: true,
       basicSalary: 0, subsL: 0, totalSubs: 0,
       incL: 0, totalInc: 0,
@@ -76,12 +78,12 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
   const incL = parseFloat(s.lohatla_incentive_per_load) * Math.max(0, lEffective - 7)
   const totalInc = incL
 
-  const assmang = parseFloat(s.assmang_bonus_per_load) * grand
+  const assmang = parseFloat(s.assmang_bonus_per_load) * assmangEff
   const gross = basicSalary + totalSubs + totalInc + assmang + additionalTotal
 
   return {
     grand, lTotal, lEffective, splitCount, basicSalary, subsL, totalSubs,
-    incL, totalInc, assmang, additionalTotal, gross, isCasual: false,
+    incL, totalInc, assmang, assmangEff, additionalTotal, gross, isCasual: false,
   }
 }
 
@@ -306,6 +308,8 @@ export default function DriverDetailPage() {
           permanent_split_loads:     c.permanent_split_loads     || 0,
           casual_split_group_a_loads: c.casual_split_group_a_loads || 0,
           casual_split_group_b_loads: c.casual_split_group_b_loads || 0,
+          assmang_loads:             c.assmang_loads             || 0,
+          assmang_split_loads:       c.assmang_split_loads       || 0,
         })
         setSubsAdvance(parseFloat(c.subsistence_advance_paid) || 0)
         setSubsVerified(c.subsistence_advance_verified || false)
@@ -544,13 +548,13 @@ export default function DriverDetailPage() {
                     ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.loadsB * liveCalc.rateB)]] : []),
                     ...(liveCalc.splitA > 0 ? [[`Group A split (${liveCalc.splitA} × ${fmt(liveCalc.rateA / 2)})`, fmt(liveCalc.splitA * liveCalc.rateA / 2)]] : []),
                     ...(liveCalc.splitB > 0 ? [[`Group B split (${liveCalc.splitB} × ${fmt(liveCalc.rateB / 2)})`, fmt(liveCalc.splitB * liveCalc.rateB / 2)]] : []),
-                    ...(liveCalc.assmang > 0 ? [[`Assmang bonus (${liveCalc.grand.toFixed(1)} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
+                    ...(liveCalc.assmang > 0 ? [[`Assmang bonus (${liveCalc.assmangEff.toFixed(1)} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
                   ] : [
                     ['Basic salary',    fmt(liveCalc.basicSalary)],
                     ['Subsistence',     fmt(liveCalc.totalSubs)],
                     ['Load incentive',  fmt(liveCalc.totalInc)],
-                    [`Assmang bonus (${liveCalc.grand} × R150)`, fmt(liveCalc.assmang)],
+                    [`Assmang bonus (${liveCalc.assmangEff} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)],
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
                   ]).map(([label, val]) => (
                     <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid var(--border)' }}>

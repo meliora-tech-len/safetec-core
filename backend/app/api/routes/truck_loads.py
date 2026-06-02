@@ -128,6 +128,14 @@ def _enrich(load: TruckLoad) -> dict:
     return d
 
 
+def _assmang_mine_ids(db: Session) -> list:
+    """IDs of mines that count toward the Assmang bonus (the ASSMANG mine)."""
+    rows = db.query(Mine.id).filter(
+        or_(func.lower(Mine.code) == 'ass', func.lower(Mine.name) == 'assmang')
+    ).all()
+    return [r[0] for r in rows]
+
+
 def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     """
     After any truck load change, find the active driver for this truck and
@@ -162,11 +170,18 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     # so they must not be counted again in this pay cycle.
     # Loads attributed to another driver on the load record (driver_id) are that
     # driver's — they belong to _sync_casual_driver, not the truck's permanent driver.
-    full_loads = db.query(func.count(TruckLoad.id)).filter(
+    full_filter = [
         *base_filter, TruckLoad.is_split_load != True,
         TruckLoad.driver_already_paid != True,
         or_(TruckLoad.driver_id.is_(None), TruckLoad.driver_id == driver.id),
-    ).scalar() or 0
+    ]
+    full_loads = db.query(func.count(TruckLoad.id)).filter(*full_filter).scalar() or 0
+
+    # Assmang bonus loads — same attribution, restricted to the ASSMANG mine.
+    assmang_ids = _assmang_mine_ids(db)
+    assmang_loads = (db.query(func.count(TruckLoad.id)).filter(
+        *full_filter, TruckLoad.mine_id.in_(assmang_ids),
+    ).scalar() or 0) if assmang_ids else 0
 
     if driver.driver_type == DriverType.permanent:
         lohatla_base  = min(7, full_loads)
@@ -184,6 +199,7 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     if cycle:
         cycle.lohatla_base_loads  = lohatla_base
         cycle.lohatla_extra_loads = lohatla_extra
+        cycle.assmang_loads       = assmang_loads
     else:
         settings = db.query(PayrollSettings).order_by(PayrollSettings.id.desc()).first()
         cycle = DriverPayCycle(
@@ -193,6 +209,7 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
             payroll_settings_id=settings.id if settings else None,
             lohatla_base_loads=lohatla_base,
             lohatla_extra_loads=lohatla_extra,
+            assmang_loads=assmang_loads,
         )
         db.add(cycle)
         db.flush()
@@ -235,6 +252,9 @@ def _sync_casual_driver(driver_id: int, load_date: datetime, db: Session):
     group_a = sum(1 for l in loads if l.mine and l.mine.casual_group == 'A')
     group_b = len(loads) - group_a
 
+    assmang_ids = set(_assmang_mine_ids(db))
+    assmang_loads = sum(1 for l in loads if l.mine_id in assmang_ids)
+
     cycle = db.query(DriverPayCycle).filter(
         DriverPayCycle.driver_id == driver_id,
         DriverPayCycle.pay_month == month,
@@ -244,6 +264,7 @@ def _sync_casual_driver(driver_id: int, load_date: datetime, db: Session):
     if cycle:
         cycle.casual_group_a_loads = group_a
         cycle.casual_group_b_loads = group_b
+        cycle.assmang_loads        = assmang_loads
     else:
         settings = db.query(PayrollSettings).order_by(PayrollSettings.id.desc()).first()
         cycle = DriverPayCycle(
@@ -251,6 +272,7 @@ def _sync_casual_driver(driver_id: int, load_date: datetime, db: Session):
             payroll_settings_id=settings.id if settings else None,
             casual_group_a_loads=group_a,
             casual_group_b_loads=group_b,
+            assmang_loads=assmang_loads,
         )
         db.add(cycle)
         db.flush()
@@ -334,6 +356,9 @@ def _sync_split_driver(driver_id: int, load_date: datetime, db: Session):
     )
     split_count = len(split_loads)
 
+    assmang_ids = set(_assmang_mine_ids(db))
+    assmang_split = sum(1 for l in split_loads if l.mine_id in assmang_ids)
+
     cycle = db.query(DriverPayCycle).filter(
         DriverPayCycle.driver_id == driver_id,
         DriverPayCycle.pay_month == month,
@@ -344,11 +369,13 @@ def _sync_split_driver(driver_id: int, load_date: datetime, db: Session):
     if driver.driver_type == DriverType.permanent:
         if cycle:
             cycle.permanent_split_loads = split_count
+            cycle.assmang_split_loads   = assmang_split
         else:
             cycle = DriverPayCycle(
                 driver_id=driver_id, pay_month=month, pay_year=year,
                 payroll_settings_id=settings.id if settings else None,
                 permanent_split_loads=split_count,
+                assmang_split_loads=assmang_split,
             )
             db.add(cycle)
             db.flush()
@@ -358,12 +385,14 @@ def _sync_split_driver(driver_id: int, load_date: datetime, db: Session):
         if cycle:
             cycle.casual_split_group_a_loads = split_a
             cycle.casual_split_group_b_loads = split_b
+            cycle.assmang_split_loads        = assmang_split
         else:
             cycle = DriverPayCycle(
                 driver_id=driver_id, pay_month=month, pay_year=year,
                 payroll_settings_id=settings.id if settings else None,
                 casual_split_group_a_loads=split_a,
                 casual_split_group_b_loads=split_b,
+                assmang_split_loads=assmang_split,
             )
             db.add(cycle)
             db.flush()

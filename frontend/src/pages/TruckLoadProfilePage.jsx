@@ -1008,6 +1008,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
         payment_date: new Date(form.payment_date + 'T12:00:00').toISOString(),
         amount,
         notes: form.notes || null,
+        truck_id: truck.id,
       })
       const driverName = formDriver ? `${formDriver.first_name} ${formDriver.last_name}` : 'Driver'
       toast.success(`Food allowance saved for ${driverName}`)
@@ -1236,9 +1237,10 @@ function ProfitSheetSection({ truck, year, month, summary }) {
     setField('custom_lines', [...(data.custom_lines || []), { id: crypto.randomUUID(), description: 'Casual Wages', amount: null }])
   }
 
-  // Income: use manual override if saved, otherwise fall back to loads summary
-  const incomeExcl = data.income_excl_vat != null ? parseFloat(data.income_excl_vat) : (parseFloat(summary?.total_excl_vat) || 0)
-  const incomeIncl = data.income_incl_vat != null ? parseFloat(data.income_incl_vat) : (parseFloat(summary?.total_incl_vat) || 0)
+  // Income: use manual override if saved, otherwise fall back to the loads
+  // Sub totals (subcontractor payout, i.e. after the R5/ton admin fee).
+  const incomeExcl = data.income_excl_vat != null ? parseFloat(data.income_excl_vat) : (parseFloat(summary?.total_subcontractor_excl_vat) || 0)
+  const incomeIncl = data.income_incl_vat != null ? parseFloat(data.income_incl_vat) : (parseFloat(summary?.total_subcontractor_incl_vat) || 0)
 
   // Fixed expenses
   const fixedTotal = EXPENSE_ROWS.reduce((s, r) => s + (parseFloat(data[r.key]) || 0), 0)
@@ -1272,8 +1274,8 @@ function ProfitSheetSection({ truck, year, month, summary }) {
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Income Excl VAT</div>
             <input
               type="number" step="0.01" min="0"
-              value={data.income_excl_vat ?? (summary?.total_excl_vat ?? '')}
-              placeholder={fmt(parseFloat(summary?.total_excl_vat) || 0)}
+              value={data.income_excl_vat ?? (summary?.total_subcontractor_excl_vat ?? '')}
+              placeholder={fmt(parseFloat(summary?.total_subcontractor_excl_vat) || 0)}
               onChange={e => setField('income_excl_vat', e.target.value === '' ? null : e.target.value)}
               style={{ width: 140, fontWeight: 700, fontSize: 15, color: 'var(--text-muted)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
             />
@@ -1283,8 +1285,8 @@ function ProfitSheetSection({ truck, year, month, summary }) {
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Income Incl VAT</div>
             <input
               type="number" step="0.01" min="0"
-              value={data.income_incl_vat ?? (summary?.total_incl_vat ?? '')}
-              placeholder={fmt(parseFloat(summary?.total_incl_vat) || 0)}
+              value={data.income_incl_vat ?? (summary?.total_subcontractor_incl_vat ?? '')}
+              placeholder={fmt(parseFloat(summary?.total_subcontractor_incl_vat) || 0)}
               onChange={e => setField('income_incl_vat', e.target.value === '' ? null : e.target.value)}
               style={{ width: 140, fontWeight: 700, fontSize: 15, color: 'var(--accent)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
             />

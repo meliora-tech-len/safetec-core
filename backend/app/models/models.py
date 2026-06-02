@@ -684,7 +684,7 @@ class PayrollSettings(Base):
     casual_rate_group_a          = Column(Numeric(12, 2), nullable=False, default=2200.00)  # Mokala/Assmang/Sebilo/Tawana
     casual_rate_group_b          = Column(Numeric(12, 2), nullable=False, default=1900.00)  # Glosam/Driehoek/Future/Afrimat/Boskop
 
-    # Assmang bonus (per load, applied to ALL loads)
+    # Assmang bonus (per load delivered to the ASSMANG mine only)
     assmang_bonus_per_load    = Column(Numeric(12, 2), nullable=False, default=150.00)
 
     # Statutory deduction rates
@@ -723,6 +723,11 @@ class DriverPayCycle(Base):
     permanent_split_loads      = Column(Integer, default=0, nullable=False)
     casual_split_group_a_loads = Column(Integer, default=0, nullable=False)
     casual_split_group_b_loads = Column(Integer, default=0, nullable=False)
+
+    # Assmang bonus is paid per load delivered to the ASSMANG mine only (auto-synced
+    # from truck loads). Effective count = assmang_loads + 0.5 × assmang_split_loads.
+    assmang_loads        = Column(Integer, default=0, nullable=False)
+    assmang_split_loads  = Column(Integer, default=0, nullable=False)
 
     subsistence_advance_paid     = Column(Numeric(12, 2), default=0)
     subsistence_advance_verified = Column(Boolean, default=False)
@@ -787,6 +792,10 @@ class DriverFoodPayment(Base):
 
     id           = Column(Integer, primary_key=True, index=True)
     pay_cycle_id = Column(Integer, ForeignKey("driver_pay_cycles.id", ondelete="CASCADE"), nullable=False)
+    # Truck this allowance was captured against. The payment is still credited to the
+    # driver's pay cycle (one payslip line), but a casual linked to several trucks
+    # must only appear under the capturing truck's Food Allowance tab, not all of them.
+    truck_id     = Column(Integer, ForeignKey("trucks.id", ondelete="SET NULL"), nullable=True)
     payment_date = Column(DateTime(timezone=True), nullable=False)
     amount       = Column(Numeric(12, 2), nullable=False)
     paid_by      = Column(String(100), nullable=True)

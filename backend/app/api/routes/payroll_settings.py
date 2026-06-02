@@ -74,7 +74,13 @@ def lookup_table(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Auto-generate gross income reference table for 7-12 loads per mine group."""
+    """Auto-generate gross income reference table for 7-12 loads per mine group.
+
+    Gross here is the guaranteed Lohatla earnings (basic + subsistence + incentive)
+    only. The Assmang bonus is NOT included — it is paid per load delivered to the
+    ASSMANG mine, which a load-count reference table cannot know. The per-load bonus
+    rate is returned separately as `assmang_bonus_per_load` for reference.
+    """
     s = _get_current(db)
 
     def calc_row(base_loads: int, extra_loads: int) -> dict:
@@ -82,8 +88,7 @@ def lookup_table(
         basic  = Decimal(str(s.lohatla_base_salary)) if base_loads > 0 else Decimal(0)
         subs   = Decimal(str(s.lohatla_subs_per_load)) * total
         inc    = Decimal(str(s.lohatla_incentive_per_load)) * extra_loads
-        bonus  = Decimal(str(s.assmang_bonus_per_load)) * total
-        gross  = basic + subs + inc + bonus
+        gross  = basic + subs + inc
         return {
             "base_loads":  base_loads,
             "extra_loads": extra_loads,
@@ -91,7 +96,6 @@ def lookup_table(
             "basic_salary": float(basic.quantize(Decimal("0.01"))),
             "subsistence":  float(subs.quantize(Decimal("0.01"))),
             "incentive":    float(inc.quantize(Decimal("0.01"))),
-            "assmang_bonus":float(bonus.quantize(Decimal("0.01"))),
             "gross":        float(gross.quantize(Decimal("0.01"))),
         }
 
@@ -104,4 +108,7 @@ def lookup_table(
             "lohatla": calc_row(base, extra),
         })
 
-    return {"rows": rows}
+    return {
+        "rows": rows,
+        "assmang_bonus_per_load": float(Decimal(str(s.assmang_bonus_per_load)).quantize(Decimal("0.01"))),
+    }

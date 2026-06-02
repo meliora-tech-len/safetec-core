@@ -49,7 +49,10 @@ def calculate_pay_cycle(
         effective_total = Decimal(loads_a + loads_b) + Decimal(split_a + split_b) * Decimal("0.5")
         casual_total    = effective_total
 
-        assmang_bonus = d(settings.assmang_bonus_per_load) * effective_total
+        # Assmang bonus — only loads delivered to the ASSMANG mine
+        assmang_effective = (Decimal(cycle.assmang_loads or 0)
+                             + Decimal(getattr(cycle, 'assmang_split_loads', 0) or 0) * Decimal("0.5"))
+        assmang_bonus = d(settings.assmang_bonus_per_load) * assmang_effective
         gross = load_earnings + assmang_bonus + additional_total
 
         total_deductions = loan_deduction + cash_deduction + food_deduction
@@ -106,8 +109,10 @@ def calculate_pay_cycle(
     inc_lohatla = d(settings.lohatla_incentive_per_load) * max(Decimal(0), lohatla_effective - Decimal(7))
     total_inc   = inc_lohatla
 
-    # Assmang bonus — ALL effective loads × rate
-    assmang_bonus = d(settings.assmang_bonus_per_load) * grand_total
+    # Assmang bonus — only loads delivered to the ASSMANG mine
+    assmang_effective = (Decimal(cycle.assmang_loads or 0)
+                         + Decimal(getattr(cycle, 'assmang_split_loads', 0) or 0) * Decimal("0.5"))
+    assmang_bonus = d(settings.assmang_bonus_per_load) * assmang_effective
 
     gross = basic_salary + total_subs + total_inc + assmang_bonus + additional_total
 

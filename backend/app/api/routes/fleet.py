@@ -351,9 +351,20 @@ def list_truck_food_payments(
         .join(Driver, DriverPayCycle.driver_id == Driver.id)
         .filter(
             or_(
-                Driver.truck_id == truck_id,
-                Driver.id.in_(casual_driver_ids),
-                Driver.id.in_(load_driver_ids),
+                # Captured against this truck — the only truck it should appear under.
+                DriverFoodPayment.truck_id == truck_id,
+                # Legacy rows (captured before truck_id existed) have no truck — fall
+                # back to the driver-link behaviour so old data still shows up. These
+                # may still appear under multiple trucks for multi-truck casuals; that
+                # is unavoidable without a captured truck and only affects old records.
+                and_(
+                    DriverFoodPayment.truck_id.is_(None),
+                    or_(
+                        Driver.truck_id == truck_id,
+                        Driver.id.in_(casual_driver_ids),
+                        Driver.id.in_(load_driver_ids),
+                    ),
+                ),
             ),
             DriverPayCycle.pay_year == year,
             DriverPayCycle.pay_month == month,

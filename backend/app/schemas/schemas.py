@@ -1130,6 +1130,7 @@ class DriverFoodPaymentCreate(BaseModel):
     paid_by: Optional[str] = None
     is_verified: bool = False
     notes: Optional[str] = None
+    truck_id: Optional[int] = None
 
 
 class DriverFoodPaymentUpdate(BaseModel):
@@ -1185,6 +1186,8 @@ class DriverPayCycleOut(BaseModel):
     permanent_split_loads: int = 0
     casual_split_group_a_loads: int = 0
     casual_split_group_b_loads: int = 0
+    assmang_loads: int = 0
+    assmang_split_loads: int = 0
     subsistence_advance_paid: Decimal
     subsistence_advance_verified: bool
     staff_loan_balance: Decimal

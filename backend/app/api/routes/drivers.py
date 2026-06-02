@@ -17,7 +17,7 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, Driver, DriverType,
     DriverPayCycle, DriverTripLog, DriverAdditionalLoad, DriverFoodPayment,
-    TruckLoad, PayrollEntry, CasualTruckAssignment,
+    TruckLoad, PayrollEntry, CasualTruckAssignment, Mine,
 )
 from app.schemas.schemas import (
     DriverCreate, DriverUpdate, DriverOut, DriverSummary, DriverStats,
@@ -134,6 +134,14 @@ def _cycle_with_calc(
     return out
 
 
+def _assmang_mine_ids(db: Session) -> list:
+    """IDs of mines that count toward the Assmang bonus (the ASSMANG mine)."""
+    rows = db.query(Mine.id).filter(
+        or_(func.lower(Mine.code) == 'ass', func.lower(Mine.name) == 'assmang')
+    ).all()
+    return [r[0] for r in rows]
+
+
 def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session) -> dict:
     """
     Derive a pay cycle's load counts from TruckLoad rows for the given month/year.
@@ -148,12 +156,14 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
         "lohatla_extra_loads":  0,
         "casual_group_a_loads": 0,
         "casual_group_b_loads": 0,
+        "assmang_loads":        0,
         "prefill_count":        0,
     }
 
     first_day = datetime(year, month, 1, tzinfo=timezone.utc)
     last_day_num = calendar.monthrange(year, month)[1]
     last_day = datetime(year, month, last_day_num, 23, 59, 59, tzinfo=timezone.utc)
+    assmang_ids = set(_assmang_mine_ids(db))
 
     if driver.driver_type == DriverType.casual:
         # Always count by driver_id — casual loads are attributed per-load, not by truck.
@@ -171,12 +181,14 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
         ).all()
         group_a = sum(1 for l in loads if l.mine and l.mine.casual_group == 'A')
         group_b = len(loads) - group_a
+        assmang_loads = sum(1 for l in loads if l.mine_id in assmang_ids)
         logger.info("[prefill] casual driver_id=%s year=%s month=%s → total=%s group_a=%s group_b=%s",
                     driver.id, year, month, len(loads), group_a, group_b)
         return {
             **empty,
             "casual_group_a_loads": group_a,
             "casual_group_b_loads": group_b,
+            "assmang_loads":        assmang_loads,
             "prefill_count":        len(loads),
         }
 
@@ -184,7 +196,7 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
     if not driver.truck_id:
         return empty
 
-    load_count = db.query(func.count(TruckLoad.id)).filter(
+    perm_filter = [
         TruckLoad.truck_id == driver.truck_id,
         TruckLoad.entity_id == driver.entity_id,
         TruckLoad.is_archived != True,
@@ -193,13 +205,18 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
         or_(TruckLoad.driver_id.is_(None), TruckLoad.driver_id == driver.id),
         TruckLoad.load_date >= first_day,
         TruckLoad.load_date <= last_day,
-    ).scalar() or 0
+    ]
+    load_count = db.query(func.count(TruckLoad.id)).filter(*perm_filter).scalar() or 0
+    assmang_loads = (db.query(func.count(TruckLoad.id)).filter(
+        *perm_filter, TruckLoad.mine_id.in_(assmang_ids),
+    ).scalar() or 0) if assmang_ids else 0
     base  = min(7, load_count)
     extra = max(0, load_count - 7)
     return {
         **empty,
         "lohatla_base_loads":  base,
         "lohatla_extra_loads": extra,
+        "assmang_loads":       assmang_loads,
         "prefill_count":       load_count,
     }
 
@@ -552,6 +569,7 @@ def get_or_create_cycle(
             lohatla_extra_loads=prefill["lohatla_extra_loads"],
             casual_group_a_loads=prefill["casual_group_a_loads"],
             casual_group_b_loads=prefill["casual_group_b_loads"],
+            assmang_loads=prefill["assmang_loads"],
         )
         db.add(cycle)
         db.commit()
@@ -564,8 +582,23 @@ def get_or_create_cycle(
         prefill = _prefill_from_truckloads(driver, year, month, db)
         cycle.casual_group_a_loads = prefill["casual_group_a_loads"]
         cycle.casual_group_b_loads = prefill["casual_group_b_loads"]
+        cycle.assmang_loads        = prefill["assmang_loads"]
         logger.info("[cycle-open] resync done driver_id=%s → group_a=%s group_b=%s",
                     driver_id, cycle.casual_group_a_loads, cycle.casual_group_b_loads)
+        db.commit()
+        db.refresh(cycle)
+    elif driver.driver_type == DriverType.permanent and driver.truck_id:
+        # Resync permanent base/extra loads from truck data, mirroring the casual
+        # branch above. Loads marked driver_already_paid (paid in a prior period)
+        # are excluded by _prefill_from_truckloads, so the base/extra counts stay
+        # in step with the trip log instead of holding a stale pre-flag total.
+        logger.info("[cycle-open] existing permanent cycle found — resyncing driver_id=%s %s/%s", driver_id, year, month)
+        prefill = _prefill_from_truckloads(driver, year, month, db)
+        cycle.lohatla_base_loads  = prefill["lohatla_base_loads"]
+        cycle.lohatla_extra_loads = prefill["lohatla_extra_loads"]
+        cycle.assmang_loads       = prefill["assmang_loads"]
+        logger.info("[cycle-open] resync done driver_id=%s → base=%s extra=%s",
+                    driver_id, cycle.lohatla_base_loads, cycle.lohatla_extra_loads)
         db.commit()
         db.refresh(cycle)
 
