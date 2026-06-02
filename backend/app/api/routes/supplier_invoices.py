@@ -844,43 +844,10 @@ def bulk_import_invoices(
             rate_d   = (excl_d / litres_d).quantize(Decimal("0.0001"))
             fillup_date = slip_date_obj or inv_date
 
-            existing_fillup = db.query(DieselFillUp).filter(
-                DieselFillUp.slip_number == slip,
-                DieselFillUp.entity_id == payload.entity_id,
-            ).first()
-
-            if existing_fillup:
-                if abs(float(existing_fillup.litres or 0) - float(litres_d)) > 0.01:
-                    # Values differ — flag as a conflict for user to resolve
-                    truck_reg = existing_fillup.truck.registration if existing_fillup.truck else None
-                    conflicts.append(DieselConflict(
-                        slip_number=slip,
-                        fillup_id=existing_fillup.id,
-                        invoice_id=inv.id,
-                        invoice_number=num or None,
-                        existing=DieselConflictSide(
-                            litres=Decimal(str(existing_fillup.litres)),
-                            rate_per_litre=Decimal(str(existing_fillup.rate_per_litre)),
-                            amount=Decimal(str(existing_fillup.amount)),
-                            fillup_date=existing_fillup.fillup_date,
-                            truck_registration=truck_reg,
-                        ),
-                        incoming=DieselConflictSide(
-                            litres=litres_d,
-                            rate_per_litre=rate_d,
-                            amount=excl_d,
-                            fillup_date=fillup_date,
-                            truck_registration=(li.unit or '').strip().upper(),
-                        ),
-                    ))
-                else:
-                    # Same slip, same litres — stamp the invoice link only.
-                    existing_fillup.invoice_number = num or None
-                    existing_fillup.supplier_invoice_id = inv.id
-                    diesel_linked += 1
-                continue
-
-            # No existing record — create a new fill-up
+            # Resolve the truck first so the duplicate check is scoped to the
+            # correct registration — the same slip number can legitimately appear
+            # for different trucks, so matching on slip+entity alone would wrongly
+            # block creation for a truck that hasn't been imported yet.
             truck = db.query(Truck).filter(
                 Truck.registration.ilike(li.unit.strip()),
                 Truck.entity_id == payload.entity_id,
@@ -892,6 +859,42 @@ def bulk_import_invoices(
             # back-computing from amount÷litres.
             if li.rate_per_litre and li.rate_per_litre > 0:
                 rate_d = Decimal(str(li.rate_per_litre)).quantize(Decimal("0.0001"))
+
+            existing_fillup = db.query(DieselFillUp).filter(
+                DieselFillUp.slip_number == slip,
+                DieselFillUp.truck_id == truck.id,
+                DieselFillUp.entity_id == payload.entity_id,
+            ).first()
+
+            if existing_fillup:
+                if abs(float(existing_fillup.litres or 0) - float(litres_d)) > 0.01:
+                    # Same truck + slip but different litres — flag as conflict.
+                    conflicts.append(DieselConflict(
+                        slip_number=slip,
+                        fillup_id=existing_fillup.id,
+                        invoice_id=inv.id,
+                        invoice_number=num or None,
+                        existing=DieselConflictSide(
+                            litres=Decimal(str(existing_fillup.litres)),
+                            rate_per_litre=Decimal(str(existing_fillup.rate_per_litre)),
+                            amount=Decimal(str(existing_fillup.amount)),
+                            fillup_date=existing_fillup.fillup_date,
+                            truck_registration=existing_fillup.truck.registration if existing_fillup.truck else None,
+                        ),
+                        incoming=DieselConflictSide(
+                            litres=litres_d,
+                            rate_per_litre=rate_d,
+                            amount=excl_d,
+                            fillup_date=fillup_date,
+                            truck_registration=(li.unit or '').strip().upper(),
+                        ),
+                    ))
+                else:
+                    # Same truck, same slip, same litres — stamp invoice link only.
+                    existing_fillup.invoice_number = num or None
+                    existing_fillup.supplier_invoice_id = inv.id
+                    diesel_linked += 1
+                continue
 
             amounts = DieselCalculationService.calculate_fillup_amounts(
                 litres=litres_d,
