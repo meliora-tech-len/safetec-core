@@ -85,11 +85,16 @@ def _auto_create_diesel_fillup(
 
         inv_date = supplier_invoice.invoice_date.date() if hasattr(supplier_invoice.invoice_date, 'date') else supplier_invoice.invoice_date
 
-        # Link to existing DieselFillUp if same supplier + invoice number already exists
-        existing_fillup = db.query(DieselFillUp).filter(
-            DieselFillUp.supplier_id == supplier.id,
-            DieselFillUp.invoice_number == supplier_invoice.invoice_number,
-        ).first()
+        # Link to an existing DieselFillUp if the same supplier + invoice number
+        # already exists — but only when there's a real invoice number to match on.
+        # Matching on a NULL/blank invoice number would wrongly collapse distinct
+        # fill-ups (e.g. different trucks) from the same supplier onto one record.
+        existing_fillup = None
+        if supplier_invoice.invoice_number:
+            existing_fillup = db.query(DieselFillUp).filter(
+                DieselFillUp.supplier_id == supplier.id,
+                DieselFillUp.invoice_number == supplier_invoice.invoice_number,
+            ).first()
         if existing_fillup:
             if not existing_fillup.supplier_invoice_id:
                 existing_fillup.supplier_invoice_id = supplier_invoice.id
@@ -584,6 +589,31 @@ def update_supplier_invoice(
     )
     db.commit()
     db.refresh(inv)
+
+    # If this edit results in litres + vehicle_reg being present on a single-line
+    # diesel invoice with no fill-up yet, create/link it now. The create path only
+    # does this when both are filled in up-front; without this, invoices saved
+    # first and completed later never get a diesel log (no petrol icon, missing
+    # from the truck's Diesel tab). Runs after the commit so a fill-up failure
+    # can't roll back the invoice edit.
+    if not inv.is_multi_line and inv.vehicle_reg and inv.litres and inv.litres > 0:
+        supplier = db.query(Supplier).filter(Supplier.id == inv.supplier_id).first()
+        if supplier and supplier.is_diesel_supplier:
+            already = db.query(DieselFillUp).filter(
+                DieselFillUp.supplier_invoice_id == inv.id
+            ).first()
+            if not already:
+                _auto_create_diesel_fillup(
+                    db=db,
+                    supplier_invoice=inv,
+                    supplier=supplier,
+                    vehicle_reg=inv.vehicle_reg,
+                    litres=Decimal(str(inv.litres)),
+                    invoice_amount=Decimal(str(inv.amount)),
+                    entity_id=inv.entity_id,
+                    user_id=current_user.id,
+                )
+
     return inv
 
 
