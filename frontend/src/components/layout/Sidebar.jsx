@@ -5,6 +5,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useTheme } from '../../hooks/useTheme'
 import { resetUserPassword } from '../../services/api'
 import toast from 'react-hot-toast'
+import { errorMessage } from '../../utils/helpers'
 import {
   LayoutDashboard, Users, Building2, FileText,
   LogOut, Shield, Sun, Moon, Settings, ChevronDown, Truck,
@@ -90,7 +91,7 @@ export default function Sidebar() {
       setNewPw('')
       setPwOpen(false)
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to update password')
+      toast.error(errorMessage(e, 'Failed to update password'))
     } finally { setPwSaving(false) }
   }
 

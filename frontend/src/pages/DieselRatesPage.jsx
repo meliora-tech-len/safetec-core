@@ -7,6 +7,7 @@ import {
 import { Plus, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Save, RefreshCw, Fuel } from 'lucide-react'
 import toast from 'react-hot-toast'
 import DateInput from '../components/DateInput'
+import { errorMessage } from '../utils/helpers'
 
 const fmt = (n, d = 2) => Number(n || 0).toFixed(d)
 const fmt2 = (n) => Number(n || 0).toFixed(2)
@@ -140,7 +141,7 @@ export default function DieselRatesPage() {
       setShowModal(false)
       loadData()
     } catch (e) {
-      toast.error(e.response?.data?.detail || 'Save failed')
+      toast.error(errorMessage(e, 'Save failed'))
     } finally {
       setSaving(false)
     }
@@ -175,7 +176,7 @@ export default function DieselRatesPage() {
       const ds = dsRes.data || []
       setDieselSettings(ds)
     } catch (e) {
-      setFeeErrors(p => ({ ...p, [key]: e.response?.data?.detail || 'Failed to save' }))
+      setFeeErrors(p => ({ ...p, [key]: errorMessage(e, 'Failed to save') }))
     } finally {
       setSavingFee(p => ({ ...p, [key]: false }))
     }

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Settings, Save, Plus, Trash2, RefreshCw } from 'lucide-react'
 import { getSettings, updateSetting, getEntities, updateEntity, getRoles, createRole, deleteRole } from '../services/api'
 import DeleteModal from '../components/DeleteModal'
+import { errorMessage } from '../utils/helpers'
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState({})
@@ -48,7 +49,7 @@ export default function SettingsPage() {
       setSavedOk(p => ({ ...p, [key]: true }))
       setTimeout(() => setSavedOk(p => ({ ...p, [key]: false })), 2000)
     } catch (e) {
-      setErrors(p => ({ ...p, [key]: e.response?.data?.detail || 'Failed to save' }))
+      setErrors(p => ({ ...p, [key]: errorMessage(e, 'Failed to save') }))
     } finally {
       setSaving(p => ({ ...p, [key]: false }))
     }
@@ -78,7 +79,7 @@ export default function SettingsPage() {
       setNewRoleKey('')
       setNewRoleDisplay('')
     } catch (e) {
-      setErrors(p => ({ ...p, roles: e.response?.data?.detail || 'Failed to create role' }))
+      setErrors(p => ({ ...p, roles: errorMessage(e, 'Failed to create role') }))
     } finally {
       setSaving(p => ({ ...p, roles: false }))
     }
@@ -99,7 +100,7 @@ export default function SettingsPage() {
       setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: true }))
       setTimeout(() => setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: false })), 2000)
     } catch (e) {
-      setErrors(p => ({ ...p, [`entity_${entity.id}`]: e.response?.data?.detail || 'Failed to save' }))
+      setErrors(p => ({ ...p, [`entity_${entity.id}`]: errorMessage(e, 'Failed to save') }))
     } finally {
       setSaving(p => ({ ...p, [`entity_${entity.id}`]: false }))
     }
@@ -339,7 +340,7 @@ export default function SettingsPage() {
             await deleteRole(deleteRoleTarget.key)
             setRoles(prev => prev.filter(r => r.key !== deleteRoleTarget.key))
           } catch (e) {
-            setErrors(p => ({ ...p, roles: e.response?.data?.detail || 'Failed to delete role' }))
+            setErrors(p => ({ ...p, roles: errorMessage(e, 'Failed to delete role') }))
           } finally {
             setSaving(p => ({ ...p, roles: false }))
           }

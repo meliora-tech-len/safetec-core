@@ -26,6 +26,17 @@ const TYPE_BADGE = {
 const formatCurrency = (n) =>
   `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
+// Coerce any API error shape into a plain string for toast().
+// FastAPI 422s return `detail` as an array of {loc, msg, type} objects — passing
+// that straight to toast renders objects as React children (React error #31).
+const apiErrorText = (err, fallback = 'Something went wrong') => {
+  const d = err?.detail ?? err?.response?.data?.detail ?? err?.message
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) return d.map(e => e?.msg || String(e)).join(', ') || fallback
+  if (d && typeof d === 'object') return d.msg || JSON.stringify(d)
+  return fallback
+}
+
 // ── Stat cards ────────────────────────────────────────────────────────────────
 function StatCards({ stats }) {
   if (!stats) return null
@@ -87,6 +98,8 @@ function DriverModal({ driver, entities, onSave, onClose }) {
       const payload = {
         ...form,
         entity_id: Number(form.entity_id),
+        // Empty optional date must be null, not '' (the backend rejects '' → 422)
+        date_engaged: form.date_engaged || null,
       }
       if (isEdit) {
         await api.put(`/api/drivers/${driver.id}`, payload)
@@ -97,7 +110,7 @@ function DriverModal({ driver, entities, onSave, onClose }) {
       }
       onSave()
     } catch (err) {
-      toast.error(err?.detail || 'Failed to save driver')
+      toast.error(apiErrorText(err, 'Failed to save driver'))
     } finally {
       setSaving(false)
     }
@@ -467,7 +480,7 @@ export default function DriversPage() {
             setDeleteTarget(null)
             load()
           } catch (err) {
-            toast.error(err?.detail || 'Failed to delete driver')
+            toast.error(apiErrorText(err, 'Failed to delete driver'))
           }
         }}
       />

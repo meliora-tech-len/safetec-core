@@ -18,6 +18,7 @@ import {
   getSupplierInvoicesByVehicle,
 } from '../services/api'
 import toast from 'react-hot-toast'
+import { errorMessage } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 import DateInput from '../components/DateInput'
@@ -325,7 +326,7 @@ function DieselSection({ truck, year, month, suppliers }) {
       setEditingFillupId(null)
       fetchFillups()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to update')
+      toast.error(errorMessage(e, 'Failed to update'))
     } finally { setEditSaving(false) }
   }
 
@@ -398,7 +399,7 @@ function DieselSection({ truck, year, month, suppliers }) {
       setAddingNew(false)
       fetchFillups()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to save diesel entry')
+      toast.error(errorMessage(e, 'Failed to save diesel entry'))
     } finally { setSaving(false) }
   }
 
@@ -731,7 +732,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
       setEditingEntryId(null)
       fetchEntries()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to update')
+      toast.error(errorMessage(e, 'Failed to update'))
     } finally { setEditEntrySaving(false) }
   }
 
@@ -765,7 +766,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
       setAddingNew(false)
       fetchEntries()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to save')
+      toast.error(errorMessage(e, 'Failed to save'))
     } finally { setSaving(false) }
   }
 
@@ -1016,7 +1017,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
       setForm({ ...EMPTY_FOOD })
       fetchEntries()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to save food allowance')
+      toast.error(errorMessage(e, 'Failed to save food allowance'))
     } finally { setSaving(false) }
   }
 
@@ -1608,7 +1609,7 @@ export default function TruckLoadProfilePage() {
       setDupWarning(null)
       fetchLoads()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to save')
+      toast.error(errorMessage(e, 'Failed to save'))
     } finally { setSaving(false) }
   }
 
@@ -1673,7 +1674,7 @@ export default function TruckLoadProfilePage() {
       setProjForm({ ...EMPTY_PROJ })
       fetchLoads()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to save projection')
+      toast.error(errorMessage(e, 'Failed to save projection'))
     } finally { setProjSaving(false) }
   }
 
@@ -1700,7 +1701,7 @@ export default function TruckLoadProfilePage() {
       setSplitModalOpen(false)
       fetchLoads()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Failed to save split load')
+      toast.error(errorMessage(e, 'Failed to save split load'))
     } finally { setSplitSaving(false) }
   }
 

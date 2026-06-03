@@ -5,6 +5,7 @@ import {
   getMines, createMine, updateMine, deleteMine,
   getMineRates, addMineRate, getEntities, getPayrollSettings,
 } from '../services/api'
+import { errorMessage } from '../utils/helpers'
 import DateInput from '../components/DateInput'
 
 const fmt = (n) =>
@@ -38,7 +39,7 @@ function MineForm({ mine, onSave, onCancel, casualRates }) {
       }
       onSave()
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to save mine')
+      toast.error(errorMessage(err, 'Failed to save mine'))
     } finally {
       setSaving(false)
     }
@@ -117,7 +118,7 @@ function InlineRateForm({ mineId, entityId, currentRate, onSave, onCancel }) {
       toast.success('Rate updated')
       onSave()
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to update rate')
+      toast.error(errorMessage(err, 'Failed to update rate'))
     } finally {
       setSaving(false)
     }

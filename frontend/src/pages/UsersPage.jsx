@@ -6,6 +6,7 @@ import {
   createUser, updateUser, deleteUser,
   updateUserPermissions, resetUserPassword, reactivateUser,
 } from '../services/api'
+import { errorMessage } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
@@ -165,7 +166,7 @@ export default function UsersPage() {
       await load()
       setModal(null)
     } catch (e) {
-      setError(e.response?.data?.detail || 'Failed to save user')
+      setError(errorMessage(e, 'Failed to save user'))
     } finally {
       setSaving(false)
     }
@@ -178,7 +179,7 @@ export default function UsersPage() {
     try {
       await reactivateUser(user.id)
       await load()
-    } catch (e) { toast.error(e.response?.data?.detail || 'Failed to reactivate user') }
+    } catch (e) { toast.error(errorMessage(e, 'Failed to reactivate user')) }
   }
 
   const handlePasswordReset = async () => {
@@ -193,7 +194,7 @@ export default function UsersPage() {
       setPassword('')
       toast.success('Password updated successfully')
     } catch (e) {
-      setError(e.response?.data?.detail || 'Failed to reset password')
+      setError(errorMessage(e, 'Failed to reset password'))
     } finally {
       setSaving(false)
     }
@@ -500,7 +501,7 @@ export default function UsersPage() {
         description={deactivateTarget ? `"${deactivateTarget.full_name}" will no longer be able to log in.` : ''}
         onArchive={async () => {
           try { await deleteUser(deactivateTarget.id); await load() }
-          catch (e) { toast.error(e.response?.data?.detail || 'Failed to deactivate user') }
+          catch (e) { toast.error(errorMessage(e, 'Failed to deactivate user')) }
           setDeactivateTarget(null)
         }}
       />

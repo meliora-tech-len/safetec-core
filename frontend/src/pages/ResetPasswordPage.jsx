@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { resetPassword } from '../services/api'
+import { errorMessage } from '../utils/helpers'
 import { Lock, Eye, EyeOff, ArrowLeft, CheckCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -35,7 +36,7 @@ export default function ResetPasswordPage() {
       setDone(true)
       setTimeout(() => navigate('/login'), 3000)
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Reset failed. The link may have expired.')
+      toast.error(errorMessage(err, 'Reset failed. The link may have expired.'))
     } finally {
       setLoading(false)
     }

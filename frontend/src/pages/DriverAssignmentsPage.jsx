@@ -3,6 +3,7 @@ import { Link2, ChevronDown, ChevronUp, AlertTriangle, Search, X, UserCheck } fr
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import { getFleetTrucks, getDrivers, updateDriver, addDriverTruckAssignment, removeDriverTruckAssignment } from '../services/api'
+import { errorMessage } from '../utils/helpers'
 
 const STATUS_COLOURS = {
   active:      { badge: 'badge-paid',      label: 'Active' },
@@ -453,7 +454,7 @@ export default function DriverAssignmentsPage() {
       setActivePopover(null)
       load()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Assignment failed')
+      toast.error(errorMessage(e, 'Assignment failed'))
     } finally { setSaving(false) }
   }, [load])
 
@@ -470,7 +471,7 @@ export default function DriverAssignmentsPage() {
       setActivePopover(null)
       load()
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Unassign failed')
+      toast.error(errorMessage(e, 'Unassign failed'))
     } finally { setSaving(false) }
   }, [load])
 

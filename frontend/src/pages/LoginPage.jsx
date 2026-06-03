@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import { Lock, Mail, Loader, Eye, EyeOff } from 'lucide-react'
+import { errorMessage } from '../utils/helpers'
 
 export default function LoginPage() {
   const { login } = useAuth()
@@ -19,7 +20,7 @@ export default function LoginPage() {
       await login(email, password)
       navigate('/dashboard')
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Invalid credentials')
+      toast.error(errorMessage(err, 'Invalid credentials'))
     } finally {
       setLoading(false)
     }

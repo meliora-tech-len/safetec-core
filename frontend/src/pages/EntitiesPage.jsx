@@ -6,6 +6,7 @@ import {
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import { getEntities, createEntity, updateEntity, uploadEntityLogo, uploadEntityLetterhead, archiveEntity, restoreEntity } from '../services/api'
+import { errorMessage } from '../utils/helpers'
 
 const TABS = ['General', 'Banking', 'Branding', 'Invoice Config']
 
@@ -160,7 +161,7 @@ export default function EntitiesPage() {
       await refreshEntities()
       setModal(null)
     } catch (e) {
-      setError(e.response?.data?.detail || 'Failed to save entity')
+      setError(errorMessage(e, 'Failed to save entity'))
     } finally {
       setSaving(false)
     }
@@ -172,7 +173,7 @@ export default function EntitiesPage() {
       await archiveEntity(entity.id)
       await load()
     } catch (e) {
-      toast.error(e.response?.data?.detail || 'Failed to archive entity')
+      toast.error(errorMessage(e, 'Failed to archive entity'))
     }
   }
 
@@ -181,7 +182,7 @@ export default function EntitiesPage() {
       await restoreEntity(entity.id)
       await load()
     } catch (e) {
-      toast.error(e.response?.data?.detail || 'Failed to restore entity')
+      toast.error(errorMessage(e, 'Failed to restore entity'))
     }
   }
 

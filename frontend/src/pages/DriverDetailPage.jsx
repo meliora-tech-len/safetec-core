@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import VerifyBadge from '../components/VerifyBadge'
 import DateInput from '../components/DateInput'
+import { errorMessage } from '../utils/helpers'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -729,13 +730,13 @@ export default function DriverDetailPage() {
                                 try {
                                   await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/verify`)
                                   loadCycle()
-                                } catch (e) { toast.error(e?.detail || 'Verification failed') }
+                                } catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
                               }}
                               onFinalize={async (item) => {
                                 try {
                                   await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/finalize`)
                                   loadCycle()
-                                } catch (e) { toast.error(e?.detail || 'Finalise failed') }
+                                } catch (e) { toast.error(errorMessage(e, 'Finalise failed')) }
                               }}
                             />
                           </td>
@@ -800,13 +801,13 @@ export default function DriverDetailPage() {
                                 try {
                                   await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/verify`)
                                   loadCycle()
-                                } catch (e) { toast.error(e?.detail || 'Verification failed') }
+                                } catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
                               }}
                               onFinalize={async (item) => {
                                 try {
                                   await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/finalize`)
                                   loadCycle()
-                                } catch (e) { toast.error(e?.detail || 'Finalise failed') }
+                                } catch (e) { toast.error(errorMessage(e, 'Finalise failed')) }
                               }}
                             />
                           </td>

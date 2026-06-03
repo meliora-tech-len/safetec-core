@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { forgotPassword } from '../services/api'
 import { Mail, ArrowLeft } from 'lucide-react'
+import { errorMessage } from '../utils/helpers'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -17,8 +18,7 @@ export default function ForgotPasswordPage() {
       await forgotPassword(email)
       setSubmitted(true)
     } catch (err) {
-      const msg = err?.response?.data?.detail || 'Something went wrong. Please try again.'
-      setError(msg)
+      setError(errorMessage(err, 'Something went wrong. Please try again.'))
     } finally {
       setLoading(false)
     }

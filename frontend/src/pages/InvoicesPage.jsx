@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getInvoices, getEntities, downloadInvoicePdf, updateInvoice, deleteInvoice } from '../services/api'
-import { formatCurrency, formatDate, statusBadgeClass, statusLabel } from '../utils/helpers'
+import { formatCurrency, formatDate, statusBadgeClass, statusLabel, errorMessage } from '../utils/helpers'
 import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2, Upload } from 'lucide-react'
 import ImportPOModal from '../components/ImportPOModal'
 import ExportButton from '../components/ExportButton'
@@ -289,7 +289,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
             setDeleteTarget(null)
             load()
           } catch (err) {
-            toast.error(err?.response?.data?.detail || 'Failed to cancel')
+            toast.error(errorMessage(err, 'Failed to cancel'))
           }
         }}
       />

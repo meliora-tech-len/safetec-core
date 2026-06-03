@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
 import DateInput from '../components/DateInput'
+import { errorMessage } from '../utils/helpers'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -516,7 +517,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
       }
       onSave()
     } catch (err) {
-      toast.error(err?.detail || 'Failed to save truck')
+      toast.error(errorMessage(err, 'Failed to save truck'))
     } finally {
       setSaving(false)
     }
@@ -751,7 +752,7 @@ function PersonalVehicleModal({ pv, entities, onSave, onClose }) {
       }
       onSave()
     } catch (err) {
-      toast.error(err?.detail || 'Failed to save vehicle')
+      toast.error(errorMessage(err, 'Failed to save vehicle'))
     } finally {
       setSaving(false)
     }
@@ -1183,7 +1184,7 @@ export default function FleetPage() {
       toast.success('Truck deleted')
       setModal(null); setSelected(null); load()
     } catch (err) {
-      toast.error(err?.detail || 'Delete failed')
+      toast.error(errorMessage(err, 'Delete failed'))
     }
   }
 
@@ -1193,7 +1194,7 @@ export default function FleetPage() {
       toast.success('Vehicle deleted')
       setModal(null); setSelected(null); loadPV()
     } catch (err) {
-      toast.error(err?.detail || 'Delete failed')
+      toast.error(errorMessage(err, 'Delete failed'))
     }
   }
 

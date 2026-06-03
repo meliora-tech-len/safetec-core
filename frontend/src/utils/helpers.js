@@ -33,8 +33,24 @@ export const statusLabel = (status) => {
 
 export const docTypeBadgeClass = (type) => `badge badge-${type}`
 
-export const errorMessage = (err) =>
-  err?.response?.data?.detail || err?.message || 'An error occurred'
+// Extract a human-readable string from any API error shape.
+// Handles axios errors (err.response.data.detail), raw-fetch rejects (err.detail),
+// FastAPI 422 arrays of {loc, msg, type}, plain objects, and strings.
+// ALWAYS returns a string, so the result is safe to pass to toast()/JSX —
+// rendering a raw object/array as a React child throws (React error #31).
+export const errorMessage = (err, fallback = 'An error occurred') => {
+  if (typeof err === 'string') return err
+  const detail = err?.response?.data?.detail ?? err?.detail
+  const coerce = (d) => {
+    if (d == null) return null
+    if (typeof d === 'string') return d
+    if (Array.isArray(d))
+      return d.map(e => (typeof e === 'string' ? e : e?.msg)).filter(Boolean).join(', ') || null
+    if (typeof d === 'object') return d.msg || d.message || d.detail || null
+    return String(d)
+  }
+  return coerce(detail) || err?.message || fallback
+}
 
 export const toISODate = (dateStr) => {
   if (!dateStr) return null

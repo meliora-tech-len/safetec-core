@@ -4,6 +4,7 @@ import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X, FileText } from 'lucide-
 import { useAuth } from '../hooks/useAuth'
 import { getEntities, getSuppliers, getCustomers, createCustomer, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
 import DateInput from '../components/DateInput'
+import { errorMessage } from '../utils/helpers'
 
 const LINE_TYPES = [
   { value: 'item',   label: 'Item',   color: 'var(--accent)' },
@@ -339,7 +340,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
       }
       navigate(`/${docPath}`)
     } catch (e) {
-      setError(e.response?.data?.detail || 'Failed to save invoice')
+      setError(errorMessage(e, 'Failed to save invoice'))
     } finally {
       setSaving(false)
     }
@@ -780,7 +781,7 @@ function QuickAddCustomerModal({ entityId, onCreated, onClose }) {
       const res = await createCustomer({ ...form, entity_id: parseInt(entityId) })
       onCreated(res.data)
     } catch (e) {
-      setErr(e.response?.data?.detail || 'Failed to create customer')
+      setErr(errorMessage(e, 'Failed to create customer'))
     } finally {
       setSaving(false)
     }
