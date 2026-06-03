@@ -852,6 +852,16 @@ export default function SupplierProfilePage() {
 
   const allInvoices = groups.flatMap(g => g.invoices)
   const multiEntity = entities.length > 1
+
+  // Map a vehicle registration to its owning subcontractor (purely for display)
+  const truckByReg = Object.fromEntries(
+    (trucks || []).map(t => [(t.registration || '').toUpperCase(), t])
+  )
+  const ownerForReg = (reg) => {
+    if (!reg) return null
+    const t = truckByReg[reg.toUpperCase()]
+    return t ? (t.subcontractor_name || t.operator || null) : null
+  }
   // Suppliers with requires_registration=false (e.g. Axxess) don't use vehicle regs on invoices
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
@@ -1187,6 +1197,7 @@ export default function SupplierProfilePage() {
                           Vehicle Reg{sortArrow('vehicle_reg')}
                         </th>
                       )}
+                      {showVehicleReg && !isWBGDiesel && <th style={styles.th}>Subcontractor</th>}
                       {!isDiesel && <th style={styles.th}>Description</th>}
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('amount')}>
                         Amount{sortArrow('amount')}
@@ -1211,7 +1222,7 @@ export default function SupplierProfilePage() {
                       const isEditing = editingId === inv.id
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
-                      const totalCols = 12 + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 1 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
+                      const totalCols = 12 + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
 
                       return (
                         <Fragment key={inv.id}>
@@ -1313,6 +1324,15 @@ export default function SupplierProfilePage() {
                                     {inv.vehicle_reg || '—'}
                                   </span>
                                 )}
+                              </td>
+                            )}
+
+                            {/* Subcontractor / truck owner (display only) */}
+                            {showVehicleReg && !isWBGDiesel && (
+                              <td style={styles.td}>
+                                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                  {ownerForReg(inv.vehicle_reg) || '—'}
+                                </span>
                               </td>
                             )}
 
@@ -1572,7 +1592,7 @@ export default function SupplierProfilePage() {
                   <tfoot>
                     <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                       <td
-                        colSpan={3 + (multiEntity ? 1 : 0) + (showVehicleReg ? 1 : 0)}
+                        colSpan={3 + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0)}
                         style={{ ...styles.td, fontWeight: 700, textAlign: 'right' }}
                       >
                         Statement Total:
