@@ -552,8 +552,8 @@ export default function DriverDetailPage() {
                   {(liveCalc.isCasual ? [
                     ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.loadsA * liveCalc.rateA)]] : []),
                     ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.loadsB * liveCalc.rateB)]] : []),
-                    ...(liveCalc.splitA > 0 ? [[`Group A split (${liveCalc.splitA} × ${fmt(liveCalc.rateA / 2)})`, fmt(liveCalc.splitA * liveCalc.rateA / 2)]] : []),
-                    ...(liveCalc.splitB > 0 ? [[`Group B split (${liveCalc.splitB} × ${fmt(liveCalc.rateB / 2)})`, fmt(liveCalc.splitB * liveCalc.rateB / 2)]] : []),
+                    ...(liveCalc.splitA > 0 ? [[`Group A split (${(liveCalc.splitA * 0.5).toFixed(1)} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.splitA * liveCalc.rateA / 2)]] : []),
+                    ...(liveCalc.splitB > 0 ? [[`Group B split (${(liveCalc.splitB * 0.5).toFixed(1)} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.splitB * liveCalc.rateB / 2)]] : []),
                     ...(liveCalc.assmang > 0 ? [[`Mine bonus (${liveCalc.assmangEff.toFixed(1)} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
                   ] : [

@@ -17,7 +17,7 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, Driver, DriverType,
     DriverPayCycle, DriverTripLog, DriverAdditionalLoad, DriverFoodPayment,
-    TruckLoad, PayrollEntry, CasualTruckAssignment, Mine,
+    TruckLoad, TruckLoadDriverSplit, PayrollEntry, CasualTruckAssignment, Mine,
 )
 from app.schemas.schemas import (
     DriverCreate, DriverUpdate, DriverOut, DriverSummary, DriverStats,
@@ -155,6 +155,10 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
         "casual_group_a_loads": 0,
         "casual_group_b_loads": 0,
         "assmang_loads":        0,
+        "permanent_split_loads":      0,
+        "casual_split_group_a_loads": 0,
+        "casual_split_group_b_loads": 0,
+        "assmang_split_loads":        0,
         "prefill_count":        0,
     }
 
@@ -162,6 +166,22 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
     last_day_num = calendar.monthrange(year, month)[1]
     last_day = datetime(year, month, last_day_num, 23, 59, 59, tzinfo=timezone.utc)
     assmang_ids = set(_assmang_mine_ids(db))
+
+    # Split-load lines attributed to this driver (each line = 0.5 of a load).
+    # calculate_pay_cycle applies the ×0.5; we store the integer line count here.
+    split_rows = (
+        db.query(TruckLoadDriverSplit)
+        .join(TruckLoad, TruckLoadDriverSplit.truck_load_id == TruckLoad.id)
+        .filter(
+            TruckLoadDriverSplit.driver_id == driver.id,
+            TruckLoad.entity_id == driver.entity_id,
+            TruckLoad.is_archived != True,
+            TruckLoad.load_date >= first_day,
+            TruckLoad.load_date <= last_day,
+        )
+        .all()
+    )
+    assmang_split = sum(1 for r in split_rows if r.mine_id in assmang_ids)
 
     if driver.driver_type == DriverType.casual:
         # Always count by driver_id — casual loads are attributed per-load, not by truck.
@@ -182,12 +202,17 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
         assmang_loads = sum(1 for l in loads if l.mine_id in assmang_ids)
         logger.info("[prefill] casual driver_id=%s year=%s month=%s → total=%s group_a=%s group_b=%s",
                     driver.id, year, month, len(loads), group_a, group_b)
+        split_a = sum(1 for r in split_rows if r.mine and r.mine.casual_group == 'A')
+        split_b = len(split_rows) - split_a
         return {
             **empty,
             "casual_group_a_loads": group_a,
             "casual_group_b_loads": group_b,
             "assmang_loads":        assmang_loads,
-            "prefill_count":        len(loads),
+            "casual_split_group_a_loads": split_a,
+            "casual_split_group_b_loads": split_b,
+            "assmang_split_loads":        assmang_split,
+            "prefill_count":        len(loads) + len(split_rows),
         }
 
     # Permanent: 7-load floor, rest are extra
@@ -215,7 +240,9 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
         "lohatla_base_loads":  base,
         "lohatla_extra_loads": extra,
         "assmang_loads":       assmang_loads,
-        "prefill_count":       load_count,
+        "permanent_split_loads": len(split_rows),
+        "assmang_split_loads":   assmang_split,
+        "prefill_count":       load_count + len(split_rows),
     }
 
 
@@ -568,6 +595,10 @@ def get_or_create_cycle(
             casual_group_a_loads=prefill["casual_group_a_loads"],
             casual_group_b_loads=prefill["casual_group_b_loads"],
             assmang_loads=prefill["assmang_loads"],
+            permanent_split_loads=prefill["permanent_split_loads"],
+            casual_split_group_a_loads=prefill["casual_split_group_a_loads"],
+            casual_split_group_b_loads=prefill["casual_split_group_b_loads"],
+            assmang_split_loads=prefill["assmang_split_loads"],
         )
         db.add(cycle)
         db.commit()
@@ -581,8 +612,12 @@ def get_or_create_cycle(
         cycle.casual_group_a_loads = prefill["casual_group_a_loads"]
         cycle.casual_group_b_loads = prefill["casual_group_b_loads"]
         cycle.assmang_loads        = prefill["assmang_loads"]
-        logger.info("[cycle-open] resync done driver_id=%s → group_a=%s group_b=%s",
-                    driver_id, cycle.casual_group_a_loads, cycle.casual_group_b_loads)
+        cycle.casual_split_group_a_loads = prefill["casual_split_group_a_loads"]
+        cycle.casual_split_group_b_loads = prefill["casual_split_group_b_loads"]
+        cycle.assmang_split_loads        = prefill["assmang_split_loads"]
+        logger.info("[cycle-open] resync done driver_id=%s → group_a=%s group_b=%s split_a=%s assmang_split=%s",
+                    driver_id, cycle.casual_group_a_loads, cycle.casual_group_b_loads,
+                    cycle.casual_split_group_a_loads, cycle.assmang_split_loads)
         db.commit()
         db.refresh(cycle)
     elif driver.driver_type == DriverType.permanent and driver.truck_id:
@@ -595,8 +630,11 @@ def get_or_create_cycle(
         cycle.lohatla_base_loads  = prefill["lohatla_base_loads"]
         cycle.lohatla_extra_loads = prefill["lohatla_extra_loads"]
         cycle.assmang_loads       = prefill["assmang_loads"]
-        logger.info("[cycle-open] resync done driver_id=%s → base=%s extra=%s",
-                    driver_id, cycle.lohatla_base_loads, cycle.lohatla_extra_loads)
+        cycle.permanent_split_loads = prefill["permanent_split_loads"]
+        cycle.assmang_split_loads   = prefill["assmang_split_loads"]
+        logger.info("[cycle-open] resync done driver_id=%s → base=%s extra=%s split=%s assmang_split=%s",
+                    driver_id, cycle.lohatla_base_loads, cycle.lohatla_extra_loads,
+                    cycle.permanent_split_loads, cycle.assmang_split_loads)
         db.commit()
         db.refresh(cycle)
 
