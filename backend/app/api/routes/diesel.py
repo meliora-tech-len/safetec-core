@@ -87,7 +87,10 @@ def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, use
         supplier_id=fillup.supplier_id,
         invoice_number=inv_num,
         invoice_date=inv_datetime,
-        amount=fillup.total_amount,
+        # Amount owed to the diesel supplier = litres × rate (the diesel cost).
+        # The internal admin fee stays on the fill-up (total_amount) and in costing,
+        # so it must not inflate the supplier invoice / its displayed rate.
+        amount=fillup.amount,
         litres=fillup.litres,
         vat_applicable=False,
         vehicle_reg=vehicle_reg,
@@ -673,6 +676,25 @@ def update_fillup(
 
     if f.truckload_id:
         _sync_truckload_diesel(db, f.truckload_id, f)
+
+    # Keep the linked supplier invoice in step when the rate/litres change, so an
+    # edited (e.g. custom once-off) rate flows through to the Supplier Profile
+    # instead of the invoice keeping its original auto-filled amount.
+    # The invoice amount is the diesel cost owed to the supplier — litres × rate,
+    # EXCLUDING the internal admin fee (which stays on the fill-up / in costing).
+    # Only sync a single-fill-up auto-created invoice — multi-line invoices (e.g.
+    # WBG imports) hold per-slip data in line items and must not be overwritten.
+    if ("litres" in updates or "rate_per_litre" in updates) and f.supplier_invoice_id:
+        inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == f.supplier_invoice_id).first()
+        if inv and not inv.is_multi_line:
+            linked_count = db.query(func.count(DieselFillUp.id)).filter(
+                DieselFillUp.supplier_invoice_id == inv.id,
+                DieselFillUp.is_archived == False,
+            ).scalar() or 0
+            if linked_count <= 1:
+                inv.amount = f.amount
+                inv.litres = f.litres
+                db.commit()
 
     # Auto-link supplier invoice if we now have a slip/invoice number and no existing link
     if (f.invoice_number or f.slip_number) and not f.supplier_invoice_id and f.supplier_id:
