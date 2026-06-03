@@ -92,13 +92,18 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
 function calcStatutory(basicSalary, settings) {
   if (!settings || !basicSalary) return null
   const s = settings
-  const monthlyBase = basicSalary * parseFloat(s.weekly_to_monthly_factor)
-  const nbcrfli    = monthlyBase * parseFloat(s.nbcrfli_rate)
-  const provident  = monthlyBase * parseFloat(s.provident_rate)
-  const wellness   = monthlyBase * parseFloat(s.wellness_rate)
-  const sickFund   = basicSalary * parseFloat(s.sick_fund_rate)
-  const holidayFund = basicSalary * parseFloat(s.holiday_fund_rate)
-  const leavePay   = basicSalary * parseFloat(s.leave_pay_rate)
+  // basicSalary is monthly; weeklyWage = monthly ÷ weekly-to-monthly factor.
+  //   Provident          — % of monthly salary
+  //   NBCRFLI / Wellness — % of weekly wage, charged per week (4/month)
+  //   Sick / Holiday / Leave — % of one week's wage
+  const factor      = parseFloat(s.weekly_to_monthly_factor)
+  const weeklyWage  = factor ? basicSalary / factor : 0
+  const nbcrfli    = weeklyWage * 4 * parseFloat(s.nbcrfli_rate)
+  const provident  = basicSalary * parseFloat(s.provident_rate)
+  const wellness   = weeklyWage * 4 * parseFloat(s.wellness_rate)
+  const sickFund   = weeklyWage * parseFloat(s.sick_fund_rate)
+  const holidayFund = weeklyWage * parseFloat(s.holiday_fund_rate)
+  const leavePay   = weeklyWage * parseFloat(s.leave_pay_rate)
   const paye       = parseFloat(s.paye_fixed)
   const total      = nbcrfli + provident + wellness + sickFund + holidayFund + leavePay + paye
   return { nbcrfli, provident, wellness, sickFund, holidayFund, leavePay, paye, total }
@@ -549,13 +554,13 @@ export default function DriverDetailPage() {
                     ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.loadsB * liveCalc.rateB)]] : []),
                     ...(liveCalc.splitA > 0 ? [[`Group A split (${liveCalc.splitA} × ${fmt(liveCalc.rateA / 2)})`, fmt(liveCalc.splitA * liveCalc.rateA / 2)]] : []),
                     ...(liveCalc.splitB > 0 ? [[`Group B split (${liveCalc.splitB} × ${fmt(liveCalc.rateB / 2)})`, fmt(liveCalc.splitB * liveCalc.rateB / 2)]] : []),
-                    ...(liveCalc.assmang > 0 ? [[`Assmang bonus (${liveCalc.assmangEff.toFixed(1)} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
+                    ...(liveCalc.assmang > 0 ? [[`Mine bonus (${liveCalc.assmangEff.toFixed(1)} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
                   ] : [
                     ['Basic salary',    fmt(liveCalc.basicSalary)],
                     ['Subsistence',     fmt(liveCalc.totalSubs)],
                     ['Load incentive',  fmt(liveCalc.totalInc)],
-                    [`Assmang bonus (${liveCalc.assmangEff} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)],
+                    [`Mine bonus (${liveCalc.assmangEff} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)],
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
                   ]).map(([label, val]) => (
                     <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid var(--border)' }}>
@@ -631,7 +636,7 @@ export default function DriverDetailPage() {
                 ] : [
                   ['Basic salary',       fmt(liveCalc.basicSalary)],
                   ['Load incentive',     fmt(liveCalc.totalInc)],
-                  ['Assmang bonus',      fmt(liveCalc.assmang)],
+                  ['Mine bonus',         fmt(liveCalc.assmang)],
                   ['Subsistence',        fmt(liveCalc.totalSubs)],
                   ['Additional loads',   fmt(liveCalc.additionalTotal)],
                 ]).map(([l, v]) => (
@@ -1089,7 +1094,8 @@ function EditDriverModal({ driver, entities, onSave, onClose }) {
         <button className="btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
         <button className="btn-primary" style={{ flex: 1 }} onClick={() => {
           if (!form.first_name.trim() || !form.last_name.trim()) { toast.error('Name required'); return }
-          onSave({ ...form })
+          // Empty optional date must be null, not '' (the backend rejects '' → 422)
+          onSave({ ...form, date_engaged: form.date_engaged || null })
         }}>Save</button>
       </div>
     </Modal>

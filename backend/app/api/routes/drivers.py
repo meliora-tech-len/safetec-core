@@ -28,6 +28,7 @@ from app.schemas.schemas import (
     CasualTruckAssignmentOut,
 )
 from app.services.audit import log_action
+from app.services.load_bonus import bonus_mine_ids
 from app.services.payroll_calculator import calculate_pay_cycle
 from app.services.payslip_generator import generate_payslip_pdf
 from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
@@ -135,11 +136,8 @@ def _cycle_with_calc(
 
 
 def _assmang_mine_ids(db: Session) -> list:
-    """IDs of mines that count toward the Assmang bonus (the ASSMANG mine)."""
-    rows = db.query(Mine.id).filter(
-        or_(func.lower(Mine.code) == 'ass', func.lower(Mine.name) == 'assmang')
-    ).all()
-    return [r[0] for r in rows]
+    """IDs of mines that earn the per-load bonus (Assmang + Mokala/Tawana/Sebilo)."""
+    return bonus_mine_ids(db)
 
 
 def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session) -> dict:

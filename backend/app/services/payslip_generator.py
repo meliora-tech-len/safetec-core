@@ -508,7 +508,7 @@ def generate_casual_payslip_pdf(driver, cycle, calc: dict, entity) -> bytes:
 
     assmang = float(calc.get("assmang_bonus", 0))
     if assmang > 0:
-        earn.append(("ASSMANG INCENTIVE", _fmt_plain(assmang), "normal"))
+        earn.append(("MINE INCENTIVE", _fmt_plain(assmang), "normal"))
 
     for al in (cycle.additional_loads or []):
         al_amt = float(al.amount or 0)

@@ -21,6 +21,7 @@ from app.schemas.schemas import (
     SplitLoadCreate, SplitLoadOut,
 )
 from app.services.audit import log_action
+from app.services.load_bonus import bonus_mine_ids
 
 router = APIRouter(prefix="/api/truck-loads", tags=["truck-loads"])
 
@@ -129,11 +130,8 @@ def _enrich(load: TruckLoad) -> dict:
 
 
 def _assmang_mine_ids(db: Session) -> list:
-    """IDs of mines that count toward the Assmang bonus (the ASSMANG mine)."""
-    rows = db.query(Mine.id).filter(
-        or_(func.lower(Mine.code) == 'ass', func.lower(Mine.name) == 'assmang')
-    ).all()
-    return [r[0] for r in rows]
+    """IDs of mines that earn the per-load bonus (Assmang + Mokala/Tawana/Sebilo)."""
+    return bonus_mine_ids(db)
 
 
 def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
@@ -177,7 +175,7 @@ def _sync_driver_pay_cycle(truck_id: int, load_date: datetime, db: Session):
     ]
     full_loads = db.query(func.count(TruckLoad.id)).filter(*full_filter).scalar() or 0
 
-    # Assmang bonus loads — same attribution, restricted to the ASSMANG mine.
+    # Bonus loads — same attribution, restricted to the bonus mines (Assmang/Mokala/Tawana/Sebilo).
     assmang_ids = _assmang_mine_ids(db)
     assmang_loads = (db.query(func.count(TruckLoad.id)).filter(
         *full_filter, TruckLoad.mine_id.in_(assmang_ids),

@@ -403,9 +403,10 @@ export default function PayrollSettingsPage() {
         </div>
 
         <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
-          <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Assmang Bonus
+          <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Mine Bonus
           </h3>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 12 }}>Mokala · Assmang · Sebilo · Tawana</div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <label className="form-label" style={{ margin: 0 }}>Bonus per load</label>
             <input
