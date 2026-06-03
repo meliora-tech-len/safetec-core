@@ -278,6 +278,11 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
 }
 
 
+// Inline-edit cell/input styling for the diesel table — horizontal padding matches
+// the 14px header/cell padding so each field lines up under its column header.
+const dEditCell  = { padding: '6px 14px', verticalAlign: 'middle' }
+const dEditInput = { width: '100%' }
+
 // ── Diesel section ─────────────────────────────────────────────────────────────
 function DieselSection({ truck, year, month, suppliers }) {
   const [fillups, setFillups]     = useState([])
@@ -535,6 +540,7 @@ function DieselSection({ truck, year, month, suppliers }) {
         <div>
           {Object.entries(bySupplier).map(([supplierName, entries]) => {
             const subLitres = entries.reduce((s, f) => s + parseFloat(f.litres || 0), 0)
+            const subAmount = entries.reduce((s, f) => s + parseFloat(f.amount || 0), 0)
             const subTotal  = entries.reduce((s, f) => s + parseFloat(f.total_amount || 0), 0)
             return (
               <div key={supplierName} className="card" style={{ marginBottom: 16, overflow: 'auto' }}>
@@ -565,44 +571,44 @@ function DieselSection({ truck, year, month, suppliers }) {
                       editingFillupId === f.id ? (
                         <tr key={f.id} onClick={e => e.stopPropagation()}
                           style={{ background: 'var(--accent-subtle)', outline: '2px solid var(--accent)', outlineOffset: -1 }}>
-                          <td style={{ padding: '4px 6px' }}>
+                          <td style={dEditCell}>
                             <DateInput className="form-input" value={editFillupForm.fillup_date}
-                              onChange={e => setEF('fillup_date', e.target.value)} style={{ width: 105 }} />
+                              onChange={e => setEF('fillup_date', e.target.value)} style={dEditInput} />
                           </td>
-                          <td style={{ padding: '4px 6px' }}>
+                          <td style={dEditCell}>
                             <select className="form-input" value={editFillupForm.diesel_type}
-                              onChange={e => setEF('diesel_type', e.target.value)} style={{ fontSize: 12 }}>
+                              onChange={e => setEF('diesel_type', e.target.value)} style={{ ...dEditInput, fontSize: 12 }}>
                               <option value="fillup">Fill-up</option>
                               <option value="topup">Top-up</option>
                             </select>
                           </td>
-                          <td style={{ padding: '4px 6px' }}>
+                          <td style={dEditCell}>
                             <input className="form-input" value={editFillupForm.slip_number}
                               onChange={e => setEF('slip_number', e.target.value)} placeholder="SLP-001"
-                              style={{ width: 80 }} />
+                              style={dEditInput} />
                           </td>
-                          <td style={{ padding: '4px 6px' }}>
+                          <td style={dEditCell}>
                             <input className="form-input" value={editFillupForm.invoice_number}
                               onChange={e => setEF('invoice_number', e.target.value)} placeholder="INV-001"
-                              style={{ width: 90 }} />
+                              style={dEditInput} />
                           </td>
-                          <td style={{ padding: '4px 6px' }}>
+                          <td style={dEditCell}>
                             <input className="form-input" type="number" step="0.01" value={editFillupForm.litres}
                               onChange={e => setEF('litres', e.target.value)} placeholder="0.00"
-                              style={{ width: 70, textAlign: 'right' }} />
+                              style={{ ...dEditInput, textAlign: 'right' }} />
                           </td>
-                          <td style={{ padding: '4px 6px' }}>
+                          <td style={dEditCell}>
                             <input className="form-input" type="number" step="0.001" value={editFillupForm.rate_per_litre}
                               onChange={e => setEF('rate_per_litre', e.target.value)} placeholder="0.00"
-                              style={{ width: 70, textAlign: 'right' }} />
+                              style={{ ...dEditInput, textAlign: 'right' }} />
                           </td>
                           <td /><td /><td />
-                          <td style={{ padding: '4px 6px' }}>
+                          <td style={dEditCell}>
                             <input className="form-input" value={editFillupForm.notes}
                               onChange={e => setEF('notes', e.target.value)} placeholder="Notes"
-                              style={{ minWidth: 80 }} />
+                              style={dEditInput} />
                           </td>
-                          <td style={{ whiteSpace: 'nowrap', padding: '4px 6px' }}>
+                          <td style={{ whiteSpace: 'nowrap', padding: '6px 8px', textAlign: 'right' }}>
                             <button className="btn btn-icon btn-primary" onClick={doUpdateFillup}
                               disabled={editSaving} title="Save" style={{ marginRight: 4 }}>
                               <Save size={13} />
@@ -650,7 +656,9 @@ function DieselSection({ truck, year, month, suppliers }) {
                     <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
                       <td colSpan={4} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
                       <td style={{ textAlign: 'right', padding: '8px 12px' }}>{subLitres.toFixed(1)} L</td>
-                      <td colSpan={3} />
+                      <td />
+                      <td style={{ textAlign: 'right', padding: '8px 12px' }}>{fmt(subAmount)}</td>
+                      <td />
                       <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(subTotal)}</td>
                       <td colSpan={2} />
                     </tr>
@@ -1001,6 +1009,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
 
   const handleAdd = async () => {
     if (!form.driver_id) return toast.error('Select a driver')
+    if (!form.payment_date) return toast.error('Date required')
     const amount = parseFloat(form.amount) || 0
     if (amount <= 0) return toast.error('Enter an amount')
     setSaving(true)
@@ -1238,10 +1247,16 @@ function ProfitSheetSection({ truck, year, month, summary }) {
     setField('custom_lines', [...(data.custom_lines || []), { id: crypto.randomUUID(), description: 'Casual Wages', amount: null }])
   }
 
-  // Income: use manual override if saved, otherwise fall back to the loads
-  // Sub totals (subcontractor payout, i.e. after the R5/ton admin fee).
-  const incomeExcl = data.income_excl_vat != null ? parseFloat(data.income_excl_vat) : (parseFloat(summary?.total_subcontractor_excl_vat) || 0)
-  const incomeIncl = data.income_incl_vat != null ? parseFloat(data.income_incl_vat) : (parseFloat(summary?.total_subcontractor_incl_vat) || 0)
+  // Income: use manual override if saved, otherwise fall back to the loads.
+  // For subcontractor trucks that's the payout (after the R5/ton admin fee);
+  // for Safetec-owned trucks the subcontractor totals are zero, so fall back to
+  // the truck's own invoiced income instead.
+  const subExcl  = parseFloat(summary?.total_subcontractor_excl_vat) || 0
+  const subIncl  = parseFloat(summary?.total_subcontractor_incl_vat) || 0
+  const autoIncomeExcl = subExcl > 0 ? subExcl : (parseFloat(summary?.total_excl_vat) || 0)
+  const autoIncomeIncl = subIncl > 0 ? subIncl : (parseFloat(summary?.total_incl_vat) || 0)
+  const incomeExcl = data.income_excl_vat != null ? parseFloat(data.income_excl_vat) : autoIncomeExcl
+  const incomeIncl = data.income_incl_vat != null ? parseFloat(data.income_incl_vat) : autoIncomeIncl
 
   // Fixed expenses
   const fixedTotal = EXPENSE_ROWS.reduce((s, r) => s + (parseFloat(data[r.key]) || 0), 0)
@@ -1275,8 +1290,8 @@ function ProfitSheetSection({ truck, year, month, summary }) {
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Income Excl VAT</div>
             <input
               type="number" step="0.01" min="0"
-              value={data.income_excl_vat ?? (summary?.total_subcontractor_excl_vat ?? '')}
-              placeholder={fmt(parseFloat(summary?.total_subcontractor_excl_vat) || 0)}
+              value={data.income_excl_vat ?? (autoIncomeExcl || '')}
+              placeholder={fmt(autoIncomeExcl)}
               onChange={e => setField('income_excl_vat', e.target.value === '' ? null : e.target.value)}
               style={{ width: 140, fontWeight: 700, fontSize: 15, color: 'var(--text-muted)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
             />
@@ -1286,8 +1301,8 @@ function ProfitSheetSection({ truck, year, month, summary }) {
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Income Incl VAT</div>
             <input
               type="number" step="0.01" min="0"
-              value={data.income_incl_vat ?? (summary?.total_subcontractor_incl_vat ?? '')}
-              placeholder={fmt(parseFloat(summary?.total_subcontractor_incl_vat) || 0)}
+              value={data.income_incl_vat ?? (autoIncomeIncl || '')}
+              placeholder={fmt(autoIncomeIncl)}
               onChange={e => setField('income_incl_vat', e.target.value === '' ? null : e.target.value)}
               style={{ width: 140, fontWeight: 700, fontSize: 15, color: 'var(--accent)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
             />
@@ -1716,6 +1731,19 @@ export default function TruckLoadProfilePage() {
     acc[`${d.first_name} ${d.last_name}`.trim()] = d.driver_type
     return acc
   }, {})
+
+  // Order for the capture dropdowns: this truck's assigned driver first, then the
+  // rest of the permanent drivers, then the casual pool (each group alphabetical).
+  // The raw list is last-name sorted, which scatters permanents among casuals and
+  // makes them look absent in the short dropdown.
+  const driverOptions = useMemo(() => {
+    const rank = (d) =>
+      (d.truck_id === truck?.id ? 0 : 10) + (d.driver_type === 'permanent' ? 0 : 2)
+    return [...drivers].sort((a, b) =>
+      rank(a) - rank(b) ||
+      `${a.last_name} ${a.first_name}`.localeCompare(`${b.last_name} ${b.first_name}`)
+    )
+  }, [drivers, truck])
   const showPo  = !isSubcontractorEntity && truck?.notes?.toLowerCase() === 'intsimbi'
   const showSub = !isSubcontractorEntity && (truck?.is_subcontractor || false)
   const vatRegistered = entities.find(e => e.id === truck?.entity_id)?.vat_registered !== false
@@ -1798,7 +1826,7 @@ export default function TruckLoadProfilePage() {
           <SearchableSelect
             value={selectedDriverId}
             onChange={setSelectedDriverId}
-            options={drivers}
+            options={driverOptions}
             getValue={d => String(d.id)}
             getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
             placeholder="Select driver…"
@@ -2007,7 +2035,7 @@ export default function TruckLoadProfilePage() {
                 <SearchableSelect
                   value={projForm.driver_id != null ? String(projForm.driver_id) : ''}
                   onChange={v => { const d = drivers.find(x => String(x.id) === v); set('driver_id', v || null); set('driver_name', d ? `${d.first_name} ${d.last_name}`.trim() : '') }}
-                  options={drivers} getValue={d => String(d.id)}
+                  options={driverOptions} getValue={d => String(d.id)}
                   getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`}
                   placeholder="Driver…" style={{ minWidth: 140 }} />
               </div>}
@@ -2035,7 +2063,7 @@ export default function TruckLoadProfilePage() {
       {/* ── Add Load card form (new loads only, at top) ────────────────────────── */}
       {activeTab === 'loads' && editingId === 'new' && (
         <div className="card" style={{ marginBottom: 16, padding: '14px 16px' }}>
-          <LoadForm editForm={editForm} setEditForm={setEditForm} mines={mines} drivers={drivers}
+          <LoadForm editForm={editForm} setEditForm={setEditForm} mines={mines} drivers={driverOptions}
             vatRate={vatRate} rateSource={rateSource} setRateSource={setRateSource}
             saving={saving} onSave={handleSave} onCancel={cancelEdit} firstInputRef={firstInputRef}
             showPo={showPo} isSubcontractorEntity={isSubcontractorEntity} fmt={fmt} MONTHS={MONTHS} />
@@ -2086,7 +2114,7 @@ export default function TruckLoadProfilePage() {
                   if (isEditing) return (
                     <tr key={l.id}>
                       <td colSpan={COLS} style={{ padding: '12px 16px', background: 'var(--accent-subtle)', borderTop: '2px solid var(--accent)', borderBottom: '2px solid var(--accent)' }}>
-                        <LoadForm editForm={editForm} setEditForm={setEditForm} mines={mines} drivers={drivers}
+                        <LoadForm editForm={editForm} setEditForm={setEditForm} mines={mines} drivers={driverOptions}
                           vatRate={vatRate} rateSource={rateSource} setRateSource={setRateSource}
                           saving={saving} onSave={handleSave} onCancel={cancelEdit} firstInputRef={firstInputRef}
                           showPo={showPo} isSubcontractorEntity={isSubcontractorEntity} fmt={fmt} MONTHS={MONTHS} />
@@ -2376,7 +2404,7 @@ export default function TruckLoadProfilePage() {
                     <SearchableSelect
                       value={d.driver_id ? String(d.driver_id) : ''}
                       onChange={v => setSplitDrivers(prev => prev.map((x, idx) => idx === i ? { ...x, driver_id: v ? parseInt(v) : null } : x))}
-                      options={drivers} getValue={x => String(x.id)}
+                      options={driverOptions} getValue={x => String(x.id)}
                       getLabel={x => `${x.first_name} ${x.last_name} (${x.driver_type === 'permanent' ? 'P' : 'C'})`}
                       placeholder="Driver…" style={{ width: '100%' }} />
                   </div>

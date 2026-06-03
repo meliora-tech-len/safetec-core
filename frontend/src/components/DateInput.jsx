@@ -73,8 +73,10 @@ const DateInput = forwardRef(function DateInput(
     onKeyDown?.(e)
   }
 
+  // Clicking the text field just positions the cursor for typing — the native
+  // picker is opened only via the calendar icon (the hidden date input below).
+  // Calling showPicker() here would steal focus and make typing impossible.
   const handleClick = (e) => {
-    try { pickerRef.current?.showPicker?.() } catch {}
     onClick?.(e)
   }
 
@@ -123,6 +125,7 @@ const DateInput = forwardRef(function DateInput(
         type="date"
         value={value || ''}
         onChange={handlePickerChange}
+        onClick={() => { try { pickerRef.current?.showPicker?.() } catch {} }}
         tabIndex={-1}
         disabled={disabled}
         style={{
