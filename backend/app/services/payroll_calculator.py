@@ -49,7 +49,7 @@ def calculate_pay_cycle(
         effective_total = Decimal(loads_a + loads_b) + Decimal(split_a + split_b) * Decimal("0.5")
         casual_total    = effective_total
 
-        # Assmang bonus — only loads delivered to the ASSMANG mine
+        # Per-load bonus — loads delivered to the bonus mines (Assmang/Mokala/Tawana/Sebilo)
         assmang_effective = (Decimal(cycle.assmang_loads or 0)
                              + Decimal(getattr(cycle, 'assmang_split_loads', 0) or 0) * Decimal("0.5"))
         assmang_bonus = d(settings.assmang_bonus_per_load) * assmang_effective
@@ -116,14 +116,23 @@ def calculate_pay_cycle(
 
     gross = basic_salary + total_subs + total_inc + assmang_bonus + additional_total
 
-    # Statutory deductions
-    monthly_base  = basic_salary * d(settings.weekly_to_monthly_factor)
-    nbcrfli       = monthly_base * d(settings.nbcrfli_rate)
-    provident     = monthly_base * d(settings.provident_rate)
-    wellness      = monthly_base * d(settings.wellness_rate)
-    sick_fund     = basic_salary * d(settings.sick_fund_rate)
-    holiday_fund  = basic_salary * d(settings.holiday_fund_rate)
-    leave_pay     = basic_salary * d(settings.leave_pay_rate)
+    # Statutory deductions.
+    # basic_salary is the monthly figure (it also drives gross pay above);
+    # weekly_wage = monthly ÷ weekly-to-monthly factor.
+    #   • Provident          — flat % of the monthly salary
+    #   • NBCRFLI / Wellness  — % of the weekly wage, charged per week (4/month)
+    #   • Sick / Holiday / Leave — % of one week's wage (weekly accrual)
+    # paye_fixed holds the capped UIF amount (R177.12); real PAYE income tax is
+    # handled externally and is intentionally not computed here.
+    factor          = d(settings.weekly_to_monthly_factor)
+    weekly_wage     = basic_salary / factor if factor else Decimal(0)
+    weeks_per_month = Decimal(4)
+    nbcrfli       = weekly_wage * weeks_per_month * d(settings.nbcrfli_rate)
+    provident     = basic_salary * d(settings.provident_rate)
+    wellness      = weekly_wage * weeks_per_month * d(settings.wellness_rate)
+    sick_fund     = weekly_wage * d(settings.sick_fund_rate)
+    holiday_fund  = weekly_wage * d(settings.holiday_fund_rate)
+    leave_pay     = weekly_wage * d(settings.leave_pay_rate)
     paye          = d(settings.paye_fixed)
     uif           = Decimal(0)
 
