@@ -137,12 +137,24 @@ def _enrich_fillup(f: DieselFillUp, db=None) -> dict:
 @router.get("/warnings")
 def get_diesel_warnings(
     entity_id: Optional[int] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Return counts of diesel fill-ups missing slip# or invoice# for the dashboard."""
+    """Return counts of diesel fill-ups missing slip# or invoice# for the dashboard.
+
+    Scoped to the selected fill-up month/year (defaults to the current month)."""
     accessible = _accessible_entity_ids(current_user)
-    q = db.query(DieselFillUp).filter(DieselFillUp.is_archived == False)
+    now = datetime.now(tz=timezone.utc)
+    period_month = month or now.month
+    period_year  = year or now.year
+
+    q = db.query(DieselFillUp).filter(
+        DieselFillUp.is_archived == False,
+        func.extract('month', DieselFillUp.fillup_date) == period_month,
+        func.extract('year', DieselFillUp.fillup_date) == period_year,
+    )
     if accessible is not None:
         q = q.filter(DieselFillUp.entity_id.in_(accessible))
     if entity_id:

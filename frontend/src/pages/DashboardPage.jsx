@@ -16,14 +16,30 @@ export default function DashboardPage() {
   const [payables, setPayables] = useState(null)
   const [dieselWarnings, setDieselWarnings] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [period, setPeriod] = useState(() => {
+    const d = new Date()
+    return { month: d.getMonth() + 1, year: d.getFullYear() }
+  })
   const navigate = useNavigate()
+
+  const periodLabel = `${MONTH_NAMES[period.month]} ${period.year}`
+  const yearOptions = (() => {
+    const cur = new Date().getFullYear()
+    const yrs = []
+    for (let y = cur + 1; y >= cur - 4; y--) yrs.push(y)
+    return yrs
+  })()
 
   useEffect(() => {
     let ignore = false
     setLoading(true)
-    const params = activeEntity?.id ? { entity_id: activeEntity.id } : {}
+    const params = {
+      ...(activeEntity?.id ? { entity_id: activeEntity.id } : {}),
+      month: period.month,
+      year: period.year,
+    }
     Promise.all([
-      getDashboardStats(activeEntity?.id || undefined),
+      getDashboardStats(activeEntity?.id || undefined, { month: period.month, year: period.year }),
       getSupplierPayablesDashboard(params),
       getDieselWarnings(params),
     ]).then(([statsRes, payablesRes, warningsRes]) => {
@@ -36,7 +52,7 @@ export default function DashboardPage() {
       if (!ignore) setLoading(false)
     })
     return () => { ignore = true }
-  }, [activeEntity])
+  }, [activeEntity, period.month, period.year])
 
   const handleEntityChange = (e) => {
     const val = e.target.value
@@ -54,12 +70,30 @@ export default function DashboardPage() {
       <div style={styles.header}>
         <div>
           <h1 style={styles.title}>Dashboard</h1>
-          <p style={styles.sub}>Business overview across all entities</p>
+          <p style={styles.sub}>Statement period: {periodLabel}</p>
         </div>
-        <select value={activeEntity?.id?.toString() || ''} onChange={handleEntityChange} style={{ width: 200 }}>
-          {isAdmin && <option value="">All Entities</option>}
-          {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select
+            value={period.month}
+            onChange={e => setPeriod(p => ({ ...p, month: parseInt(e.target.value) }))}
+            style={{ width: 130 }}
+          >
+            {MONTH_NAMES.slice(1).map((name, i) => (
+              <option key={i + 1} value={i + 1}>{name}</option>
+            ))}
+          </select>
+          <select
+            value={period.year}
+            onChange={e => setPeriod(p => ({ ...p, year: parseInt(e.target.value) }))}
+            style={{ width: 100 }}
+          >
+            {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <select value={activeEntity?.id?.toString() || ''} onChange={handleEntityChange} style={{ width: 200 }}>
+            {isAdmin && <option value="">All Entities</option>}
+            {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </div>
       </div>
 
       {loading ? (
@@ -81,7 +115,7 @@ export default function DashboardPage() {
               icon={<TrendingUp size={20} />}
               iconBg="#22c55e20"
               iconColor="var(--success)"
-              label="Paid This Month"
+              label={`Paid in ${MONTH_NAMES[period.month]}`}
               value={formatCurrency(payables?.total_paid_this_month || 0)}
               sub="Supplier payments made"
             />
@@ -91,7 +125,7 @@ export default function DashboardPage() {
               iconColor="#16a34a"
               label="Current / Cash"
               value={formatCurrency(payables?.total_current || 0)}
-              sub="Due this month"
+              sub={`Statement ${MONTH_NAMES[period.month]}`}
             />
             <StatCard
               icon={<AlertCircle size={20} />}
@@ -265,7 +299,7 @@ export default function DashboardPage() {
                   icon={<TrendingUp size={20} />}
                   iconBg="#22c55e20"
                   iconColor="var(--success)"
-                  label="Collected This Month"
+                  label={`Collected in ${MONTH_NAMES[period.month]}`}
                   value={formatCurrency(stats.paid_this_month)}
                   sub="Revenue received"
                 />

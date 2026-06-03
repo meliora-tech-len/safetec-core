@@ -174,11 +174,16 @@ def calculate_supplier_due_date(invoice_date: datetime, payment_term: PaymentTer
 @router.get("/dashboard-summary", response_model=SupplierPayablesDashboard)
 def get_dashboard_summary(
     entity_id: Optional[int] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     accessible = _accessible_entity_ids(current_user)
     now = datetime.now(tz=timezone.utc)
+    # Statement period being viewed — defaults to the current month.
+    period_month = month or now.month
+    period_year  = year or now.year
 
     q = db.query(SupplierInvoice).join(Supplier).filter(SupplierInvoice.is_paid == False, SupplierInvoice.is_archived != True)
 
@@ -204,8 +209,8 @@ def get_dashboard_summary(
         if term == PaymentTermType.current:
             stmt_m = inv.statement_month or inv.invoice_date.month
             stmt_y = inv.statement_year  or inv.invoice_date.year
-            if stmt_m == now.month and stmt_y == now.year:
-                # Statement period is current month — normal bucket
+            if stmt_m == period_month and stmt_y == period_year:
+                # Statement period matches the selected period — normal bucket
                 key = inv.supplier_id
                 if key not in current_payables:
                     current_payables[key] = {"supplier_name": supplier.name, "total": Decimal("0"), "count": 0}
@@ -224,7 +229,11 @@ def get_dashboard_summary(
                     }
                 other_period_payables[key]["total"] += outstanding
                 other_period_payables[key]["count"] += 1
-        else:  # days_30
+        else:  # days_30 — only show the selected statement period
+            stmt_m = inv.statement_month or inv.invoice_date.month
+            stmt_y = inv.statement_year  or inv.invoice_date.year
+            if stmt_m != period_month or stmt_y != period_year:
+                continue
             key = (inv.supplier_id, inv.statement_year, inv.statement_month)
             if key not in days_30_payables:
                 days_30_payables[key] = {
@@ -291,7 +300,7 @@ def get_dashboard_summary(
         paid_q = paid_q.filter(SupplierInvoice.entity_id == entity_id)
     paid_this_month = sum(
         inv.amount for inv in paid_q.all()
-        if inv.paid_date and inv.paid_date.month == now.month and inv.paid_date.year == now.year
+        if inv.paid_date and inv.paid_date.month == period_month and inv.paid_date.year == period_year
     )
 
     return SupplierPayablesDashboard(

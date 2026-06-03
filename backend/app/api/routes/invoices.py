@@ -112,6 +112,8 @@ def list_invoices(
 @router.get("/dashboard", response_model=DashboardStats)
 def dashboard_stats(
     entity_id: Optional[int] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -125,21 +127,29 @@ def dashboard_stats(
     if entity_id:
         base_query = base_query.filter(Invoice.entity_id == entity_id)
 
-    invoices = base_query.options(
+    all_docs = base_query.options(
         joinedload(Invoice.supplier), joinedload(Invoice.customer), joinedload(Invoice.entity)
     ).all()
 
     now = datetime.now(timezone.utc)
+    # Period being viewed — defaults to the current month. Issue-based metrics
+    # (outstanding/overdue/drafts/breakdown/recent) are scoped to documents issued
+    # in this period; "collected" is scoped to documents paid in this period.
+    period_month = month or now.month
+    period_year  = year or now.year
+
+    def in_period(d):
+        return d is not None and d.month == period_month and d.year == period_year
+
+    invoices = [inv for inv in all_docs if in_period(inv.issue_date)]
+
     outstanding = sum(
         inv.total for inv in invoices
         if inv.status in ("sent", "overdue", "accepted") and inv.document_type == "invoice"
     )
     paid_this_month = sum(
-        inv.total for inv in invoices
-        if inv.status == "paid"
-        and inv.paid_date
-        and inv.paid_date.month == now.month
-        and inv.paid_date.year == now.year
+        inv.total for inv in all_docs
+        if inv.status == "paid" and in_period(inv.paid_date)
     )
     overdue_count = sum(1 for inv in invoices if inv.status == "overdue")
     draft_count = sum(1 for inv in invoices if inv.status == "draft")
