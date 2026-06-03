@@ -7,7 +7,7 @@ from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
     User, TruckLoad, DieselFillUp, SupplierInvoice, SupplierInvoiceLineItem,
-    DriverPayCycle, Driver, PayrollSettings, PayrollEntry,
+    DriverPayCycle, Driver, PayrollSettings, PayrollEntry, Supplier, PaymentTermType,
 )
 from app.services.payroll_calculator import calculate_pay_cycle
 
@@ -68,23 +68,41 @@ def income_expenses_report(
     truck_income_incl = {int(r.m): float(r.incl) for r in truck_rows}
     truck_income_excl = {int(r.m): float(r.excl) for r in truck_rows}
 
-    # ── Diesel expenses grouped by calendar month ──────────────────────────────
-    diesel_rows = (
+    # ── Diesel expenses grouped by costing period (payment-term aware) ─────────
+    # Diesel has no statement period, so the fill-up date stands in for it and the
+    # supplier's payment term shifts it, mirroring supplier-invoice costing:
+    #   30-day  → costing month = fill-up month
+    #   current → costing month = fill-up month − 1 (cash belongs to the prior period,
+    #             e.g. a June cash fill-up costs in May; a Jan one rolls to prior Dec)
+    # Fetch this year's fill-ups plus next Jan (a Jan cash fill-up maps back to Dec).
+    diesel_fillups = (
         db.query(
-            func.extract('month', DieselFillUp.fillup_date).label('m'),
-            func.coalesce(func.sum(DieselFillUp.total_amount), 0).label('amount'),
-            func.coalesce(func.sum(DieselFillUp.admin_fee_vat), 0).label('vat'),
+            DieselFillUp.fillup_date,
+            DieselFillUp.total_amount,
+            DieselFillUp.admin_fee_vat,
+            Supplier.payment_term,
         )
+        .join(Supplier, Supplier.id == DieselFillUp.supplier_id)
         .filter(
             DieselFillUp.entity_id == entity_id,
-            func.extract('year', DieselFillUp.fillup_date) == year,
+            func.extract('year', DieselFillUp.fillup_date).in_([year, year + 1]),
             DieselFillUp.is_archived != True,
         )
-        .group_by(func.extract('month', DieselFillUp.fillup_date))
         .all()
     )
-    diesel_expense   = {int(float(r.m)): float(r.amount) for r in diesel_rows}
-    diesel_input_vat = {int(float(r.m)): float(r.vat)    for r in diesel_rows}
+    diesel_expense: dict[int, float] = {}
+    diesel_input_vat: dict[int, float] = {}
+    for fd, amount, vat, term in diesel_fillups:
+        is_cash = getattr(term, 'value', term) == PaymentTermType.current.value
+        if is_cash:
+            cm = fd.month - 1 if fd.month > 1 else 12
+            cy = fd.year if fd.month > 1 else fd.year - 1
+        else:
+            cm, cy = fd.month, fd.year
+        if cy != year:
+            continue
+        diesel_expense[cm]   = diesel_expense.get(cm, 0.0) + float(amount or 0)
+        diesel_input_vat[cm] = diesel_input_vat.get(cm, 0.0) + float(vat or 0)
 
     # ── Supplier invoice expenses grouped by statement month ───────────────────
     all_supplier_invoices = (

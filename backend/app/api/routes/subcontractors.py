@@ -413,14 +413,31 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                 exp_excl += c_excl
                 inv_contribs.append((inv, c_excl))
 
-        # Diesel fill-ups for this truck/month — grouped by supplier
+        # Diesel fill-ups for this truck — bucketed by the supplier's payment term,
+        # mirroring the non-diesel invoice rule above. Diesel has no statement period
+        # (not captured on the standalone module or the Diesel tab), so the fill-up
+        # DATE stands in for it:
+        #   30-day  → fill-ups dated in the costing month (same period)
+        #   current → fill-ups dated in the NEXT month (they belong to the previous
+        #             costing period, e.g. a June cash fill-up costs in May)
         fillups = (
             db.query(DieselFillUp)
+            .join(Supplier, Supplier.id == DieselFillUp.supplier_id)
             .filter(
                 DieselFillUp.truck_id == truck.id,
-                extract("month", DieselFillUp.fillup_date) == month,
-                extract("year",  DieselFillUp.fillup_date) == year,
                 DieselFillUp.is_archived == False,
+                or_(
+                    and_(
+                        Supplier.payment_term == PaymentTermType.days_30,
+                        extract("month", DieselFillUp.fillup_date) == month,
+                        extract("year",  DieselFillUp.fillup_date) == year,
+                    ),
+                    and_(
+                        Supplier.payment_term == PaymentTermType.current,
+                        extract("month", DieselFillUp.fillup_date) == cash_stmt_month,
+                        extract("year",  DieselFillUp.fillup_date) == cash_stmt_year,
+                    ),
+                ),
             )
             .order_by(DieselFillUp.fillup_date)
             .all()
