@@ -12,7 +12,7 @@ from app.core.security import get_current_user
 from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Supplier, Customer
 from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, DashboardStats, InvoiceSummary
 from app.services.audit import log_action
-from app.services.invoice_numbering import generate_invoice_number
+from app.services.invoice_numbering import generate_invoice_number, peek_invoice_number
 from app.services.pdf_generator import generate_invoice_pdf
 from app.services.email import send_invoice_email
 
@@ -248,7 +248,17 @@ def create_invoice(
     vat_rate = payload.vat_rate if payload.vat_rate is not None else (entity.vat_rate if entity.vat_rate is not None else Decimal("0.15"))
 
     try:
-        invoice_number = generate_invoice_number(db, payload.entity_id, payload.document_type)
+        # If the caller supplied an invoice number that differs from the auto value
+        # (e.g. a PO-import where the user typed a custom number in the editable field),
+        # honor it instead of auto-generating — and don't burn a counter value.
+        # Otherwise fall back to the per-entity auto sequence.
+        provided = (payload.invoice_number or "").strip()
+        if provided and provided != peek_invoice_number(db, payload.entity_id, payload.document_type):
+            if db.query(Invoice).filter(Invoice.invoice_number == provided).first():
+                raise HTTPException(status_code=400, detail=f"Invoice number '{provided}' is already in use.")
+            invoice_number = provided
+        else:
+            invoice_number = generate_invoice_number(db, payload.entity_id, payload.document_type)
         subtotal, vat_amount, total = _calculate_totals(payload.line_items, vat_rate, payload.is_vat_exempt)
 
         invoice = Invoice(
@@ -322,6 +332,20 @@ def update_invoice(
     if invoice.status == "paid":
         raise HTTPException(status_code=400, detail="Cannot edit a paid invoice")
 
+    # invoice_number is globally unique — guard a collision with a clear message
+    # instead of letting the DB raise an opaque IntegrityError on flush.
+    new_num = (payload.invoice_number or "").strip()
+    if new_num and new_num != invoice.invoice_number:
+        clash = db.query(Invoice).filter(
+            Invoice.invoice_number == new_num,
+            Invoice.id != invoice_id,
+        ).first()
+        if clash:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invoice number '{new_num}' is already in use by another document.",
+            )
+
     try:
         old_status = invoice.status
         update_data = payload.model_dump(exclude={"line_items"}, exclude_none=True)
@@ -369,9 +393,10 @@ def update_invoice(
             joinedload(Invoice.customer),
             joinedload(Invoice.entity),
         ).filter(Invoice.id == invoice.id).first()
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to update invoice")
+        detail = str(e.orig) if getattr(e, 'orig', None) else "Failed to update invoice"
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @router.delete("/{invoice_id}")
