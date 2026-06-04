@@ -866,6 +866,11 @@ export default function SupplierProfilePage() {
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
   const isWBGDiesel = isDiesel && supplier?.name?.toLowerCase().includes('wbg')
+  // Merino & Oukop send a statement carrying the slip# before the physical slip
+  // is received, so the slip# hasn't been captured as a fill-up yet. Let the user
+  // type the slip# freely instead of forcing a pick from the fill-up dropdown.
+  const slipFreeText = isDiesel &&
+    /merino|oukop/i.test(`${supplier?.name || ''} ${supplier?.short_name || ''}`)
 
   const isDuplicateInvoiceNumber = (invoiceNumber, excludeId = null) =>
     allInvoices.some(inv =>
@@ -1103,6 +1108,7 @@ export default function SupplierProfilePage() {
           onKeyDown={handleKeyDown}
           showVehicleReg={showVehicleReg}
           isDiesel={isDiesel}
+          freeTextSlip={slipFreeText}
           showReg={showVehicleReg}
           dieselRate={dieselRate}
           amountAutoFilled={amountAutoFilled}
@@ -1569,6 +1575,7 @@ export default function SupplierProfilePage() {
                                         subbies={subbies}
                                         trucks={trucks}
                                         fillups={dieselFillups}
+                                        freeTextSlip={slipFreeText}
                                       />
                                     : <LineItemsEditor
                                         items={editForm.line_items || []}
@@ -1628,7 +1635,7 @@ const CS = {
 }
 
 
-function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, showReg = false, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [], fillups = [] }) {
+function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, freeTextSlip = false, showReg = false, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [], fillups = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
   const cardRef = useRef(null)
@@ -2016,6 +2023,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
               subbies={subbies}
               trucks={trucks}
               fillups={fillups}
+              freeTextSlip={freeTextSlip}
             />
           ) : (
             <LineItemsEditor
@@ -2240,7 +2248,7 @@ function LineItemsViewer({ items, total, showReg = false }) {
 // Slip # | Slip Date | Vehicle Reg | Litres | Rate/L | Excl. VAT | Incl. VAT
 // Stored as: item_code | line_date | unit | quantity | _rate(computed) | amount_excl_vat | amount_incl_vat
 
-function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies = [], trucks = [], fillups = [] }) {
+function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies = [], trucks = [], fillups = [], freeTextSlip = false }) {
   const vatMult = vatApplicable ? 1.15 : 1
   const addLine = () => onChange([...items, blankLineItem()])
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
@@ -2299,7 +2307,7 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
                   style={{ ...liStyles.input, minWidth: 120 }} />
               </td>
               <td style={liStyles.td}>
-                {fillups.length > 0 ? (
+                {fillups.length > 0 && !freeTextSlip ? (
                   <SearchableSelect
                     value={li.item_code ?? ''}
                     onChange={v => selectSlip(idx, v)}
