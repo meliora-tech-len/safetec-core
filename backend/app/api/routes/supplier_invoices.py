@@ -827,6 +827,38 @@ def delete_line_item(
     _recalc_invoice_total(db, inv)
 
 
+def _archive_orphaned_placeholder(db: Session, old_inv_id, new_inv_id: int, user_id: int) -> bool:
+    """When a bulk import absorbs a slip that was already logged, the fill-up's
+    original auto-created placeholder invoice (pending, no number, no line items)
+    is left orphaned. Archive it so it stops showing on the Supplier Profile.
+
+    Only touches a bare placeholder: un-numbered, no line items of its own, and no
+    fill-ups still pointing at it after the re-link. Returns True if archived.
+    """
+    if not old_inv_id or old_inv_id == new_inv_id:
+        return False
+    old = db.query(SupplierInvoice).filter(SupplierInvoice.id == old_inv_id).first()
+    if not old or old.is_archived:
+        return False
+    if old.invoice_number:          # a real invoice, not a placeholder
+        return False
+    if old.line_items:              # carries its own lines — leave it alone
+        return False
+    remaining = db.query(DieselFillUp).filter(
+        DieselFillUp.supplier_invoice_id == old_inv_id,
+        DieselFillUp.is_archived != True,
+    ).count()
+    if remaining > 0:               # still backs other fill-ups
+        return False
+    old.is_archived = True
+    log_action(
+        db, "supplier_invoice.placeholder_merged", user_id=user_id,
+        entity_id=old.entity_id, resource_type="supplier_invoice", resource_id=old.id,
+        description=f"Archived placeholder invoice #{old.id} — its slip was absorbed into imported invoice #{new_inv_id}",
+    )
+    return True
+
+
 # ── Bulk import ───────────────────────────────────────────────────────────────
 
 @router.post("/bulk-import", response_model=BulkImportResult)
@@ -962,10 +994,15 @@ def bulk_import_invoices(
                         ),
                     ))
                 else:
-                    # Same truck, same slip, same litres — stamp invoice link only.
+                    # Same truck, same slip, same litres — re-link the fill-up to the
+                    # imported invoice, then archive the placeholder invoice it was
+                    # auto-created under (otherwise it lingers as a duplicate "Pending"
+                    # row on the Supplier Profile).
+                    old_inv_id = existing_fillup.supplier_invoice_id
                     existing_fillup.invoice_number = num or None
                     existing_fillup.supplier_invoice_id = inv.id
                     diesel_linked += 1
+                    _archive_orphaned_placeholder(db, old_inv_id, inv.id, current_user.id)
                 continue
 
             amounts = DieselCalculationService.calculate_fillup_amounts(
