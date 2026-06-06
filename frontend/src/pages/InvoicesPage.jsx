@@ -273,7 +273,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
         </table>
       </div>
 
-      {showImportPO && <ImportPOModal onClose={() => setShowImportPO(false)} entities={entities} />}
+      {showImportPO && <ImportPOModal onClose={() => setShowImportPO(false)} entities={entities} onImported={load} />}
 
       <DeleteModal
         isOpen={!!deleteTarget}
@@ -321,7 +321,7 @@ function StatPill({ label, count, amount, color, bg, highlight, onClick }) {
 }
 
 const styles = {
-  page: { padding: '28px 32px', flex: 1 },
+  page: { padding: 'var(--page-pad)', flex: 1 },
   statsBar: { display: 'flex', gap: 12, marginBottom: 20 },
   statPill: {
     display: 'flex', flexDirection: 'column', gap: 2,

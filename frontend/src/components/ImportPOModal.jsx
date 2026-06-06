@@ -1,7 +1,10 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
-import { Upload, X, FileText, AlertCircle, CheckCircle, ChevronRight } from 'lucide-react'
+import { Upload, X, FileText, AlertCircle, CheckCircle, ChevronRight, Layers, Loader } from 'lucide-react'
+import { createInvoice, getCustomers } from '../services/api'
+import { useAuth } from '../hooks/useAuth'
+import { errorMessage } from '../utils/helpers'
 
 function cellStr(val) {
   if (val == null) return ''
@@ -263,18 +266,108 @@ function parsePOExcel(file) {
   })
 }
 
-export default function ImportPOModal({ onClose, entities = [] }) {
+export default function ImportPOModal({ onClose, entities = [], onImported = () => {} }) {
   const navigate = useNavigate()
+  const { activeEntity } = useAuth()
   const [dragOver, setDragOver] = useState(false)
   const [parsing, setParsing] = useState(false)
   const [error, setError] = useState('')
   const [pos, setPos] = useState(null)
   const [entityFilter, setEntityFilter] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [progress, setProgress] = useState({ done: 0, total: 0 })
+  const [result, setResult] = useState(null) // { created: [], errors: [] }
   const fileRef = useRef(null)
 
   const matchEntity = (supplier_code) => {
     if (!supplier_code) return null
     return entities.find(e => supplier_code.toUpperCase().startsWith(e.code?.toUpperCase() ?? ''))
+  }
+
+  // Map a parsed PO's lines to an invoice payload's line_items (mirrors InvoiceFormPage).
+  const buildLineItems = (po) => po.line_items
+    .filter(l => l.line_type === 'spacer' || l.description || parseFloat(l.amount))
+    .map((l, i) => {
+      const isItem = (l.line_type || 'item') === 'item'
+      return {
+        description: l.description || null,
+        quantity:   isItem && l.quantity   !== '' ? parseFloat(l.quantity)   : null,
+        unit_price: isItem && l.unit_price !== '' ? parseFloat(l.unit_price) : null,
+        amount:     isItem ? (parseFloat(l.amount) || 0) : 0,
+        is_vat_exempt: false,
+        sort_order: i,
+        line_type: l.line_type || 'item',
+        loading_number: l.loading_number || null,
+        offloading_number: l.offloading_number || null,
+      }
+    })
+
+  // Create an invoice for every PO in the current (filtered) set, one at a time so
+  // the per-entity auto invoice numbers stay sequential and unique. Each invoice is
+  // created exactly as the manual per-PO flow would (customer = Tradekor, entity from
+  // supplier code, VAT from the entity), then we surface a result modal.
+  const handleImportAll = async (list) => {
+    if (!list.length) return
+    setImporting(true)
+    setError('')
+    setProgress({ done: 0, total: list.length })
+    const created = []
+    const errors = []
+    const custCache = {} // entity_id → Tradekor customer (or null)
+
+    const tradekorFor = async (entityId) => {
+      if (entityId in custCache) return custCache[entityId]
+      try {
+        const r = await getCustomers({ entity_id: entityId, limit: 500 })
+        const match = (r.data || []).find(c => c.name?.toLowerCase().includes('tradekor'))
+        custCache[entityId] = match || null
+      } catch { custCache[entityId] = null }
+      return custCache[entityId]
+    }
+
+    for (let i = 0; i < list.length; i++) {
+      const po = list[i]
+      try {
+        const entity = matchEntity(po.supplier_code) || activeEntity || entities[0]
+        if (!entity) { errors.push({ po_number: po.po_number, message: 'No matching entity' }); continue }
+        const customer = await tradekorFor(entity.id)
+        if (!customer) { errors.push({ po_number: po.po_number, message: `No "Tradekor" customer for ${entity.code}` }); continue }
+
+        const noteParts = []
+        if (po.po_number) noteParts.push(`PO Ref: ${po.po_number}`)
+        if (po.project_code) noteParts.push(`Project: ${po.project_code}`)
+
+        const payload = {
+          entity_id: entity.id,
+          supplier_id: null,
+          customer_id: customer.id,
+          document_type: 'invoice',
+          is_vat_exempt: entity.vat_registered === false,
+          issue_date: po.po_date ? new Date(po.po_date).toISOString() : null,
+          due_date: null,
+          vat_rate: entity.vat_rate != null ? parseFloat(entity.vat_rate) : 0.15,
+          notes: noteParts.join(' | ') || null,
+          status: 'draft',
+          line_items: buildLineItems(po),
+          // invoice_number omitted → backend assigns the next per-entity number
+        }
+        const res = await createInvoice(payload)
+        created.push({
+          po_number: po.po_number,
+          invoice_number: res.data.invoice_number,
+          id: res.data.id,
+          entity: entity.code,
+          total: res.data.total,
+        })
+      } catch (e) {
+        errors.push({ po_number: po.po_number, message: errorMessage(e, 'Failed to create') })
+      }
+      setProgress({ done: i + 1, total: list.length })
+    }
+
+    setImporting(false)
+    setResult({ created, errors })
+    if (created.length > 0) onImported() // refresh the invoice list behind the modal
   }
 
   const handleFile = async (file) => {
@@ -308,10 +401,10 @@ export default function ImportPOModal({ onClose, entities = [] }) {
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-      onClick={onClose}
+      onClick={() => { if (!importing) onClose() }}
     >
       <div
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: '24px 28px', width: '100%', maxWidth: pos ? 820 : 560, boxShadow: '0 20px 60px rgba(0,0,0,0.4)', maxHeight: '90vh', overflowY: 'auto', transition: 'max-width 0.2s' }}
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12, padding: '24px 28px', width: '100%', maxWidth: (pos || result) ? 820 : 560, boxShadow: '0 20px 60px rgba(0,0,0,0.4)', maxHeight: '90vh', overflowY: 'auto', transition: 'max-width 0.2s' }}
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
@@ -320,7 +413,7 @@ export default function ImportPOModal({ onClose, entities = [] }) {
             <span style={{ fontWeight: 700, fontSize: 16 }}>Import PO</span>
             {pos && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{pos.length} order{pos.length !== 1 ? 's' : ''} found</span>}
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex' }}>
+          <button onClick={() => { if (!importing) onClose() }} disabled={importing} style={{ background: 'none', border: 'none', cursor: importing ? 'not-allowed' : 'pointer', color: 'var(--text-muted)', display: 'flex' }}>
             <X size={18} />
           </button>
         </div>
@@ -331,7 +424,65 @@ export default function ImportPOModal({ onClose, entities = [] }) {
           </div>
         )}
 
-        {!pos ? (
+        {result ? (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', background: 'rgba(16,185,129,0.08)', borderRadius: 8 }}>
+              <CheckCircle size={16} style={{ color: '#059669', flexShrink: 0 }} />
+              <span style={{ fontSize: 13, color: '#059669', fontWeight: 600 }}>
+                {result.created.length} invoice{result.created.length !== 1 ? 's' : ''} created
+                {result.errors.length > 0 && <span style={{ color: '#dc2626' }}> · {result.errors.length} failed</span>}
+              </span>
+            </div>
+
+            {result.created.length > 0 && (
+              <div style={{ overflowX: 'auto', marginBottom: 14 }}>
+                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg-secondary)', borderBottom: '2px solid var(--border)' }}>
+                      {['PO Number', 'Invoice #', 'Entity', 'Total', ''].map(h => (
+                        <th key={h} style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textAlign: h === 'Total' ? 'right' : 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.created.map(inv => (
+                      <tr
+                        key={inv.id}
+                        style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                        onClick={() => { onClose(); navigate(`/invoices/${inv.id}`) }}
+                      >
+                        <td style={{ padding: '9px 10px', fontFamily: 'monospace', fontWeight: 700 }}>{inv.po_number}</td>
+                        <td style={{ padding: '9px 10px', fontFamily: 'monospace', color: 'var(--accent)' }}>{inv.invoice_number}</td>
+                        <td style={{ padding: '9px 10px' }}>
+                          <span style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--accent)', padding: '2px 8px', borderRadius: 4, fontWeight: 600, fontSize: 11 }}>{inv.entity}</span>
+                        </td>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>R {fmt(inv.total)}</td>
+                        <td style={{ padding: '9px 10px', color: 'var(--text-muted)' }}><ChevronRight size={13} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {result.errors.length > 0 && (
+              <div style={{ marginBottom: 14, padding: '10px 14px', background: 'rgba(220,38,38,0.06)', borderRadius: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#dc2626', marginBottom: 6 }}>Not created</div>
+                {result.errors.map((er, i) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '2px 0' }}>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{er.po_number}</span> — {er.message}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <button className="btn btn-primary btn-sm" onClick={() => { onClose(); navigate('/invoices') }}>
+                View all invoices
+              </button>
+            </div>
+          </>
+        ) : !pos ? (
           <>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
               Upload the Excel file converted from the PO PDF. Multiple POs and multi-page POs are handled automatically — each PO becomes a separate invoice.
@@ -356,7 +507,7 @@ export default function ImportPOModal({ onClose, entities = [] }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '10px 14px', background: 'rgba(16,185,129,0.08)', borderRadius: 8 }}>
               <CheckCircle size={15} style={{ color: '#059669', flexShrink: 0 }} />
               <span style={{ fontSize: 13, color: '#059669', fontWeight: 600 }}>
-                {pos.length} purchase order{pos.length !== 1 ? 's' : ''} found — click Create Invoice on each one to generate
+                {pos.length} purchase order{pos.length !== 1 ? 's' : ''} found — create them all at once below, or click Create Invoice on a single row
               </span>
             </div>
 
@@ -416,8 +567,18 @@ export default function ImportPOModal({ onClose, entities = [] }) {
               </table>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => { setPos(null); setError('') }}>Upload different file</button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, borderTop: '1px solid var(--border)', paddingTop: 12, flexWrap: 'wrap' }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setPos(null); setError('') }} disabled={importing}>Upload different file</button>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => handleImportAll(filteredPos)}
+                disabled={importing || filteredPos.length === 0}
+                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                {importing
+                  ? <><Loader size={14} className="spin" /> Creating… ({progress.done}/{progress.total})</>
+                  : <><Layers size={14} /> Create all {filteredPos.length} invoice{filteredPos.length !== 1 ? 's' : ''}</>}
+              </button>
             </div>
           </>
         )}
