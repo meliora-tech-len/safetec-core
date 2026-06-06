@@ -3,12 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader, Fuel, UtensilsCrossed, BarChart3,
-  CheckCheck, CalendarClock,
+  CheckCheck, CalendarClock, Search, Check,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import SearchableSelect from '../components/SearchableSelect'
 import {
-  getTruck, getTruckLoads, getTruckLoadSummary,
+  getTruck, getTruckLoads, getTruckLoadSummary, getFleetTrucks,
   createTruckLoad, createSplitLoad, updateTruckLoad, deleteTruckLoad, archiveTruckLoad,
   getMines, getDrivers, getSettings, getSuppliers,
   getDieselFillUps, createDieselFillUp, updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, getCurrentDieselRate,
@@ -29,6 +29,105 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA') : '—'
 const today = new Date().toISOString().slice(0, 10)
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
+// In-header truck switcher: click the registration to open a grouped, searchable
+// list of trucks and jump straight to another one (keeps the current month/tab).
+function TruckSwitcher({ trucks, currentId, currentLabel, entities, onSelect }) {
+  const [open, setOpen]   = useState(false)
+  const [query, setQuery] = useState('')
+  const ref = useRef(null)
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+  useEffect(() => { if (open) requestAnimationFrame(() => inputRef.current?.focus()) }, [open])
+
+  const current = trucks.find(t => String(t.id) === String(currentId))
+  const entityCode = (id) => entities.find(e => e.id === id)?.code
+  const groupOf = (t) => t.is_subcontractor
+    ? (t.subcontractor_display_name || t.contract_context || 'Subcontractor')
+    : (entityCode(t.entity_id) || 'Own Fleet')
+
+  const q = query.trim().toLowerCase()
+  const groups = useMemo(() => {
+    const filtered = q
+      ? trucks.filter(t =>
+          t.registration?.toLowerCase().includes(q) ||
+          String(t.fleet_number || '').toLowerCase().includes(q) ||
+          t.make?.toLowerCase().includes(q))
+      : trucks
+    const m = {}
+    for (const t of filtered) { const g = groupOf(t); (m[g] = m[g] || []).push(t) }
+    Object.values(m).forEach(arr => arr.sort((a, b) =>
+      (parseInt(a.fleet_number) || 9999) - (parseInt(b.fleet_number) || 9999) ||
+      (a.registration || '').localeCompare(b.registration || '')))
+    return Object.entries(m).sort(([a], [b]) => a.localeCompare(b))
+  }, [trucks, q, entities])
+
+  const pick = (t) => { setOpen(false); setQuery(''); if (String(t.id) !== String(currentId)) onSelect(t.id) }
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Switch truck"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-primary)' }}
+      >
+        <span style={{ fontSize: 26, fontWeight: 800, fontFamily: 'monospace', letterSpacing: 1 }}>
+          {current ? current.registration : (currentLabel || '—')}
+        </span>
+        <ChevronDown size={20} style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, marginTop: 6, zIndex: 200,
+          width: 280, maxHeight: 360, display: 'flex', flexDirection: 'column',
+          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10,
+          boxShadow: 'var(--shadow)', overflow: 'hidden',
+        }}>
+          <div className="search-bar" style={{ margin: 8 }}>
+            <Search size={14} />
+            <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="Search reg, fleet #, make…" />
+          </div>
+          <div style={{ overflowY: 'auto', padding: '0 4px 6px' }}>
+            {groups.length === 0 && (
+              <div style={{ padding: 12, fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center' }}>No trucks found</div>
+            )}
+            {groups.map(([group, list]) => (
+              <div key={group}>
+                <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', padding: '8px 8px 4px' }}>{group}</div>
+                {list.map(t => {
+                  const isCurrent = String(t.id) === String(currentId)
+                  return (
+                    <button key={t.id} onClick={() => pick(t)}
+                      onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.background = 'var(--bg-hover)' }}
+                      onMouseLeave={e => { if (!isCurrent) e.currentTarget.style.background = 'transparent' }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                        padding: '7px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: isCurrent ? 'var(--accent-subtle)' : 'transparent',
+                        color: isCurrent ? 'var(--accent)' : 'var(--text-primary)',
+                      }}>
+                      <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 13 }}>{t.registration}</span>
+                      {t.fleet_number && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>#{t.fleet_number}</span>}
+                      <span style={{ flex: 1 }} />
+                      {isCurrent && <Check size={14} />}
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 const EMPTY_LOAD = {
   load_date: '', slip_number: '', po_number: '',
@@ -1198,6 +1297,7 @@ function ProfitSheetSection({ truck, year, month, summary }) {
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
   const [dirty, setDirty]       = useState(false)
+  const [dieselOpen, setDieselOpen] = useState(false)
 
   const setField = (k, v) => { setData(d => ({ ...d, [k]: v })); setDirty(true) }
 
@@ -1209,10 +1309,24 @@ function ProfitSheetSection({ truck, year, month, summary }) {
         truck.registration ? getSupplierInvoicesByVehicle({ vehicle_reg: truck.registration, month, year }) : Promise.resolve({ data: [] }),
       ])
       const expData = expRes.data
-      if (!expData.custom_lines || expData.custom_lines.length === 0) {
-        expData.custom_lines = DEFAULT_PRESET_LINES.map(d => ({ id: crypto.randomUUID(), description: d.description, amount: null }))
+      // Unify every expense into a single editable list (custom_lines): the named
+      // standard-expense columns become rows (carrying any saved value), merged with
+      // existing custom lines. Standard labels not already present are seeded so the
+      // default set always appears. Idempotent: after the first save the standard
+      // columns are null, so they won't re-seed or double-count.
+      const existing = expData.custom_lines || []
+      const existingDescs = new Set(existing.map(l => (l.description || '').trim().toLowerCase()))
+      const stdRows = EXPENSE_ROWS
+        .filter(r => !existingDescs.has(r.label.toLowerCase()))
+        .map(r => ({ id: crypto.randomUUID(), description: r.label, amount: expData[r.key] ?? null }))
+      let lines = [...stdRows, ...existing]
+      if (existing.length === 0) {
+        lines = [...lines, ...DEFAULT_PRESET_LINES.map(d => ({ id: crypto.randomUUID(), description: d.description, amount: null }))]
       }
-      setData(expData)
+      // Clear the named columns locally so totals come solely from the unified list.
+      const cleared = {}
+      EXPENSE_ROWS.forEach(r => { cleared[r.key] = null })
+      setData({ ...expData, ...cleared, custom_lines: lines })
       setSupplierInvs(invRes.data)
       setDirty(false)
     } catch { toast.error('Failed to load profit sheet') }
@@ -1224,7 +1338,11 @@ function ProfitSheetSection({ truck, year, month, summary }) {
   const handleSave = async () => {
     setSaving(true)
     try {
-      await upsertTruckMonthlyExpenses(truck.id, { year, month }, data)
+      // Everything lives in custom_lines now — persist the named columns as null
+      // so the unified list is the single source of truth (no double-counting).
+      const payload = { ...data }
+      EXPENSE_ROWS.forEach(r => { payload[r.key] = null })
+      await upsertTruckMonthlyExpenses(truck.id, { year, month }, payload)
       toast.success('Profit sheet saved')
       setDirty(false)
     } catch { toast.error('Failed to save profit sheet') }
@@ -1261,8 +1379,11 @@ function ProfitSheetSection({ truck, year, month, summary }) {
   // Fixed expenses
   const fixedTotal = EXPENSE_ROWS.reduce((s, r) => s + (parseFloat(data[r.key]) || 0), 0)
 
-  // Supplier invoices total
+  // Supplier invoices total — diesel invoices are grouped into one expandable row.
   const supplierTotal = supplierInvs.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+  const dieselInvs    = supplierInvs.filter(i => i.is_diesel_supplier)
+  const otherInvs     = supplierInvs.filter(i => !i.is_diesel_supplier)
+  const dieselTotal   = dieselInvs.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
 
   // Custom lines total
   const customTotal = (data.custom_lines || []).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0)
@@ -1330,22 +1451,11 @@ function ProfitSheetSection({ truck, year, month, summary }) {
       </div>
 
       {/* ── Two-column body ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: 20, alignItems: 'start' }}>
 
-        {/* Left: Standard editable expense rows + custom lines */}
+        {/* Left: one combined, fully-editable expense list */}
         <div className="card" style={{ overflow: 'hidden' }}>
-          <SectionHead>Standard Expenses</SectionHead>
-          {EXPENSE_ROWS.map(r => (
-            <div key={r.key} style={psRow}>
-              <span style={psLabel}>{r.label}</span>
-              <input type="number" step="0.01" min="0" style={{ ...psInput, width: 150 }}
-                value={data[r.key] ?? ''} placeholder="—"
-                onChange={e => setField(r.key, e.target.value || null)} />
-            </div>
-          ))}
-
-          {/* Editable additional expense lines */}
-          <SectionHead>Additional Expenses</SectionHead>
+          <SectionHead>Expenses</SectionHead>
           {(data.custom_lines || []).map(l => (
             <div key={l.id} style={{ ...psRow, gap: 8 }}>
               <input
@@ -1380,14 +1490,13 @@ function ProfitSheetSection({ truck, year, month, summary }) {
             </button>
           </div>
 
-          {/* Fixed expense sub-total */}
           <div style={{ ...psRow, borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
             <span style={{ ...psLabel, fontWeight: 700 }}>Sub-total</span>
-            <span style={{ ...psAmt, color: 'var(--danger)' }}>{fmt(fixedTotal + customTotal)}</span>
+            <span style={{ ...psAmt, color: 'var(--danger)' }}>{fmt(customTotal)}</span>
           </div>
         </div>
 
-        {/* Right: Supplier invoices (auto-fetched) */}
+        {/* Right: Supplier invoices (auto-fetched) — diesel grouped into one row */}
         <div className="card" style={{ overflow: 'hidden' }}>
           <SectionHead>Supplier Invoices</SectionHead>
           {supplierInvs.length === 0 ? (
@@ -1396,7 +1505,38 @@ function ProfitSheetSection({ truck, year, month, summary }) {
             </div>
           ) : (
             <>
-              {supplierInvs.map(inv => (
+              {/* Diesel — single total that expands to show every diesel invoice */}
+              {dieselInvs.length > 0 && (
+                <>
+                  <div
+                    style={{ ...psRow, cursor: 'pointer' }}
+                    onClick={() => setDieselOpen(o => !o)}
+                  >
+                    <span style={{ ...psLabel, display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+                      {dieselOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      <Fuel size={13} style={{ color: 'var(--accent)' }} /> Diesel
+                      <span style={{ fontSize: 10, fontWeight: 700, background: 'var(--accent-subtle)', color: 'var(--accent)', borderRadius: 10, padding: '1px 7px' }}>
+                        {dieselInvs.length}
+                      </span>
+                    </span>
+                    <span style={psAmt}>{fmt(dieselTotal)}</span>
+                  </div>
+                  {dieselOpen && dieselInvs.map(inv => (
+                    <div key={inv.id} style={{ ...psRow, paddingLeft: 34, background: 'var(--bg-surface)' }}>
+                      <span style={{ ...psLabel, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <span style={{ fontWeight: 500 }}>{inv.supplier_name || '—'}</span>
+                        {inv.invoice_number && (
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
+                        )}
+                      </span>
+                      <span style={psAmt}>{fmt(inv.amount)}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {/* Non-diesel invoices, listed individually */}
+              {otherInvs.map(inv => (
                 <div key={inv.id} style={psRow}>
                   <span style={{ ...psLabel, display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <span style={{ fontWeight: 500 }}>{inv.supplier_name || '—'}</span>
@@ -1407,6 +1547,7 @@ function ProfitSheetSection({ truck, year, month, summary }) {
                   <span style={psAmt}>{fmt(inv.amount)}</span>
                 </div>
               ))}
+
               <div style={{ ...psRow, borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                 <span style={{ ...psLabel, fontWeight: 700 }}>Sub-total</span>
                 <span style={{ ...psAmt, color: 'var(--danger)' }}>{fmt(supplierTotal)}</span>
@@ -1470,8 +1611,16 @@ export default function TruckLoadProfilePage() {
   const [splitSaving, setSplitSaving] = useState(false)
   const [openSplitGroups, setOpenSplitGroups] = useState(new Set())
 
+  // All trucks (for the in-header truck switcher) — fetched once.
+  const [allTrucks, setAllTrucks] = useState([])
+  useEffect(() => {
+    getFleetTrucks({ limit: 1000 }).then(r => setAllTrucks(r.data || [])).catch(() => {})
+  }, [])
+
   // ── Load truck meta ──────────────────────────────────────────────────────────
   useEffect(() => {
+    // Reset truck-specific selection so a switch doesn't carry a stale driver over.
+    setSelectedDriverId('')
     getTruck(truckId)
       .then(r => setTruck(r.data))
       .catch(() => toast.error('Truck not found'))
@@ -1787,13 +1936,13 @@ export default function TruckLoadProfilePage() {
   }
 
   if (!truck) return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
       <div className="loading-center"><div className="spinner" /></div>
     </div>
   )
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
 
       {/* Breadcrumb */}
       <button className="btn btn-ghost btn-sm" onClick={() => navigate('/truck-loads')}
@@ -1804,9 +1953,13 @@ export default function TruckLoadProfilePage() {
       {/* Truck header card */}
       <div className="card" style={{ padding: '20px 24px', marginBottom: 24, display: 'flex', gap: 32, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         <div>
-          <div style={{ fontSize: 26, fontWeight: 800, fontFamily: 'monospace', letterSpacing: 1 }}>
-            {truck.registration}
-          </div>
+          <TruckSwitcher
+            trucks={allTrucks}
+            currentId={truck.id}
+            currentLabel={truck.registration}
+            entities={entities}
+            onSelect={(id) => navigate(`/truck-loads/${id}`)}
+          />
           {truck.temp_registration && (
             <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: 2 }}>
               prev. reg: {truck.temp_registration}
@@ -2350,7 +2503,7 @@ export default function TruckLoadProfilePage() {
               <button className="btn btn-ghost btn-sm" onClick={() => setSplitModalOpen(false)}><X size={15} /></button>
             </div>
             {/* Main load — the billing record. Counts as ONE load with full tonnes. */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: 14 }}>
               <div>
                 <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Mine</label>
                 <SearchableSelect

@@ -380,6 +380,7 @@ def list_invoices_by_vehicle(
             "invoice_date": str(inv.invoice_date) if inv.invoice_date else None,
             "amount": amount,
             "vat_applicable": inv.vat_applicable,
+            "is_diesel_supplier": bool(inv.supplier.is_diesel_supplier) if inv.supplier else False,
             "description": inv.description,
         })
     return result
