@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
+from sqlalchemy import or_, and_, func
 from typing import List, Optional
 from decimal import Decimal
 from datetime import date
@@ -165,6 +165,24 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
     first_day = datetime(year, month, 1, tzinfo=timezone.utc)
     last_day_num = calendar.monthrange(year, month)[1]
     last_day = datetime(year, month, last_day_num, 23, 59, 59, tzinfo=timezone.utc)
+
+    # Previous month window — loads dated there but flagged pay_deferred are paid in
+    # THIS cycle (they were done last month but only paid now).
+    prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
+    prev_first = datetime(prev_year, prev_month, 1, tzinfo=timezone.utc)
+    prev_last_num = calendar.monthrange(prev_year, prev_month)[1]
+    prev_last = datetime(prev_year, prev_month, prev_last_num, 23, 59, 59, tzinfo=timezone.utc)
+
+    # A load belongs to THIS pay cycle when it's dated in this month and not deferred,
+    # OR dated last month and deferred forward. Deferring shifts only the pay cycle —
+    # the load record (date, mine, tonnes, invoicing) stays in its own month.
+    pay_period_clause = or_(
+        and_(TruckLoad.load_date >= first_day, TruckLoad.load_date <= last_day,
+             TruckLoad.pay_deferred != True),
+        and_(TruckLoad.load_date >= prev_first, TruckLoad.load_date <= prev_last,
+             TruckLoad.pay_deferred == True),
+    )
+
     assmang_ids = set(_assmang_mine_ids(db))
 
     # Split-load lines attributed to this driver (each line = 0.5 of a load).
@@ -176,8 +194,7 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
             TruckLoadDriverSplit.driver_id == driver.id,
             TruckLoad.entity_id == driver.entity_id,
             TruckLoad.is_archived != True,
-            TruckLoad.load_date >= first_day,
-            TruckLoad.load_date <= last_day,
+            pay_period_clause,
         )
         .all()
     )
@@ -194,8 +211,7 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
             TruckLoad.is_split_load != True,
             TruckLoad.is_archived != True,
             TruckLoad.driver_already_paid != True,
-            TruckLoad.load_date >= first_day,
-            TruckLoad.load_date <= last_day,
+            pay_period_clause,
         ).all()
         group_a = sum(1 for l in loads if l.mine and l.mine.casual_group == 'A')
         group_b = len(loads) - group_a
@@ -226,8 +242,7 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
         TruckLoad.is_split_load != True,
         TruckLoad.driver_already_paid != True,
         or_(TruckLoad.driver_id.is_(None), TruckLoad.driver_id == driver.id),
-        TruckLoad.load_date >= first_day,
-        TruckLoad.load_date <= last_day,
+        pay_period_clause,
     ]
     load_count = db.query(func.count(TruckLoad.id)).filter(*perm_filter).scalar() or 0
     assmang_loads = (db.query(func.count(TruckLoad.id)).filter(

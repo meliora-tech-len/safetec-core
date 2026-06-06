@@ -276,12 +276,25 @@ def _sync_casual_driver(driver_id: int, load_date: datetime, db: Session):
         db.flush()
 
 
+def _effective_pay_period(load: TruckLoad):
+    """(year, month) of the pay cycle a load belongs to.
+
+    Normally the load's own month, but shifted one month forward when pay_deferred
+    is set — the load was done this month but is only paid in next month's payroll.
+    """
+    year, month = load.load_date.year, load.load_date.month
+    if getattr(load, "pay_deferred", False):
+        return (year + 1, 1) if month == 12 else (year, month + 1)
+    return year, month
+
+
 def _add_trip_log(load: TruckLoad, db: Session):
-    """Create a DriverTripLog entry for this load.
+    """Create a DriverTripLog entry for this load, on its effective pay cycle.
 
     Uses load.driver_id (the driver who actually drove) when set; falls back to the
     active driver assigned to the truck. This ensures casual drivers attributed on the
-    load record get the trip, not the truck's permanent driver.
+    load record get the trip, not the truck's permanent driver. A pay_deferred load's
+    trip lands on next month's cycle (its pay carries forward).
     """
     if load.driver_id:
         driver = db.query(Driver).filter(Driver.id == load.driver_id).first()
@@ -293,27 +306,34 @@ def _add_trip_log(load: TruckLoad, db: Session):
     if not driver:
         return
 
-    year  = load.load_date.year
-    month = load.load_date.month
+    year, month = _effective_pay_period(load)
 
-    # Ensure the pay cycle exists first
+    # Ensure the pay cycle exists (create a bare one if needed — its load counts are
+    # re-derived from truck loads whenever the cycle is opened).
     cycle = db.query(DriverPayCycle).filter(
         DriverPayCycle.driver_id == driver.id,
         DriverPayCycle.pay_month == month,
         DriverPayCycle.pay_year  == year,
     ).first()
     if not cycle:
-        # Will be created by _sync_driver_pay_cycle — flush needed first
-        return
+        settings = db.query(PayrollSettings).order_by(PayrollSettings.id.desc()).first()
+        cycle = DriverPayCycle(
+            driver_id=driver.id, pay_month=month, pay_year=year,
+            payroll_settings_id=settings.id if settings else None,
+        )
+        db.add(cycle)
+        db.flush()
 
-    prefix = "PROJ: " if load.is_projection else ""
+    deferred = getattr(load, "pay_deferred", False)
+    prefix = "PROJ: " if load.is_projection else ("CF: " if deferred else "")
     mine_name = f"{prefix}{load.mine.name}" if load.mine else ("PROJECTION" if load.is_projection else "Unknown")
+    note_kind = "projection" if load.is_projection else ("carried-forward load" if deferred else "truck load")
     entry = DriverTripLog(
         pay_cycle_id=cycle.id,
         trip_date=load.load_date,
         mine_name=mine_name,
         truck_load_id=load.id,
-        notes=f"Auto: {'projection' if load.is_projection else 'truck load'} #{load.id}",
+        notes=f"Auto: {note_kind} #{load.id}",
     )
     db.add(entry)
 
@@ -920,14 +940,19 @@ def update_truck_load(
                 for ld in dates_to_sync:
                     _sync_casual_driver(did, ld, db)
 
-    # Keep linked trip log entries aligned with the (possibly new) load date
-    trip_entries = db.query(DriverTripLog).filter(
-        DriverTripLog.truck_load_id == load_id
-    ).all()
-    for te in trip_entries:
-        te.trip_date = new_load_date
-    if len(trip_entries) == 1 and load.mine:
-        trip_entries[0].mine_name = load.mine.name
+    # Keep linked trip log entries aligned with the load. For split loads, just
+    # realign the date in place. For regular loads, rebuild the auto entry so it
+    # lands on the load's effective pay cycle (date change or pay_deferred toggle
+    # moves the trip to the right month).
+    if new_is_split:
+        for te in db.query(DriverTripLog).filter(DriverTripLog.truck_load_id == load_id).all():
+            te.trip_date = new_load_date
+            if load.mine:
+                te.mine_name = load.mine.name
+    else:
+        _remove_trip_log(load_id, db)
+        db.flush()
+        _add_trip_log(load, db)
 
     log_action(
         db, "truck_load.updated", user_id=current_user.id,

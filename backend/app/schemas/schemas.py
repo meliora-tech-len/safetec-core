@@ -1281,6 +1281,7 @@ class TruckLoadBase(BaseModel):
     is_split_load: bool = False
     is_projection: bool = False
     driver_already_paid: bool = False
+    pay_deferred: bool = False
     notes: Optional[str] = None
     checked_by: Optional[str] = None
     statement_month: Optional[int] = None
@@ -1310,6 +1311,7 @@ class TruckLoadUpdate(BaseModel):
     is_split_load: Optional[bool] = None
     is_projection: Optional[bool] = None
     driver_already_paid: Optional[bool] = None
+    pay_deferred: Optional[bool] = None
     notes: Optional[str] = None
     checked_by: Optional[str] = None
     statement_month: Optional[int] = None

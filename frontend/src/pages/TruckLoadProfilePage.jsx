@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader, Fuel, UtensilsCrossed, BarChart3,
-  CheckCheck,
+  CheckCheck, CalendarClock,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import SearchableSelect from '../components/SearchableSelect'
@@ -1664,6 +1664,15 @@ export default function TruckLoadProfilePage() {
     } catch { toast.error('Failed to update') }
   }
 
+  const handleTogglePayDeferred = async (load, e) => {
+    e.stopPropagation()
+    try {
+      await updateTruckLoad(load.id, { pay_deferred: !load.pay_deferred })
+      fetchLoads()
+      toast.success(load.pay_deferred ? 'Pay deferral removed — paid in load month' : 'Marked: pay in next month (load stays in this month)')
+    } catch { toast.error('Failed to update') }
+  }
+
   const handleSaveProjection = async () => {
     if (!projForm.mine_id) return toast.error('Select a mine')
     if (!projForm.load_date) return toast.error('Load date required')
@@ -2156,6 +2165,11 @@ export default function TruckLoadProfilePage() {
                                 <CheckCheck size={9} /> paid
                               </span>
                             )}
+                            {l.pay_deferred && (
+                              <span title="Done this month, paid in next month's payroll" style={{ background: '#d97706', color: '#fff', fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 700, fontStyle: 'normal', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                                <CalendarClock size={9} /> next month
+                              </span>
+                            )}
                           </span>
                         ) : '—'}
                       </td>}
@@ -2182,6 +2196,13 @@ export default function TruckLoadProfilePage() {
                           style={{ color: l.driver_already_paid ? '#16a34a' : 'var(--text-muted)', marginRight: 2 }}
                           onClick={e => handleToggleDriverPaid(l, e)}>
                           <CheckCheck size={13} />
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          title={l.pay_deferred ? "Pay deferred to next month — click to pay in this month" : "Pay in next month's payroll (load stays in this month)"}
+                          style={{ color: l.pay_deferred ? '#d97706' : 'var(--text-muted)', marginRight: 2 }}
+                          onClick={e => handleTogglePayDeferred(l, e)}>
+                          <CalendarClock size={13} />
                         </button>
                         <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
                           onClick={e => handleDelete(l, e)}><Trash2 size={13} /></button>
