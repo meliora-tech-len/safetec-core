@@ -224,7 +224,11 @@ def update_truck(
     _check_entity_access(truck.entity_id, current_user)
 
     try:
-        update_fields = payload.model_dump(exclude={"trailers"}, exclude_none=True)
+        # exclude_unset (not exclude_none): apply exactly the fields the client sent,
+        # so an explicit null clears a value — e.g. unchecking "is subcontractor"
+        # must be able to clear subcontractor_id. With exclude_none a cleared link
+        # silently kept its old value.
+        update_fields = payload.model_dump(exclude={"trailers"}, exclude_unset=True)
         if "registration" in update_fields and update_fields["registration"]:
             update_fields["registration"] = update_fields["registration"].strip().replace(" ", "")
         for field, value in update_fields.items():
