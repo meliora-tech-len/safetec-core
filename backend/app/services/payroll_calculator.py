@@ -119,17 +119,15 @@ def calculate_pay_cycle(
     # Statutory deductions.
     # basic_salary is the monthly figure (it also drives gross pay above);
     # weekly_wage = monthly ÷ weekly-to-monthly factor.
-    #   • Provident          — flat % of the monthly salary
-    #   • NBCRFLI / Wellness  — % of the weekly wage, charged per week (4/month)
-    #   • Sick / Holiday / Leave — % of one week's wage (weekly accrual)
+    #   • NBCRFLI / Provident / Wellness — flat % of the monthly salary
+    #   • Sick / Holiday / Leave         — % of one week's wage (weekly accrual)
     # paye_fixed holds the capped UIF amount (R177.12); real PAYE income tax is
     # handled externally and is intentionally not computed here.
-    factor          = d(settings.weekly_to_monthly_factor)
-    weekly_wage     = basic_salary / factor if factor else Decimal(0)
-    weeks_per_month = Decimal(4)
-    nbcrfli       = weekly_wage * weeks_per_month * d(settings.nbcrfli_rate)
+    factor        = d(settings.weekly_to_monthly_factor)
+    weekly_wage   = basic_salary / factor if factor else Decimal(0)
+    nbcrfli       = basic_salary * d(settings.nbcrfli_rate)
     provident     = basic_salary * d(settings.provident_rate)
-    wellness      = weekly_wage * weeks_per_month * d(settings.wellness_rate)
+    wellness      = basic_salary * d(settings.wellness_rate)
     sick_fund     = weekly_wage * d(settings.sick_fund_rate)
     holiday_fund  = weekly_wage * d(settings.holiday_fund_rate)
     leave_pay     = weekly_wage * d(settings.leave_pay_rate)
@@ -141,8 +139,13 @@ def calculate_pay_cycle(
     subs_advance  = d(cycle.subsistence_advance_paid)
     subs_variance = subs_advance - total_subs
 
+    # Sick/Holiday/Leave are accruals — part of the wage (earnings) AND withheld
+    # into their funds (deductions), so they net to zero in take-home. They live in
+    # total_statutory for the payslip's deduction column, so credit them back here
+    # instead of letting them reduce the payout.
+    accrual_offset   = sick_fund + holiday_fund + leave_pay
     total_deductions = total_statutory + subs_advance + loan_deduction + cash_deduction + food_deduction
-    net_payable      = gross - total_deductions
+    net_payable      = gross + accrual_offset - total_deductions
 
     return {
         "driver_type":               "permanent",

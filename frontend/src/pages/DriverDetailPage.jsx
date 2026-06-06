@@ -93,14 +93,13 @@ function calcStatutory(basicSalary, settings) {
   if (!settings || !basicSalary) return null
   const s = settings
   // basicSalary is monthly; weeklyWage = monthly ÷ weekly-to-monthly factor.
-  //   Provident          — % of monthly salary
-  //   NBCRFLI / Wellness — % of weekly wage, charged per week (4/month)
-  //   Sick / Holiday / Leave — % of one week's wage
+  //   NBCRFLI / Provident / Wellness — % of monthly salary
+  //   Sick / Holiday / Leave         — % of one week's wage
   const factor      = parseFloat(s.weekly_to_monthly_factor)
   const weeklyWage  = factor ? basicSalary / factor : 0
-  const nbcrfli    = weeklyWage * 4 * parseFloat(s.nbcrfli_rate)
+  const nbcrfli    = basicSalary * parseFloat(s.nbcrfli_rate)
   const provident  = basicSalary * parseFloat(s.provident_rate)
-  const wellness   = weeklyWage * 4 * parseFloat(s.wellness_rate)
+  const wellness   = basicSalary * parseFloat(s.wellness_rate)
   const sickFund   = weeklyWage * parseFloat(s.sick_fund_rate)
   const holidayFund = weeklyWage * parseFloat(s.holiday_fund_rate)
   const leavePay   = weeklyWage * parseFloat(s.leave_pay_rate)
@@ -361,7 +360,12 @@ export default function DriverDetailPage() {
   const cashDedParsed = parseFloat(cashDed || 0)
   const totalFoodPaid = cycle?.food_payments?.reduce((s, p) => s + parseFloat(p.amount || 0), 0) || 0
   const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed : 0) + loanDedParsed + cashDedParsed + totalFoodPaid
-  const netPayable = liveCalc ? liveCalc.gross - totalDeductions : 0
+  // Sick/Holiday/Leave are part of the wage (earnings) AND withheld into their
+  // funds (deductions), so they appear on both sides and net to zero in take-home.
+  // Gross/total earnings therefore includes them; net = grossEarnings − deductions.
+  const accrualOffset = stat ? (stat.sickFund + stat.holidayFund + stat.leavePay) : 0
+  const grossEarnings = liveCalc ? liveCalc.gross + accrualOffset : 0
+  const netPayable = liveCalc ? grossEarnings - totalDeductions : 0
 
   const downloadPayslip = async () => {
     setPdfLoading(true)
@@ -457,7 +461,7 @@ export default function DriverDetailPage() {
         <div className="grid-4" style={{ marginBottom: 20 }}>
           {[
             { label: 'Total Loads',      value: liveCalc.grand,                   colour: 'var(--accent)' },
-            { label: 'Gross Income',     value: fmt(liveCalc.gross),              colour: 'var(--success)' },
+            { label: 'Gross Income',     value: fmt(grossEarnings),               colour: 'var(--success)' },
             { label: 'Total Deductions', value: fmt(totalDeductions),             colour: 'var(--danger)' },
             { label: 'Net Payable',      value: fmt(netPayable),                  colour: 'var(--accent)' },
           ].map(c => (
@@ -558,6 +562,11 @@ export default function DriverDetailPage() {
                     ['Additional loads', fmt(liveCalc.additionalTotal)],
                   ] : [
                     ['Basic salary',    fmt(liveCalc.basicSalary)],
+                    ...(stat ? [
+                      ['Sick Fund',     fmt(stat.sickFund)],
+                      ['Holiday Fund',  fmt(stat.holidayFund)],
+                      ['Leave Pay',     fmt(stat.leavePay)],
+                    ] : []),
                     ['Subsistence',     fmt(liveCalc.totalSubs)],
                     ['Load incentive',  fmt(liveCalc.totalInc)],
                     [`Mine bonus (${liveCalc.assmangEff} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)],
@@ -569,7 +578,7 @@ export default function DriverDetailPage() {
                     </div>
                   ))}
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', fontWeight: 700, color: 'var(--accent)', fontSize: 14 }}>
-                    <span>Gross income</span><span>{fmt(liveCalc.gross)}</span>
+                    <span>Gross income</span><span>{fmt(grossEarnings)}</span>
                   </div>
                 </div>
               )}
@@ -635,6 +644,11 @@ export default function DriverDetailPage() {
                   ['Additional loads',   fmt(liveCalc.additionalTotal)],
                 ] : [
                   ['Basic salary',       fmt(liveCalc.basicSalary)],
+                  ...(stat ? [
+                    ['Sick fund',     fmt(stat.sickFund)],
+                    ['Holiday fund',  fmt(stat.holidayFund)],
+                    ['Leave pay',     fmt(stat.leavePay)],
+                  ] : []),
                   ['Load incentive',     fmt(liveCalc.totalInc)],
                   ['Mine bonus',         fmt(liveCalc.assmang)],
                   ['Subsistence',        fmt(liveCalc.totalSubs)],
@@ -645,7 +659,7 @@ export default function DriverDetailPage() {
                   </div>
                 ))}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontWeight: 600, fontSize: 13 }}>
-                  <span>Gross</span><span>{fmt(liveCalc.gross)}</span>
+                  <span>Gross</span><span>{fmt(grossEarnings)}</span>
                 </div>
 
                 {isPermanent && stat && (
