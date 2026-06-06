@@ -315,7 +315,7 @@ export default function DriversPage() {
   )
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
       <div className="page-header">
         <div>
           <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

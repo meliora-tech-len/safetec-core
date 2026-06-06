@@ -666,7 +666,7 @@ function SummaryCard({ label, value, accent }) {
 }
 
 const styles = {
-  page: { padding: '28px 32px', flex: 1 },
+  page: { padding: 'var(--page-pad)', flex: 1 },
 }
 
 const S = {

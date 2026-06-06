@@ -126,11 +126,11 @@ export default function SettingsPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: '28px 32px', color: 'var(--text-muted)' }}>Loading settings...</div>
+    return <div style={{ padding: 'var(--page-pad)', color: 'var(--text-muted)' }}>Loading settings...</div>
   }
 
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 860 }}>
+    <div style={{ padding: 'var(--page-pad)', maxWidth: 860 }}>
       <div style={{ marginBottom: 28 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Settings</h1>
         <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', fontSize: 13 }}>

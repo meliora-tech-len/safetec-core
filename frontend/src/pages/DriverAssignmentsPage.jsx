@@ -546,13 +546,13 @@ export default function DriverAssignmentsPage() {
   const entityName = (id) => entities.find(e => e.id === id)?.code || ''
 
   if (loading) return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
       <div className="loading-center"><div className="spinner" /></div>
     </div>
   )
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="page-header" style={{ marginBottom: 24 }}>

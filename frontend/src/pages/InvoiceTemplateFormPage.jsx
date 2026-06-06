@@ -239,7 +239,7 @@ export default function InvoiceTemplateFormPage() {
     }
   }
 
-  if (loading) return <div style={{ padding: '28px 32px', color: 'var(--text-muted)' }}>Loading...</div>
+  if (loading) return <div style={{ padding: 'var(--page-pad)', color: 'var(--text-muted)' }}>Loading...</div>
 
   return (
     <div style={styles.page}>

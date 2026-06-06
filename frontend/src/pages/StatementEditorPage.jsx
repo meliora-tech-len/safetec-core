@@ -438,13 +438,13 @@ export default function StatementEditorPage() {
   const isAccountType = stmtType === 'account'
 
   if (loading) return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
       <div className="loading-center"><div className="spinner" /></div>
     </div>
   )
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
 
       {/* ── Page header ── */}
       <div className="page-header">

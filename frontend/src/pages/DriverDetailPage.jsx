@@ -157,7 +157,7 @@ function AdditionalLoadModal({ entry, defaultTruckReg, onSave, onClose }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return (
     <Modal title={isEdit ? 'Edit Additional Load' : 'Add Additional Load'} onClose={onClose}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: '12px 16px' }}>
         <div>
           <label className="form-label">Date *</label>
           <DateInput className="form-input" value={form.load_date} onChange={e => set('load_date', e.target.value)} />
@@ -208,7 +208,7 @@ function FoodPaymentModal({ entry, onSave, onClose }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return (
     <Modal title={isEdit ? 'Edit Food Payment' : 'Add Food Payment'} onClose={onClose}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: '12px 16px' }}>
         <div>
           <label className="form-label">Date *</label>
           <DateInput className="form-input" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} />
@@ -421,7 +421,7 @@ export default function DriverDetailPage() {
   const isPermanent = driver.driver_type === 'permanent'
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1, maxWidth: 1400 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1, maxWidth: 1400 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -474,7 +474,7 @@ export default function DriverDetailPage() {
       )}
 
       {loading ? <div className="spinner" style={{ margin: '40px auto' }} /> : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: 20, alignItems: 'start' }}>
 
           {/* ── LEFT COLUMN ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -492,7 +492,7 @@ export default function DriverDetailPage() {
               {isPermanent ? (
                 <div style={{ background: 'rgba(22,163,74,0.06)', borderRadius: 8, padding: '14px 16px', marginBottom: 16 }}>
                   <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--success)', marginBottom: 10 }}>Lohatla Mine</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: 12 }}>
                     <div>
                       <label className="form-label">Base loads (max 7)</label>
                       <input className="form-input" type="number" min="0" max="7" value={loads.lohatla_base_loads}
@@ -605,7 +605,7 @@ export default function DriverDetailPage() {
               )}
 
               {/* Loans */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: 12, marginBottom: 12 }}>
                 <div>
                   <label className="form-label">Staff loan balance</label>
                   <input className="form-input" type="number" step="0.01" value={loanBal} onChange={e => setLoanBal(e.target.value)} />
@@ -930,7 +930,7 @@ export default function DriverDetailPage() {
                 <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Driver Info</h3>
                 <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setEditModal(true)}><Edit2 size={13} /> Edit</button>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', fontSize: 13 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: '8px 16px', fontSize: 13 }}>
                 {[
                   ['Employee #',     driver.employee_number || '—'],
                   ['ID Number',      driver.id_number       || '—'],
@@ -1039,7 +1039,7 @@ function EditDriverModal({ driver, entities, onSave, onClose }) {
 
   return (
     <Modal title="Edit Driver" onClose={onClose}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: '12px 16px' }}>
         <div>
           <label className="form-label">Entity</label>
           <select className="form-input" value={form.entity_id} onChange={e => set('entity_id', parseInt(e.target.value))}>

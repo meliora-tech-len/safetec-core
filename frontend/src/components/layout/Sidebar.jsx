@@ -62,7 +62,7 @@ const SETTINGS_NAV = [
   { to: '/settings',              icon: Settings,  label: 'Settings',     end: true },
 ]
 
-export default function Sidebar() {
+export default function Sidebar({ open = false, onClose = () => {} }) {
   const { user, logout, isAdmin, activeEntity, entities, setActiveEntity } = useAuth()
   const { isDark, toggle } = useTheme()
   const navigate = useNavigate()
@@ -154,7 +154,7 @@ export default function Sidebar() {
   const logoUrl = activeEntity?.logo_url
 
   return (
-    <aside style={styles.sidebar}>
+    <aside className={`app-sidebar${open ? ' open' : ''}`}>
       {/* Logo / Entity */}
       <div style={{ ...styles.logo, position: 'relative' }} ref={entityMenuRef}>
         <div style={{
@@ -232,7 +232,7 @@ export default function Sidebar() {
         {/* Main nav */}
         <div style={styles.navSection}>
           {visibleNav.map(({ to, icon: Icon, label, end }) => (
-            <NavLink key={to} to={to} end={!!end} style={({ isActive }) => ({
+            <NavLink key={to} to={to} end={!!end} onClick={onClose} style={({ isActive }) => ({
               ...styles.navItem,
               ...(isActive ? styles.navItemActive : {}),
             })}>
@@ -247,7 +247,7 @@ export default function Sidebar() {
           <div>
             <div style={styles.navLabel}>Billing</div>
             {visibleDocNav.map(({ to, icon: Icon, label }) => (
-              <NavLink key={to} to={to} style={({ isActive }) => ({
+              <NavLink key={to} to={to} onClick={onClose} style={({ isActive }) => ({
                 ...styles.navItem,
                 ...(isActive ? styles.navItemActive : {}),
               })}>
@@ -262,7 +262,7 @@ export default function Sidebar() {
         <div>
           <div style={styles.navLabel}>Settings</div>
           {SETTINGS_NAV.map(({ to, icon: Icon, label, end }) => (
-            <NavLink key={to} to={to} end={!!end} style={({ isActive }) => ({
+            <NavLink key={to} to={to} end={!!end} onClick={onClose} style={({ isActive }) => ({
               ...styles.navItem,
               ...(isActive ? styles.navItemActive : {}),
             })}>
@@ -277,7 +277,7 @@ export default function Sidebar() {
           <div>
             <div style={styles.navLabel}>Administration</div>
             {ADMIN_NAV.map(({ to, icon: Icon, label }) => (
-              <NavLink key={to} to={to} end style={({ isActive }) => ({
+              <NavLink key={to} to={to} end onClick={onClose} style={({ isActive }) => ({
                 ...styles.navItem,
                 ...(isActive ? styles.navItemActive : {}),
               })}>
@@ -380,11 +380,6 @@ export default function Sidebar() {
 }
 
 const styles = {
-  sidebar: {
-    width: 160, flexShrink: 0, background: 'var(--bg-sidebar)',
-    borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column',
-    height: '100vh', position: 'sticky', top: 0,
-  },
   logo: {
     display: 'flex', alignItems: 'center', gap: 8,
     padding: '12px 12px', borderBottom: '1px solid var(--border)',

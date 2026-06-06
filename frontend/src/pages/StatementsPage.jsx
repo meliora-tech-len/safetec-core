@@ -370,7 +370,7 @@ export default function StatementsPage() {
   const visible = filterType ? statements.filter(s => s.statement_type === filterType) : statements
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
 
       <div className="page-header">
         <div>

@@ -201,7 +201,7 @@ export default function UsersPage() {
   }
 
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 980 }}>
+    <div style={{ padding: 'var(--page-pad)', maxWidth: 980 }}>
       {/* Header */}
       <div className="page-header" style={{ marginBottom: 24 }}>
         <div>

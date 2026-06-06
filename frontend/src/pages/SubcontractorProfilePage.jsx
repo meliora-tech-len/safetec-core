@@ -310,7 +310,7 @@ export default function SubcontractorProfilePage() {
   const allInvoices = groups.flatMap(g => g.invoices)
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
 
       {/* ── Header ── */}
       <div className="page-header">

@@ -190,7 +190,7 @@ export default function EntitiesPage() {
   const nextQuote = `${form.quote_prefix || 'QT'}${String((parseInt(form.quote_counter) || 0) + 1).padStart(5, '0')}`
 
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 960 }}>
+    <div style={{ padding: 'var(--page-pad)', maxWidth: 960 }}>
       {/* Header */}
       <div className="page-header" style={{ marginBottom: 24 }}>
         <div>

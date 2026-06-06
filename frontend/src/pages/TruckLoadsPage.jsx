@@ -426,7 +426,7 @@ export default function TruckLoadsPage() {
   ]
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
 
       <div className="page-header">
         <div>

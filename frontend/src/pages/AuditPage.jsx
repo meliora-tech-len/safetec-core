@@ -240,7 +240,7 @@ export default function AuditPage() {
 }
 
 const styles = {
-  page: { padding: '28px 32px', flex: 1 },
+  page: { padding: 'var(--page-pad)', flex: 1 },
   filters: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' },
   searchWrap: { position: 'relative', display: 'flex', alignItems: 'center' },
   searchIcon: { position: 'absolute', left: 9, color: 'var(--text-muted)', pointerEvents: 'none' },

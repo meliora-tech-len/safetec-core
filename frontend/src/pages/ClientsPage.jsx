@@ -66,7 +66,7 @@ export default function ClientsPage() {
   }
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
       <div className="page-header">
         <div>
           <h1 className="page-title">Clients</h1>

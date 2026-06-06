@@ -577,7 +577,7 @@ export default function DieselRatesPage() {
 }
 
 const styles = {
-  page: { padding: '28px 32px', flex: 1 },
+  page: { padding: 'var(--page-pad)', flex: 1 },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
   title: { fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', margin: 0 },
   subtitle: { fontSize: 13, color: 'var(--text-muted)', marginTop: 4 },
@@ -651,7 +651,7 @@ const styles = {
     padding: '8px 12px', background: 'var(--bg-input)', color: 'var(--text-primary)',
     border: '1px solid var(--border)', borderRadius: 8, fontSize: 13,
   },
-  row2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
+  row2: { display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: 12 },
   modalActions: { display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 },
 }
 

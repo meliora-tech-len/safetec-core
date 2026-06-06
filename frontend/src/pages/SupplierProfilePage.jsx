@@ -2456,7 +2456,7 @@ const liStyles = {
 
 
 const styles = {
-  page: { padding: '28px 32px', flex: 1 },
+  page: { padding: 'var(--page-pad)', flex: 1 },
   infoCard: {
     display: 'flex', flexWrap: 'wrap', gap: '6px 24px',
     padding: '12px 16px', marginBottom: 24,

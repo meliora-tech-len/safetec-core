@@ -523,7 +523,7 @@ function IncomeExpensesReport({ data, year, onViewDetail }) {
       <div style={{ padding: '16px 20px 4px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
         VAT Position
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: '0 20px 16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, padding: '0 20px 16px' }}>
         {vatCards.map(c => (
           <div key={c.label} style={{
             background: 'var(--bg-surface)', border: '1px solid var(--border)',
@@ -961,7 +961,7 @@ function SarsVatDetail({ data, year, onBack }) {
 
 
 const styles = {
-  page: { padding: '28px 32px', flex: 1 },
+  page: { padding: 'var(--page-pad)', flex: 1 },
   header: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
     marginBottom: 24,

@@ -416,7 +416,7 @@ function StatCard({ icon, iconBg, iconColor, label, value, sub }) {
 }
 
 const styles = {
-  page: { padding: '28px 32px', flex: 1 },
+  page: { padding: 'var(--page-pad)', flex: 1 },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 },
   title: { fontSize: 22, fontWeight: 700 },
   sub: { fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 },

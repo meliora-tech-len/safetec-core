@@ -558,7 +558,7 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
 }
 
 const styles = {
-  page: { padding: '28px 32px', flex: 1 },
+  page: { padding: 'var(--page-pad)', flex: 1 },
   filters: { display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' },
   entityChip: {
     background: 'var(--accent-dim)', color: 'var(--accent)',

@@ -22,6 +22,12 @@
   --radius:     10px;
   --radius-sm:  6px;
   --font: 'Inter', system-ui, -apple-system, sans-serif;
+  /* Responsive page padding — referenced inline as var(--page-pad) so the same
+     wrapper adapts across breakpoints (overridden in the media queries below). */
+  --page-pad: 28px 32px;
+  /* Two-column inline grids — referenced as gridTemplateColumns: 'var(--col-2)'
+     so they stack to one column on phones. */
+  --col-2: 1fr 1fr;
 }
 
 /* ── Light theme ───────────────────────────────────────────── */
@@ -248,6 +254,7 @@ tbody tr:first-child td { border-top: none; }
   animation: spin 0.6s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.7s linear infinite; }
 
 .loading-center {
   display: flex; align-items: center; justify-content: center;
@@ -346,9 +353,58 @@ hr { border: none; border-top: 1px solid var(--border); }
 }
 .theme-toggle:hover { color: var(--text-primary); border-color: var(--accent); }
 
-/* Responsive */
+/* ── App shell: sidebar + mobile drawer ────────────────────── */
+.app-sidebar {
+  width: 160px; flex-shrink: 0; background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  height: 100vh; position: sticky; top: 0; z-index: 50;
+}
+
+/* Mobile top bar (hamburger + brand) — hidden on desktop */
+.mobile-topbar { display: none; }
+
+.sidebar-backdrop {
+  position: fixed; inset: 0; z-index: 45;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(2px);
+}
+
+/* ── Tablet / small laptop ─────────────────────────────────── */
+@media (max-width: 1024px) {
+  .grid-4 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── Phone / narrow ────────────────────────────────────────── */
 @media (max-width: 768px) {
+  :root, [data-theme="dark"], [data-theme="light"] { --page-pad: 16px 14px; --col-2: 1fr; }
+
   .form-row, .form-row-3 { grid-template-columns: 1fr; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+
+  /* Sidebar becomes an off-canvas drawer */
+  .app-sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; height: 100%;
+    width: 240px; transform: translateX(-100%);
+    transition: transform 0.25s ease; box-shadow: var(--shadow);
+  }
+  .app-sidebar.open { transform: translateX(0); }
+
+  .mobile-topbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    background: var(--bg-sidebar); position: sticky; top: 0; z-index: 40;
+  }
+
+  .page-title { font-size: 19px; }
+  .modal-footer { flex-direction: column-reverse; }
+  .modal-footer button { width: 100%; justify-content: center; }
+}
+
+/* ── Very small phones ─────────────────────────────────────── */
+@media (max-width: 480px) {
+  .stat-card-value { font-size: 22px; }
+  th { padding: 9px 10px; }
+  td { padding: 10px; }
 }

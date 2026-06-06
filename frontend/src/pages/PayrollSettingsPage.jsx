@@ -73,7 +73,7 @@ function GroupForm({ group, onSave, onCancel }) {
 
   return (
     <form onSubmit={handleSubmit}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: 12, marginBottom: 14 }}>
         <div className="form-group" style={{ margin: 0 }}>
           <label className="form-label">Route Group Name *</label>
           <input className="form-control" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Lohatla" required />
@@ -314,7 +314,7 @@ export default function PayrollSettingsPage() {
   const activeGroups = groups.filter(g => g.is_active)
 
   return (
-    <div style={{ padding: '28px 32px', flex: 1, maxWidth: 1100 }}>
+    <div style={{ padding: 'var(--page-pad)', flex: 1, maxWidth: 1100 }}>
       <div className="page-header">
         <div>
           <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -366,7 +366,7 @@ export default function PayrollSettingsPage() {
       </div>
 
       {/* ── Casual Rate · Assmang Bonus · Payroll Factor ──────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, marginBottom: 24 }}>
         <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
           <h3 style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Casual Driver Rates
@@ -440,7 +440,7 @@ export default function PayrollSettingsPage() {
         <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           Statutory Deduction Rates
         </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 32px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: '4px 32px' }}>
           {DEDUCTION_FIELDS.map(f => (
             <div key={f.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
               <label className="form-label" style={{ margin: 0 }}>{f.label}</label>
