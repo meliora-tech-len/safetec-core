@@ -1614,7 +1614,7 @@ export default function TruckLoadProfilePage() {
   // All trucks (for the in-header truck switcher) — fetched once.
   const [allTrucks, setAllTrucks] = useState([])
   useEffect(() => {
-    getFleetTrucks({ limit: 1000 }).then(r => setAllTrucks(r.data || [])).catch(() => {})
+    getFleetTrucks({ limit: 500 }).then(r => setAllTrucks(r.data || [])).catch(() => {})
   }, [])
 
   // ── Load truck meta ──────────────────────────────────────────────────────────
