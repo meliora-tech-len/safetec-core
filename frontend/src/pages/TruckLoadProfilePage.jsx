@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader, Fuel, UtensilsCrossed, BarChart3,
-  CheckCheck, CalendarClock, Search, Check,
+  CheckCheck, CalendarClock, Search, Check, Flag,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import SearchableSelect from '../components/SearchableSelect'
@@ -13,6 +13,7 @@ import {
   getMines, getDrivers, getSettings, getSuppliers,
   getDieselFillUps, createDieselFillUp, updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, getCurrentDieselRate,
   addDriverAdditionalLoad, updateDriverAdditionalLoad, deleteDriverAdditionalLoad, archiveDriverAdditionalLoad,
+  getAdditionalLoadRates,
   addDriverFoodPayment, getTruckAdditionalLoads, getTruckFoodPayments, deleteDriverFoodPayment,
   getTruckMonthlyExpenses, upsertTruckMonthlyExpenses,
   getSupplierInvoicesByVehicle,
@@ -796,14 +797,27 @@ function DieselSection({ truck, year, month, suppliers }) {
 
 
 // ── Additional Loads section (shown below main loads) ─────────────────────────
-function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId }) {
+function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId, isSafetec }) {
+  const EMPTY_AL = { driver_id: '', customer_id: '', route_name: '', delivery_note: '', tons: '', amount: '', load_date: '', waiting_for_slips: false, is_paid: false, notes: '' }
   const [entries, setEntries]   = useState([])
   const [loading, setLoading]   = useState(true)
   const [addingNew, setAddingNew] = useState(false)
   const [saving, setSaving]     = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
-  const [form, setForm]         = useState({ driver_id: '', route_name: '', amount: '', load_date: '', notes: '' })
+  const [rates, setRates]       = useState([])
+  const [form, setForm]         = useState({ ...EMPTY_AL })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  // Selecting a customer auto-fills the amount only; the description is left for
+  // the user to fill in.
+  const pickCustomer = (rateId) => {
+    const rate = rates.find(r => String(r.id) === String(rateId))
+    setForm(f => ({
+      ...f,
+      customer_id: rateId,
+      amount:      rate ? String(parseFloat(rate.amount)) : f.amount,
+    }))
+  }
 
   const [editingEntryId, setEditingEntryId] = useState(null)
   const [editEntryForm, setEditEntryForm]   = useState({})
@@ -813,11 +827,15 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
   const startEditEntry = (e) => {
     if (editingEntryId !== null) return
     setEditEntryForm({
-      driver_id:  String(e.driver_id || ''),
-      route_name: e.route_name || '',
-      load_date:  e.load_date ? e.load_date.slice(0, 10) : today,
-      amount:     e.amount != null ? String(e.amount) : '',
-      notes:      e.notes || '',
+      driver_id:     String(e.driver_id || ''),
+      route_name:    e.route_name || '',
+      delivery_note: e.delivery_note || '',
+      tons:          e.tons != null ? String(e.tons) : '',
+      load_date:     e.load_date ? e.load_date.slice(0, 10) : today,
+      amount:        e.amount != null ? String(e.amount) : '',
+      waiting_for_slips: !!e.waiting_for_slips,
+      is_paid:       !!e.is_paid,
+      notes:         e.notes || '',
     })
     setEditingEntryId(e.id)
   }
@@ -833,6 +851,10 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
         route_name:         editEntryForm.route_name,
         truck_registration: truck.registration,
         amount:             parseFloat(editEntryForm.amount) || 0,
+        delivery_note:      editEntryForm.delivery_note || null,
+        tons:               editEntryForm.tons !== '' ? parseFloat(editEntryForm.tons) : null,
+        waiting_for_slips:  !!editEntryForm.waiting_for_slips,
+        is_paid:            !!editEntryForm.is_paid,
         notes:              editEntryForm.notes || null,
       })
       toast.success('Entry updated')
@@ -854,6 +876,13 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
 
   useEffect(() => { fetchEntries() }, [fetchEntries])
 
+  useEffect(() => {
+    if (!isSafetec) { setRates([]); return }
+    getAdditionalLoadRates({ entity_id: truck.entity_id })
+      .then(r => setRates((r.data || []).filter(x => x.is_active)))
+      .catch(() => {})
+  }, [isSafetec, truck.entity_id])
+
   const handleAdd = async () => {
     if (!form.driver_id)  return toast.error('Select a driver')
     if (!form.route_name) return toast.error('Enter a description')
@@ -866,10 +895,14 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
         route_name:         form.route_name,
         truck_registration: truck.registration,
         amount,
+        delivery_note:      form.delivery_note || null,
+        tons:               form.tons !== '' ? parseFloat(form.tons) : null,
+        waiting_for_slips:  !!form.waiting_for_slips,
+        is_paid:            !!form.is_paid,
         notes: form.notes || null,
       })
       toast.success('Additional load added')
-      setForm({ driver_id: selectedDriverId || '', route_name: '', amount: '', load_date: '', notes: ''})
+      setForm({ ...EMPTY_AL, driver_id: selectedDriverId || '' })
       setAddingNew(false)
       fetchEntries()
     } catch (e) {
@@ -901,7 +934,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
         </div>
         <button className="btn btn-ghost btn-sm"
           onClick={() => {
-            setForm({ driver_id: selectedDriverId || '', route_name: '', amount: '', load_date: '', notes: ''})
+            setForm({ ...EMPTY_AL, driver_id: selectedDriverId || '' })
             setAddingNew(v => !v)
           }}
           style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -914,28 +947,61 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
             <div>
               <label className="form-label">Driver *</label>
-              <SearchableSelect value={String(form.driver_id)} onChange={v => set('driver_id', v)}
+              <SearchableSelect formInput value={String(form.driver_id)} onChange={v => set('driver_id', v)}
                 options={drivers} getValue={d => String(d.id)}
                 getLabel={d => `${d.first_name} ${d.last_name} (${d.driver_type === 'permanent' ? 'P' : 'C'})`} placeholder="Driver…" />
             </div>
+            {isSafetec && rates.length > 0 && (
+              <div>
+                <label className="form-label">Customer</label>
+                <SearchableSelect formInput value={String(form.customer_id)} onChange={pickCustomer}
+                  options={rates} getValue={r => String(r.id)}
+                  getLabel={r => `${r.name} — ${fmt(r.amount)}`} placeholder="Select customer…" />
+              </div>
+            )}
             <div>
               <label className="form-label">Description *</label>
               <input className="form-input" value={form.route_name} onChange={e => set('route_name', e.target.value)} placeholder="e.g. Sand loads" />
             </div>
+            {isSafetec && (
+              <div>
+                <label className="form-label">Delivery Note</label>
+                <input className="form-input" value={form.delivery_note} onChange={e => set('delivery_note', e.target.value)} placeholder="DN no." />
+              </div>
+            )}
             <div>
               <label className="form-label">Date</label>
               <DateInput className="form-input" value={form.load_date} onChange={e => set('load_date', e.target.value)} />
             </div>
+            {isSafetec && (
+              <div>
+                <label className="form-label">Tons</label>
+                <input className="form-input" type="number" step="0.01" min="0" value={form.tons} onChange={e => set('tons', e.target.value)} placeholder="0.00" />
+              </div>
+            )}
             <div>
               <label className="form-label">Amount (R) *</label>
               <input className="form-input" type="number" step="0.01" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
             </div>
             <div>
-              <label className="form-label">Notes</label>
+              <label className="form-label">Note</label>
               <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 20, marginTop: 12, alignItems: 'center' }}>
+            {isSafetec && (
+              <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={form.waiting_for_slips} onChange={e => set('waiting_for_slips', e.target.checked)} />
+                  <Flag size={13} style={{ color: form.waiting_for_slips ? '#d97706' : 'var(--text-muted)' }} /> Waiting for slips
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={form.is_paid} onChange={e => set('is_paid', e.target.checked)} />
+                  Paid
+                </label>
+              </>
+            )}
+            <div style={{ flex: 1 }} />
             <button className="btn btn-ghost btn-sm" onClick={() => setAddingNew(false)}>Cancel</button>
             <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={saving}>
               {saving ? 'Saving…' : 'Save'}
@@ -953,9 +1019,12 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
               <tr>
                 <SortableHeader label="Driver" col="driver_name" sort={addSort} onSort={onAddSort} />
                 <SortableHeader label="Description" col="route_name" sort={addSort} onSort={onAddSort} />
+                {isSafetec && <th>Delivery Note</th>}
                 <SortableHeader label="Date" col="load_date" sort={addSort} onSort={onAddSort} />
+                {isSafetec && <SortableHeader label="Tons" col="tons" sort={addSort} onSort={onAddSort} style={{ textAlign: 'right' }} />}
                 <SortableHeader label="Amount" col="amount" sort={addSort} onSort={onAddSort} style={{ textAlign: 'right' }} />
-                <th>Notes</th>
+                {isSafetec && <th>Status</th>}
+                <th>Note</th>
                 <th></th>
               </tr>
             </thead>
@@ -972,18 +1041,44 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
                         onChange={ev => setEE('route_name', ev.target.value)} placeholder="Description"
                         style={{ minWidth: 120 }} />
                     </td>
+                    {isSafetec && (
+                      <td style={{ padding: '4px 6px' }}>
+                        <input className="form-input" value={editEntryForm.delivery_note}
+                          onChange={ev => setEE('delivery_note', ev.target.value)} placeholder="DN no."
+                          style={{ width: 100 }} />
+                      </td>
+                    )}
                     <td style={{ padding: '4px 6px' }}>
                       <DateInput className="form-input" value={editEntryForm.load_date}
                         onChange={ev => setEE('load_date', ev.target.value)} style={{ width: 105 }} />
                     </td>
+                    {isSafetec && (
+                      <td style={{ padding: '4px 6px' }}>
+                        <input className="form-input" type="number" step="0.01" value={editEntryForm.tons}
+                          onChange={ev => setEE('tons', ev.target.value)} placeholder="0.00"
+                          style={{ width: 70, textAlign: 'right' }} />
+                      </td>
+                    )}
                     <td style={{ padding: '4px 6px' }}>
                       <input className="form-input" type="number" step="0.01" value={editEntryForm.amount}
                         onChange={ev => setEE('amount', ev.target.value)} placeholder="0.00"
                         style={{ width: 90, textAlign: 'right' }} />
                     </td>
+                    {isSafetec && (
+                      <td style={{ padding: '4px 6px', whiteSpace: 'nowrap' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer', marginBottom: 3 }}>
+                          <input type="checkbox" checked={editEntryForm.waiting_for_slips}
+                            onChange={ev => setEE('waiting_for_slips', ev.target.checked)} /> Slips
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={editEntryForm.is_paid}
+                            onChange={ev => setEE('is_paid', ev.target.checked)} /> Paid
+                        </label>
+                      </td>
+                    )}
                     <td style={{ padding: '4px 6px' }}>
                       <input className="form-input" value={editEntryForm.notes}
-                        onChange={ev => setEE('notes', ev.target.value)} placeholder="Notes"
+                        onChange={ev => setEE('notes', ev.target.value)} placeholder="Note"
                         style={{ minWidth: 80 }} />
                     </td>
                     <td style={{ whiteSpace: 'nowrap', padding: '4px 6px' }}>
@@ -998,7 +1093,11 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
                     </td>
                   </tr>
                 ) : (
-                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => startEditEntry(e)}>
+                  <tr key={e.id} style={{
+                    cursor: 'pointer',
+                    background: e.waiting_for_slips ? 'rgba(217,119,6,0.07)' : undefined,
+                    boxShadow: e.waiting_for_slips ? 'inset 3px 0 0 #d97706' : undefined,
+                  }} onClick={() => startEditEntry(e)}>
                     <td style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         {e.driver_name}
@@ -1011,8 +1110,26 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
                       </span>
                     </td>
                     <td style={{ fontSize: 13 }}>{e.route_name}</td>
+                    {isSafetec && <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{e.delivery_note || '—'}</td>}
                     <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.load_date)}</td>
+                    {isSafetec && <td style={{ textAlign: 'right', fontSize: 12 }}>{e.tons != null ? fmt(e.tons) : '—'}</td>}
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(e.amount)}</td>
+                    {isSafetec && (
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {e.waiting_for_slips && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700,
+                            color: '#b45309', background: 'rgba(217,119,6,0.14)', padding: '2px 6px', borderRadius: 10, marginRight: 4 }}>
+                            <Flag size={10} /> Awaiting slips
+                          </span>
+                        )}
+                        {e.is_paid && (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#16a34a', background: 'rgba(34,197,94,0.14)', padding: '2px 6px', borderRadius: 10 }}>
+                            Paid
+                          </span>
+                        )}
+                        {!e.waiting_for_slips && !e.is_paid && <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                      </td>
+                    )}
                     <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
                     <td onClick={ev => ev.stopPropagation()}>
                       <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(e)}>
@@ -1026,9 +1143,9 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId 
             {entries.length > 0 && (
               <tfoot>
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                  <td colSpan={3} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
+                  <td colSpan={isSafetec ? 5 : 3} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
                   <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(total)}</td>
-                  <td colSpan={2} />
+                  <td colSpan={isSafetec ? 3 : 2} />
                 </tr>
               </tfoot>
             )}
@@ -2466,7 +2583,7 @@ export default function TruckLoadProfilePage() {
 
       {/* ── Additional Loads (below main loads, same tab) ─────────────────────── */}
       {activeTab === 'loads' && (
-        <AdditionalLoadsSection truck={truck} year={year} month={month} drivers={drivers} selectedDriverId={selectedDriverId} />
+        <AdditionalLoadsSection truck={truck} year={year} month={month} drivers={drivers} selectedDriverId={selectedDriverId} isSafetec={isSafetec} />
       )}
 
       {/* ── Diesel tab ─────────────────────────────────────────────────────────── */}

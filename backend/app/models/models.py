@@ -773,6 +773,11 @@ class DriverAdditionalLoad(Base):
     truck_registration = Column(String(50), nullable=True)
     litres          = Column(Numeric(10, 2), nullable=True)
     amount          = Column(Numeric(12, 2), nullable=False)
+    # Safetec additional-load extras (from the customer loads sheet)
+    delivery_note     = Column(String(200), nullable=True)
+    tons              = Column(Numeric(10, 2), nullable=True)
+    waiting_for_slips = Column(Boolean, nullable=False, default=False)
+    is_paid           = Column(Boolean, nullable=False, default=False)
     is_verified     = Column(Boolean, default=False)
     verified_by     = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     verified_at     = Column(DateTime(timezone=True))
@@ -785,6 +790,19 @@ class DriverAdditionalLoad(Base):
     created_at      = Column(DateTime(timezone=True), server_default=func.now())
 
     pay_cycle = relationship("DriverPayCycle", back_populates="additional_loads")
+
+
+class AdditionalLoadRate(Base):
+    """Per-customer flat rate for Safetec additional loads (KOUGA R200, GLENDORE R500…)."""
+    __tablename__ = "additional_load_rates"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    entity_id  = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    name       = Column(String(200), nullable=False)
+    amount     = Column(Numeric(12, 2), nullable=False)
+    is_active  = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
 class DriverFoodPayment(Base):

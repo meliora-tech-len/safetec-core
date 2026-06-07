@@ -1092,6 +1092,10 @@ class DriverAdditionalLoadCreate(BaseModel):
     truck_registration: Optional[str] = None
     litres: Optional[Decimal] = None
     amount: Decimal
+    delivery_note: Optional[str] = None
+    tons: Optional[Decimal] = None
+    waiting_for_slips: bool = False
+    is_paid: bool = False
     is_verified: bool = False
     notes: Optional[str] = None
 
@@ -1102,6 +1106,10 @@ class DriverAdditionalLoadUpdate(BaseModel):
     truck_registration: Optional[str] = None
     litres: Optional[Decimal] = None
     amount: Optional[Decimal] = None
+    delivery_note: Optional[str] = None
+    tons: Optional[Decimal] = None
+    waiting_for_slips: Optional[bool] = None
+    is_paid: Optional[bool] = None
     is_verified: Optional[bool] = None
     notes: Optional[str] = None
 
@@ -1119,6 +1127,29 @@ class DriverAdditionalLoadOut(DriverAdditionalLoadCreate):
     verified2_by_date: Optional[str] = None
     verified3_by_initials: Optional[str] = None
     verified3_by_date: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ── Additional Load Rates (per-customer flat rate, Safetec) ───────────────────
+
+class AdditionalLoadRateCreate(BaseModel):
+    entity_id: int
+    name: str
+    amount: Decimal
+    is_active: bool = True
+
+
+class AdditionalLoadRateUpdate(BaseModel):
+    name: Optional[str] = None
+    amount: Optional[Decimal] = None
+    is_active: Optional[bool] = None
+
+
+class AdditionalLoadRateOut(AdditionalLoadRateCreate):
+    id: int
+    created_at: datetime
 
     class Config:
         from_attributes = True

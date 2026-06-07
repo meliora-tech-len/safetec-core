@@ -3,8 +3,9 @@ import { useAuth } from '../hooks/useAuth'
 import {
   getSuppliers, getDieselRates, createDieselRate, updateDieselRate,
   getDieselSettings, updateDieselSettings,
+  getAdditionalLoadRates, createAdditionalLoadRate, updateAdditionalLoadRate, deleteAdditionalLoadRate,
 } from '../services/api'
-import { Plus, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Save, RefreshCw, Fuel } from 'lucide-react'
+import { Plus, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Save, RefreshCw, Fuel, Package, Trash2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import DateInput from '../components/DateInput'
 import { errorMessage } from '../utils/helpers'
@@ -35,6 +36,14 @@ export default function DieselRatesPage() {
   const [savingFee, setSavingFee] = useState({})
   const [savedFee, setSavedFee] = useState({})
   const [feeErrors, setFeeErrors] = useState({})
+
+  // Additional Load Rates (Safetec only)
+  const safetecEntity = (entities || []).find(e => e.code === 'SFT')
+  const [alRates, setAlRates]       = useState([])
+  const [alForm, setAlForm]         = useState({ name: '', amount: '' })
+  const [alEditId, setAlEditId]     = useState(null)
+  const [alEditForm, setAlEditForm] = useState({ name: '', amount: '' })
+  const [alSaving, setAlSaving]     = useState(false)
 
   const today = new Date().toISOString().slice(0, 10)
 
@@ -73,6 +82,52 @@ export default function DieselRatesPage() {
   }, [entityId])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // ── Additional Load Rates (Safetec) ─────────────────────────────────────────
+  const loadAlRates = useCallback(async () => {
+    if (!safetecEntity) return
+    try {
+      const res = await getAdditionalLoadRates({ entity_id: safetecEntity.id })
+      setAlRates(res.data || [])
+    } catch { /* ignore */ }
+  }, [safetecEntity?.id])
+
+  useEffect(() => { loadAlRates() }, [loadAlRates])
+
+  const handleAlAdd = async () => {
+    if (!alForm.name.trim()) return toast.error('Enter a customer name')
+    const amt = parseFloat(alForm.amount)
+    if (isNaN(amt) || amt < 0) return toast.error('Enter a valid amount')
+    setAlSaving(true)
+    try {
+      await createAdditionalLoadRate({ entity_id: safetecEntity.id, name: alForm.name.trim(), amount: amt })
+      setAlForm({ name: '', amount: '' })
+      toast.success('Customer rate added')
+      loadAlRates()
+    } catch (e) { toast.error(errorMessage(e, 'Failed to add')) }
+    finally { setAlSaving(false) }
+  }
+
+  const handleAlSaveEdit = async (id) => {
+    const amt = parseFloat(alEditForm.amount)
+    if (!alEditForm.name.trim()) return toast.error('Enter a customer name')
+    if (isNaN(amt) || amt < 0) return toast.error('Enter a valid amount')
+    try {
+      await updateAdditionalLoadRate(id, { name: alEditForm.name.trim(), amount: amt })
+      setAlEditId(null)
+      toast.success('Rate updated')
+      loadAlRates()
+    } catch (e) { toast.error(errorMessage(e, 'Failed to update')) }
+  }
+
+  const handleAlDelete = async (rate) => {
+    if (!window.confirm(`Delete the rate for "${rate.name}"?`)) return
+    try {
+      await deleteAdditionalLoadRate(rate.id)
+      setAlRates(prev => prev.filter(r => r.id !== rate.id))
+      toast.success('Rate deleted')
+    } catch (e) { toast.error(errorMessage(e, 'Failed to delete')) }
+  }
 
   const ratesBySupplier = suppliers.map(s => ({
     supplier: s,
@@ -464,6 +519,96 @@ export default function DieselRatesPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Additional Load Rates (Safetec) ──────────────────────────────────── */}
+      {safetecEntity && (
+        <div style={{ marginTop: 32 }}>
+          <div style={{ marginBottom: 14 }}>
+            <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Package size={15} style={{ color: 'var(--accent)' }} /> Additional Load Rates — Safetec
+            </h2>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '3px 0 0' }}>
+              Per-customer flat rates for Safetec additional loads. Selecting a customer when adding an additional load auto-fills this amount.
+            </p>
+          </div>
+          <div className="card" style={{ padding: '18px 20px' }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-secondary)' }}>
+                    <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Customer</th>
+                    <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', width: 180 }}>Rate (R / load)</th>
+                    <th style={{ padding: '8px 10px', width: 90 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {alRates.length === 0 && (
+                    <tr><td colSpan={3} style={{ padding: '14px 10px', color: 'var(--text-muted)', fontSize: 13 }}>No customer rates yet — add one below.</td></tr>
+                  )}
+                  {alRates.map(r => (
+                    <tr key={r.id} style={{ borderTop: '1px solid var(--border)' }}>
+                      {alEditId === r.id ? (
+                        <>
+                          <td style={{ padding: '6px 10px' }}>
+                            <input className="form-input" value={alEditForm.name}
+                              onChange={e => setAlEditForm(f => ({ ...f, name: e.target.value }))} style={{ width: '100%' }} />
+                          </td>
+                          <td style={{ padding: '6px 10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span style={{ color: 'var(--text-muted)' }}>R</span>
+                              <input className="form-input" type="number" step="0.01" min="0" value={alEditForm.amount}
+                                onChange={e => setAlEditForm(f => ({ ...f, amount: e.target.value }))} style={{ width: 110 }} />
+                            </div>
+                          </td>
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                            <button className="btn-icon" title="Save" onClick={() => handleAlSaveEdit(r.id)} style={{ marginRight: 4 }}><Save size={14} /></button>
+                            <button className="btn-icon" title="Cancel" onClick={() => setAlEditId(null)}><X size={14} /></button>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td style={{ padding: '9px 10px', fontWeight: 600, cursor: 'pointer' }}
+                            onClick={() => { setAlEditId(r.id); setAlEditForm({ name: r.name, amount: String(parseFloat(r.amount)) }) }}>
+                            {r.name}
+                          </td>
+                          <td style={{ padding: '9px 10px' }}>
+                            <span style={styles.rateChip}>R {fmt2(r.amount)}</span>
+                          </td>
+                          <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
+                            <button className="btn-ghost btn-sm" onClick={() => { setAlEditId(r.id); setAlEditForm({ name: r.name, amount: String(parseFloat(r.amount)) }) }} style={{ marginRight: 4 }}>Edit</button>
+                            <button className="btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleAlDelete(r)}>
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                  {/* Add new row */}
+                  <tr style={{ borderTop: '1px solid var(--border)', background: 'var(--bg-hover)' }}>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input className="form-input" placeholder="e.g. KOUGA CONSTRUCTION" value={alForm.name}
+                        onChange={e => setAlForm(f => ({ ...f, name: e.target.value }))} style={{ width: '100%' }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>R</span>
+                        <input className="form-input" type="number" step="0.01" min="0" placeholder="200.00" value={alForm.amount}
+                          onChange={e => setAlForm(f => ({ ...f, amount: e.target.value }))} style={{ width: 110 }} />
+                      </div>
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <button className="btn-primary btn-sm" onClick={handleAlAdd} disabled={alSaving}>
+                        <Plus size={13} /> Add
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add / Edit Rate Modal */}
       {showModal && (

@@ -212,6 +212,12 @@ export const getCurrentDieselRate = (supplierId, params = {}) => api.get(`/diese
 export const createDieselRate = (data) => api.post('/diesel/rates', data)
 export const updateDieselRate = (id, data) => api.put(`/diesel/rates/${id}`, data)
 
+// ── Additional Load Rates (per-customer flat rate, Safetec) ────────────────────
+export const getAdditionalLoadRates   = (params = {}) => api.get('/additional-load-rates/', { params })
+export const createAdditionalLoadRate = (data)        => api.post('/additional-load-rates/', data)
+export const updateAdditionalLoadRate = (id, data)    => api.put(`/additional-load-rates/${id}`, data)
+export const deleteAdditionalLoadRate = (id)          => api.delete(`/additional-load-rates/${id}`)
+
 export const getDieselFillUps = (params = {}) => api.get('/diesel/fillups', { params })
 export const getDieselFillUpSummary = (params = {}) => api.get('/diesel/fillups/summary', { params })
 export const getDieselFillUp = (id) => api.get(`/diesel/fillups/${id}`)
