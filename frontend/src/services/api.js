@@ -283,6 +283,20 @@ export const getStatement     = (id)          => api.get(`/statements/${id}`)
 export const createStatement  = (data)        => api.post('/statements/',  data)
 export const updateStatement  = (id, data)    => api.put(`/statements/${id}`, data)
 export const deleteStatement  = (id)          => api.delete(`/statements/${id}`)
+export const exportStatementPdf   = (payload) => api.post('/statements/export/pdf',  payload, { responseType: 'blob' })
+export const exportStatementExcel = (payload) => api.post('/statements/export/xlsx', payload, { responseType: 'blob' })
+
+// Trigger a browser download from a blob response
+export function saveBlob(data, mime, filename) {
+  const url = window.URL.createObjectURL(new Blob([data], { type: mime }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  window.URL.revokeObjectURL(url)
+}
 
 // ── Feedback ──────────────────────────────────────────────────────────────────
 export const submitFeedback = (data) => api.post('/feedback/', data)

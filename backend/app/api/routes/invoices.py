@@ -65,6 +65,7 @@ def _calculate_totals(line_items_data, vat_rate: Decimal, is_vat_exempt: bool = 
 def list_invoices(
     entity_id: Optional[int] = Query(None),
     supplier_id: Optional[int] = Query(None),
+    customer_id: Optional[int] = Query(None),
     document_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
@@ -89,6 +90,8 @@ def list_invoices(
         query = query.filter(Invoice.entity_id == entity_id)
     if supplier_id:
         query = query.filter(Invoice.supplier_id == supplier_id)
+    if customer_id:
+        query = query.filter(Invoice.customer_id == customer_id)
     if document_type:
         query = query.filter(Invoice.document_type == document_type)
     if status:

@@ -1,12 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+import asyncio
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Statement, StatementLine
+from app.models.models import User, Statement, StatementLine, BusinessEntity, Customer
 from app.schemas.schemas import StatementCreate, StatementUpdate, StatementOut
+from app.services.statement_generator import generate_statement_pdf, generate_statement_excel
 
 router = APIRouter(prefix="/api/statements", tags=["statements"])
+
+
+def _filename(data: StatementCreate, entity, ext: str) -> str:
+    code = (entity.code if entity else None) or "ENT"
+    ttl  = (data.title or "STATEMENT").strip().replace(" ", "_")
+    return f"{code}_{ttl}.{ext}"
 
 
 def _check_access(entity_id: int, user: User):
@@ -83,6 +91,45 @@ def create_statement(
         ))
     db.commit()
     return _load(stmt.id, db)
+
+
+def _export_prep(data: StatementCreate, db: Session, current_user: User):
+    _check_access(data.entity_id, current_user)
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == data.entity_id).first()
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    customer = (db.query(Customer).filter(Customer.id == data.customer_id).first()
+                if data.customer_id else None)
+    return entity, customer
+
+
+@router.post("/export/pdf")
+async def export_statement_pdf(
+    data:         StatementCreate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    entity, customer = _export_prep(data, db, current_user)
+    pdf_bytes = await asyncio.to_thread(generate_statement_pdf, data, entity, customer)
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{_filename(data, entity, "pdf")}"'},
+    )
+
+
+@router.post("/export/xlsx")
+async def export_statement_xlsx(
+    data:         StatementCreate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    entity, customer = _export_prep(data, db, current_user)
+    xlsx_bytes = await asyncio.to_thread(generate_statement_excel, data, entity, customer)
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{_filename(data, entity, "xlsx")}"'},
+    )
 
 
 @router.get("/{stmt_id}", response_model=StatementOut)

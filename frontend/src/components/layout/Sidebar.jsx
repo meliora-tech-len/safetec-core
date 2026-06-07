@@ -46,7 +46,7 @@ const DOCUMENTS_NAV = [
   { to: '/invoices',            icon: FileText,       label: 'Invoices',    module: 'invoices' },
   { to: '/purchase-orders',     icon: ShoppingCart,   label: 'PO\'s',       module: 'invoices' },
   { to: '/invoice-templates',   icon: LayoutTemplate, label: 'Templates',   module: 'invoices' },
-  // { to: '/statements',       icon: LayoutList,     label: 'Statements',  module: 'invoices' },
+  { to: '/statements',          icon: LayoutList,     label: 'Statements',  module: 'invoices' },
 ]
 
 const ADMIN_NAV = [

@@ -1,24 +1,18 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Plus, Trash2, Download, Save, ChevronDown, ChevronUp, FileSpreadsheet, FileText, ArrowLeft } from 'lucide-react'
-import * as XLSX from 'xlsx'
-import { jsPDF } from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import { Plus, Trash2, Save, ChevronDown, ChevronUp, FileSpreadsheet, FileText, ArrowLeft, ListChecks, X, CreditCard, CalendarRange, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { parseISO, isValid, format, differenceInDays, startOfDay, isWithinInterval } from 'date-fns'
+import { parseISO, isValid, format, isWithinInterval } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
 import SearchableSelect from '../components/SearchableSelect'
 import DateInput from '../components/DateInput'
 import {
   getStatement, createStatement, updateStatement,
-  getInvoices, getEntity, getCustomers, getCustomer, getTruckLoads,
+  getInvoices, getCustomers,
+  exportStatementPdf, exportStatementExcel, saveBlob,
 } from '../services/api'
 
-const TABS = [
-  { key: 'invoice',      label: 'Invoice Statement' },
-  { key: 'account',      label: 'Account Statement' },
-  { key: 'truck_period', label: 'Truck Period' },
-]
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 function today()  { return new Date().toISOString().slice(0, 10) }
 function uid()    { return Math.random().toString(36).slice(2) }
@@ -35,40 +29,51 @@ function fmtAmt(val) {
   return n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-function buildCustomerLines(customer) {
-  if (!customer) return []
-  const lines = []
-  if (customer.name)        lines.push(customer.name)
-  if (customer.address) customer.address.split(/\n|,/).map(s => s.trim()).filter(Boolean).forEach(l => lines.push(l))
-  if (customer.city)        lines.push(customer.city)
-  if (customer.postal_code) lines.push(customer.postal_code)
-  if (customer.vat_number)  lines.push(`Vat no: ${customer.vat_number}`)
-  return lines
+// Pull the POH reference out of an invoice. Tradekor invoices carry it in the
+// notes ("PO Ref: POH…") and in the header line item ("ASSMANG POH … - TDK/…").
+function extractPOH(inv) {
+  if (!inv) return ''
+  const sources = [inv.notes]
+  const header = (inv.line_items || []).find(li => li.line_type === 'header')
+  if (header) sources.push(header.description)
+  for (const src of sources) {
+    if (!src) continue
+    const m = String(src).match(/POH\s*\d+/i)
+    if (m) return m[0].replace(/\s+/g, '').toUpperCase()
+  }
+  return ''
 }
 
-function invoiceToRow(inv) {
-  return {
+// Mine name sits at the start of the header line item, before "POH"
+// (e.g. "ASSMANG  POH 10126050000191 - TDK/…" → "ASSMANG"). May be absent.
+function extractMine(inv) {
+  const header = (inv?.line_items || []).find(li => li.line_type === 'header')
+  if (!header?.description) return ''
+  const m = String(header.description).match(/^(.*?)\s*POH/i)
+  return m && m[1].trim() ? m[1].trim().toUpperCase() : ''
+}
+
+// A picked invoice → an "outstanding" row. For Tradekor we pre-fill the
+// (editable) description with "MINE - POH" (mine only if present); otherwise
+// it's left blank so the export auto-builds "date - invoice #".
+function invoiceRow(inv, withPoh) {
+  const row = {
     _id: uid(),
+    kind:           'invoice',
     line_date:      inv.issue_date ? inv.issue_date.slice(0, 10) : '',
-    description:    inv.notes || inv.line_items?.[0]?.description || '',
+    description:    '',
     invoice_number: inv.invoice_number || '',
     amount:         String(parseFloat(inv.total) || 0),
   }
-}
-
-function paymentToRow(inv) {
-  return {
-    _id: uid(),
-    line_date:      inv.paid_date ? inv.paid_date.slice(0, 10) : '',
-    description:    'PAYMENT : THANK YOU',
-    invoice_number: '',
-    amount:         String(-(parseFloat(inv.total) || 0)),
+  if (withPoh) {
+    const poh = extractPOH(inv)
+    if (poh) row.description = [extractMine(inv), poh].filter(Boolean).join(' - ')
   }
+  return row
 }
 
-function blankRow() {
-  return { _id: uid(), line_date: today(), description: '', invoice_number: '', amount: '' }
-}
+function blankRow()        { return { _id: uid(), kind: 'invoice', line_date: today(), description: '', invoice_number: '', amount: '' } }
+function blankPaymentRow() { return { _id: uid(), kind: 'payment', line_date: today(), description: 'PAYMENT RECEIVED', invoice_number: '', amount: '' } }
 
 
 export default function StatementEditorPage() {
@@ -78,7 +83,6 @@ export default function StatementEditorPage() {
   const { isAdmin, activeEntity, entities } = useAuth()
 
   // ─── header state ──────────────────────────────────────────────────────────
-  const [stmtType,    setStmtType]    = useState('invoice')
   const [entityId,    setEntityId]    = useState(activeEntity?.id?.toString() || '')
   const [customerId,  setCustomerId]  = useState('')
   const [customers,   setCustomers]   = useState([])
@@ -89,12 +93,20 @@ export default function StatementEditorPage() {
   const [exporting,   setExporting]   = useState(false)
   const [loading,     setLoading]     = useState(!isNew)
 
-  // ─── import bar state ──────────────────────────────────────────────────────
-  const [importOpen,  setImportOpen]  = useState(false)
-  const [importFrom,  setImportFrom]  = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10) })
-  const [importTo,    setImportTo]    = useState(today())
-  const [importing,   setImporting]   = useState(false)
-  const [importIncludePaid, setImportIncludePaid] = useState(false)
+  // ─── invoice picker ─────────────────────────────────────────────────────────
+  const [pickerOpen,     setPickerOpen]     = useState(false)
+  const [pickerLoading,  setPickerLoading]  = useState(false)
+  const [pickerInvoices, setPickerInvoices] = useState([])
+  const [pickerSelected, setPickerSelected] = useState(() => new Set())
+  const [pickerSearch,   setPickerSearch]   = useState('')
+
+  // ─── date-range loader (Tradekor) ───────────────────────────────────────────
+  const [rangeFrom,    setRangeFrom]    = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10) })
+  const [rangeTo,      setRangeTo]      = useState(today())
+  const [rangeLoading, setRangeLoading] = useState(false)
+
+  // ─── cancel-confirm modal ────────────────────────────────────────────────────
+  const [cancelOpen, setCancelOpen] = useState(false)
 
   // ─── load existing statement ───────────────────────────────────────────────
   useEffect(() => {
@@ -103,13 +115,13 @@ export default function StatementEditorPage() {
     getStatement(id)
       .then(res => {
         const s = res.data
-        setStmtType(s.statement_type || 'invoice')
         setEntityId(String(s.entity_id))
         setCustomerId(s.customer_id ? String(s.customer_id) : '')
         setStmtDate(s.statement_date ? s.statement_date.slice(0, 10) : today())
         setTitle(s.title || '')
         setRows((s.lines || []).map(l => ({
           _id:            uid(),
+          kind:           (parseFloat(l.amount) || 0) < 0 ? 'payment' : 'invoice',
           line_date:      l.line_date ? l.line_date.slice(0, 10) : '',
           description:    l.description || '',
           invoice_number: l.invoice_number || '',
@@ -134,41 +146,112 @@ export default function StatementEditorPage() {
     setRows(prev => prev.map(r => r._id === id ? { ...r, [field]: value } : r))
   }
   function addRow()       { setRows(prev => [...prev, blankRow()]) }
+  function addPayment()   { setRows(prev => [...prev, blankPaymentRow()]) }
   function removeRow(_id) { setRows(prev => prev.length > 1 ? prev.filter(r => r._id !== _id) : prev) }
+  function moveRow(_id, dir) {
+    setRows(prev => {
+      const i = prev.findIndex(r => r._id === _id)
+      const j = i + dir
+      if (i < 0 || j < 0 || j >= prev.length) return prev
+      const next = prev.slice()
+      ;[next[i], next[j]] = [next[j], next[i]]
+      return next
+    })
+  }
 
-  // ─── import from invoices ─────────────────────────────────────────────────
-  async function handleImport() {
+  // ─── invoice picker ─────────────────────────────────────────────────────────
+  async function openPicker() {
     if (!entityId || !customerId) { toast.error('Select entity and customer first'); return }
-    setImporting(true)
+    setPickerOpen(true)
+    setPickerSearch('')
+    setPickerSelected(new Set())
+    setPickerLoading(true)
     try {
-      const res   = await getInvoices({ entity_id: entityId, customer_id: customerId, document_type: 'invoice', limit: 1000 })
-      const from  = parseISO(importFrom)
-      const to    = parseISO(importTo + 'T23:59:59')
-      const invs  = (res.data || []).filter(inv => {
-        if (!importIncludePaid && inv.status === 'paid') return false
-        const d = inv.issue_date ? parseISO(inv.issue_date) : null
-        return d && isValid(d) && isWithinInterval(d, { start: from, end: to })
+      const res = await getInvoices({
+        entity_id: entityId, customer_id: customerId, document_type: 'invoice', limit: 1000,
       })
-      if (invs.length === 0) { toast.error('No invoices found'); return }
-
-      const newRows = []
-      invs.forEach(inv => {
-        newRows.push(invoiceToRow(inv))
-        if (stmtType === 'account' && inv.status === 'paid' && inv.paid_date) {
-          newRows.push(paymentToRow(inv))
-        }
-      })
-
-      // Sort by date then append / replace
-      newRows.sort((a, b) => (a.line_date || '') < (b.line_date || '') ? -1 : 1)
-      setRows(newRows)
-      setImportOpen(false)
-      toast.success(`Loaded ${invs.length} invoice${invs.length !== 1 ? 's' : ''}`)
+      const invs = (res.data || [])
+        .filter(inv => String(inv.customer?.id ?? inv.customer_id) === String(customerId))
+        .sort((a, b) => (a.issue_date || '') < (b.issue_date || '') ? 1 : -1)
+      setPickerInvoices(invs)
     } catch {
-      toast.error('Import failed')
+      toast.error('Failed to load invoices')
+      setPickerInvoices([])
     } finally {
-      setImporting(false)
+      setPickerLoading(false)
     }
+  }
+  function togglePick(id) {
+    setPickerSelected(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+  function addSelectedInvoices() {
+    const chosen = pickerInvoices.filter(inv => pickerSelected.has(inv.id))
+    if (chosen.length === 0) { toast.error('No invoices selected'); return }
+    const existing = new Set(rows.map(r => r.invoice_number).filter(Boolean))
+    const fresh = chosen.filter(inv => !existing.has(inv.invoice_number)).map(inv => invoiceRow(inv, isTradekor))
+    if (fresh.length === 0) { toast.error('Those invoices are already on the statement'); setPickerOpen(false); return }
+    setRows(prev => {
+      // Drop the initial empty placeholder row if it's still untouched
+      const base = (prev.length === 1 && !prev[0].invoice_number && !prev[0].amount && !prev[0].description)
+        ? [] : prev
+      return [...base, ...fresh]
+    })
+    const skipped = chosen.length - fresh.length
+    toast.success(`Added ${fresh.length} invoice${fresh.length !== 1 ? 's' : ''}${skipped ? ` (${skipped} already added)` : ''}`)
+    setPickerOpen(false)
+  }
+
+  // ─── date-range loader (Tradekor) ───────────────────────────────────────────
+  // Pull every invoice issued in the selected range straight into the statement.
+  async function loadDateRange() {
+    if (!entityId || !customerId) { toast.error('Select entity and customer first'); return }
+    if (!rangeFrom || !rangeTo)   { toast.error('Set a date range'); return }
+    setRangeLoading(true)
+    try {
+      const res  = await getInvoices({ entity_id: entityId, customer_id: customerId, document_type: 'invoice', limit: 1000 })
+      const from = parseISO(rangeFrom)
+      const to   = parseISO(rangeTo + 'T23:59:59')
+      const invs = (res.data || [])
+        .filter(inv => String(inv.customer?.id ?? inv.customer_id) === String(customerId))
+        .filter(inv => {
+          const d = inv.issue_date ? parseISO(inv.issue_date) : null
+          return d && isValid(d) && isWithinInterval(d, { start: from, end: to })
+        })
+        .sort((a, b) => (a.issue_date || '') < (b.issue_date || '') ? -1 : 1)
+      if (invs.length === 0) { toast.error('No invoices found in that range'); return }
+
+      const existing = new Set(rows.map(r => r.invoice_number).filter(Boolean))
+      const fresh = invs.filter(inv => !existing.has(inv.invoice_number)).map(inv => invoiceRow(inv, isTradekor))
+      if (fresh.length === 0) { toast.error('Those invoices are already on the statement'); return }
+      setRows(prev => {
+        const base = (prev.length === 1 && !prev[0].invoice_number && !prev[0].amount && !prev[0].description)
+          ? [] : prev
+        return [...base, ...fresh]
+      })
+      const skipped = invs.length - fresh.length
+      toast.success(`Added ${fresh.length} invoice${fresh.length !== 1 ? 's' : ''}${skipped ? ` (${skipped} already added)` : ''}`)
+    } catch {
+      toast.error('Failed to load invoices')
+    } finally {
+      setRangeLoading(false)
+    }
+  }
+
+  // Force the sign by row kind (payment = negative outstanding/paid).
+  function signedAmount(r) {
+    const n = parseFloat(r.amount) || 0
+    return r.kind === 'payment' ? -Math.abs(n) : Math.abs(n)
+  }
+
+  // ─── cancel / discard ───────────────────────────────────────────────────────
+  function handleCancel() {
+    const hasData = customerId || rows.some(r => r.amount || r.description || r.invoice_number)
+    if (hasData) setCancelOpen(true)
+    else navigate('/statements')
   }
 
   // ─── save ─────────────────────────────────────────────────────────────────
@@ -180,14 +263,14 @@ export default function StatementEditorPage() {
     const payload = {
       entity_id:      Number(entityId),
       customer_id:    customerId ? Number(customerId) : null,
-      statement_type: stmtType,
+      statement_type: 'generic',
       statement_date: stmtDate,
       title:          title || null,
       lines: rows.map((r, i) => ({
         line_date:      r.line_date || null,
         description:    r.description || null,
         invoice_number: r.invoice_number || null,
-        amount:         parseFloat(r.amount) || 0,
+        amount:         signedAmount(r),
         sort_order:     i,
       })),
     }
@@ -207,37 +290,38 @@ export default function StatementEditorPage() {
     }
   }
 
-  // ─── export ───────────────────────────────────────────────────────────────
+  // ─── export (server-side: letterhead + entity branding) ─────────────────────
+  function exportPayload() {
+    return {
+      entity_id:      Number(entityId),
+      customer_id:    customerId ? Number(customerId) : null,
+      statement_type: 'generic',
+      statement_date: stmtDate,
+      title:          title || null,
+      lines: rows.map((r, i) => ({
+        line_date:      r.line_date || null,
+        description:    r.description || null,
+        invoice_number: r.invoice_number || null,
+        amount:         signedAmount(r),
+        sort_order:     i,
+      })),
+    }
+  }
+
   async function handleExport(fmt) {
-    if (!entityId) { toast.error('Select an entity'); return }
+    if (!entityId)   { toast.error('Select an entity');   return }
+    if (!customerId) { toast.error('Select a customer');  return }
     setExporting(true)
     try {
-      const [entityRes, custRes] = await Promise.all([
-        getEntity(entityId),
-        customerId ? getCustomer(customerId) : Promise.resolve({ data: null }),
-      ])
-      const entity   = entityRes.data
-      const customer = custRes.data
-      const sortedRows = rows.slice().sort((a, b) => (a.line_date || '') < (b.line_date || '') ? -1 : 1)
-      const safeTitle  = title || 'STATEMENT'
-      const filename   = `${entity?.code || 'ENT'}_${safeTitle.replace(/\s+/g, '_')}`
-
-      if (stmtType === 'invoice') {
-        fmt === 'excel' ? exportInvoiceExcel(sortedRows, entity, customer, safeTitle, filename)
-                        : exportInvoicePdf(sortedRows, entity, customer, safeTitle, filename)
-      } else if (stmtType === 'account') {
-        fmt === 'excel' ? exportAccountExcel(sortedRows, entity, customer, safeTitle, filename)
-                        : exportAccountPdf(sortedRows, entity, customer, safeTitle, filename)
+      const base = (title || 'STATEMENT').replace(/\s+/g, '_')
+      if (fmt === 'excel') {
+        const res = await exportStatementExcel(exportPayload())
+        saveBlob(res.data, XLSX_MIME, `${base}.xlsx`)
       } else {
-        const loadsRes = await getTruckLoads({
-          entity_id:       entityId,
-          statement_month: parseISO(stmtDate).getMonth() + 1,
-          statement_year:  parseISO(stmtDate).getFullYear(),
-          limit: 2000,
-        })
-        const loads = (loadsRes.data || []).filter(l => !l.is_archived && !l.is_projection)
-        exportTruckPeriodExcel(sortedRows, loads, entity, customer, safeTitle, filename)
+        const res = await exportStatementPdf(exportPayload())
+        saveBlob(res.data, 'application/pdf', `${base}.pdf`)
       }
+      toast.success('Downloaded')
     } catch (e) {
       console.error(e); toast.error('Export failed')
     } finally {
@@ -245,197 +329,12 @@ export default function StatementEditorPage() {
     }
   }
 
-  // ─── export generators (same as list page) ───────────────────────────────
-  function exportInvoiceExcel(lines, entity, customer, stmtTitle, filename) {
-    const rows = []
-    buildCustomerLines(customer).forEach(l => rows.push([l]))
-    rows.push([]); rows.push(['', stmtTitle]); rows.push([])
-    const dataStart = rows.length
-    lines.forEach(l => {
-      const amt = parseFloat(l.amount) || 0
-      rows.push([fmtDateDot(l.line_date), l.description || '', amt, l.invoice_number || '', amt])
-    })
-    rows.push([])
-    const total = lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0)
-    rows.push(['', '', '', 'TOTAL AMOUNT OUTSTANDING', total])
-    const ws = XLSX.utils.aoa_to_sheet(rows)
-    ws['!cols'] = [{ wch: 14 }, { wch: 55 }, { wch: 16 }, { wch: 24 }, { wch: 16 }]
-    for (let i = 0; i < lines.length; i++) {
-      ;[2, 4].forEach(c => { const ref = XLSX.utils.encode_cell({ r: dataStart + i, c }); if (ws[ref]) ws[ref].z = '#,##0.00' })
-    }
-    const totRef = XLSX.utils.encode_cell({ r: rows.length - 1, c: 4 }); if (ws[totRef]) ws[totRef].z = '#,##0.00'
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Statement')
-    XLSX.writeFile(wb, `${filename}.xlsx`); toast.success('Downloaded')
-  }
-
-  function exportInvoicePdf(lines, entity, customer, stmtTitle, filename) {
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-    let y = 18
-    const custLines = buildCustomerLines(customer)
-    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.text(custLines[0] || '', 14, y); y += 6
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-    for (let i = 1; i < custLines.length; i++) { doc.text(custLines[i], 14, y); y += 4 }
-    y += 4; doc.setFontSize(12); doc.setFont('helvetica', 'bold')
-    doc.text(stmtTitle, 105, y, { align: 'center' }); y += 8
-    const total = lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0)
-    autoTable(doc, {
-      startY: y, head: [['Date', 'Description', 'Invoice #', 'Amount (R)']],
-      body: lines.map(l => [fmtDateDot(l.line_date), l.description || '', l.invoice_number || '', fmtAmt(l.amount)]),
-      foot: [['', '', 'TOTAL OUTSTANDING', fmtAmt(total)]],
-      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold', fontSize: 9 },
-      footStyles: { fillColor: [240, 240, 240], textColor: 30, fontStyle: 'bold', fontSize: 9 },
-      bodyStyles: { fontSize: 9 },
-      columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 90 }, 2: { cellWidth: 32 }, 3: { cellWidth: 33, halign: 'right' } },
-      theme: 'grid',
-    })
-    doc.save(`${filename}.pdf`); toast.success('Downloaded')
-  }
-
-  function exportAccountExcel(lines, entity, customer, stmtTitle, filename) {
-    const wsRows = []
-    wsRows.push(['STATEMENT', '', '', '', 'Date', fmtDateDot(new Date())]); wsRows.push([])
-    buildCustomerLines(customer).forEach(l => wsRows.push([l]))
-    wsRows.push([]); wsRows.push(['', stmtTitle]); wsRows.push([])
-    wsRows.push(['DATE', 'DESCRIPTION', 'INV #', 'DEBIT', 'CREDIT', 'BALANCE'])
-    const dataStart = wsRows.length; let balance = 0
-    lines.forEach(l => {
-      const amt = parseFloat(l.amount) || 0; balance += amt
-      wsRows.push([fmtDateDot(l.line_date), l.description || '', l.invoice_number || '',
-        amt > 0 ? amt : null, amt < 0 ? Math.abs(amt) : null, balance])
-    })
-    wsRows.push([])
-    const now = startOfDay(new Date())
-    const aging = { current: 0, days30: 0, days60: 0, days90: 0 }
-    lines.filter(l => (parseFloat(l.amount) || 0) > 0).forEach(l => {
-      const age = l.line_date ? differenceInDays(now, startOfDay(parseISO(l.line_date))) : 0
-      const amt = parseFloat(l.amount) || 0
-      if (age <= 30) aging.current += amt; else if (age <= 60) aging.days30 += amt
-      else if (age <= 90) aging.days60 += amt; else aging.days90 += amt
-    })
-    wsRows.push(['90 DAYS', '60 DAYS', '30 DAYS', 'CURRENT', 'AMOUNT DUE'])
-    wsRows.push([aging.days90 || null, aging.days60 || null, aging.days30 || null, aging.current || null,
-                 aging.days90 + aging.days60 + aging.days30 + aging.current])
-    if (entity?.bank_name || entity?.bank_account_number) {
-      wsRows.push([]); wsRows.push(['Banking Details:'])
-      if (entity.name)               wsRows.push([entity.name])
-      if (entity.bank_name)          wsRows.push([entity.bank_name])
-      if (entity.bank_branch)        wsRows.push([`Branch: ${entity.bank_branch}`])
-      if (entity.bank_account_number) wsRows.push([`Account No: ${entity.bank_account_number}`])
-      if (entity.bank_branch_code)   wsRows.push([`Branch Code: ${entity.bank_branch_code}`])
-      if (entity.bank_reference)     wsRows.push([`Ref: ${entity.bank_reference}`])
-    }
-    const ws = XLSX.utils.aoa_to_sheet(wsRows)
-    ws['!cols'] = [{ wch: 14 }, { wch: 50 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 16 }]
-    for (let i = 0; i < lines.length; i++) {
-      ;[3, 4, 5].forEach(c => { const ref = XLSX.utils.encode_cell({ r: dataStart + i, c }); if (ws[ref] && ws[ref].t === 'n') ws[ref].z = '#,##0.00' })
-    }
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Account Statement')
-    XLSX.writeFile(wb, `${filename}_ACCOUNT.xlsx`); toast.success('Downloaded')
-  }
-
-  function exportAccountPdf(lines, entity, customer, stmtTitle, filename) {
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-    let y = 14
-    doc.setFontSize(13); doc.setFont('helvetica', 'bold'); doc.text('STATEMENT', 14, y)
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-    doc.text(`Date: ${fmtDateDot(new Date())}`, 196, y, { align: 'right' }); y += 8
-    const custLines = buildCustomerLines(customer)
-    doc.setFontSize(10); doc.setFont('helvetica', 'bold'); doc.text(custLines[0] || '', 14, y); y += 5
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-    for (let i = 1; i < custLines.length; i++) { doc.text(custLines[i], 14, y); y += 4 }
-    y += 4; doc.setFontSize(11); doc.setFont('helvetica', 'bold')
-    doc.text(stmtTitle, 105, y, { align: 'center' }); y += 7
-    let balance = 0
-    autoTable(doc, {
-      startY: y, head: [['Date', 'Description', 'Inv #', 'Debit (R)', 'Credit (R)', 'Balance (R)']],
-      body: lines.map(l => {
-        const amt = parseFloat(l.amount) || 0; balance += amt
-        return [fmtDateDot(l.line_date), l.description || '', l.invoice_number || '',
-          amt > 0 ? fmtAmt(amt) : '', amt < 0 ? fmtAmt(Math.abs(amt)) : '', fmtAmt(balance)]
-      }),
-      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold', fontSize: 8 },
-      bodyStyles: { fontSize: 8 },
-      columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 72 }, 2: { cellWidth: 22 },
-        3: { cellWidth: 24, halign: 'right' }, 4: { cellWidth: 24, halign: 'right' }, 5: { cellWidth: 26, halign: 'right' } },
-      theme: 'grid',
-    })
-    const now = startOfDay(new Date())
-    const aging = { current: 0, days30: 0, days60: 0, days90: 0 }
-    lines.filter(l => (parseFloat(l.amount) || 0) > 0).forEach(l => {
-      const age = l.line_date ? differenceInDays(now, startOfDay(parseISO(l.line_date))) : 0
-      const amt = parseFloat(l.amount) || 0
-      if (age <= 30) aging.current += amt; else if (age <= 60) aging.days30 += amt
-      else if (age <= 90) aging.days60 += amt; else aging.days90 += amt
-    })
-    y = doc.lastAutoTable.finalY + 8
-    autoTable(doc, {
-      startY: y, head: [['90 Days', '60 Days', '30 Days', 'Current', 'Amount Due']],
-      body: [[fmtAmt(aging.days90), fmtAmt(aging.days60), fmtAmt(aging.days30), fmtAmt(aging.current),
-              fmtAmt(aging.days90 + aging.days60 + aging.days30 + aging.current)]],
-      headStyles: { fillColor: [80, 80, 80], textColor: 255, fontSize: 8 },
-      bodyStyles: { fontSize: 9, fontStyle: 'bold', halign: 'right' }, theme: 'grid',
-    })
-    if (entity?.bank_name || entity?.bank_account_number) {
-      y = doc.lastAutoTable.finalY + 8; doc.setFontSize(9); doc.setFont('helvetica', 'bold')
-      doc.text('Banking Details:', 14, y); y += 5; doc.setFont('helvetica', 'normal')
-      ;[entity.name, entity.bank_name,
-        entity.bank_branch && `Branch: ${entity.bank_branch}`,
-        entity.bank_account_number && `Account No: ${entity.bank_account_number}`,
-        entity.bank_branch_code && `Branch Code: ${entity.bank_branch_code}`,
-        entity.bank_reference && `Ref: ${entity.bank_reference}`,
-      ].filter(Boolean).forEach(l => { doc.text(l, 14, y); y += 4 })
-    }
-    doc.save(`${filename}_ACCOUNT.pdf`); toast.success('Downloaded')
-  }
-
-  function exportTruckPeriodExcel(lines, loads, entity, customer, stmtTitle, filename) {
-    const exRows = []
-    buildCustomerLines(customer).forEach(l => exRows.push([l]))
-    exRows.push([]); exRows.push(['', stmtTitle]); exRows.push([])
-    exRows.push(['INVOICES']); exRows.push(['DATE', 'DESCRIPTION', 'INVOICE #', 'AMOUNT INCL VAT'])
-    const invDataStart = exRows.length
-    lines.forEach(l => exRows.push([fmtDateDot(l.line_date), l.description || '', l.invoice_number || '', parseFloat(l.amount) || 0]))
-    exRows.push(['', '', 'TOTAL', lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0)])
-    exRows.push([])
-    const truckMap = {}
-    loads.forEach(load => {
-      const reg = load.truck_registration || 'UNKNOWN'; const mine = load.mine_name || 'Unknown'
-      if (!truckMap[reg]) truckMap[reg] = {}
-      if (!truckMap[reg][mine]) truckMap[reg][mine] = { trips: 0, tonnes: 0, amountInvoiced: 0, amountPayout: 0 }
-      const m = truckMap[reg][mine]; m.trips++; m.tonnes += parseFloat(load.tonnes) || 0
-      m.amountInvoiced += parseFloat(load.amount_incl_vat) || 0
-      m.amountPayout += parseFloat(load.subcontractor_amount_incl_vat) || parseFloat(load.amount_incl_vat) || 0
-    })
-    const hasPayout = Object.values(truckMap).some(mines => Object.values(mines).some(m => m.amountPayout !== m.amountInvoiced && m.amountPayout > 0))
-    exRows.push(['TRUCK LOAD SUMMARY'])
-    const hd = ['TRUCK REG', 'MINE', 'TRIPS', 'TONNES', 'AMOUNT INVOICED']; if (hasPayout) hd.push('AMOUNT PAYOUT')
-    exRows.push(hd)
-    const loadDataStart = exRows.length
-    const sortedRegs = Object.keys(truckMap).sort()
-    let totTrips = 0, totTonnes = 0, totInv = 0, totPay = 0
-    sortedRegs.forEach(reg => {
-      Object.keys(truckMap[reg]).sort().forEach((mine, idx) => {
-        const m = truckMap[reg][mine]
-        const row = [idx === 0 ? reg : '', mine, m.trips, m.tonnes, m.amountInvoiced]
-        if (hasPayout) row.push(m.amountPayout)
-        exRows.push(row); totTrips += m.trips; totTonnes += m.tonnes; totInv += m.amountInvoiced; totPay += m.amountPayout
-      })
-    })
-    const totRow = ['TOTAL', '', totTrips, totTonnes, totInv]; if (hasPayout) totRow.push(totPay); exRows.push(totRow)
-    const ws = XLSX.utils.aoa_to_sheet(exRows)
-    ws['!cols'] = [{ wch: 14 }, { wch: 45 }, { wch: 10 }, { wch: 12 }, { wch: 20 }, { wch: 20 }]
-    for (let i = 0; i <= lines.length; i++) { const ref = XLSX.utils.encode_cell({ r: invDataStart + i, c: 3 }); if (ws[ref] && ws[ref].t === 'n') ws[ref].z = '#,##0.00' }
-    const totalLoadRows = sortedRegs.reduce((s, r) => s + Object.keys(truckMap[r]).length, 0)
-    for (let i = 0; i <= totalLoadRows; i++) {
-      ;(hasPayout ? [3, 4, 5] : [3, 4]).forEach(c => { const ref = XLSX.utils.encode_cell({ r: loadDataStart + i, c }); if (ws[ref] && ws[ref].t === 'n') ws[ref].z = c === 3 ? '#,##0.000' : '#,##0.00' })
-    }
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Truck Period')
-    XLSX.writeFile(wb, `${filename}_TRUCK.xlsx`); toast.success('Downloaded')
-  }
-
   // ─── computed ─────────────────────────────────────────────────────────────
-  const total = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
-  const isAccountType = stmtType === 'account'
+  const selectedCustomer = customers.find(c => String(c.id) === String(customerId)) || null
+  const isTradekor       = (selectedCustomer?.name || '').toLowerCase().includes('tradekor')
+  const total            = rows.reduce((s, r) => s + signedAmount(r), 0)
+  const outstandingTotal = rows.reduce((s, r) => { const n = signedAmount(r); return s + (n > 0 ? n : 0) }, 0)
+  const paidTotal        = rows.reduce((s, r) => { const n = signedAmount(r); return s + (n < 0 ? n : 0) }, 0)
 
   if (loading) return (
     <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
@@ -445,6 +344,12 @@ export default function StatementEditorPage() {
 
   return (
     <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
+
+      <style>{`
+        .stmt-cell-input { border: 1px solid transparent; border-radius: 4px; transition: border-color .12s, background .12s; }
+        .stmt-cell-input:hover:not(:disabled) { border-color: var(--border); }
+        .stmt-cell-input:focus { border-color: var(--accent); background: var(--bg-surface); outline: none; }
+      `}</style>
 
       {/* ── Page header ── */}
       <div className="page-header">
@@ -458,42 +363,23 @@ export default function StatementEditorPage() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {stmtType !== 'truck_period' && (
-            <>
-              <button className="btn-ghost btn-sm" onClick={() => handleExport('pdf')} disabled={exporting}>
-                <FileText size={14} style={{ color: 'var(--danger)' }} />
-                PDF
-              </button>
-            </>
-          )}
+          <button className="btn-ghost btn-sm" onClick={() => handleExport('pdf')} disabled={exporting}>
+            <FileText size={14} style={{ color: 'var(--danger)' }} />
+            PDF
+          </button>
           <button className="btn-ghost btn-sm" onClick={() => handleExport('excel')} disabled={exporting}>
             <FileSpreadsheet size={14} style={{ color: '#16a34a' }} />
             Excel
+          </button>
+          <button className="btn-ghost btn-sm" onClick={handleCancel} disabled={saving}>
+            <X size={14} />
+            Cancel
           </button>
           <button className="btn-primary" onClick={handleSave} disabled={saving}>
             <Save size={14} />
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
-      </div>
-
-      {/* ── Type tabs ── */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 24, borderBottom: '2px solid var(--border)' }}>
-        {TABS.map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => setStmtType(key)}
-            style={{
-              padding: '8px 20px', border: 'none', background: 'none', cursor: 'pointer',
-              fontSize: 14, fontWeight: stmtType === key ? 700 : 400,
-              color: stmtType === key ? 'var(--accent)' : 'var(--text-muted)',
-              borderBottom: stmtType === key ? '2px solid var(--accent)' : '2px solid transparent',
-              marginBottom: -2, transition: 'all 0.15s',
-            }}
-          >
-            {label}
-          </button>
-        ))}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -513,6 +399,7 @@ export default function StatementEditorPage() {
                 <div className="form-group">
                   <label>Customer <span style={{ color: 'var(--danger)' }}>*</span></label>
                   <SearchableSelect
+                    formInput
                     options={customers} value={customerId} onChange={setCustomerId}
                     getValue={c => String(c.id)} getLabel={c => c.name} placeholder="Search customer…"
                   />
@@ -523,6 +410,7 @@ export default function StatementEditorPage() {
               <div className="form-group">
                 <label>Customer <span style={{ color: 'var(--danger)' }}>*</span></label>
                 <SearchableSelect
+                  formInput
                   options={customers} value={customerId} onChange={setCustomerId}
                   getValue={c => String(c.id)} getLabel={c => c.name} placeholder="Search customer…"
                 />
@@ -531,7 +419,7 @@ export default function StatementEditorPage() {
             <div className="form-row">
               <div className="form-group">
                 <label>Statement Date</label>
-                <DateInput value={stmtDate} onChange={setStmtDate} />
+                <DateInput value={stmtDate} onChange={e => setStmtDate(e.target.value)} />
               </div>
               <div className="form-group">
                 <label>Title</label>
@@ -541,51 +429,44 @@ export default function StatementEditorPage() {
           </div>
         </div>
 
-        {/* ── Import from invoices ── */}
-        <div className="card" style={{ padding: 0 }}>
-          <button
-            onClick={() => setImportOpen(o => !o)}
-            style={{
-              width: '100%', padding: '12px 16px', background: 'none', border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)',
-            }}
-          >
-            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Download size={14} style={{ color: 'var(--accent)' }} />
-              Load from Invoices
-            </span>
-            {importOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        {/* ── Pick invoices + add payment ── */}
+        <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <button className="btn-primary btn-sm" onClick={openPicker} disabled={!entityId || !customerId}>
+            <ListChecks size={14} /> Select Invoices
           </button>
-
-          {importOpen && (
-            <div style={{ padding: '0 16px 16px', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                <div className="form-group" style={{ flex: 1, minWidth: 140 }}>
-                  <label>From</label>
-                  <DateInput value={importFrom} onChange={setImportFrom} />
-                </div>
-                <div className="form-group" style={{ flex: 1, minWidth: 140 }}>
-                  <label>To</label>
-                  <DateInput value={importTo} onChange={setImportTo} />
-                </div>
-                {stmtType !== 'account' && (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', color: 'var(--text-secondary)', paddingBottom: 10 }}>
-                    <input type="checkbox" checked={importIncludePaid} onChange={e => setImportIncludePaid(e.target.checked)} />
-                    Include paid
-                  </label>
-                )}
-                <button className="btn-primary btn-sm" onClick={handleImport} disabled={importing} style={{ marginBottom: 0 }}>
-                  {importing ? 'Loading…' : 'Load & Replace Rows'}
-                </button>
-              </div>
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
-                This will replace all current rows with the imported invoices.
-                {stmtType === 'account' && ' Payment rows are added automatically for paid invoices.'}
-              </p>
-            </div>
-          )}
+          <button className="btn-ghost btn-sm" onClick={addPayment}>
+            <CreditCard size={14} style={{ color: 'var(--success)' }} /> Add Payment Line
+          </button>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', flex: 1 }}>
+            Pick the customer's invoices, then add any payments received. Use the ⇅ arrows to order rows.
+          </span>
         </div>
+
+        {/* ── Tradekor: load invoices by date range ── */}
+        {isTradekor && (
+          <div className="card" style={{ borderLeft: '3px solid var(--accent)' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <CalendarRange size={15} style={{ color: 'var(--accent)' }} />
+              Tradekor — Load invoices by date range
+            </div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ flex: 1, minWidth: 150 }}>
+                <label>From</label>
+                <DateInput value={rangeFrom} onChange={e => setRangeFrom(e.target.value)} />
+              </div>
+              <div className="form-group" style={{ flex: 1, minWidth: 150 }}>
+                <label>To</label>
+                <DateInput value={rangeTo} onChange={e => setRangeTo(e.target.value)} />
+              </div>
+              <button className="btn-primary btn-sm" onClick={loadDateRange} disabled={rangeLoading} style={{ marginBottom: 0 }}>
+                {rangeLoading ? 'Loading…' : 'Load Invoices in Range'}
+              </button>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+              Pulls every Tradekor invoice issued in this range into the statement. You can still edit, reorder, or remove rows afterwards.
+            </p>
+          </div>
+        )}
 
         {/* ── Rows table ── */}
         <div className="card" style={{ padding: 0 }}>
@@ -593,35 +474,64 @@ export default function StatementEditorPage() {
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
               Rows <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({rows.length})</span>
             </span>
-            <button className="btn-ghost btn-sm" onClick={addRow}>
-              <Plus size={13} /> Add Row
-            </button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="btn-ghost btn-sm" onClick={addPayment}>
+                <CreditCard size={13} style={{ color: 'var(--success)' }} /> Add Payment
+              </button>
+              <button className="btn-ghost btn-sm" onClick={addRow}>
+                <Plus size={13} /> Add Invoice Row
+              </button>
+            </div>
           </div>
 
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--bg-surface)' }}>
+                  <th style={{ ...thStyle, width: 70 }} />
                   <th style={thStyle}>Date</th>
-                  <th style={{ ...thStyle, width: '40%' }}>Description</th>
+                  <th style={{ ...thStyle, width: '36%' }}>Description</th>
                   <th style={thStyle}>Invoice #</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>
-                    {isAccountType ? 'Amount (+ debit / − credit)' : 'Amount'}
-                  </th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Amount</th>
                   <th style={{ ...thStyle, width: 36 }} />
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row, idx) => {
-                  const amt = parseFloat(row.amount) || 0
-                  const isCredit = isAccountType && amt < 0
+                  const isPayment = row.kind === 'payment'
                   return (
                     <tr
                       key={row._id}
-                      style={{ background: isCredit ? 'rgba(34,197,94,0.04)' : undefined }}
+                      style={{ background: isPayment ? 'rgba(34,197,94,0.04)' : undefined }}
                     >
+                      <td style={{ ...tdStyle, padding: '4px 6px', whiteSpace: 'nowrap' }}>
+                        <button
+                          type="button"
+                          title={isPayment ? 'Payment line — click to make an invoice line' : 'Invoice line — click to make a payment line'}
+                          onClick={() => setRow(row._id, 'kind', isPayment ? 'invoice' : 'payment')}
+                          style={{
+                            border: 'none', borderRadius: 4, cursor: 'pointer', padding: '2px 6px',
+                            fontSize: 10, fontWeight: 700, letterSpacing: '0.03em',
+                            color: isPayment ? 'var(--success)' : 'var(--accent)',
+                            background: isPayment ? 'rgba(34,197,94,0.12)' : 'rgba(37,99,235,0.10)',
+                          }}
+                        >
+                          {isPayment ? 'PAID' : 'INV'}
+                        </button>
+                        <span style={{ display: 'inline-flex', flexDirection: 'column', marginLeft: 4, verticalAlign: 'middle' }}>
+                          <button className="btn-icon" onClick={() => moveRow(row._id, -1)} disabled={idx === 0}
+                            style={{ padding: 0, height: 12, color: 'var(--text-muted)', opacity: idx === 0 ? 0.3 : 1 }} title="Move up">
+                            <ChevronUp size={12} />
+                          </button>
+                          <button className="btn-icon" onClick={() => moveRow(row._id, 1)} disabled={idx === rows.length - 1}
+                            style={{ padding: 0, height: 12, color: 'var(--text-muted)', opacity: idx === rows.length - 1 ? 0.3 : 1 }} title="Move down">
+                            <ChevronDown size={12} />
+                          </button>
+                        </span>
+                      </td>
                       <td style={tdStyle}>
                         <input
+                          className="stmt-cell-input"
                           type="date"
                           value={row.line_date}
                           onChange={e => setRow(row._id, 'line_date', e.target.value)}
@@ -630,31 +540,36 @@ export default function StatementEditorPage() {
                       </td>
                       <td style={tdStyle}>
                         <input
+                          className="stmt-cell-input"
                           type="text"
                           value={row.description}
                           onChange={e => setRow(row._id, 'description', e.target.value)}
-                          placeholder="Description…"
+                          onFocus={isPayment ? e => e.target.select() : undefined}
+                          placeholder={isPayment ? 'Payment message…' : 'Auto: date - invoice #'}
                           style={inputStyle}
                         />
                       </td>
                       <td style={tdStyle}>
                         <input
+                          className="stmt-cell-input"
                           type="text"
                           value={row.invoice_number}
                           onChange={e => setRow(row._id, 'invoice_number', e.target.value)}
                           placeholder="Inv #"
-                          style={{ ...inputStyle, width: 110 }}
+                          disabled={isPayment}
+                          style={{ ...inputStyle, width: 110, opacity: isPayment ? 0.4 : 1 }}
                         />
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>
                         <input
+                          className="stmt-cell-input"
                           type="number"
                           value={row.amount}
                           onChange={e => setRow(row._id, 'amount', e.target.value)}
                           placeholder="0.00"
                           style={{
                             ...inputStyle, width: 130, textAlign: 'right',
-                            color: isCredit ? 'var(--success)' : undefined,
+                            color: isPayment ? 'var(--success)' : undefined,
                           }}
                         />
                       </td>
@@ -678,28 +593,155 @@ export default function StatementEditorPage() {
           {/* Total footer */}
           <div style={{
             padding: '10px 16px', borderTop: '1px solid var(--border)',
-            display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16,
+            display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 20,
           }}>
-            {isAccountType && (
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                Balance Outstanding:
-                <strong style={{ color: total >= 0 ? 'var(--text-primary)' : 'var(--success)', marginLeft: 8, fontFamily: 'monospace' }}>
-                  R {fmtAmt(total)}
-                </strong>
-              </span>
-            )}
-            {!isAccountType && (
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                Total Outstanding:
-                <strong style={{ color: 'var(--text-primary)', marginLeft: 8, fontFamily: 'monospace' }}>
-                  R {fmtAmt(total)}
-                </strong>
-              </span>
-            )}
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Outstanding:
+              <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--text-primary)' }}>R {fmtAmt(outstandingTotal)}</strong>
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Paid:
+              <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--success)' }}>R {fmtAmt(paidTotal)}</strong>
+            </span>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>
+              Amount Due:
+              <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--text-primary)' }}>R {fmtAmt(total)}</strong>
+            </span>
           </div>
         </div>
 
       </div>
+
+      {/* ── Invoice picker modal ── */}
+      {pickerOpen && (
+        <div
+          onClick={() => setPickerOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-card, #fff)', borderRadius: 10, width: 'min(720px, 100%)',
+              maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
+            }}
+          >
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>Select Invoices</div>
+                {selectedCustomer && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                    for {selectedCustomer.name}
+                  </div>
+                )}
+              </div>
+              <button className="btn-icon" onClick={() => setPickerOpen(false)}><X size={16} /></button>
+            </div>
+
+            <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
+              <input
+                type="text"
+                value={pickerSearch}
+                onChange={e => setPickerSearch(e.target.value)}
+                placeholder="Search invoice # or amount…"
+                style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 6 }}
+              />
+            </div>
+
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {pickerLoading ? (
+                <div style={{ padding: 40, textAlign: 'center' }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
+              ) : (() => {
+                const term = pickerSearch.trim().toLowerCase()
+                const visible = pickerInvoices.filter(inv =>
+                  !term ||
+                  (inv.invoice_number || '').toLowerCase().includes(term) ||
+                  String(inv.total || '').includes(term)
+                )
+                if (visible.length === 0) return (
+                  <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                    No invoices found for this customer.
+                  </div>
+                )
+                return (
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-surface)' }}>
+                        <th style={{ ...thStyle, width: 36 }} />
+                        <th style={thStyle}>Date</th>
+                        <th style={thStyle}>Invoice #</th>
+                        <th style={thStyle}>Status</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Total (R)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visible.map(inv => {
+                        const checked = pickerSelected.has(inv.id)
+                        return (
+                          <tr key={inv.id} onClick={() => togglePick(inv.id)} style={{ cursor: 'pointer', background: checked ? 'rgba(37,99,235,0.06)' : undefined }}>
+                            <td style={{ ...tdStyle, textAlign: 'center' }}>
+                              <input type="checkbox" checked={checked} readOnly />
+                            </td>
+                            <td style={{ ...tdStyle, fontSize: 13 }}>{fmtDateDot(inv.issue_date)}</td>
+                            <td style={{ ...tdStyle, fontSize: 13, fontWeight: 500 }}>{inv.invoice_number}</td>
+                            <td style={{ ...tdStyle, fontSize: 12, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{inv.status}</td>
+                            <td style={{ ...tdStyle, fontSize: 13, textAlign: 'right', fontFamily: 'monospace' }}>{fmtAmt(inv.total)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )
+              })()}
+            </div>
+
+            <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{pickerSelected.size} selected</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn-ghost btn-sm" onClick={() => setPickerOpen(false)}>Cancel</button>
+                <button className="btn-primary btn-sm" onClick={addSelectedInvoices} disabled={pickerSelected.size === 0}>
+                  Add Selected
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Discard confirmation modal ── */}
+      {cancelOpen && (
+        <div className="modal-overlay" onClick={() => setCancelOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 440, padding: 0, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+              <AlertTriangle size={18} color="var(--danger)" style={{ flexShrink: 0 }} />
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Discard statement?</span>
+            </div>
+            <div style={{ padding: '20px' }}>
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                {isNew
+                  ? 'This statement hasn’t been saved yet. '
+                  : 'Any unsaved changes to this statement will be lost. '}
+                Are you sure you want to leave and discard your changes?
+              </p>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
+              <button className="btn-ghost" onClick={() => setCancelOpen(false)}>Keep editing</button>
+              <button
+                onClick={() => { setCancelOpen(false); navigate('/statements') }}
+                style={{
+                  padding: '7px 18px', borderRadius: 7, border: 'none',
+                  background: 'var(--danger)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                }}
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

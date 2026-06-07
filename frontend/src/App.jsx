@@ -28,8 +28,8 @@ import MinesSettingsPage from './pages/MinesSettingsPage'
 import DieselFillUpsPage from './pages/DieselFillUpsPage'
 import DieselRatesPage from './pages/DieselRatesPage'
 import ReportsPage from './pages/ReportsPage'
-// import StatementsPage from './pages/StatementsPage'
-// import StatementEditorPage from './pages/StatementEditorPage'
+import StatementsPage from './pages/StatementsPage'
+import StatementEditorPage from './pages/StatementEditorPage'
 import SubcontractorsPage from './pages/SubcontractorsPage'
 import SubcontractorProfilePage from './pages/SubcontractorProfilePage'
 import CustomersPage from './pages/CustomersPage'
@@ -125,9 +125,9 @@ export default function App() {
             {/* Diesel */}
             <Route path="/diesel" element={<DieselFillUpsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
-            {/* <Route path="/statements" element={<StatementsPage />} /> */}
-            {/* <Route path="/statements/new" element={<StatementEditorPage />} /> */}
-            {/* <Route path="/statements/:id" element={<StatementEditorPage />} /> */}
+            <Route path="/statements" element={<StatementsPage />} />
+            <Route path="/statements/new" element={<StatementEditorPage />} />
+            <Route path="/statements/:id" element={<StatementEditorPage />} />
             <Route path="/settings/diesel-rates" element={<DieselRatesPage />} />
           </Route>
 
