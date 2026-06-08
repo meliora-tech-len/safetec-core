@@ -136,12 +136,12 @@ export default function DieselReportsPage() {
 // ── Monthly by Truck ────────────────────────────────────────────────────────────
 function TruckReport({ data }) {
   const totals = data.reduce((acc, r) => ({
-    fill_up_count: acc.fill_up_count + (r.fill_up_count || 0),
+    fillup_count: acc.fillup_count + (r.fillup_count || 0),
     total_litres: acc.total_litres + Number(r.total_litres || 0),
     total_amount: acc.total_amount + Number(r.total_amount || 0),
     total_admin_fee: acc.total_admin_fee + Number(r.total_admin_fee || 0),
     grand_total: acc.grand_total + Number(r.grand_total || 0),
-  }), { fill_up_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, grand_total: 0 })
+  }), { fillup_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, grand_total: 0 })
 
   return (
     <table style={styles.table}>
@@ -156,7 +156,7 @@ function TruckReport({ data }) {
         {data.map((r, i) => (
           <tr key={i} style={styles.row}>
             <td style={{ ...styles.td, fontWeight: 600 }}>{r.truck_reg || r.truck_id}</td>
-            <td style={styles.td}>{r.fill_up_count}</td>
+            <td style={styles.td}>{r.fillup_count}</td>
             <td style={styles.td}>{fmtL(r.total_litres)}</td>
             <td style={styles.td}>{fmtR(r.total_amount)}</td>
             <td style={styles.td}>{fmtR(r.total_admin_fee)}</td>
@@ -168,7 +168,7 @@ function TruckReport({ data }) {
         ))}
         <tr style={styles.totalRow}>
           <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
-          <td style={styles.td}>{totals.fill_up_count}</td>
+          <td style={styles.td}>{totals.fillup_count}</td>
           <td style={styles.td}>{fmtL(totals.total_litres)}</td>
           <td style={styles.td}>{fmtR(totals.total_amount)}</td>
           <td style={styles.td}>{fmtR(totals.total_admin_fee)}</td>
@@ -185,18 +185,15 @@ function TruckReport({ data }) {
 // ── Supplier Reconciliation ─────────────────────────────────────────────────────
 function SupplierReport({ data }) {
   const totals = data.reduce((acc, r) => ({
-    fill_up_count: acc.fill_up_count + (r.fill_up_count || 0),
+    fillup_count: acc.fillup_count + (r.fillup_count || 0),
     total_litres: acc.total_litres + Number(r.total_litres || 0),
     total_amount: acc.total_amount + Number(r.total_amount || 0),
     total_admin_fee: acc.total_admin_fee + Number(r.total_admin_fee || 0),
     grand_total: acc.grand_total + Number(r.grand_total || 0),
-  }), { fill_up_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, grand_total: 0 })
+  }), { fillup_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, grand_total: 0 })
 
   return (
     <>
-      <div style={styles.reconNote}>
-        DIESEL TOTALS TO MATCH SUPPLIER — reconcile these figures against supplier statements before payment.
-      </div>
       <table style={styles.table}>
         <thead>
           <tr>
@@ -209,7 +206,7 @@ function SupplierReport({ data }) {
           {data.map((r, i) => (
             <tr key={i} style={styles.row}>
               <td style={{ ...styles.td, fontWeight: 600 }}>{r.supplier_name || r.supplier_id}</td>
-              <td style={styles.td}>{r.fill_up_count}</td>
+              <td style={styles.td}>{r.fillup_count}</td>
               <td style={styles.td}>{fmtL(r.total_litres)}</td>
               <td style={styles.td}>{fmtR(r.total_amount)}</td>
               <td style={styles.td}>{fmtR(r.total_admin_fee)}</td>
@@ -218,7 +215,7 @@ function SupplierReport({ data }) {
           ))}
           <tr style={styles.totalRow}>
             <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
-            <td style={styles.td}>{totals.fill_up_count}</td>
+            <td style={styles.td}>{totals.fillup_count}</td>
             <td style={styles.td}>{fmtL(totals.total_litres)}</td>
             <td style={styles.td}>{fmtR(totals.total_amount)}</td>
             <td style={styles.td}>{fmtR(totals.total_admin_fee)}</td>
@@ -232,14 +229,14 @@ function SupplierReport({ data }) {
 
 // ── Annual Summary ──────────────────────────────────────────────────────────────
 function AnnualReport({ data, year }) {
-  // data is array of monthly totals: { month, fill_up_count, total_litres, total_amount, total_admin_fee, grand_total }
+  // data is array of monthly totals: { month, fillup_count, total_litres, total_amount, total_admin_fee, grand_total }
   const totals = data.reduce((acc, r) => ({
-    fill_up_count: acc.fill_up_count + (r.fill_up_count || 0),
+    fillup_count: acc.fillup_count + (r.fillup_count || 0),
     total_litres: acc.total_litres + Number(r.total_litres || 0),
     total_amount: acc.total_amount + Number(r.total_amount || 0),
     total_admin_fee: acc.total_admin_fee + Number(r.total_admin_fee || 0),
     grand_total: acc.grand_total + Number(r.grand_total || 0),
-  }), { fill_up_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, grand_total: 0 })
+  }), { fillup_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, grand_total: 0 })
 
   return (
     <>
@@ -258,7 +255,7 @@ function AnnualReport({ data, year }) {
               <td style={{ ...styles.td, fontWeight: 600 }}>
                 {MONTHS[(r.month || i + 1) - 1]} {year}
               </td>
-              <td style={styles.td}>{r.fill_up_count}</td>
+              <td style={styles.td}>{r.fillup_count}</td>
               <td style={styles.td}>{fmtL(r.total_litres)}</td>
               <td style={styles.td}>{fmtR(r.total_amount)}</td>
               <td style={styles.td}>{fmtR(r.total_admin_fee)}</td>
@@ -267,7 +264,7 @@ function AnnualReport({ data, year }) {
           ))}
           <tr style={styles.totalRow}>
             <td style={{ ...styles.td, fontWeight: 700 }}>YEAR TOTAL</td>
-            <td style={styles.td}>{totals.fill_up_count}</td>
+            <td style={styles.td}>{totals.fillup_count}</td>
             <td style={styles.td}>{fmtL(totals.total_litres)}</td>
             <td style={styles.td}>{fmtR(totals.total_amount)}</td>
             <td style={styles.td}>{fmtR(totals.total_admin_fee)}</td>
@@ -284,7 +281,7 @@ const styles = {
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
   title: { fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', margin: 0 },
   subtitle: { fontSize: 13, color: 'var(--text-muted)', marginTop: 4 },
-  tabs: { display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 0 },
+  tabs: { display: 'flex', gap: 4, marginBottom: 16, paddingBottom: 0 },
   tab: {
     padding: '8px 18px', background: 'none', border: 'none', cursor: 'pointer',
     fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', borderBottom: '2px solid transparent',

@@ -1844,6 +1844,8 @@ class DieselSupplierReconciliation(BaseModel):
     fillup_count: int
     total_litres: Decimal
     total_amount: Decimal
+    total_admin_fee: Decimal
+    grand_total: Decimal
     verified_amount: Decimal
     unverified_amount: Decimal
 

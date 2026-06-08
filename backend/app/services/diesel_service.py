@@ -138,7 +138,9 @@ class DieselCalculationService:
                 Supplier.name.label("supplier_name"),
                 func.count(DieselFillUp.id).label("fillup_count"),
                 func.coalesce(func.sum(DieselFillUp.litres), 0).label("total_litres"),
-                func.coalesce(func.sum(DieselFillUp.total_amount), 0).label("total_amount"),
+                func.coalesce(func.sum(DieselFillUp.amount), 0).label("total_amount"),
+                func.coalesce(func.sum(DieselFillUp.admin_fee_amount), 0).label("total_admin_fee"),
+                func.coalesce(func.sum(DieselFillUp.total_amount), 0).label("grand_total"),
                 func.coalesce(
                     func.sum(DieselFillUp.total_amount).filter(DieselFillUp.verified == True), 0
                 ).label("verified_amount"),
@@ -162,6 +164,8 @@ class DieselCalculationService:
                 "fillup_count": r.fillup_count,
                 "total_litres": Decimal(str(r.total_litres)).quantize(TWO_DP),
                 "total_amount": Decimal(str(r.total_amount)).quantize(TWO_DP),
+                "total_admin_fee": Decimal(str(r.total_admin_fee)).quantize(TWO_DP),
+                "grand_total": Decimal(str(r.grand_total)).quantize(TWO_DP),
                 "verified_amount": Decimal(str(r.verified_amount)).quantize(TWO_DP),
                 "unverified_amount": Decimal(str(r.unverified_amount)).quantize(TWO_DP),
             }

@@ -9,10 +9,8 @@ from sqlalchemy import text
 
 
 def upgrade(conn):
-    try:
-        conn.execute(text(
-            "ALTER TABLE suppliers ADD COLUMN is_intercompany BOOLEAN NOT NULL DEFAULT FALSE"
-        ))
-    except Exception:
-        pass  # column already exists
+    # IF NOT EXISTS so a manual re-run (raw SQL) doesn't error on an existing column.
+    conn.execute(text(
+        "ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS is_intercompany BOOLEAN NOT NULL DEFAULT FALSE"
+    ))
     conn.commit()
