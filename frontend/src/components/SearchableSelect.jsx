@@ -17,7 +17,7 @@ import { createPortal } from 'react-dom'
  */
 export default function SearchableSelect({
   value, onChange, options = [], getValue, getLabel,
-  placeholder = 'Select…', style = {}, formInput = false,
+  placeholder = 'Select…', style = {}, formInput = false, creatable = false,
 }) {
   const [open, setOpen]       = useState(false)
   const [query, setQuery]     = useState('')
@@ -33,6 +33,13 @@ export default function SearchableSelect({
   const filtered = query.trim()
     ? options.filter(o => getLabel(o).toLowerCase().includes(query.toLowerCase()))
     : options
+
+  // ── Creatable: offer the typed text as a brand-new value ─────────────────────
+  const q = query.trim()
+  const exactMatch = options.some(o => getLabel(o).toLowerCase() === q.toLowerCase())
+  const showCreate = creatable && q.length > 0 && !exactMatch
+  // Navigable rows = an optional "create" row followed by the filtered options.
+  const rows = showCreate ? [{ __create: true, __text: q }, ...filtered] : filtered
 
   // ── Geometry ────────────────────────────────────────────────────────────────
   const measureTrigger = () => {
@@ -51,6 +58,8 @@ export default function SearchableSelect({
   const closeDrop = () => { setOpen(false); setQuery(''); setHoverIdx(-1) }
 
   const pick = (opt) => { onChange(getValue(opt)); closeDrop() }
+  const createValue = (text) => { onChange(text); closeDrop() }
+  const pickRow = (row) => (row && row.__create) ? createValue(row.__text) : pick(row)
 
   // ── Keyboard (only active when open) ────────────────────────────────────────
   const handleKeyDown = (e) => {
@@ -61,7 +70,7 @@ export default function SearchableSelect({
         break
       case 'ArrowDown':
         e.preventDefault()
-        setHoverIdx(i => Math.min(i + 1, filtered.length - 1))
+        setHoverIdx(i => Math.min(i + 1, rows.length - 1))
         break
       case 'ArrowUp':
         e.preventDefault()
@@ -69,13 +78,15 @@ export default function SearchableSelect({
         break
       case 'Enter':
         e.preventDefault()
-        if (hoverIdx >= 0 && filtered[hoverIdx]) pick(filtered[hoverIdx])
-        else if (filtered.length === 1) pick(filtered[0])
+        if (hoverIdx >= 0 && rows[hoverIdx]) pickRow(rows[hoverIdx])
+        else if (rows.length === 1) pickRow(rows[0])
+        else if (showCreate) createValue(q)
         break
       case 'Tab':
         // Auto-select on Tab if there's a highlighted item or exactly one match
-        if (hoverIdx >= 0 && filtered[hoverIdx]) pick(filtered[hoverIdx])
-        else if (query.trim() && filtered.length === 1) pick(filtered[0])
+        if (hoverIdx >= 0 && rows[hoverIdx]) pickRow(rows[hoverIdx])
+        else if (q && rows.length === 1) pickRow(rows[0])
+        else if (showCreate) createValue(q)
         else closeDrop()
         break
       default:
@@ -125,7 +136,7 @@ export default function SearchableSelect({
     borderRadius: 'var(--radius-sm)',
     border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`,
     background: 'var(--bg-base)',
-    color: open || selected ? 'var(--text-primary)' : 'var(--text-muted)',
+    color: open || selected || value ? 'var(--text-primary)' : 'var(--text-muted)',
     cursor: open ? 'text' : 'pointer',
     outline: 'none',
     width: '100%',
@@ -139,7 +150,7 @@ export default function SearchableSelect({
     borderRadius: 5,
     border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`,
     background: 'var(--bg-card)',
-    color: open || selected ? 'var(--text-primary)' : 'var(--text-muted)',
+    color: open || selected || value ? 'var(--text-primary)' : 'var(--text-muted)',
     cursor: open ? 'text' : 'pointer',
     outline: 'none',
     width: '100%',
@@ -178,11 +189,31 @@ export default function SearchableSelect({
           boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           zIndex: 9999,
         }}>
-          {filtered.length === 0
+          {rows.length === 0
             ? <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
                 No results
               </div>
-            : filtered.map((o, i) => {
+            : rows.map((o, i) => {
+                if (o.__create) {
+                  const isActive = i === hoverIdx
+                  return (
+                    <div
+                      key="__create"
+                      onMouseDown={e => { e.preventDefault(); createValue(o.__text) }}
+                      onMouseEnter={() => setHoverIdx(i)}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                        background: isActive ? 'var(--accent-subtle)' : 'transparent',
+                        color: 'var(--accent)',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Add “{o.__text}”
+                    </div>
+                  )
+                }
                 const isSelected = getValue(o) === value
                 const isActive   = i === hoverIdx || isSelected
                 return (

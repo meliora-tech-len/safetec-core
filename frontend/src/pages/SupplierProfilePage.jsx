@@ -6,7 +6,7 @@ import {
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
   verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
   addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
-  getSubcontractors, getDieselFillUps,
+  getSubcontractors, getDieselFillUpSlips,
   finalizeSupplierInvoice, bulkImportSupplierInvoices, resolveSupplierDieselConflicts,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
@@ -616,8 +616,8 @@ export default function SupplierProfilePage() {
   // Fetch diesel fill-ups for slip# dropdown in sub-lines (diesel suppliers only)
   useEffect(() => {
     if (!supplier?.is_diesel_supplier || !supplier?.entity_id) { setDieselFillups([]); return }
-    getDieselFillUps({ entity_id: supplier.entity_id, limit: 1000 })
-      .then(r => setDieselFillups((r.data || []).filter(f => f.slip_number)))
+    getDieselFillUpSlips({ entity_id: supplier.entity_id })
+      .then(r => setDieselFillups(r.data || []))
       .catch(() => setDieselFillups([]))
   }, [supplier?.id, supplier?.entity_id, supplier?.is_diesel_supplier])
 
@@ -2279,6 +2279,19 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
       amount_incl_vat: excl ? String(Math.round(excl * vatMult * 100) / 100) : '',
     }))
   }
+  // One option per slip number — the entity's fill-ups can repeat a slip# across
+  // rows, which would otherwise produce duplicate-key warnings in the dropdown.
+  const slipOptions = (() => {
+    const seen = new Set()
+    const out = []
+    for (const f of fillups) {
+      const s = f.slip_number ?? ''
+      if (!s || seen.has(s)) continue
+      seen.add(s)
+      out.push(f)
+    }
+    return out
+  })()
   const totalLitres = items.reduce((s, li) => s + (parseFloat(li.quantity) || 0), 0)
   const totalExcl = items.reduce((s, li) => s + (parseFloat(li.amount_excl_vat) || 0), 0)
   const totalIncl = items.reduce((s, li) => s + (parseFloat(li.amount_incl_vat) || 0), 0)
@@ -2307,14 +2320,15 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
                   style={{ ...liStyles.input, minWidth: 120 }} />
               </td>
               <td style={liStyles.td}>
-                {fillups.length > 0 && !freeTextSlip ? (
+                {(fillups.length > 0 || freeTextSlip) ? (
                   <SearchableSelect
                     value={li.item_code ?? ''}
                     onChange={v => selectSlip(idx, v)}
-                    options={[{ slip_number: '' }, ...fillups]}
+                    options={[{ slip_number: '' }, ...slipOptions]}
                     getValue={f => f.slip_number ?? ''}
                     getLabel={f => f.slip_number ? f.slip_number : '— Select —'}
-                    placeholder="Select slip…"
+                    placeholder={freeTextSlip ? 'Slip # / search…' : 'Select slip…'}
+                    creatable={freeTextSlip}
                     style={{ minWidth: 130 }}
                   />
                 ) : (

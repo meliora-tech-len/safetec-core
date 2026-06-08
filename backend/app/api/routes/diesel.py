@@ -507,6 +507,52 @@ def list_fillups(
     return [_enrich_fillup(f, db) for f in fillups]
 
 
+@router.get("/fillups/slips")
+def list_fillup_slips(
+    entity_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lightweight, deduped list of distinct slip numbers (+ autofill fields) for
+    the slip# dropdown. Avoids _enrich_fillup's per-row user/truck/supplier queries
+    so it stays fast even with thousands of fill-ups."""
+    accessible = _accessible_entity_ids(current_user)
+    q = (
+        db.query(
+            DieselFillUp.slip_number,
+            DieselFillUp.litres,
+            DieselFillUp.rate_per_litre,
+            Truck.registration,
+        )
+        .outerjoin(Truck, DieselFillUp.truck_id == Truck.id)
+        .filter(
+            DieselFillUp.is_archived != True,
+            DieselFillUp.slip_number.isnot(None),
+            DieselFillUp.slip_number != "",
+        )
+    )
+    if accessible is not None:
+        q = q.filter(DieselFillUp.entity_id.in_(accessible))
+    if entity_id:
+        _check_entity_access(entity_id, current_user)
+        q = q.filter(DieselFillUp.entity_id == entity_id)
+    q = q.order_by(DieselFillUp.fillup_date.desc(), DieselFillUp.id.desc())
+
+    seen = set()
+    out = []
+    for slip, litres, rate, reg in q.all():
+        if slip in seen:
+            continue
+        seen.add(slip)
+        out.append({
+            "slip_number": slip,
+            "litres": litres,
+            "rate_per_litre": rate,
+            "truck_registration": reg,
+        })
+    return out
+
+
 @router.get("/fillups/truck/{truck_id}", response_model=List[DieselFillUpOut])
 def list_fillups_by_truck(
     truck_id: int,

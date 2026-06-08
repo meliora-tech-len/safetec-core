@@ -220,6 +220,7 @@ export const deleteAdditionalLoadRate = (id)          => api.delete(`/additional
 
 export const importDiesel = (data) => api.post('/diesel/import', data)
 export const getDieselFillUps = (params = {}) => api.get('/diesel/fillups', { params })
+export const getDieselFillUpSlips = (params = {}) => api.get('/diesel/fillups/slips', { params })
 export const getDieselFillUpSummary = (params = {}) => api.get('/diesel/fillups/summary', { params })
 export const getDieselFillUp = (id) => api.get(`/diesel/fillups/${id}`)
 export const getDieselFillUpsByTruck = (truckId, params = {}) => api.get(`/diesel/fillups/truck/${truckId}`, { params })
