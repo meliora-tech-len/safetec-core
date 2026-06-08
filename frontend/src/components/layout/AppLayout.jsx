@@ -41,7 +41,9 @@ export default function AppLayout() {
           </span>
         </div>
 
-        <ErrorBoundary>
+        {/* Key by active entity so switching entities remounts the current page,
+            forcing it to refetch its entity-scoped data (branding alone isn't enough). */}
+        <ErrorBoundary key={activeEntity?.id ?? 'all'}>
           <Outlet />
         </ErrorBoundary>
       </main>

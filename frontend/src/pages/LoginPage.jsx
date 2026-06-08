@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import toast from 'react-hot-toast'
-import { Lock, Mail, Loader, Eye, EyeOff } from 'lucide-react'
+import { Lock, Mail, Loader, Eye, EyeOff, AlertCircle } from 'lucide-react'
 import { errorMessage } from '../utils/helpers'
 
 export default function LoginPage() {
@@ -12,15 +11,23 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPw, setShowPw] = useState(false)
+  const [error, setError] = useState('')
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoading(true)
+    setError('')
     try {
       await login(email, password)
       navigate('/dashboard')
     } catch (err) {
-      toast.error(errorMessage(err, 'Invalid credentials'))
+      // The <Toaster> only mounts inside the authenticated layout, so show the
+      // error inline here — otherwise a failed login looks like nothing happened.
+      const status = err?.response?.status
+      const msg = status === 401
+        ? 'Incorrect email or password. Please try again.'
+        : errorMessage(err, 'Unable to sign in. Please try again.')
+      setError(msg)
     } finally {
       setLoading(false)
     }
@@ -36,13 +43,19 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} style={styles.form}>
+          {error && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.4)', color: 'var(--danger)', padding: '10px 12px', borderRadius: 'var(--radius-sm)', fontSize: 13 }}>
+              <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <span>{error}</span>
+            </div>
+          )}
           <div className="form-group">
             <label>Email Address</label>
             <div style={styles.inputWrap}>
               <Mail size={15} style={styles.inputIcon} />
               <input
                 type="email" value={email}
-                onChange={e => setEmail(e.target.value)}
+                onChange={e => { setEmail(e.target.value); if (error) setError('') }}
                 placeholder="admin@safetec.co.za"
                 required autoFocus
                 style={{ paddingLeft: 36 }}
@@ -56,7 +69,7 @@ export default function LoginPage() {
               <Lock size={15} style={styles.inputIcon} />
               <input
                 type={showPw ? 'text' : 'password'} value={password}
-                onChange={e => setPassword(e.target.value)}
+                onChange={e => { setPassword(e.target.value); if (error) setError('') }}
                 placeholder="••••••••"
                 required
                 style={{ paddingLeft: 36, paddingRight: 36 }}
