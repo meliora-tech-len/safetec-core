@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { getDashboardStats, getSupplierPayablesDashboard, getDieselWarnings } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
-import { TrendingUp, AlertCircle, FileText, Clock, Building2, ChevronRight, CreditCard, Fuel } from 'lucide-react'
+import { TrendingUp, AlertCircle, FileText, Clock, Building2, ChevronRight, ChevronDown, CreditCard, Fuel } from 'lucide-react'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState(null)
   const [payables, setPayables] = useState(null)
   const [dieselWarnings, setDieselWarnings] = useState(null)
+  const [showOtherPeriods, setShowOtherPeriods] = useState(false)
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState(() => {
     const d = new Date()
@@ -137,28 +138,6 @@ export default function DashboardPage() {
             />
           </div>
 
-          {/* Supplier Payables Breakdown */}
-          {payables?.other_period_payables?.length > 0 && (
-            <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, background: 'rgba(220,38,38,0.06)', border: '1px solid rgba(220,38,38,0.25)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>⚠ Invoices found logged under different months</span>
-              </div>
-              {payables.other_period_payables.map(p => (
-                <div key={`${p.supplier_id}-${p.invoice_year}-${p.invoice_month}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid rgba(220,38,38,0.12)', fontSize: 13 }}>
-                  <div>
-                    <Link to={`/suppliers/${p.supplier_id}`} style={{ fontWeight: 600, color: 'var(--text-primary)', textDecoration: 'none' }}>
-                      {p.supplier_name}
-                    </Link>
-                    <span style={{ marginLeft: 8, fontSize: 11, color: '#dc2626' }}>
-                      {MONTH_NAMES[p.invoice_month]} {p.invoice_year} · {p.invoice_count} invoice{p.invoice_count !== 1 ? 's' : ''}
-                    </span>
-                  </div>
-                  <span style={{ fontWeight: 700, color: '#dc2626' }}>{formatCurrency(p.total_outstanding)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
           {payables && (payables.current_payables.length > 0 || payables.days_30_payables.length > 0 || payables.total_paid_this_month > 0) && (
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -279,6 +258,39 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Invoices logged in other months — collapsed by default (informational) */}
+          {payables?.other_period_payables?.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <button
+                onClick={() => setShowOtherPeriods(v => !v)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+              >
+                {showOtherPeriods ? <ChevronDown size={15} color="var(--text-muted)" /> : <ChevronRight size={15} color="var(--text-muted)" />}
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Invoices logged in other months</span>
+                <span style={{ background: 'var(--bg-hover)', color: 'var(--text-muted)', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10 }}>
+                  {payables.other_period_payables.length}
+                </span>
+              </button>
+              {showOtherPeriods && (
+                <div className="card" style={{ marginTop: 12 }}>
+                  {payables.other_period_payables.map(p => (
+                    <div key={`${p.supplier_id}-${p.invoice_year}-${p.invoice_month}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                      <div>
+                        <Link to={`/suppliers/${p.supplier_id}`} style={{ fontWeight: 600, color: 'var(--text-primary)', textDecoration: 'none' }}>
+                          {p.supplier_name}
+                        </Link>
+                        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+                          {MONTH_NAMES[p.invoice_month]} {p.invoice_year} · {p.invoice_count} invoice{p.invoice_count !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <span style={{ fontWeight: 700 }}>{formatCurrency(p.total_outstanding)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
