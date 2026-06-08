@@ -35,11 +35,20 @@ import SubcontractorProfilePage from './pages/SubcontractorProfilePage'
 import CustomersPage from './pages/CustomersPage'
 import InvoiceTemplatesPage from './pages/InvoiceTemplatesPage'
 import InvoiceTemplateFormPage from './pages/InvoiceTemplateFormPage'
+import { isNoTruckEntity } from './utils/helpers'
 import './styles/globals.css'
 
 function PrivateRoute({ children }) {
   const { user } = useAuth()
   return user ? children : <Navigate to="/login" replace />
+}
+
+// Blocks truck/driver/diesel routes for entities that don't run trucks (Border, Thembis)
+function TruckRoute({ children }) {
+  const { user, activeEntity } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  if (isNoTruckEntity(activeEntity)) return <Navigate to="/dashboard" replace />
+  return children
 }
 
 function AdminRoute({ children }) {
@@ -68,11 +77,11 @@ export default function App() {
             <Route path="/suppliers/:supplierId" element={<SupplierProfilePage />} />
 
             {/* Fleet */}
-            <Route path="/fleet" element={<FleetPage />} />
+            <Route path="/fleet" element={<TruckRoute><FleetPage /></TruckRoute>} />
 
             {/* Subcontractors */}
-            <Route path="/subcontractors" element={<SubcontractorsPage />} />
-            <Route path="/subcontractors/:id" element={<SubcontractorProfilePage />} />
+            <Route path="/subcontractors" element={<TruckRoute><SubcontractorsPage /></TruckRoute>} />
+            <Route path="/subcontractors/:id" element={<TruckRoute><SubcontractorProfilePage /></TruckRoute>} />
 
             {/* Clients */}
             <Route path="/clients" element={<ClientsPage />} />
@@ -81,9 +90,9 @@ export default function App() {
             <Route path="/customers" element={<CustomersPage />} />
 
             {/* Drivers */}
-            <Route path="/drivers" element={<DriversPage />} />
-            <Route path="/drivers/:driverId" element={<DriverDetailPage />} />
-            <Route path="/fleet/assignments" element={<DriverAssignmentsPage />} />
+            <Route path="/drivers" element={<TruckRoute><DriversPage /></TruckRoute>} />
+            <Route path="/drivers/:driverId" element={<TruckRoute><DriverDetailPage /></TruckRoute>} />
+            <Route path="/fleet/assignments" element={<TruckRoute><DriverAssignmentsPage /></TruckRoute>} />
 
             {/* Quotes */}
             <Route path="/quotes" element={<InvoicesPage docType="quote" />} />
@@ -115,20 +124,20 @@ export default function App() {
 
             {/* Settings — all authenticated users */}
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/settings/payroll" element={<PayrollSettingsPage />} />
+            <Route path="/settings/payroll" element={<TruckRoute><PayrollSettingsPage /></TruckRoute>} />
             <Route path="/settings/mines" element={<MinesSettingsPage />} />
 
             {/* Truck Loads */}
-            <Route path="/truck-loads" element={<PrivateRoute><TruckLoadsPage /></PrivateRoute>} />
-            <Route path="/truck-loads/:truckId" element={<PrivateRoute><TruckLoadProfilePage /></PrivateRoute>} />
+            <Route path="/truck-loads" element={<TruckRoute><TruckLoadsPage /></TruckRoute>} />
+            <Route path="/truck-loads/:truckId" element={<TruckRoute><TruckLoadProfilePage /></TruckRoute>} />
 
             {/* Diesel */}
-            <Route path="/diesel" element={<DieselFillUpsPage />} />
+            <Route path="/diesel" element={<TruckRoute><DieselFillUpsPage /></TruckRoute>} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/statements" element={<StatementsPage />} />
             <Route path="/statements/new" element={<StatementEditorPage />} />
             <Route path="/statements/:id" element={<StatementEditorPage />} />
-            <Route path="/settings/diesel-rates" element={<DieselRatesPage />} />
+            <Route path="/settings/diesel-rates" element={<TruckRoute><DieselRatesPage /></TruckRoute>} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

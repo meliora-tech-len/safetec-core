@@ -5,7 +5,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useTheme } from '../../hooks/useTheme'
 import { resetUserPassword } from '../../services/api'
 import toast from 'react-hot-toast'
-import { errorMessage } from '../../utils/helpers'
+import { errorMessage, TRUCK_MODULES, isNoTruckEntity } from '../../utils/helpers'
 import {
   LayoutDashboard, Users, Building2, FileText,
   LogOut, Shield, Sun, Moon, Settings, ChevronDown, Truck,
@@ -57,8 +57,8 @@ const ADMIN_NAV = [
 const SETTINGS_NAV = [
   { to: '/settings/mines',        icon: MapPin,    label: 'Mines' },
   { to: '/reports',               icon: BarChart2, label: 'Reports' },
-  { to: '/settings/payroll',      icon: Settings,  label: 'Payroll Rates' },
-  { to: '/settings/diesel-rates', icon: Fuel,      label: 'Diesel Rates' },
+  { to: '/settings/payroll',      icon: Settings,  label: 'Payroll Rates', truck: true },
+  { to: '/settings/diesel-rates', icon: Fuel,      label: 'Diesel Rates',  truck: true },
   { to: '/settings',              icon: Settings,  label: 'Settings',     end: true },
 ]
 
@@ -136,13 +136,20 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
   }
   const entityAccess = getEntityAccess()
 
+  // Entities like Border Tradepost / Thembis People don't run trucks — hide those modules entirely
+  const noTrucks = isNoTruckEntity(activeEntity)
+
   const visibleNav = NAV.filter(item => {
     if (item.adminOnly && !isAdmin) return false
+    if (noTrucks && TRUCK_MODULES.includes(item.module)) return false
     if (!item.module) return true  // no module restriction (dashboard)
     if (isAdmin) return true
     if (!entityAccess) return false
     return (entityAccess.allowed_modules || []).includes(item.module)
   })
+
+  // Hide truck-related Settings items (Payroll/Diesel Rates) for no-truck entities
+  const visibleSettingsNav = SETTINGS_NAV.filter(item => !(noTrucks && item.truck))
 
   const visibleDocNav = DOCUMENTS_NAV.filter(item => {
     if (isAdmin) return true
@@ -261,7 +268,7 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
         {/* Settings nav */}
         <div>
           <div style={styles.navLabel}>Settings</div>
-          {SETTINGS_NAV.map(({ to, icon: Icon, label, end }) => (
+          {visibleSettingsNav.map(({ to, icon: Icon, label, end }) => (
             <NavLink key={to} to={to} end={!!end} onClick={onClose} style={({ isActive }) => ({
               ...styles.navItem,
               ...(isActive ? styles.navItemActive : {}),

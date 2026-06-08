@@ -52,6 +52,12 @@ export const errorMessage = (err, fallback = 'An error occurred') => {
   return coerce(detail) || err?.message || fallback
 }
 
+// Entities that don't operate trucks — Border Tradepost (BTP) & Thembis People (TP).
+// Truck/driver/diesel modules are hidden and their routes blocked for these.
+export const NO_TRUCK_ENTITY_CODES = ['BTP', 'TP']
+export const TRUCK_MODULES = ['fleet', 'drivers', 'truck_loads', 'diesel']
+export const isNoTruckEntity = (entity) => NO_TRUCK_ENTITY_CODES.includes(entity?.code)
+
 export const toISODate = (dateStr) => {
   if (!dateStr) return null
   try { return new Date(dateStr).toISOString() } catch { return null }
