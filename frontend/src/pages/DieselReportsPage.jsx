@@ -287,7 +287,7 @@ const styles = {
     fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', borderBottom: '2px solid transparent',
     marginBottom: -1, transition: 'all 0.12s',
   },
-  tabActive: { color: 'var(--accent)', fontWeight: 700, borderBottomColor: 'var(--accent)' },
+  tabActive: { color: 'var(--accent)', fontWeight: 700, borderBottom: '2px solid var(--accent)' },
   filters: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' },
   select: {
     padding: '7px 12px', background: 'var(--bg-card)', color: 'var(--text-primary)',
