@@ -1744,11 +1744,15 @@ export default function TruckLoadProfilePage() {
   const [splitSaving, setSplitSaving] = useState(false)
   const [openSplitGroups, setOpenSplitGroups] = useState(new Set())
 
-  // All trucks (for the in-header truck switcher) — fetched once.
+  // Trucks for the in-header truck switcher — scoped to the current truck's
+  // entity so you only switch between trucks of the same entity.
   const [allTrucks, setAllTrucks] = useState([])
   useEffect(() => {
-    getFleetTrucks({ limit: 500 }).then(r => setAllTrucks(r.data || [])).catch(() => {})
-  }, [])
+    if (!truck?.entity_id) return
+    getFleetTrucks({ entity_id: truck.entity_id, limit: 500 })
+      .then(r => setAllTrucks(r.data || []))
+      .catch(() => {})
+  }, [truck?.entity_id])
 
   // ── Load truck meta ──────────────────────────────────────────────────────────
   useEffect(() => {
