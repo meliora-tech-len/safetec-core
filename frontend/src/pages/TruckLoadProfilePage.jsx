@@ -25,6 +25,7 @@ import toast from 'react-hot-toast'
 import { errorMessage } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
 import VerifyBadge from '../components/VerifyBadge'
+import VerifiableAmount from '../components/VerifiableAmount'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 import DateInput from '../components/DateInput'
 
@@ -1501,6 +1502,29 @@ function ProfitSheetSection({ truck, year, month, summary }) {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // ── Per-value verification overlay (profit sheet) — optional on every value ──
+  const { user: pvUser, isAdmin: pvIsAdmin } = useAuth()
+  const [pVerif, setPVerif] = useState({})
+  const profitPrefix = `profit:${truck.id}:${year}-${String(month).padStart(2, '0')}`
+  const fetchPVerif = useCallback(() => {
+    getVerifications(profitPrefix)
+      .then(r => { const m = {}; for (const v of r.data) m[v.target] = v; setPVerif(m) })
+      .catch(() => setPVerif({}))
+  }, [profitPrefix])
+  useEffect(() => { fetchPVerif() }, [fetchPVerif])
+  const pVerify   = async (t) => { try { await verifyValue(t, truck?.entity_id); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const pFinalize = async (t) => { try { await finalizeValue(t, truck?.entity_id); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
+  // Wrap any profit-sheet value; `field` is the stable sub-key.
+  const PV = ({ field, align = 'right', children }) => {
+    const t = `${profitPrefix}:${field}`
+    return (
+      <VerifiableAmount target={t} state={pVerif[t]} onVerify={pVerify} onFinalize={pFinalize}
+        currentUserId={pvUser?.id} isAdmin={pvIsAdmin} align={align}>
+        {children}
+      </VerifiableAmount>
+    )
+  }
+
   const handleSave = async () => {
     setSaving(true)
     try {
@@ -1575,35 +1599,39 @@ function ProfitSheetSection({ truck, year, month, summary }) {
           {/* Income Excl VAT — editable */}
           <div style={{ padding: '10px 20px', borderRight: '1px solid var(--border)' }}>
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Income Excl VAT</div>
-            <input
-              type="number" step="0.01" min="0"
-              value={data.income_excl_vat ?? (autoIncomeExcl || '')}
-              placeholder={fmt(autoIncomeExcl)}
-              onChange={e => setField('income_excl_vat', e.target.value === '' ? null : e.target.value)}
-              style={{ width: 140, fontWeight: 700, fontSize: 15, color: 'var(--text-muted)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
-            />
+            <PV field="income_excl" align="left">
+              <input
+                type="number" step="0.01" min="0"
+                value={data.income_excl_vat ?? (autoIncomeExcl || '')}
+                placeholder={fmt(autoIncomeExcl)}
+                onChange={e => setField('income_excl_vat', e.target.value === '' ? null : e.target.value)}
+                style={{ width: 120, fontWeight: 700, fontSize: 15, color: 'var(--text-muted)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
+              />
+            </PV>
           </div>
           {/* Income Incl VAT — editable */}
           <div style={{ padding: '10px 20px', borderRight: '1px solid var(--border)' }}>
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Income Incl VAT</div>
-            <input
-              type="number" step="0.01" min="0"
-              value={data.income_incl_vat ?? (autoIncomeIncl || '')}
-              placeholder={fmt(autoIncomeIncl)}
-              onChange={e => setField('income_incl_vat', e.target.value === '' ? null : e.target.value)}
-              style={{ width: 140, fontWeight: 700, fontSize: 15, color: 'var(--accent)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
-            />
+            <PV field="income_incl" align="left">
+              <input
+                type="number" step="0.01" min="0"
+                value={data.income_incl_vat ?? (autoIncomeIncl || '')}
+                placeholder={fmt(autoIncomeIncl)}
+                onChange={e => setField('income_incl_vat', e.target.value === '' ? null : e.target.value)}
+                style={{ width: 120, fontWeight: 700, fontSize: 15, color: 'var(--accent)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
+              />
+            </PV>
           </div>
           {/* Total Expenses — calculated, read-only */}
           <div style={{ padding: '10px 20px', borderRight: '1px solid var(--border)' }}>
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Total Expenses</div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--danger)' }}>{fmt(totalExpenses)}</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--danger)' }}><PV field="total_expenses" align="left">{fmt(totalExpenses)}</PV></div>
           </div>
           {/* Net Profit — calculated, read-only */}
           <div style={{ padding: '10px 20px' }}>
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 4 }}>Net Profit</div>
             <div style={{ fontWeight: 700, fontSize: 15, color: !hasData ? 'var(--text-muted)' : netProfit >= 0 ? '#16a34a' : 'var(--danger)' }}>
-              {hasData ? fmt(netProfit) : '—'}
+              {hasData ? <PV field="net_profit" align="left">{fmt(netProfit)}</PV> : '—'}
             </div>
           </div>
         </div>
@@ -1630,16 +1658,18 @@ function ProfitSheetSection({ truck, year, month, summary }) {
                 placeholder="Description"
                 onChange={e => updateCustomLine(l.id, 'description', e.target.value)}
               />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                <input
-                  type="number" step="0.01" min="0"
-                  style={{ ...psInput, width: 130 }}
-                  value={l.amount ?? ''}
-                  placeholder="—"
-                  onChange={e => updateCustomLine(l.id, 'amount', e.target.value === '' ? null : e.target.value)}
-                />
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flexShrink: 0 }}>
+                <PV field={`expense:${l.id}`}>
+                  <input
+                    type="number" step="0.01" min="0"
+                    style={{ ...psInput, width: 130 }}
+                    value={l.amount ?? ''}
+                    placeholder="—"
+                    onChange={e => updateCustomLine(l.id, 'amount', e.target.value === '' ? null : e.target.value)}
+                  />
+                </PV>
                 <button onClick={() => removeCustomLine(l.id)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: '2px 4px', lineHeight: 1 }}>
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: '6px 4px', lineHeight: 1 }}>
                   <X size={13} />
                 </button>
               </div>
@@ -1658,7 +1688,7 @@ function ProfitSheetSection({ truck, year, month, summary }) {
 
           <div style={{ ...psRow, borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
             <span style={{ ...psLabel, fontWeight: 700 }}>Sub-total</span>
-            <span style={{ ...psAmt, color: 'var(--danger)' }}>{fmt(customTotal)}</span>
+            <span style={{ ...psAmt, color: 'var(--danger)' }}><PV field="expenses_subtotal">{fmt(customTotal)}</PV></span>
           </div>
         </div>
 
@@ -1685,7 +1715,7 @@ function ProfitSheetSection({ truck, year, month, summary }) {
                         {dieselInvs.length}
                       </span>
                     </span>
-                    <span style={psAmt}>{fmt(dieselTotal)}</span>
+                    <span style={psAmt}><PV field="diesel_total">{fmt(dieselTotal)}</PV></span>
                   </div>
                   {dieselOpen && dieselInvs.map(inv => (
                     <div key={inv.id} style={{ ...psRow, paddingLeft: 34, background: 'var(--bg-surface)' }}>
@@ -1695,7 +1725,7 @@ function ProfitSheetSection({ truck, year, month, summary }) {
                           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
                         )}
                       </span>
-                      <span style={psAmt}>{fmt(inv.amount)}</span>
+                      <span style={psAmt}><PV field={`invoice:${inv.id}`}>{fmt(inv.amount)}</PV></span>
                     </div>
                   ))}
                 </>
@@ -1710,13 +1740,13 @@ function ProfitSheetSection({ truck, year, month, summary }) {
                       <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
                     )}
                   </span>
-                  <span style={psAmt}>{fmt(inv.amount)}</span>
+                  <span style={psAmt}><PV field={`invoice:${inv.id}`}>{fmt(inv.amount)}</PV></span>
                 </div>
               ))}
 
               <div style={{ ...psRow, borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                 <span style={{ ...psLabel, fontWeight: 700 }}>Sub-total</span>
-                <span style={{ ...psAmt, color: 'var(--danger)' }}>{fmt(supplierTotal)}</span>
+                <span style={{ ...psAmt, color: 'var(--danger)' }}><PV field="supplier_subtotal">{fmt(supplierTotal)}</PV></span>
               </div>
             </>
           )}
