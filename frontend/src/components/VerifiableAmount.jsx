@@ -9,10 +9,11 @@ import VerifyBadge from './VerifyBadge'
  * Props:
  *   target, children (formatted amount), state (verification map entry or undefined),
  *   onVerify(target), onFinalize(target), currentUserId, isAdmin, align
+ *   inline — lay the badge beside the value (row) instead of underneath (column)
  */
 export default function VerifiableAmount({
   target, children, state, onVerify, onFinalize,
-  currentUserId, isAdmin = false, align = 'right',
+  currentUserId, isAdmin = false, align = 'right', inline = false,
 }) {
   const lockedDone = !!(state && state.verified3_by)
 
@@ -22,8 +23,12 @@ export default function VerifiableAmount({
     ...(lockedDone ? { background: 'rgba(245,158,11,0.22)', border: '1px solid rgba(245,158,11,0.7)' } : {}),
   }
 
+  const wrapStyle = inline
+    ? { display: 'inline-flex', flexDirection: 'row', alignItems: 'center', gap: 6 }
+    : { display: 'inline-flex', flexDirection: 'column', alignItems: align === 'right' ? 'flex-end' : 'flex-start', gap: 2 }
+
   return (
-    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: align === 'right' ? 'flex-end' : 'flex-start', gap: 2 }}>
+    <span style={wrapStyle}>
       <span style={valueStyle}>{children}</span>
       <VerifyBadge
         item={state || {}}
