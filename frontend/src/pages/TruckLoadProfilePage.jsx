@@ -1515,11 +1515,11 @@ function ProfitSheetSection({ truck, year, month, summary }) {
   const pVerify   = async (t) => { try { await verifyValue(t, truck?.entity_id); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
   const pFinalize = async (t) => { try { await finalizeValue(t, truck?.entity_id); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
   // Wrap any profit-sheet value; `field` is the stable sub-key.
-  const PV = ({ field, align = 'right', children }) => {
+  const PV = ({ field, align = 'right', inline = false, children }) => {
     const t = `${profitPrefix}:${field}`
     return (
       <VerifiableAmount target={t} state={pVerif[t]} onVerify={pVerify} onFinalize={pFinalize}
-        currentUserId={pvUser?.id} isAdmin={pvIsAdmin} align={align}>
+        currentUserId={pvUser?.id} isAdmin={pvIsAdmin} align={align} inline={inline}>
         {children}
       </VerifiableAmount>
     )
@@ -1653,16 +1653,16 @@ function ProfitSheetSection({ truck, year, month, summary }) {
           {(data.custom_lines || []).map(l => (
             <div key={l.id} style={{ ...psRow, gap: 8 }}>
               <input
-                style={{ ...psInput, flex: 1, textAlign: 'left', minWidth: 0 }}
+                style={{ ...psInput, flex: '1 1 90px', textAlign: 'left', minWidth: 70 }}
                 value={l.description}
                 placeholder="Description"
                 onChange={e => updateCustomLine(l.id, 'description', e.target.value)}
               />
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flexShrink: 0 }}>
-                <PV field={`expense:${l.id}`}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <PV field={`expense:${l.id}`} inline>
                   <input
                     type="number" step="0.01" min="0"
-                    style={{ ...psInput, width: 130 }}
+                    style={{ ...psInput, width: 110 }}
                     value={l.amount ?? ''}
                     placeholder="—"
                     onChange={e => updateCustomLine(l.id, 'amount', e.target.value === '' ? null : e.target.value)}
@@ -1790,6 +1790,9 @@ export default function TruckLoadProfilePage() {
   const [saving, setSaving]         = useState(false)
   const [dupWarning, setDupWarning] = useState(null)
   const firstInputRef = useRef(null)
+  const newDriverBackfilled = useRef(false)
+  const projDriverBackfilled = useRef(false)
+  const splitDriverBackfilled = useRef(false)
 
   // Projection form
   const [addingProjection, setAddingProjection] = useState(false)
@@ -1895,6 +1898,56 @@ export default function TruckLoadProfilePage() {
   useEffect(() => {
     if (editingId && firstInputRef.current) firstInputRef.current.focus()
   }, [editingId])
+
+  // ── Backfill new-load driver once the central driver resolves ────────────────
+  // On slow connections the Add-Load form can open before the drivers list (and
+  // therefore selectedDriverId) is ready, leaving the form's Driver box empty
+  // even though the header populates a moment later. Fill it once, only while
+  // still empty, so we never override a driver the user picked or cleared.
+  useEffect(() => {
+    if (editingId !== 'new') { newDriverBackfilled.current = false; return }
+    if (newDriverBackfilled.current) return
+    if (editForm.driver_id) { newDriverBackfilled.current = true; return }
+    if (!selectedDriverId) return
+    const d = drivers.find(x => String(x.id) === selectedDriverId)
+    if (!d) return
+    newDriverBackfilled.current = true
+    setEditForm(f => ({
+      ...f,
+      driver_id: selectedDriverId,
+      driver_name: `${d.first_name} ${d.last_name}`.trim(),
+    }))
+  }, [editingId, selectedDriverId, drivers, editForm.driver_id])
+
+  // Same backfill for the Projection form (snapshots selectedDriverId on open).
+  useEffect(() => {
+    if (!addingProjection) { projDriverBackfilled.current = false; return }
+    if (projDriverBackfilled.current) return
+    if (projForm.driver_id) { projDriverBackfilled.current = true; return }
+    if (!selectedDriverId) return
+    const d = drivers.find(x => String(x.id) === selectedDriverId)
+    if (!d) return
+    projDriverBackfilled.current = true
+    setProjForm(f => ({
+      ...f,
+      driver_id: selectedDriverId,
+      driver_name: `${d.first_name} ${d.last_name}`.trim(),
+    }))
+  }, [addingProjection, selectedDriverId, drivers, projForm.driver_id])
+
+  // Same backfill for the Split modal's first driver line (defaults to the
+  // header driver; the second line is filled in by hand).
+  useEffect(() => {
+    if (!splitModalOpen) { splitDriverBackfilled.current = false; return }
+    if (splitDriverBackfilled.current) return
+    if (splitDrivers[0]?.driver_id) { splitDriverBackfilled.current = true; return }
+    if (!selectedDriverId) return
+    const d = drivers.find(x => String(x.id) === selectedDriverId)
+    if (!d) return
+    splitDriverBackfilled.current = true
+    setSplitDrivers(prev => prev.map((x, idx) =>
+      idx === 0 ? { ...x, driver_id: parseInt(selectedDriverId) } : x))
+  }, [splitModalOpen, selectedDriverId, drivers, splitDrivers])
 
   // ── Auto-fill rate from mine ─────────────────────────────────────────────────
   useEffect(() => {
