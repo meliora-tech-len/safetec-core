@@ -4,8 +4,10 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, X, Edit2, Check, Do
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import VerifyBadge from '../components/VerifyBadge'
+import VerifiableAmount from '../components/VerifiableAmount'
 import DateInput from '../components/DateInput'
 import { errorMessage } from '../utils/helpers'
+import { getVerifications, verifyValue, finalizeValue } from '../services/api'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -330,6 +332,30 @@ export default function DriverDetailPage() {
 
   useEffect(() => { loadCycle() }, [loadCycle])
 
+  // ── Per-value verification overlay (payroll) ────────────────────────────────
+  const [verif, setVerif] = useState({})
+  const cyclePrefix = cycle?.id ? `paycycle:${cycle.id}` : null
+  const loadVerif = useCallback(() => {
+    if (!cyclePrefix) return
+    getVerifications(cyclePrefix)
+      .then(r => {
+        const map = {}
+        for (const v of r.data) map[v.target] = v
+        setVerif(map)
+      })
+      .catch(() => setVerif({}))
+  }, [cyclePrefix])
+  useEffect(() => { loadVerif() }, [loadVerif])
+
+  const handleVerifyValue = async (target) => {
+    try { await verifyValue(target, driver?.entity_id); loadVerif() }
+    catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
+  }
+  const handleFinalizeValue = async (target) => {
+    try { await finalizeValue(target, driver?.entity_id); loadVerif() }
+    catch (e) { toast.error(errorMessage(e, 'Lock failed')) }
+  }
+
   // Month navigation
   const prevMonth = () => {
     if (month === 1) { setMonth(12); setYear(y => y - 1) }
@@ -460,14 +486,25 @@ export default function DriverDetailPage() {
       {liveCalc && (
         <div className="grid-4" style={{ marginBottom: 20 }}>
           {[
-            { label: 'Total Loads',      value: liveCalc.grand,                   colour: 'var(--accent)' },
+            { label: 'Total Loads',      value: liveCalc.grand,                   colour: 'var(--accent)', verifyField: 'total_loads' },
             { label: 'Gross Income',     value: fmt(grossEarnings),               colour: 'var(--success)' },
             { label: 'Total Deductions', value: fmt(totalDeductions),             colour: 'var(--danger)' },
             { label: 'Net Payable',      value: fmt(netPayable),                  colour: 'var(--accent)' },
           ].map(c => (
             <div key={c.label} className="stat-card">
               <div className="stat-card-label">{c.label}</div>
-              <div className="stat-card-value" style={{ color: c.colour, fontSize: 20 }}>{c.value}</div>
+              <div className="stat-card-value" style={{ color: c.colour, fontSize: 20 }}>
+                {c.verifyField && cyclePrefix ? (
+                  <VerifiableAmount
+                    target={`${cyclePrefix}:${c.verifyField}`}
+                    state={verif[`${cyclePrefix}:${c.verifyField}`]}
+                    onVerify={handleVerifyValue} onFinalize={handleFinalizeValue}
+                    currentUserId={user?.id} isAdmin={isAdmin} align="left"
+                  >
+                    {c.value}
+                  </VerifiableAmount>
+                ) : c.value}
+              </div>
             </div>
           ))}
         </div>

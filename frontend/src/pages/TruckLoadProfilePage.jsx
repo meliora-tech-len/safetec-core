@@ -18,10 +18,13 @@ import {
   addDriverFoodPayment, getTruckAdditionalLoads, getTruckFoodPayments, deleteDriverFoodPayment,
   getTruckMonthlyExpenses, upsertTruckMonthlyExpenses,
   getSupplierInvoicesByVehicle,
+  verifyDieselFillUp, finalizeDieselFillUp,
+  getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
 import toast from 'react-hot-toast'
 import { errorMessage } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
+import VerifyBadge from '../components/VerifyBadge'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 import DateInput from '../components/DateInput'
 
@@ -486,6 +489,12 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
 
   useEffect(() => { fetchFillups() }, [fetchFillups])
 
+  // Per-line verification — native DieselFillUp verification, shared with the
+  // standalone Diesel module (verify once, reflected in both views).
+  const { user: dieselUser, isAdmin: dieselIsAdmin } = useAuth()
+  const handleVerifyFillup   = async (f) => { try { await verifyDieselFillUp(f.id); fetchFillups() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const handleFinalizeFillup = async (f) => { try { await finalizeDieselFillUp(f.id); fetchFillups() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
+
   const doAdd = async () => {
     setSaving(true)
     try {
@@ -760,9 +769,13 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
                           <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(f.total_amount)}</td>
                           <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.notes || '—'}</td>
                           <td onClick={e => e.stopPropagation()}>
-                            <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(f)}>
-                              <Trash2 size={13} />
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                              <VerifyBadge item={f} onVerify={handleVerifyFillup} onFinalize={handleFinalizeFillup}
+                                currentUserId={dieselUser?.id} isAdmin={dieselIsAdmin} />
+                              <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(f)}>
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )
@@ -891,6 +904,20 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
   }, [truck.id, year, month])
 
   useEffect(() => { fetchEntries() }, [fetchEntries])
+
+  // Per-line verification overlay (additional loads)
+  const { user: alUser, isAdmin: alIsAdmin } = useAuth()
+  const [alVerif, setAlVerif] = useState({})
+  const alPrefix = `truckloads:${truck.id}:${year}-${String(month).padStart(2, '0')}`
+  const alTarget = (id) => `${alPrefix}:addload:${id}`
+  const fetchAlVerif = useCallback(() => {
+    getVerifications(alPrefix)
+      .then(r => { const m = {}; for (const v of r.data) m[v.target] = v; setAlVerif(m) })
+      .catch(() => setAlVerif({}))
+  }, [alPrefix])
+  useEffect(() => { fetchAlVerif() }, [fetchAlVerif])
+  const handleVerifyAl   = async (t) => { try { await verifyValue(t, truck?.entity_id); fetchAlVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const handleFinalizeAl = async (t) => { try { await finalizeValue(t, truck?.entity_id); fetchAlVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
 
   useEffect(() => {
     if (!isSafetec) { setRates([]); return }
@@ -1148,9 +1175,15 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
                     )}
                     <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
                     <td onClick={ev => ev.stopPropagation()}>
-                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(e)}>
-                        <Trash2 size={13} />
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                        <VerifyBadge item={alVerif[alTarget(e.id)] || {}}
+                          onVerify={() => handleVerifyAl(alTarget(e.id))}
+                          onFinalize={() => handleFinalizeAl(alTarget(e.id))}
+                          currentUserId={alUser?.id} isAdmin={alIsAdmin} />
+                        <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(e)}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -1698,7 +1731,7 @@ function ProfitSheetSection({ truck, year, month, summary }) {
 export default function TruckLoadProfilePage() {
   const { truckId } = useParams()
   const navigate = useNavigate()
-  const { isAdmin, entities } = useAuth()
+  const { isAdmin, entities, user } = useAuth()
 
   const now = new Date()
   const [year, setYear]   = useState(now.getFullYear())
@@ -1814,6 +1847,20 @@ export default function TruckLoadProfilePage() {
   }, [truck, year, month])
 
   useEffect(() => { fetchLoads() }, [fetchLoads])
+
+  // ── Per-line verification overlay (Loads) ───────────────────────────────────
+  const [loadVerif, setLoadVerif] = useState({})
+  const loadsVerifPrefix = truck ? `truckloads:${truck.id}:${year}-${String(month).padStart(2, '0')}` : null
+  const loadVerifTarget = (loadId) => `${loadsVerifPrefix}:load:${loadId}`
+  const fetchLoadVerif = useCallback(() => {
+    if (!loadsVerifPrefix) return
+    getVerifications(loadsVerifPrefix)
+      .then(r => { const m = {}; for (const v of r.data) m[v.target] = v; setLoadVerif(m) })
+      .catch(() => setLoadVerif({}))
+  }, [loadsVerifPrefix])
+  useEffect(() => { fetchLoadVerif() }, [fetchLoadVerif])
+  const handleVerifyLoad   = async (target) => { try { await verifyValue(target, truck?.entity_id); fetchLoadVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const handleFinalizeLoad = async (target) => { try { await finalizeValue(target, truck?.entity_id); fetchLoadVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
 
   useEffect(() => {
     if (editingId && firstInputRef.current) firstInputRef.current.focus()
@@ -2497,6 +2544,12 @@ export default function TruckLoadProfilePage() {
                         </button>
                         <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
                           onClick={e => handleDelete(l, e)}><Trash2 size={13} /></button>
+                        <div style={{ marginTop: 4 }}>
+                          <VerifyBadge item={loadVerif[loadVerifTarget(l.id)] || {}}
+                            onVerify={() => handleVerifyLoad(loadVerifTarget(l.id))}
+                            onFinalize={() => handleFinalizeLoad(loadVerifTarget(l.id))}
+                            currentUserId={user?.id} isAdmin={isAdmin} />
+                        </div>
                       </td>
                     </tr>
                   )

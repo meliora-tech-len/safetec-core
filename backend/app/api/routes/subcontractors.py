@@ -456,6 +456,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                 fee_vt = (fee_ex * Decimal("0.15")).quantize(Decimal("0.01"))
                 fee_in = (fee_ex * Decimal("1.15")).quantize(Decimal("0.01"))
                 rows.append(DieselFillUpCostingRow(
+                    fillup_id=f.id,
                     fillup_date=f.fillup_date,
                     slip_number=f.slip_number,
                     invoice_number=f.invoice_number,

@@ -105,11 +105,13 @@ def apply_verify_step(obj, current_user: User, is_admin: bool):
             )
 
 
-def apply_finalize_step(obj, current_user: User, is_admin: bool):
+def apply_finalize_step(obj, current_user: User, is_admin: bool, require_step1: bool = True):
     """
     Apply or undo step 3 (admin final lock).
 
-    - Requires at least step 1 to be complete.
+    - By default requires at least step 1 to be complete. Pass require_step1=False
+      to let the owner lock a value on its own (her verification alone stands) —
+      used by the per-value verification overlay.
     - Any admin can apply step 3 (step 2 is optional).
     - Only the admin who set step 3 can reverse it.
     """
@@ -124,7 +126,7 @@ def apply_finalize_step(obj, current_user: User, is_admin: bool):
     step1_done = bool(getattr(obj, _flag_attr, False))
     step3_done = bool(getattr(obj, "verified3_by", None))
 
-    if not step1_done:
+    if require_step1 and not step1_done:
         raise HTTPException(
             status_code=400,
             detail="At least one verification step must be completed before applying the final lock.",

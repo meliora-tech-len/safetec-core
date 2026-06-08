@@ -2010,6 +2010,7 @@ class PayrollEntryStatusTransition(BaseModel):
 # ── Subcontractor Costing Schemas ─────────────────────────────────────────────
 
 class DieselFillUpCostingRow(BaseModel):
+    fillup_id: Optional[int] = None
     fillup_date: date
     slip_number: Optional[str] = None
     invoice_number: Optional[str] = None
@@ -2109,3 +2110,24 @@ class SubcontractorCostingOut(BaseModel):
     summary: SubcontractorCostingSummary
     diesel_suppliers: List[str] = []
     is_vat_registered: bool = True
+
+
+# ── Per-value verification overlay ────────────────────────────────────────────
+
+class ValueVerificationActionIn(BaseModel):
+    target: str
+    entity_id: Optional[int] = None
+
+
+class ValueVerificationOut(BaseModel):
+    target: str
+    is_verified: bool = False
+    verified_by: Optional[int] = None
+    verified2_by: Optional[int] = None
+    verified3_by: Optional[int] = None
+    verified_by_initials: Optional[str] = None
+    verified_by_date: Optional[str] = None
+    verified2_by_initials: Optional[str] = None
+    verified2_by_date: Optional[str] = None
+    verified3_by_initials: Optional[str] = None
+    verified3_by_date: Optional[str] = None

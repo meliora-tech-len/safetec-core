@@ -7,8 +7,10 @@ import {
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice,
   getSubcontractorInvoices, getSubcontractorCosting,
   downloadSubcontractorCostingPdf, downloadSubcontractorCostingExcel,
+  getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
+import VerifiableAmount from '../components/VerifiableAmount'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, Plus, Trash2, ChevronLeft, ChevronRight,
@@ -60,7 +62,7 @@ const blankExpenseForm = (truckReg = '') => ({
 export default function SubcontractorProfilePage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { entities } = useAuth()
+  const { entities, user, isAdmin } = useAuth()
 
   const [subcontractor, setSubcontractor] = useState(null)
   const [activeTab, setActiveTab]         = useState('costing')
@@ -123,8 +125,30 @@ export default function SubcontractorProfilePage() {
       .finally(() => setCostingLoading(false))
   }, [id, month, year])
 
+  // ── Per-value verification overlay (costing) ────────────────────────────────
+  const [verif, setVerif] = useState({})
+  const costingPrefix = `costing:${id}:${year}-${String(month).padStart(2, '0')}`
+  const loadVerif = useCallback(() => {
+    getVerifications(costingPrefix)
+      .then(r => {
+        const map = {}
+        for (const v of r.data) map[v.target] = v
+        setVerif(map)
+      })
+      .catch(() => setVerif({}))
+  }, [costingPrefix])
+
+  const handleVerifyValue = async (target) => {
+    try { await verifyValue(target, subcontractor?.entity_id); loadVerif() }
+    catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
+  }
+  const handleFinalizeValue = async (target) => {
+    try { await finalizeValue(target, subcontractor?.entity_id); loadVerif() }
+    catch (e) { toast.error(errorMessage(e, 'Lock failed')) }
+  }
+
   useEffect(() => { if (activeTab === 'invoices') loadInvoices() }, [activeTab, loadInvoices])
-  useEffect(() => { if (activeTab === 'costing')  loadCosting()  }, [activeTab, loadCosting])
+  useEffect(() => { if (activeTab === 'costing')  { loadCosting(); loadVerif() } }, [activeTab, loadCosting, loadVerif])
 
   const handleExport = async (type) => {
     setExportLoading(type)
@@ -669,9 +693,18 @@ export default function SubcontractorProfilePage() {
                   onAddExpense={() => openExpenseModal(td.truck.registration)}
                   onDeleteInvoice={setExpenseDeleteTarget}
                   isVatRegistered={costing.is_vat_registered !== false}
+                  verifPrefix={costingPrefix}
+                  verif={verif}
+                  onVerify={handleVerifyValue}
+                  onFinalize={handleFinalizeValue}
+                  currentUserId={user?.id}
+                  isAdmin={isAdmin}
                 />
               ))}
-              <SummaryCard summary={costing.summary} trucks={costing.trucks} isVatRegistered={costing.is_vat_registered !== false} />
+              <SummaryCard summary={costing.summary} trucks={costing.trucks} isVatRegistered={costing.is_vat_registered !== false}
+                verifPrefix={costingPrefix} verif={verif}
+                onVerify={handleVerifyValue} onFinalize={handleFinalizeValue}
+                currentUserId={user?.id} isAdmin={isAdmin} />
             </>
           )}
         </div>
@@ -902,10 +935,12 @@ function NewInvoiceRow({ form, setForm, saving, onSave, onCancel, firstInputRef,
 
 // ── Diesel Group Table ─────────────────────────────────────────────────────────
 
-function DieselGroupTable({ group, truckReg }) {
+function DieselGroupTable({ group, truckReg, V }) {
   const dTh = (label, right = false) => (
     <th key={label} style={{ ...thStyle, textAlign: right ? 'right' : 'left', whiteSpace: 'nowrap' }}>{label}</th>
   )
+  const W = V || (({ children }) => children)  // no-op when verification not wired
+  const sKey = (group.supplier_name || '').toUpperCase()
   return (
     <div style={{ overflowX: 'auto', marginTop: 8 }}>
       <table style={{ ...tblStyle, minWidth: 900 }}>
@@ -927,7 +962,9 @@ function DieselGroupTable({ group, truckReg }) {
           </tr>
         </thead>
         <tbody>
-          {group.rows.map((r, i) => (
+          {group.rows.map((r, i) => {
+            const dk = r.fillup_id != null ? `diesel:${r.fillup_id}` : `dieselrow:${sKey}:${i}`
+            return (
             <tr key={i}>
               <td style={tdStyle}>{truckReg}</td>
               <td style={tdStyle}>{r.fillup_date}</td>
@@ -936,24 +973,24 @@ function DieselGroupTable({ group, truckReg }) {
               <td style={tdStyle}>{r.supplier_name || '—'}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtT(r.litres)}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.rate_per_litre)}</td>
-              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.amount_excl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right' }}><W field={`${dk}:amt_excl`}>{fmtC(r.amount_excl)}</W></td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.amount_excl)}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.admin_fee_excl)}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.admin_fee_vat)}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(r.admin_fee_incl)}</td>
               <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmtC(r.grand_total)}</td>
             </tr>
-          ))}
+          )})}
         </tbody>
         <tfoot>
           <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
             <td style={tdStyle} colSpan={11} align="right">TOT ADMIN FEE</td>
-            <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(group.tot_admin_fee_incl)}</td>
-            <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{fmtC(group.tot_grand_total)}</td>
+            <td style={{ ...tdStyle, textAlign: 'right' }}><W field={`dieselsupplier:${sKey}:fee_incl`}>{fmtC(group.tot_admin_fee_incl)}</W></td>
+            <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}><W field={`dieselsupplier:${sKey}:grand_total`}>{fmtC(group.tot_grand_total)}</W></td>
           </tr>
           <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
             <td style={tdStyle} colSpan={12} align="right">TOT EXCL ADMIN FEE</td>
-            <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(group.tot_excl_admin_fee)}</td>
+            <td style={{ ...tdStyle, textAlign: 'right' }}><W field={`dieselsupplier:${sKey}:excl`}>{fmtC(group.tot_excl_admin_fee)}</W></td>
           </tr>
         </tfoot>
       </table>
@@ -961,7 +998,7 @@ function DieselGroupTable({ group, truckReg }) {
   )
 }
 
-function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDieselTab }) {
+function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDieselTab, V }) {
   const effectiveTab = activeDieselTab ?? (groups[0]?.supplier_name ?? null)
   const activeGroup = groups.find(g => g.supplier_name === effectiveTab) ?? groups[0] ?? null
 
@@ -994,14 +1031,15 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
           )
         })}
       </div>
-      {activeGroup && <DieselGroupTable group={activeGroup} truckReg={truckReg} />}
+      {activeGroup && <DieselGroupTable group={activeGroup} truckReg={truckReg} V={V} />}
     </div>
   )
 }
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice, isVatRegistered = true }) {
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice, isVatRegistered = true,
+  verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false }) {
   const [expanded, setExpanded] = useState(false)
   const [showLoadDetail, setShowLoadDetail] = useState(false)
   const [activeDieselTab, setActiveDieselTab] = useState(null)
@@ -1013,6 +1051,17 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
     net_payable,
     diesel_groups = [],
   } = truckData
+
+  // Per-value verification helper for this truck's amounts
+  const vKey = (field) => `${verifPrefix}:truck:${truck.id}:${field}`
+  const V = ({ field, children }) => (
+    onVerify
+      ? <VerifiableAmount target={vKey(field)} state={verif[vKey(field)]}
+          onVerify={onVerify} onFinalize={onFinalize} currentUserId={currentUserId} isAdmin={isAdmin}>
+          {children}
+        </VerifiableAmount>
+      : children
+  )
 
   const loadCount   = loads.length
   const totalTonnes = loads.reduce((s, l) => s + (l.tonnes ? parseFloat(l.tonnes) : 0), 0)
@@ -1114,7 +1163,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{fmtC(admin_fee)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}><V field="admin_fee">{fmtC(admin_fee)}</V></td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={tdStyle}></td>
             </tr>
@@ -1136,7 +1185,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right', color: hasDiesel ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: hasDiesel ? 600 : 400 }}>
-                      {hasDiesel ? fmtC(dieselExcl) : dash}
+                      {hasDiesel ? <V field={`dieselsupplier:${key}:excl`}>{fmtC(dieselExcl)}</V> : dash}
                     </td>
                     <td style={tdStyle}></td>
                   </tr>
@@ -1146,7 +1195,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right', color: hasFee ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: hasFee ? 600 : 400 }}>
-                      {hasFee ? fmtC(feeIncl) : dash}
+                      {hasFee ? <V field={`dieselsupplier:${key}:fee_incl`}>{fmtC(feeIncl)}</V> : dash}
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={tdStyle}></td>
@@ -1184,10 +1233,10 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      {inv.vat_applicable ? fmtC(inv.amount) : dash}
+                      {inv.vat_applicable ? <V field={`invoice:${inv.id}:amount`}>{fmtC(inv.amount)}</V> : dash}
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      {inv.vat_applicable ? dash : fmtC(inv.amount)}
+                      {inv.vat_applicable ? dash : <V field={`invoice:${inv.id}:amount`}>{fmtC(inv.amount)}</V>}
                     </td>
                     <td style={tdStyle}>
                       <button className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
@@ -1204,7 +1253,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
               <td style={tdStyle}>Totals</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(incomeExcl)}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{isVatRegistered ? fmtC(vat) : dash}</td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{isVatRegistered ? fmtC(incomeIncl) : dash}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{isVatRegistered ? <V field="income_incl">{fmtC(incomeIncl)}</V> : dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--danger)' }}>{fmtC(total_expenses_incl_vat)}</td>
               <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--danger)' }}>{fmtC(total_expenses_excl_vat)}</td>
               <td style={tdStyle}></td>
@@ -1219,15 +1268,21 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
             <div style={{ display: 'flex', gap: 0, marginTop: 12, borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div style={{ flex: 1, padding: '10px 16px', borderRight: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>To Be Invoiced</div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>{fmtC(isVatRegistered ? incomeIncl : incomeExcl)}</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>
+                  <V field={isVatRegistered ? 'income_incl' : 'income_excl'}>{fmtC(isVatRegistered ? incomeIncl : incomeExcl)}</V>
+                </div>
               </div>
               <div style={{ flex: 1, padding: '10px 16px', borderRight: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>Total Expenses</div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--danger)' }}>{fmtC(totalExp)}</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--danger)' }}>
+                  <V field="total_expenses">{fmtC(totalExp)}</V>
+                </div>
               </div>
               <div style={{ flex: 1, padding: '10px 16px' }}>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>To Be Paid Out</div>
-                <div style={{ fontWeight: 700, fontSize: 16, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)' }}>{fmtC(net_payable)}</div>
+                <div style={{ fontWeight: 700, fontSize: 16, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
+                  <V field="net_payable">{fmtC(net_payable)}</V>
+                </div>
               </div>
             </div>
           )
@@ -1275,7 +1330,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
                   <td style={tdStyle} colSpan={5}>Total</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(income_excl_vat)}</td>
-                  {isVatRegistered && <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{fmtC(income_incl_vat)}</td>}
+                  {isVatRegistered && <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}><V field="income_incl">{fmtC(income_incl_vat)}</V></td>}
                 </tr>
               </tfoot>
             </table>
@@ -1287,6 +1342,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                 truckReg={truck.registration}
                 activeDieselTab={activeDieselTab}
                 setActiveDieselTab={setActiveDieselTab}
+                V={V}
               />
             )}
           </div>
@@ -1298,8 +1354,19 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
 
 // ── Monthly Summary Card ───────────────────────────────────────────────────────
 
-function SummaryCard({ summary, trucks = [], isVatRegistered = true }) {
+function SummaryCard({ summary, trucks = [], isVatRegistered = true,
+  verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false }) {
   const [expanded, setExpanded] = useState(false)
+
+  const sKey = (field) => `${verifPrefix}:summary:${field}`
+  const SV = ({ field, children }) => (
+    onVerify
+      ? <VerifiableAmount target={sKey(field)} state={verif[sKey(field)]}
+          onVerify={onVerify} onFinalize={onFinalize} currentUserId={currentUserId} isAdmin={isAdmin}>
+          {children}
+        </VerifiableAmount>
+      : children
+  )
 
   const th = (label, right = false) => (
     <th key={label} style={{ ...thStyle, textAlign: right ? 'right' : 'left' }}>{label}</th>
@@ -1351,10 +1418,18 @@ function SummaryCard({ summary, trucks = [], isVatRegistered = true }) {
             <tfoot>
               <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
                 <td style={tdStyle}>TOTAL</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(isVatRegistered ? summary.income_incl_vat : summary.income_excl_vat)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.total_expenses_excl_vat)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(summary.total_expenses_incl_vat)}</td>
-                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontSize: 15 }}>{fmtC(summary.net_payable)}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>
+                  <SV field={isVatRegistered ? 'income_incl' : 'income_excl'}>{fmtC(isVatRegistered ? summary.income_incl_vat : summary.income_excl_vat)}</SV>
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>
+                  <SV field="total_expenses_excl">{fmtC(summary.total_expenses_excl_vat)}</SV>
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}>
+                  <SV field="total_expenses_incl">{fmtC(summary.total_expenses_incl_vat)}</SV>
+                </td>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontSize: 15 }}>
+                  <SV field="net_payable">{fmtC(summary.net_payable)}</SV>
+                </td>
               </tr>
             </tfoot>
           </table>

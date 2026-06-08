@@ -20,6 +20,7 @@ import { CheckCircle, CheckCheck, Lock, AlertTriangle, ShieldCheck } from 'lucid
  */
 export default function VerifyBadge({
   item, onVerify, onFinalize, disabled = false, currentUserId, isAdmin = false,
+  adminFinalizeAnytime = false,
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [finalizeOpen, setFinalizeOpen] = useState(false)
@@ -39,8 +40,8 @@ export default function VerifyBadge({
     step2Done ? !isOwnStep2 : step1Done ? (!isOwnStep1 && !canClickStep2) : false
   )
 
-  const canDoStep3 = !!onFinalize && isAdmin && step1Done && !step3Done
-  const showStep3Row = !!onFinalize && (step3Done || (isAdmin && step1Done))
+  const canDoStep3 = !!onFinalize && isAdmin && !step3Done && (step1Done || adminFinalizeAnytime)
+  const showStep3Row = !!onFinalize && (step3Done || (isAdmin && (step1Done || adminFinalizeAnytime)))
 
   const badge = (initials, date) => (
     <span style={{
@@ -66,7 +67,7 @@ export default function VerifyBadge({
         ? step3Done ? 'Locked by final approval' : 'Undo your step 2 approval'
         : step3Done ? 'Locked by final approval' : 'Verified — locked'
 
-  const step3Tooltip = !step1Done
+  const step3Tooltip = (!step1Done && !adminFinalizeAnytime)
     ? 'Requires at least one verification first'
     : step3Done
       ? isOwnStep3 ? 'Undo final lock' : 'Final lock — locked'
@@ -169,7 +170,7 @@ export default function VerifyBadge({
             {step3Done && item.verified3_by_initials
               ? badge(item.verified3_by_initials, item.verified3_by_date)
               : <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                  {step3Done ? 'Locked' : 'Final lock'}
+                  {step3Done ? 'Locked' : 'Final Verification'}
                 </span>
             }
           </div>

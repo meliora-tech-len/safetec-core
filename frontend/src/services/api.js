@@ -244,6 +244,11 @@ export const verifyFoodPayment        = (driverId, year, month, paymentId) =>
 export const finalizeFoodPayment      = (driverId, year, month, paymentId) =>
   api.patch(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}/finalize`)
 
+// ── Generic per-value verification overlay ──────────────────────────────────
+export const getVerifications = (prefix) => api.get('/verifications', { params: { prefix } })
+export const verifyValue      = (target, entityId = null) => api.patch('/verifications/verify', { target, entity_id: entityId })
+export const finalizeValue    = (target, entityId = null) => api.patch('/verifications/finalize', { target, entity_id: entityId })
+
 // ── Payroll Settings ──────────────────────────────────────────────────────────
 export const getPayrollSettings = () => api.get('/payroll-settings')
 

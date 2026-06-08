@@ -1261,3 +1261,34 @@ class LicenceAlertAck(Base):
     acknowledged_at     = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("resource_type", "resource_id", "acknowledged_expiry"),)
+
+
+# ── Per-value verification overlay ────────────────────────────────────────────
+
+class ValueVerification(Base):
+    """Generic per-value verification, decoupled from the modules' own data.
+
+    Many verifiable amounts (costing-sheet figures, payroll/profit totals) are
+    computed on the fly and have no row of their own. This table attaches the
+    standard 3-step verification to an arbitrary value identified by a stable
+    `target` key (identity-based, never the numeric value). It carries the same
+    columns as SupplierInvoice so the shared verification service operates on it
+    unchanged. Used as a 2-tier flow in practice: step 1 = user verify,
+    step 3 = admin/owner final lock (step 2 left unused).
+    """
+    __tablename__ = "value_verifications"
+
+    id        = Column(Integer, primary_key=True, index=True)
+    entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=True)
+    target    = Column(String(255), nullable=False, unique=True, index=True)
+
+    is_verified  = Column(Boolean, default=False)
+    verified_by  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at  = Column(DateTime(timezone=True))
+    verified2_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified2_at = Column(DateTime(timezone=True))
+    verified3_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified3_at = Column(DateTime(timezone=True))
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
