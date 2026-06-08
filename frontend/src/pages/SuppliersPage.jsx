@@ -365,6 +365,7 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
     notes: supplier?.notes || '',
     payment_term: supplier?.payment_term || 'current',
     is_diesel_supplier: supplier?.is_diesel_supplier || false,
+    is_intercompany: supplier?.is_intercompany || false,
     requires_registration: supplier?.requires_registration !== false,
   })
   const [saving, setSaving] = useState(false)
@@ -485,6 +486,18 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
               />
               <label htmlFor="is_diesel_supplier" style={{ margin: 0, cursor: 'pointer', fontWeight: 500 }}>
                 Diesel supplier — appears in diesel rate management
+              </label>
+            </div>
+            <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+              <input
+                type="checkbox"
+                id="is_intercompany"
+                checked={form.is_intercompany}
+                onChange={e => set('is_intercompany', e.target.checked)}
+                style={{ width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
+              />
+              <label htmlFor="is_intercompany" style={{ margin: 0, cursor: 'pointer', fontWeight: 500 }}>
+                Intercompany — grouped separately on the SARS/VAT report
               </label>
             </div>
             <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>

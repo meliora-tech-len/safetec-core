@@ -8,11 +8,29 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, TruckLoad, DieselFillUp, SupplierInvoice, SupplierInvoiceLineItem,
     DriverPayCycle, Driver, PayrollSettings, PayrollEntry, Supplier, PaymentTermType,
-    Invoice, Customer, DocumentType, InvoiceStatus,
+    Invoice, Customer, DocumentType, InvoiceStatus, BusinessEntity,
 )
 from app.services.payroll_calculator import calculate_pay_cycle
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
+
+
+def _intercompany_tokens(db: Session, entity_id: int) -> set:
+    """Upper-case tokens identifying OTHER group entities (codes + name words ≥4),
+    used to auto-detect intercompany customers/suppliers by name on the VAT report."""
+    tokens: set = set()
+    for e in db.query(BusinessEntity).filter(BusinessEntity.id != entity_id).all():
+        if e.code and len(e.code) >= 4:
+            tokens.add(e.code.upper())
+        for w in (e.name or '').upper().replace('(', ' ').replace(')', ' ').split():
+            if len(w) >= 4 and w not in ('PTY', 'LTD'):
+                tokens.add(w)
+    return tokens
+
+
+def _name_is_intercompany(name: str, tokens: set) -> bool:
+    up = (name or '').upper()
+    return any(t in up for t in tokens)
 
 MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -26,27 +44,6 @@ def _check_entity_access(entity_id: int, user: User):
     access_ids = [a.entity_id for a in user.entity_access]
     if entity_id not in access_ids:
         raise HTTPException(status_code=403, detail="Access denied to this entity")
-
-
-def _entity_has_truck_loads(db: Session, entity_id: int, year: int) -> bool:
-    """True if the entity recorded any (non-archived) truck loads for the statement year.
-
-    Income source discriminator: truck entities (OBHI/SFT/BKMO) earn via truck loads,
-    whose customer invoices merely re-bill the same revenue to Tradekor — counting both
-    would double-count. Invoice-only entities (BTP/TP) have no loads, so their income
-    comes from the customer Invoice table instead.
-    """
-    return (
-        db.query(TruckLoad.id)
-        .filter(
-            TruckLoad.entity_id == entity_id,
-            TruckLoad.statement_year == year,
-            TruckLoad.statement_month.isnot(None),
-            TruckLoad.is_archived != True,
-        )
-        .first()
-        is not None
-    )
 
 
 @router.get("/income-expenses")
@@ -69,53 +66,31 @@ def income_expenses_report(
     """
     _check_entity_access(entity_id, current_user)
 
-    # ── Income source: truck loads if present, else customer invoices ──────────
-    # Truck entities (OBHI/SFT/BKMO) earn via truck loads, grouped by the user-set
-    # statement period (so a load done in April but billed in May shows in May).
-    # Invoice-only entities (BTP/TP) have no loads — their income is the customer
-    # Invoice table, grouped by issue_date. The two sources are never summed, to
-    # avoid double-counting truck entities whose invoices re-bill the same loads.
-    if _entity_has_truck_loads(db, entity_id, year):
-        income_source = 'truck_loads'
-        truck_rows = (
-            db.query(
-                TruckLoad.statement_month.label('m'),
-                func.coalesce(func.sum(TruckLoad.amount_incl_vat), 0).label('incl'),
-                func.coalesce(func.sum(TruckLoad.amount_excl_vat), 0).label('excl'),
-            )
-            .filter(
-                TruckLoad.entity_id == entity_id,
-                TruckLoad.statement_year == year,
-                TruckLoad.statement_month.isnot(None),
-                TruckLoad.is_archived != True,
-            )
-            .group_by(TruckLoad.statement_month)
-            .all()
+    # ── Income source: customer invoices (output VAT basis) ────────────────────
+    # Income is every customer invoice issued in the period — the actual tax
+    # invoices that create output VAT — grouped by issue_date month, for all
+    # entities. (Truck loads are operational records, not the VAT/sales figure.)
+    # total = incl-VAT, subtotal = excl-VAT; credit notes (negative) net out.
+    # Count every status except cancelled (real invoices are often left 'draft');
+    # only document_type=invoice, never quotes/POs.
+    income_source = 'invoices'
+    inv_rows = (
+        db.query(
+            func.extract('month', Invoice.issue_date).label('m'),
+            func.coalesce(func.sum(Invoice.total), 0).label('incl'),
+            func.coalesce(func.sum(Invoice.subtotal), 0).label('excl'),
         )
-        truck_income_incl = {int(r.m): float(r.incl) for r in truck_rows}
-        truck_income_excl = {int(r.m): float(r.excl) for r in truck_rows}
-    else:
-        income_source = 'invoices'
-        # total = incl-VAT, subtotal = excl-VAT; credit notes (negative) net out.
-        # Count every status except cancelled (these businesses leave real
-        # invoices in 'draft'); only document_type=invoice, never quotes/POs.
-        inv_rows = (
-            db.query(
-                func.extract('month', Invoice.issue_date).label('m'),
-                func.coalesce(func.sum(Invoice.total), 0).label('incl'),
-                func.coalesce(func.sum(Invoice.subtotal), 0).label('excl'),
-            )
-            .filter(
-                Invoice.entity_id == entity_id,
-                func.extract('year', Invoice.issue_date) == year,
-                Invoice.document_type == DocumentType.invoice,
-                Invoice.status != InvoiceStatus.cancelled,
-            )
-            .group_by(func.extract('month', Invoice.issue_date))
-            .all()
+        .filter(
+            Invoice.entity_id == entity_id,
+            func.extract('year', Invoice.issue_date) == year,
+            Invoice.document_type == DocumentType.invoice,
+            Invoice.status != InvoiceStatus.cancelled,
         )
-        truck_income_incl = {int(r.m): float(r.incl) for r in inv_rows}
-        truck_income_excl = {int(r.m): float(r.excl) for r in inv_rows}
+        .group_by(func.extract('month', Invoice.issue_date))
+        .all()
+    )
+    truck_income_incl = {int(r.m): float(r.incl) for r in inv_rows}
+    truck_income_excl = {int(r.m): float(r.excl) for r in inv_rows}
 
     # ── Diesel expenses grouped by costing period (payment-term aware) ─────────
     # Diesel has no statement period, so the fill-up date stands in for it and the
@@ -322,70 +297,60 @@ def income_expenses_report(
 
 def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
     """Build per-invoice detail dict for one month (shared by single and annual endpoints)."""
-    from collections import defaultdict
-
-    # Income side mirrors the main report's source rule: truck entities show their
-    # loads grouped by mine; invoice-only entities (BTP/TP) show real customer invoices.
-    if _entity_has_truck_loads(db, entity_id, year):
-        loads = (
-            db.query(TruckLoad)
-            .filter(
-                TruckLoad.entity_id == entity_id,
-                TruckLoad.statement_year == year,
-                TruckLoad.statement_month == month,
-                TruckLoad.is_archived != True,
-                TruckLoad.is_projection != True,
-            )
-            .order_by(TruckLoad.load_date)
-            .all()
+    # Income side: every customer invoice issued in the month (output VAT basis),
+    # for all entities — the actual tax invoices, not operational truck loads.
+    income_invoices = (
+        db.query(Invoice)
+        .filter(
+            Invoice.entity_id == entity_id,
+            func.extract('year', Invoice.issue_date) == year,
+            func.extract('month', Invoice.issue_date) == month,
+            Invoice.document_type == DocumentType.invoice,
+            Invoice.status != InvoiceStatus.cancelled,
         )
+        .order_by(Invoice.issue_date)
+        .all()
+    )
+    income_tokens = _intercompany_tokens(db, entity_id)
+    output_invoices = []
+    for inv in income_invoices:
+        incl = float(inv.total or 0)
+        excl = float(inv.subtotal or 0)
+        cust = inv.customer.name if inv.customer else ''
+        desc = f"{inv.invoice_number} — {cust}" if cust else (inv.invoice_number or '')
+        # Group: Tradekor → Intercompany (customer name matches another entity) → Other
+        if 'TRADEKOR' in cust.upper():
+            ocat = 'tradekor'
+        elif _name_is_intercompany(cust, income_tokens):
+            ocat = 'intercompany'
+        else:
+            ocat = 'other'
+        output_invoices.append({
+            'date':        inv.issue_date.strftime('%Y-%m-%d') if inv.issue_date else None,
+            'description': desc,
+            'amount_incl': round(incl, 2),
+            'amount_excl': round(excl, 2),
+            'vat':         round(incl - excl, 2),
+            'category':    ocat,
+        })
 
-        mine_groups: dict = defaultdict(lambda: {'mine_name': '', 'date': None, 'incl': 0.0, 'excl': 0.0})
-        for load in loads:
-            g = mine_groups[load.mine_id]
-            g['mine_name'] = load.mine.name if load.mine else str(load.mine_id)
-            d = load.load_date
-            if g['date'] is None or d > g['date']:
-                g['date'] = d
-            g['incl'] += float(load.amount_incl_vat or 0)
-            g['excl'] += float(load.amount_excl_vat or 0)
-
-        output_invoices = sorted([
-            {
-                'date':        g['date'].strftime('%Y-%m-%d') if g['date'] else None,
-                'description': g['mine_name'],
-                'amount_incl': round(g['incl'], 2),
-                'amount_excl': round(g['excl'], 2),
-                'vat':         round(g['incl'] - g['excl'], 2),
-            }
-            for g in mine_groups.values()
-        ], key=lambda x: x['date'] or '')
-    else:
-        income_invoices = (
-            db.query(Invoice)
-            .filter(
-                Invoice.entity_id == entity_id,
-                func.extract('year', Invoice.issue_date) == year,
-                func.extract('month', Invoice.issue_date) == month,
-                Invoice.document_type == DocumentType.invoice,
-                Invoice.status != InvoiceStatus.cancelled,
-            )
-            .order_by(Invoice.issue_date)
-            .all()
-        )
-        output_invoices = []
-        for inv in income_invoices:
-            incl = float(inv.total or 0)
-            excl = float(inv.subtotal or 0)
-            cust = inv.customer.name if inv.customer else ''
-            desc = f"{inv.invoice_number} — {cust}" if cust else (inv.invoice_number or '')
-            output_invoices.append({
-                'date':        inv.issue_date.strftime('%Y-%m-%d') if inv.issue_date else None,
-                'description': desc,
-                'amount_incl': round(incl, 2),
-                'amount_excl': round(excl, 2),
-                'vat':         round(incl - excl, 2),
-            })
+    # Order Tradekor → Intercompany → Other (then date) and build per-group subtotals.
+    _OCAT_ORDER = {'tradekor': 0, 'intercompany': 1, 'other': 2}
+    _OCAT_LABEL = {'tradekor': 'Tradekor', 'intercompany': 'Intercompany', 'other': 'Other'}
+    output_invoices.sort(key=lambda x: (_OCAT_ORDER.get(x['category'], 9), x['date'] or ''))
+    output_groups = []
+    for key in ('tradekor', 'intercompany', 'other'):
+        rows = [x for x in output_invoices if x['category'] == key]
+        if not rows:
+            continue
+        output_groups.append({
+            'key':         key,
+            'label':       _OCAT_LABEL[key],
+            'count':       len(rows),
+            'amount_incl': round(sum(x['amount_incl'] for x in rows), 2),
+            'amount_excl': round(sum(x['amount_excl'] for x in rows), 2),
+            'vat':         round(sum(x['vat'] for x in rows), 2),
+        })
 
     sup_invoices = (
         db.query(SupplierInvoice)
@@ -427,6 +392,16 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             name = inv.supplier.name
         elif inv.subcontractor_id and inv.subcontractor:
             name = inv.subcontractor.name
+        # Categorise for the grouped expense breakdown:
+        #   subcontractor → diesel → intercompany → other (first match wins)
+        if inv.subcontractor_id:
+            category = 'subcontractor'
+        elif inv.supplier and inv.supplier.is_diesel_supplier:
+            category = 'diesel'
+        elif inv.supplier and getattr(inv.supplier, 'is_intercompany', False):
+            category = 'intercompany'
+        else:
+            category = 'other'
         input_invoices.append({
             'date':           inv.invoice_date.strftime('%Y-%m-%d') if inv.invoice_date else None,
             'invoice_number': inv.invoice_number or '',
@@ -436,6 +411,27 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             'amount_excl':    round(excl, 2),
             'vat':            round(incl - excl, 2),
             'vat_applicable': inv.vat_applicable,
+            'category':       category,
+        })
+
+    # Order by category (diesel, subcontractor, intercompany, other) then date,
+    # and compute per-group subtotals for the SARS expense breakdown.
+    _CAT_ORDER = {'diesel': 0, 'subcontractor': 1, 'intercompany': 2, 'other': 3}
+    _CAT_LABEL = {'diesel': 'Diesel', 'subcontractor': 'Subcontractors',
+                  'intercompany': 'Intercompany', 'other': 'Other Suppliers'}
+    input_invoices.sort(key=lambda x: (_CAT_ORDER.get(x['category'], 9), x['date'] or ''))
+    input_groups = []
+    for key in ('diesel', 'subcontractor', 'intercompany', 'other'):
+        rows = [x for x in input_invoices if x['category'] == key]
+        if not rows:
+            continue
+        input_groups.append({
+            'key':         key,
+            'label':       _CAT_LABEL[key],
+            'count':       len(rows),
+            'amount_incl': round(sum(x['amount_incl'] for x in rows), 2),
+            'amount_excl': round(sum(x['amount_excl'] for x in rows), 2),
+            'vat':         round(sum(x['vat'] for x in rows), 2),
         })
 
     out_incl = sum(x['amount_incl'] for x in output_invoices)
@@ -449,7 +445,9 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         'month':           month,
         'month_name':      MONTH_NAMES[month - 1],
         'output_invoices': output_invoices,
+        'output_groups':   output_groups,
         'input_invoices':  input_invoices,
+        'input_groups':    input_groups,
         'output_totals':   {'amount_incl': round(out_incl, 2), 'amount_excl': round(out_excl, 2), 'vat': out_vat},
         'input_totals':    {'amount_incl': round(in_incl, 2),  'amount_excl': round(in_excl, 2),  'vat': in_vat},
         'vat_payable':     round(out_vat - in_vat, 2),

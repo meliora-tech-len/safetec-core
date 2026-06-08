@@ -206,6 +206,7 @@ class Supplier(Base):
     category = Column(String(100))
     payment_term = Column(Enum(PaymentTermType), nullable=False, default=PaymentTermType.current)
     is_diesel_supplier       = Column(Boolean, default=False)
+    is_intercompany          = Column(Boolean, nullable=False, default=False, server_default='0')
     requires_registration    = Column(Boolean, nullable=False, default=True)
 
     entity = relationship("BusinessEntity", back_populates="suppliers")
