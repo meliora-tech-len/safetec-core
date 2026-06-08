@@ -7,7 +7,8 @@ import {
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
-import { Plus, Search, X, Trash2, Fuel, Save } from 'lucide-react'
+import { Plus, Search, X, Trash2, Fuel, Save, Upload } from 'lucide-react'
+import ImportDieselModal from '../components/ImportDieselModal'
 import ExportButton from '../components/ExportButton'
 import SearchableSelect from '../components/SearchableSelect'
 import VerifyBadge from '../components/VerifyBadge'
@@ -63,6 +64,7 @@ export default function DieselFillUpsPage() {
   const [dieselSettings, setDieselSettings] = useState(null)
   const [saving,       setSaving]       = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [showImport,   setShowImport]   = useState(false)
   const firstInputRef = useRef(null)
   const { sort, onSort } = useSort('truck_registration', 'asc')
 
@@ -254,6 +256,12 @@ export default function DieselFillUpsPage() {
   const multiEntity = entities.length > 1
   const COLS = multiEntity ? 15 : 14
 
+  // Diesel-sheet import is restricted to Bokamosho (BKMO) only
+  const importEntityId = filterEntity || activeEntity?.id
+  const importEntity = entities.find(e => String(e.id) === String(importEntityId))
+    || (String(activeEntity?.id) === String(importEntityId) ? activeEntity : null)
+  const isBokamosho = importEntity?.code === 'BKMO'
+
   return (
     <div style={styles.page}>
       <div className="page-header">
@@ -284,11 +292,24 @@ export default function DieselFillUpsPage() {
               { header: 'Notes',         key: 'notes' },
             ]}
           />
+          {isBokamosho && (
+            <button className="btn-ghost" onClick={() => setShowImport(true)}>
+              <Upload size={15} /> Import
+            </button>
+          )}
           <button className="btn-primary" onClick={startNew} disabled={editingId !== null}>
             <Plus size={15} /> Log Diesel
           </button>
         </div>
       </div>
+
+      {showImport && isBokamosho && (
+        <ImportDieselModal
+          entityId={Number(importEntityId)}
+          onClose={() => setShowImport(false)}
+          onImported={load}
+        />
+      )}
 
       {/* Filters */}
       <div className="card" style={{ padding: '14px 18px', marginBottom: 20 }}>

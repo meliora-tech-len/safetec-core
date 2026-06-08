@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from datetime import datetime, date
 from decimal import Decimal
 from enum import Enum
@@ -1872,6 +1872,55 @@ class DieselFillUpSummary(BaseModel):
     total_admin_fee: Decimal = Decimal("0")
     total_admin_fee_vat: Decimal = Decimal("0")
     grand_total: Decimal = Decimal("0")
+
+
+# ── Diesel sheet import (e.g. Bokamosho) ──────────────────────────────────────
+
+class DieselImportRow(BaseModel):
+    depot: Optional[str] = None
+    fillup_date: date
+    registration: str
+    slip_number: Optional[str] = None
+    litres: Decimal
+    amount: Decimal              # Sum of AMOUNT (EXCL)
+
+
+class DieselImportRequest(BaseModel):
+    entity_id: int
+    # The diesel supplier is resolved per row from its DIESEL DEPO.
+    depot_suppliers: Dict[str, int] = {}          # depot name → supplier_id
+    default_supplier_id: Optional[int] = None     # fallback when depot has no mapping
+    commit: bool = False
+    rows: List[DieselImportRow] = []
+
+
+class DieselImportRowResult(BaseModel):
+    registration: str
+    slip_number: Optional[str] = None
+    fillup_date: date
+    litres: Decimal
+    amount: Decimal
+    rate_per_litre: Decimal
+    depot: Optional[str] = None
+    supplier_id: Optional[int] = None
+    supplier_name: Optional[str] = None
+    status: str                 # matched | created | duplicate | unmatched | invalid
+    truck_id: Optional[int] = None
+    truck_registration: Optional[str] = None
+    matched_by_temp: bool = False
+    message: Optional[str] = None
+
+
+class DieselImportResult(BaseModel):
+    total: int = 0
+    matched: int = 0
+    created: int = 0
+    duplicates: int = 0
+    unmatched: int = 0
+    invalid: int = 0
+    committed: bool = False
+    unmatched_registrations: List[str] = []
+    rows: List[DieselImportRowResult] = []
 
 
 # ── PayrollEntry Schemas ──────────────────────────────────────────────────────

@@ -3,8 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader, Fuel, UtensilsCrossed, BarChart3,
-  CheckCheck, CalendarClock, Search, Check, Flag,
+  CheckCheck, CalendarClock, Search, Check, Flag, Upload,
 } from 'lucide-react'
+import ImportDieselModal from '../components/ImportDieselModal'
 import { useAuth } from '../hooks/useAuth'
 import SearchableSelect from '../components/SearchableSelect'
 import {
@@ -384,12 +385,13 @@ const dEditCell  = { padding: '6px 14px', verticalAlign: 'middle' }
 const dEditInput = { width: '100%' }
 
 // ── Diesel section ─────────────────────────────────────────────────────────────
-function DieselSection({ truck, year, month, suppliers }) {
+function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
   const [fillups, setFillups]     = useState([])
   const [loading, setLoading]     = useState(true)
   const [addingNew, setAddingNew] = useState(false)
   const [saving, setSaving]       = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [showImport, setShowImport] = useState(false)
   const [form, setForm]           = useState({ ...EMPTY_DIESEL })
   const [autoRate, setAutoRate]   = useState(null)
   const [rateEdited, setRateEdited] = useState(false)
@@ -548,12 +550,26 @@ function DieselSection({ truck, year, month, suppliers }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+        {isBokamosho && (
+          <button className="btn btn-ghost" onClick={() => setShowImport(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Upload size={14} /> Import
+          </button>
+        )}
         <button className="btn btn-primary" onClick={() => setAddingNew(v => !v)}
           style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <Plus size={14} /> Log Diesel
         </button>
       </div>
+
+      {showImport && isBokamosho && (
+        <ImportDieselModal
+          entityId={truck.entity_id}
+          onClose={() => setShowImport(false)}
+          onImported={fetchFillups}
+        />
+      )}
 
       {addingNew && (
         <div ref={dieselFormRef} className="card" style={{ padding: 20, marginBottom: 20 }}>
@@ -1999,6 +2015,7 @@ export default function TruckLoadProfilePage() {
   const isSubcontractorEntity = truck?.entity_is_subcontractor || false
   const entityCode = truck ? (entities.find(e => e.id === truck.entity_id)?.code || '') : ''
   const isSafetec  = entityCode === 'SFT'
+  const isBokamosho = entityCode === 'BKMO'
   const permanentDriver = drivers.find(d => d.truck_id === truck?.id && d.driver_slot === 1)
     ?? drivers.find(d => d.truck_id === truck?.id)
   const selectedDriver  = drivers.find(d => String(d.id) === selectedDriverId)
@@ -2588,7 +2605,7 @@ export default function TruckLoadProfilePage() {
 
       {/* ── Diesel tab ─────────────────────────────────────────────────────────── */}
       {activeTab === 'diesel' && (
-        <DieselSection truck={truck} year={year} month={month} suppliers={suppliers} />
+        <DieselSection truck={truck} year={year} month={month} suppliers={suppliers} isBokamosho={isBokamosho} />
       )}
 
       {/* ── Food Allowance tab ─────────────────────────────────────────────────── */}

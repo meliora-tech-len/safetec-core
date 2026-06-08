@@ -1,5 +1,5 @@
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -19,6 +19,7 @@ from app.schemas.schemas import (
     DieselFillUpSummary,
     DieselSummaryByTruck, DieselSupplierReconciliation, DieselAnnualMonthRow,
     DieselInvoiceReconciliationRow,
+    DieselImportRequest, DieselImportResult, DieselImportRowResult,
 )
 from app.services.diesel_service import DieselCalculationService
 from app.services.audit import log_action
@@ -635,6 +636,151 @@ def create_fillup(
             )
 
     return _enrich_fillup(f)
+
+
+def _match_truck_by_reg(db: Session, entity_id: int, reg: str):
+    """Find a truck in the entity by real OR temp registration (case-insensitive).
+    Returns (truck, matched_by_temp)."""
+    if not reg:
+        return None, False
+    r = reg.strip()
+    truck = db.query(Truck).filter(
+        Truck.entity_id == entity_id, Truck.registration.ilike(r)
+    ).first()
+    if truck:
+        return truck, False
+    truck = db.query(Truck).filter(
+        Truck.entity_id == entity_id, Truck.temp_registration.ilike(r)
+    ).first()
+    if truck:
+        return truck, True
+    return None, False
+
+
+@router.post("/import", response_model=DieselImportResult)
+def import_diesel(
+    payload: DieselImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Import parsed diesel-sheet rows. The diesel supplier is resolved per row
+    from its DIESEL DEPO (depot_suppliers map). Matches trucks by real/temp
+    registration, derives rate = amount / litres, and applies the entity's 1%
+    admin fee. With commit=false this is a dry-run preview (nothing is saved)."""
+    _check_entity_access(payload.entity_id, current_user)
+
+    entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
+    if not entity_obj or entity_obj.code != "BKMO":
+        raise HTTPException(status_code=400, detail="Diesel sheet import is only available for Bokamosho (BKMO).")
+
+    # Valid suppliers for this entity (id → name) and a case-insensitive depot map
+    supplier_names = {
+        s.id: s.name
+        for s in db.query(Supplier).filter(Supplier.entity_id == payload.entity_id).all()
+    }
+    depot_map = { (k or "").strip().lower(): v for k, v in (payload.depot_suppliers or {}).items() }
+
+    def resolve_supplier(depot: Optional[str]) -> Optional[int]:
+        sid = depot_map.get((depot or "").strip().lower())
+        if sid is None:
+            sid = payload.default_supplier_id
+        return sid if sid in supplier_names else None
+
+    settings = DieselCalculationService.get_diesel_settings(db, payload.entity_id)
+    admin_fee_pct = Decimal(str(settings.admin_fee_pct)) if settings else Decimal("0")
+    apply_admin_fee = settings.apply_admin_fee if settings else False
+    vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
+
+    result = DieselImportResult(total=len(payload.rows), committed=payload.commit)
+    unmatched_regs: set[str] = set()
+    # slips already seen in this batch (avoid in-file duplicates), keyed by (truck, supplier, slip)
+    seen_batch: set[tuple] = set()
+
+    for row in payload.rows:
+        litres = Decimal(str(row.litres or 0))
+        amount = Decimal(str(row.amount or 0))
+        rate = (amount / litres).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if litres > 0 else Decimal("0")
+
+        rr = DieselImportRowResult(
+            registration=row.registration, slip_number=row.slip_number,
+            fillup_date=row.fillup_date, litres=litres, amount=amount,
+            rate_per_litre=rate, depot=row.depot, status="invalid",
+        )
+
+        if litres <= 0 or amount <= 0:
+            rr.status = "invalid"; rr.message = "Litres and amount must be greater than 0"
+            result.invalid += 1; result.rows.append(rr); continue
+
+        supplier_id = resolve_supplier(row.depot)
+        if supplier_id is None:
+            rr.status = "invalid"
+            rr.message = f"No diesel supplier mapped for depot '{row.depot or '—'}'"
+            result.invalid += 1; result.rows.append(rr); continue
+        rr.supplier_id = supplier_id
+        rr.supplier_name = supplier_names.get(supplier_id)
+
+        truck, by_temp = _match_truck_by_reg(db, payload.entity_id, row.registration)
+        if not truck:
+            rr.status = "unmatched"; rr.message = "No truck with this registration (real or temp)"
+            result.unmatched += 1
+            unmatched_regs.add(row.registration.strip().upper())
+            result.rows.append(rr); continue
+
+        rr.truck_id = truck.id
+        rr.truck_registration = truck.registration
+        rr.matched_by_temp = by_temp
+
+        slip = (row.slip_number or "").strip()
+        batch_key = (truck.id, supplier_id, slip)
+        dup = False
+        if slip:
+            if batch_key in seen_batch:
+                dup = True
+            else:
+                existing = db.query(DieselFillUp).filter(
+                    DieselFillUp.truck_id == truck.id,
+                    DieselFillUp.supplier_id == supplier_id,
+                    DieselFillUp.slip_number == slip,
+                    DieselFillUp.is_archived == False,
+                ).first()
+                dup = existing is not None
+        if dup:
+            rr.status = "duplicate"; rr.message = "Slip already exists for this truck"
+            result.duplicates += 1; result.rows.append(rr); continue
+
+        result.matched += 1
+        if slip:
+            seen_batch.add(batch_key)
+
+        if payload.commit:
+            amounts = DieselCalculationService.calculate_fillup_amounts(
+                litres=litres, rate_per_litre=rate,
+                admin_fee_pct=admin_fee_pct, apply_admin_fee=apply_admin_fee, vat_rate=vat_rate,
+            )
+            f = DieselFillUp(
+                entity_id=payload.entity_id, truck_id=truck.id, supplier_id=supplier_id,
+                fillup_date=row.fillup_date, litres=litres, rate_per_litre=rate,
+                slip_number=slip or None, notes=(row.depot or None),
+                admin_fee_pct=admin_fee_pct, **amounts, created_by=current_user.id,
+            )
+            db.add(f)
+            result.created += 1
+            rr.status = "created"
+        else:
+            rr.status = "matched"
+        result.rows.append(rr)
+
+    result.unmatched_registrations = sorted(unmatched_regs)
+
+    if payload.commit and result.created:
+        log_action(
+            db, "diesel_fillup.imported", user_id=current_user.id,
+            entity_id=payload.entity_id, resource_type="diesel_fillup",
+            description=f"Imported {result.created} diesel fill-up(s)",
+        )
+        db.commit()
+
+    return result
 
 
 @router.put("/fillups/{fillup_id}", response_model=DieselFillUpOut)

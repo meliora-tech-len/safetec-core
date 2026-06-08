@@ -375,6 +375,7 @@ const BLANK_TRUCK = {
   subcontractor_name: '',
   subcontractor_id: null,
   is_temp_registration: false,
+  temp_registration: '',
   status: 'active',
   notes: '',
   finance_account_number: '',
@@ -428,6 +429,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
       subcontractor_name:   t.subcontractor_name || '',
       subcontractor_id:     t.subcontractor_id || null,
       is_temp_registration: t.is_temp_registration || false,
+      temp_registration:    t.temp_registration || '',
       status:               t.status || 'active',
       notes:                t.notes || '',
       trailers,
@@ -491,6 +493,7 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
     try {
       const payload = {
         ...form,
+        temp_registration:    form.temp_registration?.trim() || null,
         licence_expiry:       form.licence_expiry || null,
         finance_contract_end: form.finance_contract_end || null,
         trailers: form.trailers
@@ -569,13 +572,24 @@ function TruckModal({ truck: initialTruck, entities, allDrivers, existingTrucks,
                     onChange={e => set('is_temp_registration', e.target.checked)}
                     style={{ width: 14, height: 14, cursor: 'pointer' }}
                   />
-                  Temporary registration plate
+                  Registration above is temporary (no real plate yet)
                 </label>
               </div>
+              <div className="form-group">
+                <label>Temp / Old Registration</label>
+                <input value={form.temp_registration} onChange={e => set('temp_registration', e.target.value.toUpperCase())} placeholder="e.g. KXH519MP" style={{ fontFamily: 'monospace' }} />
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Old/temporary plate for the same vehicle. Diesel &amp; loads on this plate link to this truck.
+                </div>
+              </div>
+            </div>
+
+            <div className="form-row">
               <div className="form-group">
                 <label>VIN / Chassis</label>
                 <input value={form.vin} onChange={e => set('vin', e.target.value.toUpperCase())} placeholder="e.g. 9BSG6X40004042164" style={{ fontFamily: 'monospace' }} />
               </div>
+              <div className="form-group" />
             </div>
 
             <div className="form-row">
