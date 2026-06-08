@@ -11,6 +11,18 @@ TWO_DP = Decimal("0.01")
 FOUR_DP = Decimal("0.0001")
 
 
+def diesel_type_for_supplier(supplier: Optional[Supplier]) -> str:
+    """Fixed per-supplier diesel tag: Merino & Oukop fills are always 'topup';
+    everything else (e.g. WBG Diesel) is 'fillup'. Single source of truth so all
+    fill-up creation paths tag consistently."""
+    if not supplier:
+        return "fillup"
+    name = f"{supplier.name or ''} {supplier.short_name or ''}".lower()
+    if "merino" in name or "oukop" in name:
+        return "topup"
+    return "fillup"
+
+
 class DieselCalculationService:
 
     @staticmethod

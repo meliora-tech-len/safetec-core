@@ -20,7 +20,7 @@ from app.schemas.schemas import (
 )
 from app.services.audit import log_action
 from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
-from app.services.diesel_service import DieselCalculationService
+from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
 
 router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
 
@@ -45,6 +45,99 @@ def _propagate_invoice_number_to_fillups(db: Session, invoice: SupplierInvoice) 
         return
     for li in invoice.line_items:
         _link_fillup_from_slip(db, invoice, li.item_code)
+
+
+def _maybe_create_line_fillup(
+    db: Session, invoice: SupplierInvoice, li: SupplierInvoiceLineItem, user_id: int
+) -> None:
+    """Create a diesel fill-up for a line that carries a truck + litres + amount
+    but has no fill-up to link to.
+
+    Runs *after* _link_fillup_from_slip, so a slip already captured as a fill-up
+    (e.g. Merino's diesel-sheet imports) is linked, not duplicated. This covers
+    suppliers like Oukop, whose slip numbers come straight off a statement and
+    were never imported as fill-ups — previously their manually-keyed lines
+    linked to nothing and never showed under the truck. Mirrors the per-line
+    creation in bulk_import_invoices.
+    """
+    slip = (li.item_code or "").strip()
+    if not slip:
+        return
+    supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
+    if not supplier or not supplier.is_diesel_supplier:
+        return
+    reg = (li.unit or "").strip()
+    if not reg or not li.quantity or li.quantity <= 0:
+        return
+    if not li.amount_excl_vat or li.amount_excl_vat <= 0:
+        return
+
+    truck = (
+        db.query(Truck)
+        .filter(Truck.registration.ilike(reg), Truck.entity_id == invoice.entity_id)
+        .first()
+    )
+    if not truck:
+        return
+
+    # Already a fill-up for this slip on this truck (created earlier, or linked
+    # just now by _link_fillup_from_slip)? Then only ensure it points at this
+    # invoice — never duplicate.
+    existing = (
+        db.query(DieselFillUp)
+        .filter(
+            DieselFillUp.slip_number == slip,
+            DieselFillUp.truck_id == truck.id,
+            DieselFillUp.entity_id == invoice.entity_id,
+            DieselFillUp.is_archived != True,
+        )
+        .first()
+    )
+    if existing:
+        if not existing.supplier_invoice_id:
+            existing.supplier_invoice_id = invoice.id
+        return
+
+    litres_d = Decimal(str(li.quantity))
+    excl_d = Decimal(str(li.amount_excl_vat))
+    rate_d = (excl_d / litres_d).quantize(Decimal("0.0001"))
+    inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
+    fillup_date = li.line_date or inv_date
+
+    settings = DieselCalculationService.get_diesel_settings(db, invoice.entity_id)
+    admin_fee_pct = Decimal(str(settings.admin_fee_pct)) if settings else Decimal("0")
+    apply_admin_fee = settings.apply_admin_fee if settings else False
+    amounts = DieselCalculationService.calculate_fillup_amounts(
+        litres=litres_d,
+        rate_per_litre=rate_d,
+        admin_fee_pct=admin_fee_pct,
+        apply_admin_fee=apply_admin_fee,
+    )
+
+    db.add(DieselFillUp(
+        entity_id=invoice.entity_id,
+        truck_id=truck.id,
+        supplier_id=supplier.id,
+        fillup_date=fillup_date,
+        litres=litres_d,
+        rate_per_litre=rate_d,
+        invoice_number=invoice.invoice_number,
+        slip_number=slip,
+        supplier_invoice_id=invoice.id,
+        admin_fee_pct=admin_fee_pct,
+        diesel_type=diesel_type_for_supplier(supplier),
+        created_by=user_id,
+        **amounts,
+    ))
+    log_action(
+        db, "diesel_fillup.auto_created", user_id=user_id,
+        entity_id=invoice.entity_id, resource_type="diesel_fillup",
+        description=(
+            f"Auto-created diesel fill-up from invoice "
+            f"{invoice.invoice_number or '(pending)'} line for {truck.registration} "
+            f"({litres_d}L, slip {slip})"
+        ),
+    )
 
 
 def _recalc_invoice_total(db: Session, invoice: SupplierInvoice) -> None:
@@ -125,6 +218,7 @@ def _auto_create_diesel_fillup(
             invoice_number=supplier_invoice.invoice_number,
             supplier_invoice_id=supplier_invoice.id,
             admin_fee_pct=admin_fee_pct,
+            diesel_type=diesel_type_for_supplier(supplier),
             created_by=user_id,
             **amounts,
         )
@@ -777,6 +871,7 @@ def add_line_item(
     db.flush()
     if data.item_code:
         _link_fillup_from_slip(db, inv, data.item_code)
+    _maybe_create_line_fillup(db, inv, li, current_user.id)
     _recalc_invoice_total(db, inv)
     db.refresh(li)
     return SupplierInvoiceLineItemOut.model_validate(li)
@@ -803,6 +898,7 @@ def update_line_item(
     db.flush()
     if data.item_code:
         _link_fillup_from_slip(db, li.invoice, data.item_code)
+    _maybe_create_line_fillup(db, li.invoice, li, current_user.id)
     _recalc_invoice_total(db, li.invoice)
     db.refresh(li)
     return SupplierInvoiceLineItemOut.model_validate(li)
@@ -964,12 +1060,17 @@ def bulk_import_invoices(
             if li.rate_per_litre and li.rate_per_litre > 0:
                 rate_d = Decimal(str(li.rate_per_litre)).quantize(Decimal("0.0001"))
 
+            # Match a fill-up already logged for this slip + truck, regardless of the
+            # date it was captured on (a slip number uniquely identifies one fuel
+            # transaction; the logged date rarely equals the Excel slip date). This
+            # lets the import absorb a pre-logged slip — re-linking it to the imported
+            # invoice and archiving its pending placeholder — instead of duplicating it.
             existing_fillup = db.query(DieselFillUp).filter(
                 DieselFillUp.slip_number == slip,
                 DieselFillUp.truck_id == truck.id,
                 DieselFillUp.entity_id == payload.entity_id,
-                DieselFillUp.fillup_date == fillup_date,
-            ).first()
+                DieselFillUp.is_archived != True,
+            ).order_by(DieselFillUp.fillup_date.desc()).first()
 
             if existing_fillup:
                 if abs(float(existing_fillup.litres or 0) - float(litres_d)) > 0.01:
@@ -1023,6 +1124,7 @@ def bulk_import_invoices(
                 slip_number=slip,
                 supplier_invoice_id=inv.id,
                 admin_fee_pct=admin_fee_pct,
+                diesel_type=diesel_type_for_supplier(supplier),
                 created_by=current_user.id,
                 **amounts,
             ))

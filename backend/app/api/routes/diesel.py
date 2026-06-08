@@ -21,7 +21,7 @@ from app.schemas.schemas import (
     DieselInvoiceReconciliationRow,
     DieselImportRequest, DieselImportResult, DieselImportRowResult,
 )
-from app.services.diesel_service import DieselCalculationService
+from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
 from app.services.audit import log_action
 from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
 
@@ -720,10 +720,11 @@ def import_diesel(
         raise HTTPException(status_code=400, detail="Diesel sheet import is only available for Bokamosho (BKMO).")
 
     # Valid suppliers for this entity (id → name) and a case-insensitive depot map
-    supplier_names = {
-        s.id: s.name
+    supplier_objs = {
+        s.id: s
         for s in db.query(Supplier).filter(Supplier.entity_id == payload.entity_id).all()
     }
+    supplier_names = {sid: s.name for sid, s in supplier_objs.items()}
     depot_map = { (k or "").strip().lower(): v for k, v in (payload.depot_suppliers or {}).items() }
 
     def resolve_supplier(depot: Optional[str]) -> Optional[int]:
@@ -807,7 +808,9 @@ def import_diesel(
                 entity_id=payload.entity_id, truck_id=truck.id, supplier_id=supplier_id,
                 fillup_date=row.fillup_date, litres=litres, rate_per_litre=rate,
                 slip_number=slip or None, notes=(row.depot or None),
-                admin_fee_pct=admin_fee_pct, **amounts, created_by=current_user.id,
+                admin_fee_pct=admin_fee_pct,
+                diesel_type=diesel_type_for_supplier(supplier_objs.get(supplier_id)),
+                **amounts, created_by=current_user.id,
             )
             db.add(f)
             result.created += 1

@@ -4,7 +4,7 @@ import {
   updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp, finalizeDieselFillUp,
   getCurrentDieselRate, getEntities, getDieselSettings, getSuppliers,
 } from '../services/api'
-import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
+import { formatCurrency, formatDate, errorMessage, dieselTypeForSupplier } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
 import toast from 'react-hot-toast'
 import { Plus, Search, X, Trash2, Fuel, Save, Upload } from 'lucide-react'
@@ -582,7 +582,10 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
       <td style={S.td}>
         <SearchableSelect
           value={String(form.supplier_id)}
-          onChange={v => { set('supplier_id', v); setRateEdited(false) }}
+          onChange={v => {
+            set('supplier_id', v); setRateEdited(false)
+            set('diesel_type', dieselTypeForSupplier(suppliers.find(s => String(s.id) === String(v))))
+          }}
           options={suppliers}
           getValue={s => String(s.id)}
           getLabel={s => s.name}

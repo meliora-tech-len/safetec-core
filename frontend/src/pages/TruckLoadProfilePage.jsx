@@ -22,7 +22,7 @@ import {
   getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
 import toast from 'react-hot-toast'
-import { errorMessage } from '../utils/helpers'
+import { errorMessage, dieselTypeForSupplier } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
 import VerifyBadge from '../components/VerifyBadge'
 import VerifiableAmount from '../components/VerifiableAmount'
@@ -591,7 +591,7 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
             </div>
             <div>
               <label className="form-label">Supplier *</label>
-              <SearchableSelect value={String(form.supplier_id)} onChange={v => { set('supplier_id', v); setRateEdited(false); setAutoRate(null) }}
+              <SearchableSelect value={String(form.supplier_id)} onChange={v => { set('supplier_id', v); setRateEdited(false); setAutoRate(null); set('diesel_type', dieselTypeForSupplier(suppliers.find(s => String(s.id) === String(v)))) }}
                 options={suppliers} getValue={s => String(s.id)} getLabel={s => s.name} placeholder="Supplier…" formInput />
             </div>
             <div>

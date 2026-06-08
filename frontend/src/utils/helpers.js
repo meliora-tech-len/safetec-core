@@ -1,5 +1,15 @@
 import { format, parseISO, isValid } from 'date-fns'
 
+// Fixed per-supplier diesel tag: Merino & Oukop are always 'topup',
+// everything else (e.g. WBG Diesel) is 'fillup'. Mirrors the backend rule in
+// diesel_service.diesel_type_for_supplier. Accepts a supplier object or a name.
+export const dieselTypeForSupplier = (supplier) => {
+  const name = (typeof supplier === 'string'
+    ? supplier
+    : `${supplier?.name || ''} ${supplier?.short_name || ''}`).toLowerCase()
+  return (name.includes('merino') || name.includes('oukop')) ? 'topup' : 'fillup'
+}
+
 export const formatCurrency = (amount) => {
   if (amount == null) return 'R 0.00'
   return `R ${parseFloat(amount).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
