@@ -347,6 +347,29 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     cash_stmt_month = month + 1 if month < 12 else 1
     cash_stmt_year  = year      if month < 12 else year + 1
 
+    # Safetec ignores the current/cash-vs-30-day timing rule: every non-diesel
+    # invoice captured in the statement month belongs to that same month's
+    # costing, regardless of payment term. Other entities keep the rule above.
+    is_safetec = bool(entity and (entity.code or "").upper() == "SFT")
+    if is_safetec:
+        period_clause = and_(
+            SupplierInvoice.statement_month == month,
+            SupplierInvoice.statement_year == year,
+        )
+    else:
+        period_clause = or_(
+            and_(
+                Supplier.payment_term == PaymentTermType.days_30,
+                SupplierInvoice.statement_month == month,
+                SupplierInvoice.statement_year == year,
+            ),
+            and_(
+                Supplier.payment_term == PaymentTermType.current,
+                SupplierInvoice.statement_month == cash_stmt_month,
+                SupplierInvoice.statement_year == cash_stmt_year,
+            ),
+        )
+
     # All candidate non-diesel invoices for this entity/period, fetched once.
     # Per-truck matching (main-line reg vs. per-sub-line reg) happens in Python
     # via `_truck_invoice_contribution`, so a multi-line/split invoice can pull
@@ -359,18 +382,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             SupplierInvoice.entity_id == sub.entity_id,
             SupplierInvoice.is_archived == False,
             Supplier.is_diesel_supplier == False,
-            or_(
-                and_(
-                    Supplier.payment_term == PaymentTermType.days_30,
-                    SupplierInvoice.statement_month == month,
-                    SupplierInvoice.statement_year == year,
-                ),
-                and_(
-                    Supplier.payment_term == PaymentTermType.current,
-                    SupplierInvoice.statement_month == cash_stmt_month,
-                    SupplierInvoice.statement_year == cash_stmt_year,
-                ),
-            ),
+            period_clause,
         )
         .all()
     )
