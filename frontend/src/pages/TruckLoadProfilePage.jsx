@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader, Fuel, UtensilsCrossed, BarChart3,
-  CheckCheck, CalendarClock, Search, Check, Flag, Upload,
+  Banknote, CalendarClock, Search, Check, Flag, Upload,
 } from 'lucide-react'
 import ImportDieselModal from '../components/ImportDieselModal'
 import { useAuth } from '../hooks/useAuth'
@@ -2583,7 +2583,7 @@ export default function TruckLoadProfilePage() {
                             )}
                             {l.driver_already_paid && (
                               <span title="Driver already paid for this load" style={{ background: '#16a34a', color: '#fff', fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 700, fontStyle: 'normal', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                                <CheckCheck size={9} /> paid
+                                <Banknote size={9} /> paid
                               </span>
                             )}
                             {l.pay_deferred && (
@@ -2616,7 +2616,7 @@ export default function TruckLoadProfilePage() {
                           title={l.driver_already_paid ? 'Driver already paid — click to remove flag' : 'Mark: driver already paid (paid in prior period)'}
                           style={{ color: l.driver_already_paid ? '#16a34a' : 'var(--text-muted)', marginRight: 2 }}
                           onClick={e => handleToggleDriverPaid(l, e)}>
-                          <CheckCheck size={13} />
+                          <Banknote size={13} />
                         </button>
                         <button
                           className="btn btn-ghost btn-sm"
