@@ -866,6 +866,13 @@ export default function SupplierProfilePage() {
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
   const isWBGDiesel = isDiesel && supplier?.name?.toLowerCase().includes('wbg')
+  // Cradock Truck Stop (OBHI & SFT) invoices arrive VAT-inclusive with no
+  // litres/rate breakdown — collapse the multi-line sub-line Qty/Rate columns
+  // into a single incl-VAT amount the user types directly.
+  const supplierEntityCode = entities.find(e => e.id === supplier?.entity_id)?.code
+  const isCradock = !isDiesel &&
+    /cradock/i.test(supplier?.name || '') &&
+    ['OBHI', 'SFT'].includes(supplierEntityCode)
   // Merino & Oukop send a statement carrying the slip# before the physical slip
   // is received, so the slip# hasn't been captured as a fill-up yet. Let the user
   // type the slip# freely instead of forcing a pick from the fill-up dropdown.
@@ -1109,6 +1116,7 @@ export default function SupplierProfilePage() {
           onKeyDown={handleKeyDown}
           showVehicleReg={showVehicleReg}
           isDiesel={isDiesel}
+          amountInclOnly={isCradock}
           freeTextSlip={slipFreeText}
           showReg={showVehicleReg}
           dieselRate={dieselRate}
@@ -1588,11 +1596,12 @@ export default function SupplierProfilePage() {
                                         vatApplicable={editForm.vat_applicable !== false}
                                         showReg={showVehicleReg}
                                         trucks={trucks}
+                                        amountInclOnly={isCradock}
                                       />
                                 ) : (
                                   isDiesel
                                     ? <DieselLineItemsViewer items={inv.line_items || []} total={inv.amount} />
-                                    : <LineItemsViewer items={inv.line_items || []} total={inv.amount} showReg={showVehicleReg} />
+                                    : <LineItemsViewer items={inv.line_items || []} total={inv.amount} showReg={showVehicleReg} amountInclOnly={isCradock} />
                                 )}
                               </td>
                             </tr>
@@ -1640,7 +1649,7 @@ const CS = {
 }
 
 
-function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, freeTextSlip = false, showReg = false, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [], fillups = [] }) {
+function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, multiEntity, firstInputRef, onKeyDown, showVehicleReg, isDiesel, amountInclOnly = false, freeTextSlip = false, showReg = false, dieselRate, amountAutoFilled, onAmountEdit, trucks = [], subbies = [], fillups = [] }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const entityCode = entities.find(e => String(e.id) === String(form.entity_id))?.code || '—'
   const cardRef = useRef(null)
@@ -2037,6 +2046,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
               vatApplicable={form.vat_applicable !== false}
               showReg={showReg || (form.line_items || []).some(li => li.unit)}
               trucks={trucks}
+              amountInclOnly={amountInclOnly}
             />
           )}
         </div>
@@ -2046,15 +2056,20 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
 }
 
 
-function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = false, trucks = [] }) {
+function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = false, trucks = [], amountInclOnly = false }) {
   const vatMult = vatApplicable ? 1.15 : 1
   const addLine = () => onChange([...items, blankLineItem()])
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
   const updateLine = (idx, field, value) => {
     const updated = { ...items[idx], [field]: value }
-    const qty = parseFloat(field === 'quantity' ? value : updated.quantity) || 0
-    const rate = parseFloat(field === '_rate' ? value : updated._rate) || 0
-    if (field === 'quantity' || field === '_rate') {
+    if (field === 'amount_incl_vat') {
+      // Supplier invoices the VAT-inclusive amount directly (no qty/rate breakdown).
+      const incl = parseFloat(value) || 0
+      updated.amount_incl_vat = value
+      updated.amount_excl_vat = incl ? String(Math.round(incl / vatMult * 100) / 100) : ''
+    } else if (field === 'quantity' || field === '_rate') {
+      const qty = parseFloat(field === 'quantity' ? value : updated.quantity) || 0
+      const rate = parseFloat(field === '_rate' ? value : updated._rate) || 0
       const excl = qty && rate ? Math.round(qty * rate * 100) / 100 : 0
       updated.amount_excl_vat = excl || ''
       updated.amount_incl_vat = excl ? String(Math.round(excl * vatMult * 100) / 100) : ''
@@ -2072,10 +2087,10 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
           <col style={{ width: 80 }} />
           <col />
           {showReg && <col style={{ width: 120 }} />}
-          <col style={{ width: 65 }} />
-          <col style={{ width: 105 }} />
-          <col style={{ width: 95 }} />
-          <col style={{ width: 95 }} />
+          {!amountInclOnly && <col style={{ width: 65 }} />}
+          {!amountInclOnly && <col style={{ width: 105 }} />}
+          {!amountInclOnly && <col style={{ width: 95 }} />}
+          <col style={{ width: amountInclOnly ? 130 : 95 }} />
           <col style={{ width: 28 }} />
         </colgroup>
         <thead>
@@ -2083,10 +2098,10 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
             <th style={liStyles.th}>Item Code</th>
             <th style={liStyles.th}>Description</th>
             {showReg && <th style={liStyles.th}>Reg</th>}
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
+            {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>}
+            {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>}
+            {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>}
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>{amountInclOnly ? 'Amount (incl. VAT)' : 'Incl. VAT'}</th>
             <th style={liStyles.th} />
           </tr>
         </thead>
@@ -2122,21 +2137,35 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
                   )}
                 </td>
               )}
+              {!amountInclOnly && (
+                <td style={liStyles.td}>
+                  <input type="number" step="0.001" value={li.quantity ?? ''} placeholder="0"
+                    onChange={e => updateLine(idx, 'quantity', e.target.value)}
+                    style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
+                </td>
+              )}
+              {!amountInclOnly && (
+                <td style={liStyles.td}>
+                  <input type="number" step="0.0001" value={li._rate || ''} placeholder="0.00"
+                    onChange={e => updateLine(idx, '_rate', e.target.value)}
+                    style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
+                </td>
+              )}
+              {!amountInclOnly && (
+                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)', fontSize: 11 }}>
+                  {parseFloat(li.amount_excl_vat) ? parseFloat(li.amount_excl_vat).toFixed(2) : '—'}
+                </td>
+              )}
               <td style={liStyles.td}>
-                <input type="number" step="0.001" value={li.quantity ?? ''} placeholder="0"
-                  onChange={e => updateLine(idx, 'quantity', e.target.value)}
-                  style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
-              </td>
-              <td style={liStyles.td}>
-                <input type="number" step="0.0001" value={li._rate || ''} placeholder="0.00"
-                  onChange={e => updateLine(idx, '_rate', e.target.value)}
-                  style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
-              </td>
-              <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)', fontSize: 11 }}>
-                {parseFloat(li.amount_excl_vat) ? parseFloat(li.amount_excl_vat).toFixed(2) : '—'}
-              </td>
-              <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', fontSize: 11, fontWeight: 600 }}>
-                {parseFloat(li.amount_incl_vat) ? parseFloat(li.amount_incl_vat).toFixed(2) : '—'}
+                {amountInclOnly ? (
+                  <input type="number" step="0.01" value={li.amount_incl_vat ?? ''} placeholder="0.00"
+                    onChange={e => updateLine(idx, 'amount_incl_vat', e.target.value)}
+                    style={{ ...liStyles.input, width: '100%', textAlign: 'right', fontWeight: 600 }} />
+                ) : (
+                  <span style={{ display: 'block', textAlign: 'right', fontFamily: 'monospace', fontSize: 11, fontWeight: 600 }}>
+                    {parseFloat(li.amount_incl_vat) ? parseFloat(li.amount_incl_vat).toFixed(2) : '—'}
+                  </span>
+                )}
               </td>
               <td style={{ ...liStyles.td, textAlign: 'center' }}>
                 <button onClick={() => removeLine(idx)}
@@ -2149,17 +2178,19 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={showReg ? 4 : 3} style={{ padding: '8px 6px' }}>
+            <td colSpan={amountInclOnly ? (showReg ? 3 : 2) : (showReg ? 4 : 3)} style={{ padding: '8px 6px' }}>
               <button onClick={addLine}
                 style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none',
                   cursor: 'pointer', color: 'var(--accent)', fontWeight: 600, fontSize: 12, padding: 0 }}>
                 <Plus size={13} /> Add line
               </button>
             </td>
-            <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
-            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
-              {totalExcl.toFixed(2)}
-            </td>
+            {!amountInclOnly && <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>}
+            {!amountInclOnly && (
+              <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
+                {totalExcl.toFixed(2)}
+              </td>
+            )}
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
               {totalIncl.toFixed(2)}
             </td>
@@ -2172,7 +2203,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
 }
 
 
-function LineItemsViewer({ items, total, showReg = false }) {
+function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false }) {
   if (!items || items.length === 0) {
     return <p style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>No line items.</p>
   }
@@ -2185,10 +2216,10 @@ function LineItemsViewer({ items, total, showReg = false }) {
           <col />
           {showReg && <col style={{ width: 110 }} />}
           <col style={{ width: 82 }} />
-          <col style={{ width: 65 }} />
-          <col style={{ width: 105 }} />
-          <col style={{ width: 95 }} />
-          <col style={{ width: 95 }} />
+          {!amountInclOnly && <col style={{ width: 65 }} />}
+          {!amountInclOnly && <col style={{ width: 105 }} />}
+          {!amountInclOnly && <col style={{ width: 95 }} />}
+          <col style={{ width: amountInclOnly ? 130 : 95 }} />
         </colgroup>
         <thead>
           <tr style={{ background: 'var(--bg-surface)' }}>
@@ -2196,10 +2227,10 @@ function LineItemsViewer({ items, total, showReg = false }) {
             <th style={liStyles.th}>Description</th>
             {showReg && <th style={liStyles.th}>Reg</th>}
             <th style={liStyles.th}>Date</th>
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>Incl. VAT</th>
+            {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>}
+            {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>}
+            {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>}
+            <th style={{ ...liStyles.th, textAlign: 'right' }}>{amountInclOnly ? 'Amount (incl. VAT)' : 'Incl. VAT'}</th>
           </tr>
         </thead>
         <tbody>
@@ -2217,13 +2248,17 @@ function LineItemsViewer({ items, total, showReg = false }) {
                   </td>
                 )}
                 <td style={{ ...liStyles.td, color: 'var(--text-muted)' }}>{li.line_date ? String(li.line_date).slice(0, 10).split('-').reverse().join('-') : '—'}</td>
-                <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>
-                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
-                  {rate != null ? rate.toFixed(4) : '—'}
-                </td>
-                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                  R {excl.toFixed(2)}
-                </td>
+                {!amountInclOnly && <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>}
+                {!amountInclOnly && (
+                  <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
+                    {rate != null ? rate.toFixed(4) : '—'}
+                  </td>
+                )}
+                {!amountInclOnly && (
+                  <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                    R {excl.toFixed(2)}
+                  </td>
+                )}
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
                   R {parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}
                 </td>
@@ -2233,11 +2268,13 @@ function LineItemsViewer({ items, total, showReg = false }) {
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={showReg ? 4 : 3} style={liStyles.td} />
-            <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
-            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
-              R {totalExcl.toFixed(2)}
-            </td>
+            <td colSpan={amountInclOnly ? (showReg ? 4 : 3) : (showReg ? 4 : 3)} style={liStyles.td} />
+            {!amountInclOnly && <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>}
+            {!amountInclOnly && (
+              <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
+                R {totalExcl.toFixed(2)}
+              </td>
+            )}
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
               R {parseFloat(total ?? 0).toFixed(2)}
             </td>
