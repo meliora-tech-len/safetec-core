@@ -110,7 +110,9 @@ function FleetTab({ entities, isAdmin }) {
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="search-bar" style={{ flex: '1 1 200px', minWidth: 180 }}>
           <Search size={14} />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search reg, make, sub-fleet…" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+                 onKeyDown={e => { if (e.key === 'Enter' && sorted.length === 1) navigate(`/truck-loads/${sorted[0].id}`) }}
+                 placeholder="Search reg, make, sub-fleet…" />
           {search && <button className="btn-icon" onClick={() => setSearch('')} style={{ padding: 0, background: 'none' }}><X size={13} /></button>}
         </div>
         {isAdmin && (

@@ -902,6 +902,7 @@ export default function SupplierProfilePage() {
         case 'invoice_date':   av = a.invoice_date || '';   bv = b.invoice_date || '';   break
         case 'invoice_number': av = a.invoice_number || ''; bv = b.invoice_number || ''; break
         case 'vehicle_reg':    av = (a.vehicle_reg || '').toUpperCase(); bv = (b.vehicle_reg || '').toUpperCase(); break
+        case 'subcontractor':  av = (ownerForReg(a.vehicle_reg) || '').toLowerCase(); bv = (ownerForReg(b.vehicle_reg) || '').toLowerCase(); break
         case 'slip_number':    av = (a.slip_number || '').toLowerCase(); bv = (b.slip_number || '').toLowerCase(); break
         case 'amount':         av = parseFloat(a.amount) || 0; bv = parseFloat(b.amount) || 0; break
         case 'litres':         av = parseFloat(a.litres) || 0; bv = parseFloat(b.litres) || 0; break
@@ -1203,7 +1204,11 @@ export default function SupplierProfilePage() {
                           Vehicle Reg{sortArrow('vehicle_reg')}
                         </th>
                       )}
-                      {showVehicleReg && !isWBGDiesel && <th style={styles.th}>Subcontractor</th>}
+                      {showVehicleReg && !isWBGDiesel && (
+                        <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('subcontractor')}>
+                          Subcontractor{sortArrow('subcontractor')}
+                        </th>
+                      )}
                       {!isDiesel && <th style={styles.th}>Description</th>}
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('amount')}>
                         Amount{sortArrow('amount')}

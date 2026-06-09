@@ -79,6 +79,8 @@ export default function SubcontractorProfilePage() {
   const [saving, setSaving]               = useState(false)
   const [collapsed, setCollapsed]         = useState({})
   const [deleteTarget, setDeleteTarget]   = useState(null)
+  const [sortCol, setSortCol]             = useState('invoice_date')
+  const [sortDir, setSortDir]             = useState('asc')
   const firstInputRef = useRef(null)
 
   // Costing tab state
@@ -116,6 +118,26 @@ export default function SubcontractorProfilePage() {
       .catch(() => setGroups([]))
       .finally(() => setInvoicesLoading(false))
   }, [id])
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('asc') }
+  }
+  const sortArrow = (col) => sortCol === col ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
+
+  const sortInvoices = (invoices) => [...invoices].sort((a, b) => {
+    let av, bv
+    switch (sortCol) {
+      case 'invoice_date':   av = a.invoice_date || '';   bv = b.invoice_date || '';   break
+      case 'invoice_number': av = (a.invoice_number || '').toLowerCase(); bv = (b.invoice_number || '').toLowerCase(); break
+      case 'vehicle_reg':    av = (a.vehicle_reg || '').toUpperCase(); bv = (b.vehicle_reg || '').toUpperCase(); break
+      case 'amount':         av = parseFloat(a.amount) || 0; bv = parseFloat(b.amount) || 0; break
+      default:               av = ''; bv = ''
+    }
+    if (av < bv) return sortDir === 'asc' ? -1 : 1
+    if (av > bv) return sortDir === 'asc' ? 1 : -1
+    return 0
+  })
 
   const loadCosting = useCallback(() => {
     setCostingLoading(true)
@@ -413,7 +435,7 @@ export default function SubcontractorProfilePage() {
             {groups.length === 0 && (
               <div style={styles.group}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <InvoiceTableHead />
+                  <InvoiceTableHead onSort={handleSort} sortArrow={sortArrow} />
                   <tbody>
                     {showNew
                       ? <NewInvoiceRow
@@ -463,7 +485,7 @@ export default function SubcontractorProfilePage() {
                   {isOpen && (
                     <div style={{ overflowX: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <InvoiceTableHead />
+                        <InvoiceTableHead onSort={handleSort} sortArrow={sortArrow} />
                         <tbody>
                           {groupIndex === 0 && showNew && (
                             <NewInvoiceRow
@@ -473,7 +495,7 @@ export default function SubcontractorProfilePage() {
                               trucks={trucks}
                             />
                           )}
-                          {group.invoices.map(inv => {
+                          {sortInvoices(group.invoices).map(inv => {
                             const isEditing = editingId === inv.id
                             const f = editForm
                             return (
@@ -859,15 +881,16 @@ export default function SubcontractorProfilePage() {
 
 // ── Invoice table header ───────────────────────────────────────────────────────
 
-function InvoiceTableHead() {
+function InvoiceTableHead({ onSort, sortArrow }) {
+  const sortableTh = { ...styles.th, cursor: 'pointer', userSelect: 'none' }
   return (
     <thead>
       <tr style={{ background: 'var(--bg-surface)' }}>
-        <th style={styles.th}>Date</th>
-        <th style={styles.th}>Invoice #</th>
-        <th style={styles.th}>Truck Reg</th>
+        <th style={sortableTh} onClick={() => onSort('invoice_date')}>Date{sortArrow('invoice_date')}</th>
+        <th style={sortableTh} onClick={() => onSort('invoice_number')}>Invoice #{sortArrow('invoice_number')}</th>
+        <th style={sortableTh} onClick={() => onSort('vehicle_reg')}>Truck Reg{sortArrow('vehicle_reg')}</th>
         <th style={styles.th}>Description</th>
-        <th style={styles.th}>Amount</th>
+        <th style={sortableTh} onClick={() => onSort('amount')}>Amount{sortArrow('amount')}</th>
         <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
         <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
         <th style={styles.th}></th>
