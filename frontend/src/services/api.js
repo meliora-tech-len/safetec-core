@@ -114,6 +114,7 @@ export const deleteRole = (key) => api.delete(`/roles/${key}`)
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 export const getSettings = () => api.get('/settings/')
+export const getSetting = (key) => api.get(`/settings/${key}`)
 export const updateSetting = (key, data) => api.put(`/settings/${key}`, data)
 export const createSetting = (data) => api.post('/settings/', data)
 

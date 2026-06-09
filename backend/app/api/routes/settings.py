@@ -39,8 +39,12 @@ def update_setting(
     current_user: User = Depends(get_current_user),
 ):
     setting = db.query(AppSetting).filter(AppSetting.key == key).first()
-    if not setting:
-        raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
+    created = setting is None
+    if created:
+        # Upsert: create the setting on first save so new settings keys (e.g.
+        # profit_sheet_defaults) don't require a seed/migration first.
+        setting = AppSetting(key=key, category=payload.category or "system")
+        db.add(setting)
 
     setting.value = payload.value
     if payload.label is not None:
@@ -49,8 +53,9 @@ def update_setting(
         setting.category = payload.category
     setting.updated_by = current_user.id
 
-    log_action(db, "setting.updated", user_id=current_user.id, resource_type="setting",
-               description=f"Updated setting '{key}' to '{payload.value}'")
+    log_action(db, "setting.created" if created else "setting.updated",
+               user_id=current_user.id, resource_type="setting",
+               description=f"{'Created' if created else 'Updated'} setting '{key}'")
     db.commit()
     db.refresh(setting)
     return setting
