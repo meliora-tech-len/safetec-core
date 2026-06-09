@@ -2320,7 +2320,7 @@ function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies 
           {items.map((li, idx) => (
             <tr key={li._key ?? li.id ?? idx} style={{ borderBottom: '1px solid var(--border)' }}>
               <td style={liStyles.td}>
-                <input type="date" value={li.line_date ?? ''}
+                <DateInput value={li.line_date ?? ''}
                   onChange={e => updateLine(idx, 'line_date', e.target.value)}
                   style={{ ...liStyles.input, minWidth: 120 }} />
               </td>
