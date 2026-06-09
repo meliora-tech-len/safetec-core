@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { CheckCircle, CheckCheck, Lock, AlertTriangle, ShieldCheck } from 'lucide-react'
 
 /**
@@ -177,6 +178,8 @@ export default function VerifyBadge({
         )}
       </div>
 
+      {(confirmOpen || finalizeOpen || undoFinalizeOpen) && createPortal(
+      <>
       {/* Unverify steps 1/2 */}
       {confirmOpen && (
         <div className="modal-overlay" onClick={handleCancel} style={{ zIndex: 1000 }}>
@@ -245,6 +248,9 @@ export default function VerifyBadge({
             </div>
           </div>
         </div>
+      )}
+      </>,
+      document.body
       )}
     </>
   )
