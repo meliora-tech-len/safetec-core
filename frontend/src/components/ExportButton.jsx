@@ -6,14 +6,17 @@ import { exportToExcel, exportToPdf } from '../utils/exportUtils'
  * Reusable export dropdown.
  *
  * Props:
- *   columns  — Array<{ header: string, key?: string, value?: (row) => string }>
- *   data     — Array<object>  (the currently displayed / filtered rows)
- *   filename — string without extension  e.g. 'suppliers-2024'
- *   title    — string shown in the PDF header  e.g. 'Suppliers Report'
- *   disabled — bool (optional)
+ *   columns   — Array<{ header: string, key?: string, value?: (row) => string }>
+ *   data      — Array<object>  (the currently displayed / filtered rows)
+ *   fetchData — optional async () => Array<object>. When set, the full dataset is
+ *               fetched on export (e.g. all server pages) instead of using `data`.
+ *   filename  — string without extension  e.g. 'suppliers-2024'
+ *   title     — string shown in the PDF header  e.g. 'Suppliers Report'
+ *   disabled  — bool (optional)
  */
-export default function ExportButton({ columns, data, filename, title, disabled }) {
+export default function ExportButton({ columns, data, fetchData, filename, title, disabled }) {
   const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
   const ref = useRef(null)
 
   useEffect(() => {
@@ -23,26 +26,35 @@ export default function ExportButton({ columns, data, filename, title, disabled 
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  const handle = (type) => {
+  const handle = async (type) => {
     setOpen(false)
-    if (!data?.length) return
+    let rows = data
+    if (fetchData) {
+      setBusy(true)
+      try { rows = await fetchData() }
+      catch { rows = null }
+      finally { setBusy(false) }
+    }
+    if (!rows?.length) return
     const stamp = new Date().toISOString().slice(0, 10)
     const file = `${filename}-${stamp}`
-    if (type === 'excel') exportToExcel(columns, data, file)
-    else exportToPdf(columns, data, file, title)
+    if (type === 'excel') exportToExcel(columns, rows, file)
+    else exportToPdf(columns, rows, file, title)
   }
+
+  const noData = !fetchData && !data?.length
 
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>
       <button
         className="btn-ghost"
         onClick={() => setOpen(o => !o)}
-        disabled={disabled || !data?.length}
-        title={!data?.length ? 'No data to export' : 'Export'}
+        disabled={disabled || busy || noData}
+        title={noData ? 'No data to export' : (busy ? 'Preparing export…' : 'Export')}
         style={{ display: 'flex', alignItems: 'center', gap: 5 }}
       >
         <Download size={13} />
-        Export
+        {busy ? 'Exporting…' : 'Export'}
         <ChevronDown size={11} style={{ opacity: 0.6, marginLeft: 1 }} />
       </button>
 

@@ -89,6 +89,8 @@ export const deleteUser = (id) => api.delete(`/users/${id}`)
 
 // ── Audit ─────────────────────────────────────────────────────────────────────
 export const getAuditLogs = (params = {}) => api.get('/audit/', { params })
+export const getAuditLogMonths = (params = {}) => api.get('/audit/months', { params })
+export const exportAuditLogs = (params = {}) => api.get('/audit/export', { params })
 
 // ── Entities (additions) ──────────────────────────────────────────────────────
 export const uploadEntityLogo = (id, formData) =>

@@ -1,10 +1,18 @@
-import { useState, useEffect, useMemo } from 'react'
-import { getAuditLogs, getEntities } from '../services/api'
+import { useState, useEffect, useRef } from 'react'
+import { getAuditLogs, getAuditLogMonths, exportAuditLogs, getEntities } from '../services/api'
 import { formatDateTime } from '../utils/helpers'
-import { Shield, RefreshCw, Search } from 'lucide-react'
+import { Shield, RefreshCw, Search, Calendar } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
+import Pagination from '../components/Pagination'
 import { useAuth } from '../hooks/useAuth'
-import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
+import SortableHeader, { useSort } from '../components/SortableHeader'
+
+const MONTH_NAMES = [
+  '', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+const monthKey = (year, month) => `${year}-${month}`
+const monthLabel = (year, month) => `${MONTH_NAMES[month]} ${year}`
 
 const ACTION_LABELS = {
   // Auth
@@ -92,48 +100,82 @@ const RESOURCE_TYPES = [
 
 export default function AuditPage() {
   const { activeEntity, isAdmin } = useAuth()
+  const PAGE_SIZE = 50
+
   const [logs, setLogs] = useState([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [entities, setEntities] = useState([])
+  const [months, setMonths] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
   const [filterResource, setFilterResource] = useState('')
   const [filterAction, setFilterAction] = useState('')
+  const [filterMonth, setFilterMonth] = useState('') // 'YYYY-M' of the month being viewed
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  const { sort, onSort } = useSort('created_at', 'desc')
+  const reqRef = useRef(0)
 
   const entityMap = Object.fromEntries(entities.map(e => [e.id, e.name]))
 
-  const load = () => {
-    setLoading(true)
-    const params = { limit: 200 }
+  // Shared filter params for both the paged list and the export.
+  const queryParams = () => {
+    if (!filterMonth) return null
+    const [year, month] = filterMonth.split('-')
+    const params = { year, month }
     if (filterEntity) params.entity_id = filterEntity
     if (filterResource) params.resource_type = filterResource
-    getAuditLogs(params).then(r => setLogs(r.data)).finally(() => setLoading(false))
+    if (filterAction) params.action_group = filterAction
+    if (debouncedSearch) params.q = debouncedSearch
+    return params
   }
+
+  const load = () => {
+    const params = queryParams()
+    if (!params) { setLogs([]); setTotal(0); setLoading(false); return }
+    setLoading(true)
+    const myReq = ++reqRef.current
+    getAuditLogs({ ...params, page, page_size: PAGE_SIZE, sort: sort.col, dir: sort.dir })
+      .then(r => {
+        if (myReq !== reqRef.current) return // a newer request superseded this one
+        setLogs(r.data.items)
+        setTotal(r.data.total)
+      })
+      .finally(() => { if (myReq === reqRef.current) setLoading(false) })
+  }
+
+  // Changing a filter/search/sort resets to page 1; page changes keep the filters.
+  const resetTo = (setter) => (value) => { setter(value); setPage(1) }
+  const handleSort = (col) => { onSort(col); setPage(1) }
+
+  // Debounce the free-text search so we don't fire a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedSearch(search); setPage(1) }, 300)
+    return () => clearTimeout(t)
+  }, [search])
 
   useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
-  useEffect(() => { load() }, [filterEntity, filterResource])
+  useEffect(() => {
+    const params = filterEntity ? { entity_id: filterEntity } : {}
+    getAuditLogMonths(params).then(r => {
+      const data = r.data || []
+      setMonths(data)
+      const keys = data.map(mo => monthKey(mo.year, mo.month))
+      // Keep the current month if it still exists for this entity, else jump to
+      // the most recent month available. No months → nothing to show.
+      setFilterMonth(prev => (prev && keys.includes(prev)) ? prev : (keys[0] || ''))
+      setPage(1)
+      if (data.length === 0) { setLogs([]); setTotal(0); setLoading(false) }
+    }).catch(() => { setMonths([]); setFilterMonth(''); setLogs([]); setTotal(0); setLoading(false) })
+  }, [filterEntity])
 
-  const { sort, onSort } = useSort('created_at', 'desc')
-
-  const filtered = useMemo(() => {
-    const base = logs.filter(log => {
-      if (filterAction && !log.action.startsWith(filterAction)) return false
-      if (search) {
-        const q = search.toLowerCase()
-        return (
-          (log.description || '').toLowerCase().includes(q) ||
-          (log.user?.full_name || '').toLowerCase().includes(q) ||
-          (log.action || '').toLowerCase().includes(q)
-        )
-      }
-      return true
-    })
-    return applySort(base, sort, (item, col) => {
-      if (col === 'user_name') return item.user?.full_name || ''
-      return item[col]
-    })
-  }, [logs, filterAction, search, sort])
+  useEffect(() => { load() }, [
+    filterMonth, filterEntity, filterResource, filterAction, debouncedSearch,
+    sort.col, sort.dir, page,
+  ])
 
   const actionLabel = (action) => ACTION_LABELS[action] || action
   const actionColor = (action) => ACTION_COLORS[action] || 'var(--text-secondary)'
@@ -143,13 +185,19 @@ export default function AuditPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Audit Log</h1>
-          <p className="page-subtitle">Complete activity trail — who changed what and when</p>
+          <p className="page-subtitle">Complete activity trail — who changed what and when. Pick a month to view earlier history.</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <ExportButton
             title="Audit Log Report"
             filename="audit-log"
-            data={filtered}
+            data={logs}
+            fetchData={async () => {
+              const params = queryParams()
+              if (!params) return []
+              const r = await exportAuditLogs(params)
+              return r.data
+            }}
             columns={[
               { header: 'Timestamp',   value: r => formatDateTime(r.created_at) },
               { header: 'User',        value: r => r.user?.full_name || 'System' },
@@ -173,16 +221,27 @@ export default function AuditPage() {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
+        <div style={styles.monthWrap}>
+          <Calendar size={13} style={styles.searchIcon} />
+          <select value={filterMonth} onChange={e => resetTo(setFilterMonth)(e.target.value)} style={{ ...styles.monthSelect }}>
+            {months.length === 0 && <option value="">No activity yet</option>}
+            {months.map(mo => (
+              <option key={monthKey(mo.year, mo.month)} value={monthKey(mo.year, mo.month)}>
+                {monthLabel(mo.year, mo.month)}
+              </option>
+            ))}
+          </select>
+        </div>
         {isAdmin && (
-          <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
+          <select value={filterEntity} onChange={e => resetTo(setFilterEntity)(e.target.value)} style={{ width: 180 }}>
             <option value="">All Entities</option>
             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         )}
-        <select value={filterAction} onChange={e => setFilterAction(e.target.value)} style={{ width: 180 }}>
+        <select value={filterAction} onChange={e => resetTo(setFilterAction)(e.target.value)} style={{ width: 180 }}>
           {ACTION_GROUPS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
         </select>
-        <select value={filterResource} onChange={e => setFilterResource(e.target.value)} style={{ width: 150 }}>
+        <select value={filterResource} onChange={e => resetTo(setFilterResource)(e.target.value)} style={{ width: 150 }}>
           {RESOURCE_TYPES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>
       </div>
@@ -191,10 +250,10 @@ export default function AuditPage() {
         <table>
           <thead>
             <tr>
-              <SortableHeader label="Timestamp" col="created_at" sort={sort} onSort={onSort} />
-              <SortableHeader label="User" col="user_name" sort={sort} onSort={onSort} />
-              <SortableHeader label="Action" col="action" sort={sort} onSort={onSort} />
-              <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
+              <SortableHeader label="Timestamp" col="created_at" sort={sort} onSort={handleSort} />
+              <SortableHeader label="User" col="user_name" sort={sort} onSort={handleSort} />
+              <SortableHeader label="Action" col="action" sort={sort} onSort={handleSort} />
+              <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={handleSort} />
               <th>Description</th>
               <th>IP Address</th>
             </tr>
@@ -202,9 +261,9 @@ export default function AuditPage() {
           <tbody>
             {loading ? (
               <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
-            ) : filtered.length === 0 ? (
+            ) : logs.length === 0 ? (
               <tr><td colSpan={6}><div className="empty-state"><Shield size={32} /><p>No audit logs found</p></div></td></tr>
-            ) : filtered.map(log => (
+            ) : logs.map(log => (
               <tr key={log.id}>
                 <td className="font-mono text-muted" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{formatDateTime(log.created_at)}</td>
                 <td style={{ fontSize: 12, fontWeight: 500 }}>{log.user?.full_name || 'System'}</td>
@@ -230,11 +289,7 @@ export default function AuditPage() {
         </table>
       </div>
 
-      {!loading && (
-        <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
-          Showing {filtered.length} of {logs.length} entries
-        </p>
-      )}
+      {!loading && <Pagination page={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} />}
     </div>
   )
 }
@@ -243,6 +298,8 @@ const styles = {
   page: { padding: 'var(--page-pad)', flex: 1 },
   filters: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' },
   searchWrap: { position: 'relative', display: 'flex', alignItems: 'center' },
-  searchIcon: { position: 'absolute', left: 9, color: 'var(--text-muted)', pointerEvents: 'none' },
-  searchInput: { paddingLeft: 28, width: 260, height: 32, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-input, var(--bg-hover))', color: 'var(--text-primary)', fontSize: 12 },
+  searchIcon: { position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' },
+  searchInput: { paddingLeft: 32, width: 180 },
+  monthWrap: { position: 'relative', display: 'flex', alignItems: 'center' },
+  monthSelect: { paddingLeft: 32, width: 180 },
 }

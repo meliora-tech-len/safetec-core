@@ -607,6 +607,13 @@ class AuditLogOut(BaseModel):
         from_attributes = True
 
 
+class AuditLogPage(BaseModel):
+    items: List[AuditLogOut]
+    total: int
+    page: int
+    page_size: int
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 class DashboardStats(BaseModel):
