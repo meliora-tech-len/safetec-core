@@ -26,7 +26,7 @@ from reportlab.platypus import (
 )
 
 from app.services.pdf_generator import (
-    _load_logo, _hex_to_color, format_currency, format_date,
+    _load_logo, _load_letterhead, _hex_to_color, format_currency, format_date,
     _FONT_NORMAL, _FONT_BOLD, _FONT_ITALIC,
 )
 
@@ -110,10 +110,10 @@ def generate_statement_pdf(stmt, entity, customer) -> bytes:
 
     # ── Header: letterhead (preferred) or logo + company info ─────────────────
     letterhead_img = None
-    lh_bytes = _load_logo(getattr(entity, "letterhead_url", None), getattr(entity, "letterhead_path", None))
+    lh_bytes = _load_letterhead(entity)
     if lh_bytes:
         try:
-            letterhead_img = RLImage(io.BytesIO(lh_bytes), width=CONTENT_W*mm, height=130*mm, kind="proportional")
+            letterhead_img = RLImage(io.BytesIO(lh_bytes), width=196*mm, height=60*mm, kind="proportional")
             letterhead_img.hAlign = "CENTER"
         except Exception:
             letterhead_img = None
@@ -329,7 +329,7 @@ def generate_statement_excel(stmt, entity, customer) -> bytes:
     row = 1
 
     # Letterhead image (floats over the cells) — reserve rows beneath it
-    lh_bytes = _load_logo(getattr(entity, "letterhead_url", None), getattr(entity, "letterhead_path", None))
+    lh_bytes = _load_letterhead(entity)
     if not lh_bytes:
         lh_bytes = _load_logo(getattr(entity, "logo_url", None), getattr(entity, "logo_path", None))
     if lh_bytes:
@@ -337,7 +337,7 @@ def generate_statement_excel(stmt, entity, customer) -> bytes:
             from PIL import Image as PILImage
             pil = PILImage.open(io.BytesIO(lh_bytes))
             ratio = pil.height / pil.width if pil.width else 0.3
-            disp_w = 820
+            disp_w = 900
             disp_h = int(disp_w * ratio)
             img = XLImage(io.BytesIO(lh_bytes))
             img.width, img.height = disp_w, disp_h

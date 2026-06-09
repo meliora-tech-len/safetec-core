@@ -118,6 +118,37 @@ def _load_logo(logo_url: str | None, logo_path: str | None = None) -> bytes | No
     return None
 
 
+def _load_letterhead(entity) -> bytes | None:
+    """
+    Resolve an entity's letterhead image bytes.
+
+    1. Try the DB-stored letterhead_url / letterhead_path.
+    2. Fall back to the bundled file shipped in static/letterheads/<code>_letterhead.<ext>.
+
+    The fallback guarantees the letterhead still renders in production even when the
+    stored URL points at a host that isn't reachable from the server (e.g. a
+    localhost URL captured during local upload). It only kicks in when the primary
+    load fails, so entities whose stored URL already resolves are unaffected.
+    """
+    lh = _load_logo(getattr(entity, "letterhead_url", None),
+                    getattr(entity, "letterhead_path", None))
+    if lh:
+        return lh
+
+    code = (getattr(entity, "code", None) or "").lower()
+    if not code:
+        return None
+    lh_dir = _BACKEND_ROOT / "static" / "letterheads"
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        candidate = lh_dir / f"{code}_letterhead.{ext}"
+        try:
+            if candidate.is_file():
+                return candidate.read_bytes()
+        except Exception:
+            pass
+    return None
+
+
 def _compute_totals(invoice, line_items):
     subtotal = Decimal("0")
     vat_base = Decimal("0")
@@ -210,20 +241,17 @@ def generate_invoice_pdf(invoice, entity, supplier, *, customer=None, theme: str
 
     # ── Load letterhead (takes priority over logo) ────────────────────────────
     letterhead_img = None
-    lh_url  = getattr(entity, "letterhead_url",  None)
-    lh_path = getattr(entity, "letterhead_path", None)
-    if lh_url or lh_path:
-        lh_bytes = _load_logo(lh_url, lh_path)
-        if lh_bytes:
-            try:
-                letterhead_img = RLImage(
-                    io.BytesIO(lh_bytes),
-                    width=174*mm, height=105*mm,
-                    kind="proportional",
-                )
-                letterhead_img.hAlign = 'CENTER'
-            except Exception:
-                letterhead_img = None
+    lh_bytes = _load_letterhead(entity)
+    if lh_bytes:
+        try:
+            letterhead_img = RLImage(
+                io.BytesIO(lh_bytes),
+                width=196*mm, height=60*mm,
+                kind="proportional",
+            )
+            letterhead_img.hAlign = 'CENTER'
+        except Exception:
+            letterhead_img = None
 
     # ── Load logo (used only when no letterhead) ──────────────────────────────
     logo_img = None

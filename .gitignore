@@ -25,7 +25,9 @@ backend/safetec_core.db-wal
 *.db-wal
 
 # ── Uploaded / generated files ────────────────────────────────────────────────
-backend/static/
+backend/static/*
+# …but ship the bundled default letterheads so PDFs/statements render them in prod
+!backend/static/letterheads/
 
 # ── Node.js ───────────────────────────────────────────────────────────────────
 frontend/node_modules/
