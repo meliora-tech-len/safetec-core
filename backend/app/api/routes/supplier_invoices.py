@@ -9,7 +9,7 @@ from typing import List, Optional
 
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, PaymentTermType, Truck, DieselFillUp
+from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, PaymentTermType, Truck, DieselFillUp, BusinessEntity
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
     SupplierInvoiceLineItemCreate, SupplierInvoiceLineItemOut,
@@ -284,6 +284,12 @@ def get_dashboard_summary(
     period_month = month or now.month
     period_year  = year or now.year
 
+    # OBHI: don't hide 30-day invoices that fall outside the selected statement
+    # month — show every outstanding 30-day payable (original, pre-statement-period
+    # behaviour). Other entities stay scoped to the selected period.
+    is_obhi = bool(entity_id) and db.query(BusinessEntity.code).filter(
+        BusinessEntity.id == entity_id).scalar() == "OBHI"
+
     q = db.query(SupplierInvoice).join(Supplier).filter(SupplierInvoice.is_paid == False, SupplierInvoice.is_archived != True)
 
     if accessible is not None:
@@ -328,10 +334,10 @@ def get_dashboard_summary(
                     }
                 other_period_payables[key]["total"] += outstanding
                 other_period_payables[key]["count"] += 1
-        else:  # days_30 — only show the selected statement period
+        else:  # days_30 — scoped to the selected statement period (except OBHI)
             stmt_m = inv.statement_month or inv.invoice_date.month
             stmt_y = inv.statement_year  or inv.invoice_date.year
-            if stmt_m != period_month or stmt_y != period_year:
+            if not is_obhi and (stmt_m != period_month or stmt_y != period_year):
                 continue
             key = (inv.supplier_id, inv.statement_year, inv.statement_month)
             if key not in days_30_payables:

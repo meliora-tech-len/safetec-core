@@ -144,7 +144,13 @@ def dashboard_stats(
     def in_period(d):
         return d is not None and d.month == period_month and d.year == period_year
 
-    invoices = [inv for inv in all_docs if in_period(inv.issue_date)]
+    # OBHI: don't scope the issue-based metrics to the selected month — count all
+    # outstanding/overdue/draft documents (original, pre-statement-period
+    # behaviour). "Collected in <month>" below stays period-scoped for everyone.
+    is_obhi = bool(entity_id) and db.query(BusinessEntity.code).filter(
+        BusinessEntity.id == entity_id).scalar() == "OBHI"
+
+    invoices = all_docs if is_obhi else [inv for inv in all_docs if in_period(inv.issue_date)]
 
     outstanding = sum(
         inv.total for inv in invoices

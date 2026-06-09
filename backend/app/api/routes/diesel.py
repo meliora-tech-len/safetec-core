@@ -148,17 +148,24 @@ def get_diesel_warnings(
 ):
     """Return counts of diesel fill-ups missing slip# or invoice# for the dashboard.
 
-    Scoped to the selected fill-up month/year (defaults to the current month)."""
+    Scoped to the selected fill-up month/year (defaults to the current month).
+    Exception: OBHI handles diesel on a different cadence to the statement month,
+    so its warnings are NOT period-scoped — every outstanding fill-up missing a
+    slip#/invoice# is shown (the original, pre-statement-period behaviour)."""
     accessible = _accessible_entity_ids(current_user)
     now = datetime.now(tz=timezone.utc)
     period_month = month or now.month
     period_year  = year or now.year
 
-    q = db.query(DieselFillUp).filter(
-        DieselFillUp.is_archived == False,
-        func.extract('month', DieselFillUp.fillup_date) == period_month,
-        func.extract('year', DieselFillUp.fillup_date) == period_year,
-    )
+    is_obhi = bool(entity_id) and db.query(BusinessEntity.code).filter(
+        BusinessEntity.id == entity_id).scalar() == "OBHI"
+
+    q = db.query(DieselFillUp).filter(DieselFillUp.is_archived == False)
+    if not is_obhi:
+        q = q.filter(
+            func.extract('month', DieselFillUp.fillup_date) == period_month,
+            func.extract('year', DieselFillUp.fillup_date) == period_year,
+        )
     if accessible is not None:
         q = q.filter(DieselFillUp.entity_id.in_(accessible))
     if entity_id:
