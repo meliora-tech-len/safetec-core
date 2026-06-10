@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useSessionState } from '../hooks/useSessionState'
 import {
   getSubcontractor, getSuppliers, getFleetTrucks,
   createSubcontractorInvoice, createSupplierInvoice,
@@ -66,8 +67,8 @@ export default function SubcontractorProfilePage() {
 
   const [subcontractor, setSubcontractor] = useState(null)
   const [activeTab, setActiveTab]         = useState('costing')
-  const [month, setMonth]                 = useState(now.getMonth() + 1)
-  const [year, setYear]                   = useState(now.getFullYear())
+  const [month, setMonth]                 = useSessionState('period:costing:month', now.getMonth() + 1)
+  const [year, setYear]                   = useSessionState('period:costing:year', now.getFullYear())
 
   // Invoice tab state
   const [groups, setGroups]               = useState([])
@@ -139,25 +140,33 @@ export default function SubcontractorProfilePage() {
     return 0
   })
 
+  // Guard against out-of-order responses: when the month changes while a
+  // request is still in flight, the slower stale response must never
+  // overwrite the data for the month currently on screen.
+  const costingReqId = useRef(0)
   const loadCosting = useCallback(() => {
+    const reqId = ++costingReqId.current
     setCostingLoading(true)
     getSubcontractorCosting(id, { month, year })
-      .then(r => setCosting(r.data))
-      .catch(() => setCosting(null))
-      .finally(() => setCostingLoading(false))
+      .then(r => { if (reqId === costingReqId.current) setCosting(r.data) })
+      .catch(() => { if (reqId === costingReqId.current) setCosting(null) })
+      .finally(() => { if (reqId === costingReqId.current) setCostingLoading(false) })
   }, [id, month, year])
 
   // ── Per-value verification overlay (costing) ────────────────────────────────
   const [verif, setVerif] = useState({})
   const costingPrefix = `costing:${id}:${year}-${String(month).padStart(2, '0')}`
+  const verifReqId = useRef(0)
   const loadVerif = useCallback(() => {
+    const reqId = ++verifReqId.current
     getVerifications(costingPrefix)
       .then(r => {
+        if (reqId !== verifReqId.current) return
         const map = {}
         for (const v of r.data) map[v.target] = v
         setVerif(map)
       })
-      .catch(() => setVerif({}))
+      .catch(() => { if (reqId === verifReqId.current) setVerif({}) })
   }, [costingPrefix])
 
   const handleVerifyValue = async (target) => {

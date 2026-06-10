@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
@@ -27,22 +29,18 @@ const thisYear = new Date().getFullYear()
 const thisMonth = new Date().getMonth() + 1
 
 export default function ReportsPage() {
-  const { isAdmin, activeEntity, entities } = useAuth()
+  const { isAdmin, entities } = useAuth()
 
   const [tab, setTab]         = useState('income')
-  const [entityId, setEntityId] = useState(activeEntity?.id || '')
-  const [year, setYear]       = useState(thisYear)
-  const [month, setMonth]     = useState(thisMonth)
+  const [entityId, setEntityId] = useEntityFilter()
+  const [year, setYear]       = useSessionState('period:reports:year', thisYear)
+  const [month, setMonth]     = useSessionState('period:reports:month', thisMonth)
   const [loading, setLoading] = useState(false)
 
   // Diesel reports use an array; income report uses a structured object
   const [dieselData, setDieselData]   = useState([])
   const [incomeData, setIncomeData]   = useState(null)
   const [detailData, setDetailData]   = useState(null)
-
-  useEffect(() => {
-    if (!isAdmin && activeEntity?.id) setEntityId(activeEntity.id)
-  }, [isAdmin, activeEntity])
 
   const loadDetail = useCallback(async (m) => {
     if (!entityId) return

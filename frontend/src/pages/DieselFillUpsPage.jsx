@@ -6,6 +6,8 @@ import {
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage, dieselTypeForSupplier } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
 import toast from 'react-hot-toast'
 import { Plus, Search, X, Trash2, Fuel, Save, Upload } from 'lucide-react'
 import ImportDieselModal from '../components/ImportDieselModal'
@@ -46,9 +48,9 @@ export default function DieselFillUpsPage() {
   const [loading, setLoading]     = useState(true)
 
   // Filters
-  const [filterEntity,   setFilterEntity]   = useState(activeEntity?.id?.toString() || '')
-  const [filterYear,     setFilterYear]     = useState(now.getFullYear())
-  const [filterMonth,    setFilterMonth]    = useState(now.getMonth() + 1)
+  const [filterEntity,   setFilterEntity]   = useEntityFilter()
+  const [filterYear,     setFilterYear]     = useSessionState('period:diesel-fillups:year', now.getFullYear())
+  const [filterMonth,    setFilterMonth]    = useSessionState('period:diesel-fillups:month', now.getMonth() + 1)
   const [filterTruck,    setFilterTruck]    = useState('')
   const [filterSupplier, setFilterSupplier] = useState('')
   const [filterVerified, setFilterVerified] = useState('')
@@ -67,8 +69,6 @@ export default function DieselFillUpsPage() {
   const [showImport,   setShowImport]   = useState(false)
   const firstInputRef = useRef(null)
   const { sort, onSort } = useSort('truck_registration', 'asc')
-
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
 
   // Reference data — entities once on mount
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])

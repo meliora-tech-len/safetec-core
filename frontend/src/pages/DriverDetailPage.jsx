@@ -2,6 +2,7 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, X, Edit2, Check, Download } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useSessionState } from '../hooks/useSessionState'
 import toast from 'react-hot-toast'
 import VerifyBadge from '../components/VerifyBadge'
 import VerifiableAmount from '../components/VerifiableAmount'
@@ -249,8 +250,8 @@ export default function DriverDetailPage() {
   const { isAdmin, user } = useAuth()
 
   const now = new Date()
-  const [year,  setYear]  = useState(now.getFullYear())
-  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [year,  setYear]  = useSessionState('period:driver-pay:year', now.getFullYear())
+  const [month, setMonth] = useSessionState('period:driver-pay:month', now.getMonth() + 1)
 
   const [driver,      setDriver]      = useState(null)
   const [cycle,       setCycle]       = useState(null)

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import ImportDieselModal from '../components/ImportDieselModal'
 import { useAuth } from '../hooks/useAuth'
+import { useSessionState } from '../hooks/useSessionState'
 import SearchableSelect from '../components/SearchableSelect'
 import {
   getTruck, getTruckLoads, getTruckLoadSummary, getFleetTrucks,
@@ -1777,8 +1778,8 @@ export default function TruckLoadProfilePage() {
   const { isAdmin, entities, user } = useAuth()
 
   const now = new Date()
-  const [year, setYear]   = useState(now.getFullYear())
-  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [year, setYear]   = useSessionState('period:truck-loads:year', now.getFullYear())
+  const [month, setMonth] = useSessionState('period:truck-loads:month', now.getMonth() + 1)
 
   const [activeTab, setActiveTab] = useState('loads')
   const [truck, setTruck]                   = useState(null)

@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, Fragment, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Package, Search, X, ChevronRight, AlertCircle, CheckCircle } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
 import { getFleetTrucks, getTruckFleetSummary, getDieselInvoiceReconciliation } from '../services/api'
 import { formatCurrency } from '../utils/helpers'
 import toast from 'react-hot-toast'
@@ -45,19 +47,13 @@ function PeriodEntityBar({ month, setMonth, year, setYear, entityId, setEntityId
 function FleetTab({ entities, isAdmin }) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { activeEntity } = useAuth()
   const urlEntityId = searchParams.get('entity_id') || ''
 
   const [trucks, setTrucks]             = useState([])
   const [loading, setLoading]           = useState(true)
   const [search, setSearch]             = useState('')
-  const [filterEntity, setFilterEntity] = useState(urlEntityId || activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity] = useEntityFilter(urlEntityId)
   const [filterSub, setFilterSub]       = useState('')
-
-  useEffect(() => {
-    if (urlEntityId) return
-    setFilterEntity(activeEntity?.id?.toString() || '')
-  }, [activeEntity, urlEntityId])
 
   const obhiId = useMemo(() => entities.find(e => e.code === 'OBHI')?.id?.toString(), [entities])
 
@@ -168,17 +164,13 @@ function FleetTab({ entities, isAdmin }) {
 
 // ── Summary tab (entity-specific) ────────────────────────────────────────────
 
-function SummaryTab({ entities, isAdmin, activeEntity }) {
+function SummaryTab({ entities, isAdmin }) {
   const navigate = useNavigate()
   const [rows, setRows]       = useState([])
   const [loading, setLoading] = useState(true)
-  const [month, setMonth]     = useState(currentMonth())
-  const [year, setYear]       = useState(currentYear())
-  const [entityId, setEntityId] = useState(activeEntity?.id?.toString() || '')
-
-  useEffect(() => {
-    if (!entityId && activeEntity?.id) setEntityId(activeEntity.id.toString())
-  }, [activeEntity])
+  const [month, setMonth]     = useSessionState('period:truck-loads:month', currentMonth())
+  const [year, setYear]       = useSessionState('period:truck-loads:year', currentYear())
+  const [entityId, setEntityId] = useEntityFilter()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -283,16 +275,12 @@ function SummaryTab({ entities, isAdmin, activeEntity }) {
 
 // ── Diesel Totals tab ─────────────────────────────────────────────────────────
 
-function DieselTotalsTab({ entities, isAdmin, activeEntity }) {
+function DieselTotalsTab({ entities, isAdmin }) {
   const [rows, setRows]       = useState([])
   const [loading, setLoading] = useState(true)
-  const [month, setMonth]     = useState(currentMonth())
-  const [year, setYear]       = useState(currentYear())
-  const [entityId, setEntityId] = useState(activeEntity?.id?.toString() || '')
-
-  useEffect(() => {
-    if (!entityId && activeEntity?.id) setEntityId(activeEntity.id.toString())
-  }, [activeEntity])
+  const [month, setMonth]     = useSessionState('period:truck-loads:month', currentMonth())
+  const [year, setYear]       = useSessionState('period:truck-loads:year', currentYear())
+  const [entityId, setEntityId] = useEntityFilter()
 
   const load = useCallback(async () => {
     if (!entityId) return
@@ -418,7 +406,7 @@ function DieselTotalsTab({ entities, isAdmin, activeEntity }) {
 // ── Page shell ────────────────────────────────────────────────────────────────
 
 export default function TruckLoadsPage() {
-  const { entities, isAdmin, activeEntity } = useAuth()
+  const { entities, isAdmin } = useAuth()
   const [tab, setTab] = useState('fleet')
 
   const TABS = [
@@ -460,8 +448,8 @@ export default function TruckLoadsPage() {
       </div>
 
       {tab === 'fleet'   && <FleetTab entities={entities} isAdmin={isAdmin} />}
-      {tab === 'summary' && <SummaryTab entities={entities} isAdmin={isAdmin} activeEntity={activeEntity} />}
-      {tab === 'diesel'  && <DieselTotalsTab entities={entities} isAdmin={isAdmin} activeEntity={activeEntity} />}
+      {tab === 'summary' && <SummaryTab entities={entities} isAdmin={isAdmin} />}
+      {tab === 'diesel'  && <DieselTotalsTab entities={entities} isAdmin={isAdmin} />}
     </div>
   )
 }

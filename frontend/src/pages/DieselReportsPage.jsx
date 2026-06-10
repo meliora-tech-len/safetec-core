@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
 } from '../services/api'
@@ -22,18 +24,14 @@ const thisYear = new Date().getFullYear()
 const thisMonth = new Date().getMonth() + 1
 
 export default function DieselReportsPage() {
-  const { isAdmin, activeEntity, entities } = useAuth()
+  const { isAdmin, entities } = useAuth()
 
   const [tab, setTab] = useState('truck')
-  const [entityId, setEntityId] = useState(activeEntity?.id || '')
-  const [year, setYear] = useState(thisYear)
-  const [month, setMonth] = useState(thisMonth)
+  const [entityId, setEntityId] = useEntityFilter()
+  const [year, setYear] = useSessionState('period:diesel-reports:year', thisYear)
+  const [month, setMonth] = useSessionState('period:diesel-reports:month', thisMonth)
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState([])
-
-  useEffect(() => {
-    if (!isAdmin && activeEntity?.id) setEntityId(activeEntity.id)
-  }, [isAdmin, activeEntity])
 
   const load = useCallback(async () => {
     if (!entityId) return
