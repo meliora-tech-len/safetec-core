@@ -1283,7 +1283,9 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
           <tfoot>
             <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
               <td style={tdStyle}>Totals</td>
-              <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(incomeExcl)}</td>
+              {/* Non-VAT entities (BKMO): the Incl VAT column is dashed out, so the
+                  verification tick lives on the Excl VAT total instead */}
+              <td style={{ ...tdStyle, textAlign: 'right' }}>{isVatRegistered ? fmtC(incomeExcl) : <V field="income_excl">{fmtC(incomeExcl)}</V>}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{isVatRegistered ? fmtC(vat) : dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{isVatRegistered ? <V field="income_incl">{fmtC(incomeIncl)}</V> : dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--danger)' }}>{fmtC(total_expenses_incl_vat)}</td>
@@ -1361,7 +1363,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
               <tfoot>
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
                   <td style={tdStyle} colSpan={5}>Total</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(income_excl_vat)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{isVatRegistered ? fmtC(income_excl_vat) : <V field="income_excl">{fmtC(income_excl_vat)}</V>}</td>
                   {isVatRegistered && <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}><V field="income_incl">{fmtC(income_incl_vat)}</V></td>}
                 </tr>
               </tfoot>
