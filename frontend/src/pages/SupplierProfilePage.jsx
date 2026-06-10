@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  getSupplier, getEntities,
+  getSupplier, getSuppliers, getEntities,
   getSupplierInvoices, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
   verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
@@ -560,6 +560,7 @@ export default function SupplierProfilePage() {
   , [supplierId])
 
   useEffect(() => {
+    setLoading(true)
     Promise.all([
       getSupplier(supplierId).then(r => {
         setSupplier(r.data)
@@ -568,6 +569,17 @@ export default function SupplierProfilePage() {
       getEntities().then(r => setEntities(r.data)),
     ]).then(() => setLoading(false))
   }, [supplierId])
+
+  // Sibling suppliers in the same entity, for the quick-switch dropdown
+  const [entitySuppliers, setEntitySuppliers] = useState([])
+  useEffect(() => {
+    if (!supplier?.entity_id) return
+    getSuppliers({ entity_id: supplier.entity_id, limit: 500 })
+      .then(r => setEntitySuppliers(
+        (r.data || []).sort((a, b) => a.name.localeCompare(b.name))
+      ))
+      .catch(() => {})
+  }, [supplier?.entity_id])
 
   useEffect(() => { if (!loading) loadInvoices() }, [loading, loadInvoices])
 
@@ -853,14 +865,21 @@ export default function SupplierProfilePage() {
   const allInvoices = groups.flatMap(g => g.invoices)
   const multiEntity = entities.length > 1
 
-  // Map a vehicle registration to its owning subcontractor (purely for display)
-  const truckByReg = Object.fromEntries(
-    (trucks || []).map(t => [(t.registration || '').toUpperCase(), t])
-  )
+  // Map a vehicle registration to its owning subcontractor (purely for display).
+  // Temp/old plates are indexed too; real registrations take precedence.
+  const truckByReg = {}
+  for (const t of trucks || []) {
+    if (t.temp_registration) truckByReg[t.temp_registration.toUpperCase()] = t
+  }
+  for (const t of trucks || []) {
+    if (t.registration) truckByReg[t.registration.toUpperCase()] = t
+  }
   const ownerForReg = (reg) => {
     if (!reg) return null
     const t = truckByReg[reg.toUpperCase()]
-    return t ? (t.subcontractor_name || t.operator || null) : null
+    // subcontractor_display_name is the backend-computed owner (FK-linked
+    // subcontractor → free-text name → operator); older fields kept as fallback
+    return t ? (t.subcontractor_display_name || t.subcontractor_name || t.operator || null) : null
   }
   // Suppliers with requires_registration=false (e.g. Axxess) don't use vehicle regs on invoices
   const showVehicleReg = supplier?.requires_registration !== false
@@ -957,6 +976,19 @@ export default function SupplierProfilePage() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {entitySuppliers.length > 1 && (
+            <div style={{ width: 240 }} title={`Jump to another ${supplierEntityCode || ''} supplier`}>
+              <SearchableSelect
+                value={String(supplierId)}
+                onChange={id => { if (id && id !== String(supplierId)) navigate(`/suppliers/${id}`) }}
+                options={entitySuppliers}
+                getValue={o => String(o.id)}
+                getLabel={o => o.name}
+                placeholder="Switch supplier…"
+                formInput
+              />
+            </div>
+          )}
           <ExportButton
             title={`${supplier.name} — Invoices`}
             filename={`invoices-${supplier.name.replace(/\s+/g, '-').toLowerCase()}`}
