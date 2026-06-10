@@ -19,7 +19,9 @@ from app.schemas.schemas import (
     DieselConflict, DieselConflictSide, DieselConflictResolution,
 )
 from app.services.audit import log_action
-from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
+from app.services.verification import (
+    apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
+)
 from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
 
 router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
@@ -662,6 +664,9 @@ def update_supplier_invoice(
 
     updates = payload.model_dump(exclude_none=True)
 
+    # Final-verification lock: only payment-status fields may still change
+    ensure_not_locked(inv, updates, {"is_paid", "paid_date", "payment_reference"})
+
     # Auto-set verified_at when marking verified
     if updates.get("is_verified") is True and not inv.is_verified:
         updates["verified_at"] = datetime.now(tz=timezone.utc)
@@ -780,6 +785,7 @@ def archive_supplier_invoice(
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(inv.entity_id, current_user)
+    ensure_not_locked(inv)
 
     inv.is_archived = True
     log_action(
@@ -803,6 +809,7 @@ def delete_supplier_invoice(
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(inv.entity_id, current_user)
+    ensure_not_locked(inv)
 
     log_action(
         db, "supplier_invoice.deleted", user_id=current_user.id,
@@ -871,6 +878,7 @@ def add_line_item(
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(inv.entity_id, current_user)
+    ensure_not_locked(inv)
 
     li = SupplierInvoiceLineItem(invoice_id=invoice_id, **data.model_dump())
     db.add(li)
@@ -898,6 +906,7 @@ def update_line_item(
     if not li:
         raise HTTPException(status_code=404, detail="Line item not found")
     _check_entity_access(li.invoice.entity_id, current_user)
+    ensure_not_locked(li.invoice)
 
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(li, k, v)
@@ -925,6 +934,7 @@ def delete_line_item(
         raise HTTPException(status_code=404, detail="Line item not found")
     inv = li.invoice
     _check_entity_access(inv.entity_id, current_user)
+    ensure_not_locked(inv)
     db.delete(li)
     db.flush()
     _recalc_invoice_total(db, inv)

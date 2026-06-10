@@ -2,7 +2,7 @@
 Shared 3-step verification helpers.
 
 Step 1: any authorised user marks an item as checked.
-Step 2: a *different* admin gives secondary approval.
+Step 2: a *different* user adds their own verification tick.
 Step 3 (final lock): any admin finalises — requires step 1 (step 2 optional).
          Only the admin who set step 3 can reverse it.
 
@@ -10,7 +10,9 @@ Un-verify rules:
 - Step 1 can be undone by the person who did it (while step 3 not set).
 - Step 2 can be undone by the person who did it (while step 3 not set).
 - Step 3 can only be undone by the admin who set it.
-- Nothing can change once step 3 is set (except by that same admin).
+- Once step 3 is set, existing ticks and the record's values are frozen, but
+  a user who hasn't ticked yet may still ADD their verification to an empty
+  step — e.g. the admin verified and locked before the assistant got to it.
 """
 
 from datetime import datetime, timezone
@@ -18,6 +20,30 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.models import User
+
+
+def is_locked(obj) -> bool:
+    """True when the final verification lock (step 3) is set on the record."""
+    return bool(getattr(obj, "verified3_by", None))
+
+
+def ensure_not_locked(obj, updates: dict | None = None, allowed_fields: set | None = None):
+    """Raise 403 when `obj` carries the final verification lock.
+
+    Pass `updates` (the requested field changes) together with `allowed_fields`
+    to let pure workflow-status updates (e.g. marking paid) through on locked
+    records. The lock is lifted by the admin who applied it removing her final
+    verification — after that the record can be amended again.
+    """
+    if not is_locked(obj):
+        return
+    if updates is not None and allowed_fields is not None and set(updates) <= allowed_fields:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="This record is locked by final verification. The admin who applied "
+               "the final verification must remove it before changes can be made.",
+    )
 
 
 def _initials(full_name: str | None) -> str | None:
@@ -54,7 +80,8 @@ def get_verification_display(db: Session, obj) -> dict:
 
 def apply_verify_step(obj, current_user: User, is_admin: bool):
     """
-    Advance or revert steps 1/2 on `obj`.  Blocked once step 3 is set.
+    Advance or revert steps 1/2 on `obj`.  Once step 3 is set, only adding a
+    tick to an empty step is allowed — no undos.
 
     The object must have: is_verified (or verified), verified_by,
     verified_at, verified2_by, verified2_at, verified3_by columns.
@@ -68,10 +95,21 @@ def apply_verify_step(obj, current_user: User, is_admin: bool):
     step3_done = bool(getattr(obj, "verified3_by", None))
 
     if step3_done:
-        raise HTTPException(
-            status_code=403,
-            detail="This record is locked by final approval and cannot be changed.",
-        )
+        # Final lock freezes existing ticks (and the record itself), but a user
+        # who hasn't verified yet may still add their tick to an empty step.
+        if not step1_done:
+            setattr(obj, _flag_attr, True)
+            obj.verified_by = current_user.id
+            obj.verified_at = now
+        elif not step2_done and obj.verified_by != current_user.id:
+            obj.verified2_by = current_user.id
+            obj.verified2_at = now
+        else:
+            raise HTTPException(
+                status_code=403,
+                detail="This record is locked by final approval and cannot be changed.",
+            )
+        return
 
     if not step1_done:
         setattr(obj, _flag_attr, True)
@@ -85,14 +123,9 @@ def apply_verify_step(obj, current_user: User, is_admin: bool):
             setattr(obj, _flag_attr, False)
             obj.verified_by = None
             obj.verified_at = None
-        elif is_admin:
+        else:
             obj.verified2_by = current_user.id
             obj.verified2_at = now
-        else:
-            raise HTTPException(
-                status_code=403,
-                detail="This verification was done by someone else and cannot be changed.",
-            )
 
     else:
         if obj.verified2_by == current_user.id:

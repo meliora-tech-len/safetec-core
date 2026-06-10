@@ -23,7 +23,9 @@ from app.schemas.schemas import (
 )
 from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
 from app.services.audit import log_action
-from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
+from app.services.verification import (
+    apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
+)
 
 router = APIRouter(prefix="/api/diesel", tags=["diesel"])
 
@@ -850,6 +852,7 @@ def update_fillup(
     if not f:
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
+    ensure_not_locked(f)
 
     updates = payload.model_dump(exclude_none=True)
 
@@ -921,6 +924,7 @@ def archive_fillup(
     if not f:
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
+    ensure_not_locked(f)
 
     f.is_archived = True
     log_action(
@@ -942,6 +946,7 @@ def delete_fillup(
     if not f:
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
+    ensure_not_locked(f)
 
     if f.verified and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Cannot delete a verified fill-up. Contact an admin.")

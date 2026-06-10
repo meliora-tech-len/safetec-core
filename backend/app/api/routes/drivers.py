@@ -31,7 +31,9 @@ from app.services.audit import log_action
 from app.services.load_bonus import bonus_mine_ids
 from app.services.payroll_calculator import calculate_pay_cycle
 from app.services.payslip_generator import generate_payslip_pdf
-from app.services.verification import apply_verify_step, apply_finalize_step, get_verification_display
+from app.services.verification import (
+    apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
+)
 from app.api.routes.payroll_settings import _get_current as _get_payroll_settings
 
 router = APIRouter(prefix="/api/drivers", tags=["drivers"])
@@ -819,7 +821,10 @@ def update_additional_load(
     entry = db.query(DriverAdditionalLoad).filter(DriverAdditionalLoad.id == load_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
-    for field, value in payload.model_dump(exclude_none=True).items():
+    updates = payload.model_dump(exclude_none=True)
+    # Final-verification lock: only the paid status may still change
+    ensure_not_locked(entry, updates, {"is_paid"})
+    for field, value in updates.items():
         setattr(entry, field, value)
     log_action(db, "additional_load.updated", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="additional_load",
@@ -843,6 +848,7 @@ def delete_additional_load(
     entry = db.query(DriverAdditionalLoad).filter(DriverAdditionalLoad.id == load_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
+    ensure_not_locked(entry)
     log_action(db, "additional_load.deleted", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="additional_load",
                resource_id=load_id,
@@ -865,6 +871,7 @@ def archive_additional_load(
     entry = db.query(DriverAdditionalLoad).filter(DriverAdditionalLoad.id == load_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
+    ensure_not_locked(entry)
     entry.is_archived = True
     log_action(db, "additional_load.archived", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="additional_load",
@@ -964,6 +971,7 @@ def update_food_payment(
     entry = db.query(DriverFoodPayment).filter(DriverFoodPayment.id == payment_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
+    ensure_not_locked(entry)
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(entry, field, value)
     log_action(db, "food_payment.updated", user_id=current_user.id,
@@ -988,6 +996,7 @@ def delete_food_payment(
     entry = db.query(DriverFoodPayment).filter(DriverFoodPayment.id == payment_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
+    ensure_not_locked(entry)
     log_action(db, "food_payment.deleted", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="food_payment",
                resource_id=payment_id,

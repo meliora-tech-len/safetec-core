@@ -15,9 +15,10 @@ import { CheckCircle, CheckCheck, Lock, AlertTriangle, ShieldCheck } from 'lucid
  *   isAdmin       — whether logged-in user is admin
  *
  * Lock rules:
- *   Step 3 done → everything locked; only the step-3 admin can undo.
- *   Step 2 done → only step-2 admin can undo (step 1 also re-opens).
- *   Step 1 done → only step-1 user or a different admin can act.
+ *   Step 3 done → existing ticks locked (only the step-3 admin can undo the lock),
+ *                 but a user without a tick can still add theirs to an empty step.
+ *   Step 2 done → only the step-2 user can undo it.
+ *   Step 1 done → the step-1 user can undo it; any other user can add step 2.
  */
 export default function VerifyBadge({
   item, onVerify, onFinalize, disabled = false, currentUserId, isAdmin = false,
@@ -34,11 +35,16 @@ export default function VerifyBadge({
   const isOwnStep1 = step1Done && item.verified_by === currentUserId
   const isOwnStep2 = step2Done && item.verified2_by === currentUserId
   const isOwnStep3 = step3Done && item.verified3_by === currentUserId
-  const canClickStep2 = isAdmin && !step3Done && item.verified_by !== currentUserId
-  const isUndo = isOwnStep1 || isOwnStep2
+  // A user without a tick can always add theirs to an empty step — even after
+  // the final lock (the lock freezes existing ticks and values, not new ticks)
+  const canAddStep2 = step1Done && !step2Done && item.verified_by !== currentUserId
+  const canAddTick = !step1Done || canAddStep2
+  const isUndo = !step3Done && (isOwnStep1 || isOwnStep2)
 
-  const isSteps12Locked = disabled || step3Done || (
-    step2Done ? !isOwnStep2 : step1Done ? (!isOwnStep1 && !canClickStep2) : false
+  const isSteps12Locked = disabled || (
+    step3Done
+      ? !canAddTick
+      : step2Done ? !isOwnStep2 : step1Done ? (!isOwnStep1 && !canAddStep2) : false
   )
 
   const canDoStep3 = !!onFinalize && isAdmin && !step3Done && (step1Done || adminFinalizeAnytime)
@@ -58,14 +64,12 @@ export default function VerifyBadge({
     ? 'Click to verify (step 1)'
     : !step2Done
       ? isOwnStep1
-        ? 'Undo your verification'
-        : step3Done
-          ? 'Locked by final approval'
-          : canClickStep2
-            ? 'Click to approve (step 2)'
-            : `Verified by ${item.verified_by_initials || '?'} — locked`
+        ? step3Done ? 'Locked by final approval' : 'Undo your verification'
+        : canAddStep2
+          ? 'Click to add your verification (step 2)'
+          : `Verified by ${item.verified_by_initials || '?'} — locked`
       : isOwnStep2
-        ? step3Done ? 'Locked by final approval' : 'Undo your step 2 approval'
+        ? step3Done ? 'Locked by final approval' : 'Undo your step 2 verification'
         : step3Done ? 'Locked by final approval' : 'Verified — locked'
 
   const step3Tooltip = (!step1Done && !adminFinalizeAnytime)
