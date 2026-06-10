@@ -2,7 +2,7 @@ import calendar
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, extract
+from sqlalchemy import or_, and_, extract, func
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from decimal import Decimal
@@ -388,12 +388,15 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     )
 
     for truck in trucks:
+        # Loads belong to their STATEMENT period when one is set (a month-end
+        # load can be pushed to the next month's statement), falling back to
+        # the load date — same rule as the Truck Loads listing.
         loads = (
             db.query(TruckLoad)
             .filter(
                 TruckLoad.truck_id == truck.id,
-                extract("month", TruckLoad.load_date) == month,
-                extract("year",  TruckLoad.load_date) == year,
+                func.coalesce(TruckLoad.statement_month, extract("month", TruckLoad.load_date)) == month,
+                func.coalesce(TruckLoad.statement_year,  extract("year",  TruckLoad.load_date)) == year,
                 TruckLoad.is_archived == False,
             )
             .order_by(TruckLoad.load_date)
