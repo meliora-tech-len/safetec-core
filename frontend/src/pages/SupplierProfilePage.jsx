@@ -8,6 +8,7 @@ import {
   addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
   getSubcontractors, getDieselFillUpSlips,
   finalizeSupplierInvoice, bulkImportSupplierInvoices, resolveSupplierDieselConflicts,
+  getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
@@ -16,6 +17,7 @@ import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, 
 import * as XLSX from 'xlsx'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
+import VerifiableAmount from '../components/VerifiableAmount'
 import DeleteModal from '../components/DeleteModal'
 import SearchableSelect from '../components/SearchableSelect'
 import DateInput from '../components/DateInput'
@@ -583,6 +585,30 @@ export default function SupplierProfilePage() {
 
   useEffect(() => { if (!loading) loadInvoices() }, [loading, loadInvoices])
 
+  // Per-line verification overlay for multi-line/split invoices: users tick a
+  // sub-line once they've confirmed its amount on that subcontractor's costing
+  const [lineVerif, setLineVerif] = useState({})
+  const lineTarget = (invId, liId) => `si-line:${supplierId}:${invId}:${liId}`
+  const loadLineVerif = useCallback(() => {
+    getVerifications(`si-line:${supplierId}:`)
+      .then(r => {
+        const map = {}
+        for (const v of r.data) map[v.target] = v
+        setLineVerif(map)
+      })
+      .catch(() => setLineVerif({}))
+  }, [supplierId])
+  useEffect(() => { if (!loading) loadLineVerif() }, [loading, loadLineVerif])
+
+  const handleVerifyLine = async (target) => {
+    try { await verifyValue(target, supplier?.entity_id); loadLineVerif() }
+    catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
+  }
+  const handleFinalizeLine = async (target) => {
+    try { await finalizeValue(target, supplier?.entity_id); loadLineVerif() }
+    catch (e) { toast.error(errorMessage(e, 'Lock failed')) }
+  }
+
   // Fetch trucks for vehicle reg dropdown — filtered by active entity (or supplier's entity as fallback)
   useEffect(() => {
     if (!supplier) return
@@ -885,13 +911,15 @@ export default function SupplierProfilePage() {
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
   const isWBGDiesel = isDiesel && supplier?.name?.toLowerCase().includes('wbg')
-  // Cradock Truck Stop (OBHI & SFT) invoices arrive VAT-inclusive with no
-  // litres/rate breakdown — collapse the multi-line sub-line Qty/Rate columns
-  // into a single incl-VAT amount the user types directly.
+  // Invoices that arrive VAT-inclusive with no qty/rate breakdown — collapse
+  // the multi-line sub-line Qty/Rate columns into a single incl-VAT amount the
+  // user types directly. Originally just Cradock Truck Stop (OBHI & SFT); now
+  // ALL OBHI non-diesel suppliers capture sub-lines this way.
   const supplierEntityCode = entities.find(e => e.id === supplier?.entity_id)?.code
-  const isCradock = !isDiesel &&
-    /cradock/i.test(supplier?.name || '') &&
-    ['OBHI', 'SFT'].includes(supplierEntityCode)
+  const amountInclOnly = !isDiesel && (
+    supplierEntityCode === 'OBHI' ||
+    (/cradock/i.test(supplier?.name || '') && supplierEntityCode === 'SFT')
+  )
   // Merino & Oukop send a statement carrying the slip# before the physical slip
   // is received, so the slip# hasn't been captured as a fill-up yet. Let the user
   // type the slip# freely instead of forcing a pick from the fill-up dropdown.
@@ -1148,7 +1176,7 @@ export default function SupplierProfilePage() {
           onKeyDown={handleKeyDown}
           showVehicleReg={showVehicleReg}
           isDiesel={isDiesel}
-          amountInclOnly={isCradock}
+          amountInclOnly={amountInclOnly}
           freeTextSlip={slipFreeText}
           showReg={showVehicleReg}
           dieselRate={dieselRate}
@@ -1628,12 +1656,16 @@ export default function SupplierProfilePage() {
                                         vatApplicable={editForm.vat_applicable !== false}
                                         showReg={showVehicleReg}
                                         trucks={trucks}
-                                        amountInclOnly={isCradock}
+                                        amountInclOnly={amountInclOnly}
                                       />
                                 ) : (
                                   isDiesel
                                     ? <DieselLineItemsViewer items={inv.line_items || []} total={inv.amount} />
-                                    : <LineItemsViewer items={inv.line_items || []} total={inv.amount} showReg={showVehicleReg} amountInclOnly={isCradock} />
+                                    : <LineItemsViewer items={inv.line_items || []} total={inv.amount} showReg={showVehicleReg} amountInclOnly={amountInclOnly}
+                                        ownerForReg={ownerForReg}
+                                        verif={lineVerif} verifTarget={li => lineTarget(inv.id, li.id)}
+                                        onVerify={handleVerifyLine} onFinalize={handleFinalizeLine}
+                                        currentUserId={user?.id} isAdmin={isAdmin} />
                                 )}
                               </td>
                             </tr>
@@ -2235,41 +2267,76 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
 }
 
 
-function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false }) {
+function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false,
+  ownerForReg = null, verif = {}, verifTarget = null, onVerify = null, onFinalize = null,
+  currentUserId, isAdmin = false }) {
   if (!items || items.length === 0) {
     return <p style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>No line items.</p>
   }
   const totalExcl = items.reduce((s, li) => s + (parseFloat(li.amount_excl_vat) || 0), 0)
+
+  // Equal split across trucks: every line has a reg and carries the same
+  // amount. Show the owning subcontractor per line and group the lines so one
+  // subcontractor's trucks sit together instead of mixed alphabetically.
+  const isEqualSplit = !!ownerForReg && showReg && items.length > 1
+    && items.every(li => (li.unit || '').trim())
+    && new Set(items.map(li => (parseFloat(li.amount_incl_vat) || 0).toFixed(2))).size === 1
+  const displayItems = isEqualSplit
+    ? [...items].sort((a, b) => {
+        const oa = (ownerForReg(a.unit) || '').toLowerCase()
+        const ob = (ownerForReg(b.unit) || '').toLowerCase()
+        if (oa !== ob) {
+          if (!oa) return 1   // unknown owners last
+          if (!ob) return -1
+          return oa.localeCompare(ob)
+        }
+        return (a.unit || '').localeCompare(b.unit || '')
+      })
+    : items
+
+  // Per-line verification (lines with a reg only): user ticks once the amount
+  // is confirmed on that subcontractor's costing sheet
+  const canVerify = (li) => !!(onVerify && verifTarget && (li.unit || '').trim())
+
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, tableLayout: 'fixed' }}>
         <colgroup>
           <col style={{ width: 80 }} />
-          <col />
+          {/* Equal splits have short repeated descriptions (e.g. RENT) — cap the
+              column and give the spare width to the Subcontractor column instead */}
+          <col style={isEqualSplit ? { width: 140 } : undefined} />
           {showReg && <col style={{ width: 110 }} />}
-          <col style={{ width: 82 }} />
-          {!amountInclOnly && <col style={{ width: 65 }} />}
+          {isEqualSplit && <col />}
+          {!isEqualSplit && <col style={{ width: 82 }} />}
+          {!amountInclOnly && !isEqualSplit && <col style={{ width: 65 }} />}
           {!amountInclOnly && <col style={{ width: 105 }} />}
           {!amountInclOnly && <col style={{ width: 95 }} />}
-          <col style={{ width: amountInclOnly ? 130 : 95 }} />
+          {/* Equal splits carry the verify badge beside the amount — wider
+              column, left-aligned so the ticks never run off the table */}
+          <col style={{ width: isEqualSplit ? 190 : amountInclOnly ? 130 : 120 }} />
         </colgroup>
         <thead>
           <tr style={{ background: 'var(--bg-surface)' }}>
             <th style={liStyles.th}>Item Code</th>
             <th style={liStyles.th}>Description</th>
             {showReg && <th style={liStyles.th}>Reg</th>}
-            <th style={liStyles.th}>Date</th>
-            {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>}
+            {isEqualSplit && <th style={liStyles.th}>Subcontractor</th>}
+            {/* Equal splits: every line shares the invoice date and qty is
+                always 1 — drop both columns to make room */}
+            {!isEqualSplit && <th style={liStyles.th}>Date</th>}
+            {!amountInclOnly && !isEqualSplit && <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>}
             {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>}
             {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>}
-            <th style={{ ...liStyles.th, textAlign: 'right' }}>{amountInclOnly ? 'Amount (incl. VAT)' : 'Incl. VAT'}</th>
+            <th style={{ ...liStyles.th, textAlign: isEqualSplit ? 'left' : 'right' }}>{amountInclOnly ? 'Amount (incl. VAT)' : 'Incl. VAT'}</th>
           </tr>
         </thead>
         <tbody>
-          {items.map(li => {
+          {displayItems.map(li => {
             const qty = parseFloat(li.quantity) || 0
             const excl = parseFloat(li.amount_excl_vat) || 0
             const rate = qty > 0 ? excl / qty : null
+            const inclFmt = <>R&nbsp;{parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}</>
             return (
               <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={liStyles.td}>{li.item_code || '—'}</td>
@@ -2279,8 +2346,13 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
                     <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{li.unit || '—'}</span>
                   </td>
                 )}
-                <td style={{ ...liStyles.td, color: 'var(--text-muted)' }}>{li.line_date ? String(li.line_date).slice(0, 10).split('-').reverse().join('-') : '—'}</td>
-                {!amountInclOnly && <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>}
+                {isEqualSplit && (
+                  <td style={{ ...liStyles.td, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {ownerForReg(li.unit) || '—'}
+                  </td>
+                )}
+                {!isEqualSplit && <td style={{ ...liStyles.td, color: 'var(--text-muted)' }}>{li.line_date ? String(li.line_date).slice(0, 10).split('-').reverse().join('-') : '—'}</td>}
+                {!amountInclOnly && !isEqualSplit && <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>}
                 {!amountInclOnly && (
                   <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
                     {rate != null ? rate.toFixed(4) : '—'}
@@ -2291,8 +2363,14 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
                     R&nbsp;{excl.toFixed(2)}
                   </td>
                 )}
-                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
-                  R&nbsp;{parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}
+                <td style={{ ...liStyles.td, textAlign: isEqualSplit ? 'left' : 'right', fontFamily: 'monospace' }}>
+                  {canVerify(li) ? (
+                    <VerifiableAmount target={verifTarget(li)} state={verif[verifTarget(li)]}
+                      onVerify={onVerify} onFinalize={onFinalize}
+                      currentUserId={currentUserId} isAdmin={isAdmin} inline>
+                      {inclFmt}
+                    </VerifiableAmount>
+                  ) : inclFmt}
                 </td>
               </tr>
             )
@@ -2300,14 +2378,16 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
         </tbody>
         <tfoot>
           <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
-            <td colSpan={amountInclOnly ? (showReg ? 4 : 3) : (showReg ? 4 : 3)} style={liStyles.td} />
+            {/* Spans up to the Rate column: equal splits swap Date for
+                Subcontractor (net 0) and drop Qty */}
+            <td colSpan={(showReg ? 4 : 3) + (!amountInclOnly && !isEqualSplit ? 1 : 0)} style={liStyles.td} />
             {!amountInclOnly && <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>}
             {!amountInclOnly && (
               <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
                 R&nbsp;{totalExcl.toFixed(2)}
               </td>
             )}
-            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
+            <td style={{ ...liStyles.td, textAlign: isEqualSplit ? 'left' : 'right', fontWeight: 700, fontFamily: 'monospace' }}>
               R&nbsp;{parseFloat(total ?? 0).toFixed(2)}
             </td>
           </tr>
