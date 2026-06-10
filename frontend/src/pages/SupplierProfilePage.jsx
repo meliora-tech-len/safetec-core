@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   getSupplier, getSuppliers, getEntities,
@@ -222,8 +222,8 @@ function DieselConflictStep({ conflicts, onDone }) {
                       <div>Truck: <strong style={{ color:'var(--text-primary)', fontFamily:'monospace' }}>{side.truck_registration || '—'}</strong></div>
                       <div>Date: <strong style={{ color:'var(--text-primary)' }}>{fmtDate(side.fillup_date)}</strong></div>
                       <div>Litres: <strong style={{ color:'var(--text-primary)' }}>{fmt(side.litres)} L</strong></div>
-                      <div>Rate/L: <strong style={{ color:'var(--text-primary)' }}>R {fmt(side.rate_per_litre)}</strong></div>
-                      <div>Amount: <strong style={{ color:'var(--text-primary)' }}>R {fmt(side.amount)}</strong></div>
+                      <div>Rate/L: <strong style={{ color:'var(--text-primary)' }}>R&nbsp;{fmt(side.rate_per_litre)}</strong></div>
+                      <div>Amount: <strong style={{ color:'var(--text-primary)' }}>R&nbsp;{fmt(side.amount)}</strong></div>
                     </div>
                   </label>
                 ))}
@@ -963,7 +963,7 @@ export default function SupplierProfilePage() {
                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                   Current rate:&nbsp;
                   <strong style={{ color: 'var(--text)', fontFamily: 'monospace' }}>
-                    R {parseFloat(dieselRate.rate_per_litre).toFixed(4)}/L
+                    R&nbsp;{parseFloat(dieselRate.rate_per_litre).toFixed(4)}/L
                   </strong>
                   {dieselRate.effective_date && (
                     <span style={{ marginLeft: 6, fontSize: 11 }}>
@@ -1389,7 +1389,7 @@ export default function SupplierProfilePage() {
 
                             {/* Description (non-diesel only) */}
                             {!isDiesel && (
-                              <td style={{ ...styles.td, maxWidth: 200 }}>
+                              <td style={{ ...styles.td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {isEditing ? (
                                   <input
                                     value={f.description}
@@ -1554,7 +1554,7 @@ export default function SupplierProfilePage() {
                             </td>
 
                             {/* Notes */}
-                            <td style={{ ...styles.td, maxWidth: 180 }}>
+                            <td style={{ ...styles.td, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {isEditing ? (
                                 <input
                                   value={f.notes}
@@ -1886,7 +1886,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
           </label>
           {form.is_multi_line ? (
             <div style={{ padding: '6px 10px', fontWeight: 700, fontSize: 14, background: 'var(--bg-surface)', borderRadius: 6, border: '1px solid var(--border)' }}>
-              {lineTotal > 0 ? `R ${lineTotal.toFixed(2)}` : '—'}
+              {lineTotal > 0 ? `R ${lineTotal.toFixed(2)}` : '—'}
             </div>
           ) : (
             <input type="number" step="0.01" placeholder="0.00"
@@ -2048,15 +2048,15 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
               {splitN > 0 && splitTotal > 0 && (
                 <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 14px', fontSize: 12, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--text-muted)' }}>
-                    Per truck excl. VAT: <strong style={{ color: 'var(--text-primary)' }}>R {perTruckExcl.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
+                    Per truck excl. VAT: <strong style={{ color: 'var(--text-primary)' }}>R&nbsp;{perTruckExcl.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
                   </span>
                   {form.vat_applicable !== false && (
                     <span style={{ color: 'var(--text-muted)' }}>
-                      Incl. VAT: <strong style={{ color: 'var(--text-primary)' }}>R {perTruckIncl.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
+                      Incl. VAT: <strong style={{ color: 'var(--text-primary)' }}>R&nbsp;{perTruckIncl.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
                     </span>
                   )}
                   <span style={{ color: 'var(--text-muted)' }}>
-                    Total: <strong style={{ color: 'var(--accent)' }}>R {(perTruckIncl * splitN).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
+                    Total: <strong style={{ color: 'var(--accent)' }}>R&nbsp;{(perTruckIncl * splitN).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
                   </span>
                 </div>
               )}
@@ -2288,11 +2288,11 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
                 )}
                 {!amountInclOnly && (
                   <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                    R {excl.toFixed(2)}
+                    R&nbsp;{excl.toFixed(2)}
                   </td>
                 )}
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
-                  R {parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}
+                  R&nbsp;{parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}
                 </td>
               </tr>
             )
@@ -2304,11 +2304,11 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
             {!amountInclOnly && <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>}
             {!amountInclOnly && (
               <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
-                R {totalExcl.toFixed(2)}
+                R&nbsp;{totalExcl.toFixed(2)}
               </td>
             )}
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
-              R {parseFloat(total ?? 0).toFixed(2)}
+              R&nbsp;{parseFloat(total ?? 0).toFixed(2)}
             </td>
           </tr>
         </tfoot>
@@ -2504,8 +2504,8 @@ function DieselLineItemsViewer({ items, total }) {
                 <td style={liStyles.td}><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{li.unit || '—'}</span></td>
                 <td style={{ ...liStyles.td, textAlign: 'right' }}>{litres ? `${litres.toFixed(1)}L` : '—'}</td>
                 <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>{rate != null ? rate.toFixed(4) : '—'}</td>
-                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>R {excl.toFixed(2)}</td>
-                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>R {parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}</td>
+                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-muted)' }}>R&nbsp;{excl.toFixed(2)}</td>
+                <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>R&nbsp;{parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}</td>
               </tr>
             )
           })}
@@ -2516,8 +2516,8 @@ function DieselLineItemsViewer({ items, total }) {
             <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>{totalLitres.toFixed(1)}L</td>
             <td style={liStyles.td} />
-            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>R {totalExcl.toFixed(2)}</td>
-            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>R {parseFloat(total ?? 0).toFixed(2)}</td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>R&nbsp;{totalExcl.toFixed(2)}</td>
+            <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>R&nbsp;{parseFloat(total ?? 0).toFixed(2)}</td>
           </tr>
         </tfoot>
       </table>
@@ -2558,7 +2558,7 @@ const styles = {
   groupHeader: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
     padding: '14px 18px', cursor: 'pointer', userSelect: 'none',
-    background: 'var(--bg-surface)',
+    background: 'var(--bg-surface)', flexWrap: 'wrap', gap: '6px 12px',
   },
   paidBadge: {
     padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 800,
@@ -2573,7 +2573,9 @@ const styles = {
     color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5,
     borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap',
   },
-  td: { padding: '7px 10px', fontSize: 13, verticalAlign: 'middle' },
+  // nowrap keeps every cell on one line; narrow screens scroll the table
+  // horizontally (wrappers have overflowX:auto) instead of stacking values.
+  td: { padding: '7px 10px', fontSize: 13, verticalAlign: 'middle', whiteSpace: 'nowrap' },
   cellInput: {
     padding: '4px 8px', fontSize: 13,
     background: 'var(--bg-input, var(--bg-card))',

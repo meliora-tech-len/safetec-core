@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, X, Edit2, Check, Download } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
@@ -31,7 +31,7 @@ function useApi() {
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
-const fmt = (n) => `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const fmt = (n) => `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtDate = (d) => {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })

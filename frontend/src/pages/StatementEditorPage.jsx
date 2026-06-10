@@ -597,15 +597,15 @@ export default function StatementEditorPage() {
           }}>
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
               Outstanding:
-              <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--text-primary)' }}>R {fmtAmt(outstandingTotal)}</strong>
+              <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--text-primary)' }}>R&nbsp;{fmtAmt(outstandingTotal)}</strong>
             </span>
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
               Paid:
-              <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--success)' }}>R {fmtAmt(paidTotal)}</strong>
+              <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--success)' }}>R&nbsp;{fmtAmt(paidTotal)}</strong>
             </span>
             <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>
               Amount Due:
-              <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--text-primary)' }}>R {fmtAmt(total)}</strong>
+              <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--text-primary)' }}>R&nbsp;{fmtAmt(total)}</strong>
             </span>
           </div>
         </div>

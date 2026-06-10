@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   getDieselFillUps, getDieselFillUpSummary, createDieselFillUp,
   updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp, finalizeDieselFillUp,
@@ -464,7 +464,7 @@ export default function DieselFillUpsPage() {
                     <div style={{ fontSize: 13 }}>{f.supplier_name}</div>
                   </td>
                   <td className="text-right" style={{ fontSize: 13 }}>{parseFloat(f.litres).toFixed(2)}</td>
-                  <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>R {parseFloat(f.rate_per_litre).toFixed(2)}</td>
+                  <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>R&nbsp;{parseFloat(f.rate_per_litre).toFixed(2)}</td>
                   <td className="text-right">{formatCurrency(f.amount)}</td>
                   <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {parseFloat(f.admin_fee_amount) > 0 ? formatCurrency(f.admin_fee_amount) : '—'}

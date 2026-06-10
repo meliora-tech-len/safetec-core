@@ -50,7 +50,7 @@ function LineTypeChip({ value, onChange }) {
 
 function fmt(val) {
   const n = parseFloat(val) || 0
-  return `R ${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `R ${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export default function InvoiceTemplateFormPage() {

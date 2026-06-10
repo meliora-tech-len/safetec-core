@@ -353,19 +353,19 @@ function DieselTotalsTab({ entities, isAdmin }) {
                     <td style={{ fontWeight: 600 }}>{r.supplier_name}</td>
                     <td style={{ textAlign: 'right' }}>{r.invoice_count}</td>
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>
-                      R {fmt2(r.invoice_total)}
+                      R&nbsp;{fmt2(r.invoice_total)}
                     </td>
                     <td style={{ textAlign: 'right', color: r.fillup_count === 0 ? '#d97706' : 'inherit' }}>
                       {r.fillup_count === 0 ? '⚠ 0' : r.fillup_count}
                     </td>
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>
-                      R {fmt2(r.fillup_total)}
+                      R&nbsp;{fmt2(r.fillup_total)}
                     </td>
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12,
                                  color: Number(r.difference) === 0 ? 'var(--text-muted)'
                                       : Number(r.difference) > 0 ? '#dc2626' : '#d97706',
                                  fontWeight: Number(r.difference) !== 0 ? 700 : 400 }}>
-                      {Number(r.difference) === 0 ? '—' : `R ${fmt2(r.difference)}`}
+                      {Number(r.difference) === 0 ? '—' : `R ${fmt2(r.difference)}`}
                     </td>
                     <td style={{ textAlign: 'center' }}>
                       {r.is_matched ? (
@@ -384,13 +384,13 @@ function DieselTotalsTab({ entities, isAdmin }) {
                     {rows.reduce((s, r) => s + r.invoice_count, 0)}
                   </td>
                   <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, padding: '8px 12px' }}>
-                    R {fmt2(rows.reduce((s, r) => s + Number(r.invoice_total), 0))}
+                    R&nbsp;{fmt2(rows.reduce((s, r) => s + Number(r.invoice_total), 0))}
                   </td>
                   <td style={{ textAlign: 'right', padding: '8px 12px' }}>
                     {rows.reduce((s, r) => s + r.fillup_count, 0)}
                   </td>
                   <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, padding: '8px 12px' }}>
-                    R {fmt2(rows.reduce((s, r) => s + Number(r.fillup_total), 0))}
+                    R&nbsp;{fmt2(rows.reduce((s, r) => s + Number(r.fillup_total), 0))}
                   </td>
                   <td colSpan={2} style={{ padding: '8px 12px' }} />
                 </tr>

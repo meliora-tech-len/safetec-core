@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import {
@@ -301,14 +301,14 @@ export default function DieselRatesPage() {
                     </td>
                     <td style={styles.td}>
                       {current ? (
-                        <span style={styles.rateChip}>R {fmt(current.rate_per_litre)}/L</span>
+                        <span style={styles.rateChip}>R&nbsp;{fmt(current.rate_per_litre)}/L</span>
                       ) : (
                         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>No active rate</span>
                       )}
                     </td>
                     <td style={styles.td}>
                       {current && Number(current.additional_charge_per_ton) > 0 ? (
-                        <span style={styles.chargeChip}>R {fmt2(current.additional_charge_per_ton)}/ton</span>
+                        <span style={styles.chargeChip}>R&nbsp;{fmt2(current.additional_charge_per_ton)}/ton</span>
                       ) : (
                         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
                       )}
@@ -365,10 +365,10 @@ export default function DieselRatesPage() {
                                     {r.effective_to ? fmtDate(r.effective_to) : <span style={{ color: 'var(--text-muted)' }}>Open</span>}
                                   </td>
                                   <td style={{ ...styles.td, fontSize: 12, fontWeight: 600 }}>
-                                    R {fmt(r.rate_per_litre)}
+                                    R&nbsp;{fmt(r.rate_per_litre)}
                                   </td>
                                   <td style={{ ...styles.td, fontSize: 12 }}>
-                                    {Number(r.additional_charge_per_ton) > 0 ? `R ${fmt2(r.additional_charge_per_ton)}` : '—'}
+                                    {Number(r.additional_charge_per_ton) > 0 ? `R ${fmt2(r.additional_charge_per_ton)}` : '—'}
                                   </td>
                                   <td style={{ ...styles.td, fontSize: 12 }}>
                                     <span style={{
@@ -569,7 +569,7 @@ export default function DieselRatesPage() {
                             {r.name}
                           </td>
                           <td style={{ padding: '9px 10px' }}>
-                            <span style={styles.rateChip}>R {fmt2(r.amount)}</span>
+                            <span style={styles.rateChip}>R&nbsp;{fmt2(r.amount)}</span>
                           </td>
                           <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
                             <button className="btn-ghost btn-sm" onClick={() => { setAlEditId(r.id); setAlEditForm({ name: r.name, amount: String(parseFloat(r.amount)) }) }} style={{ marginRight: 4 }}>Edit</button>

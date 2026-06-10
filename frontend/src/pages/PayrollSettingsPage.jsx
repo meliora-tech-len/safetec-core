@@ -14,7 +14,7 @@ function useApi() {
   return { get, post, put, del }
 }
 
-const fmt = (n) => `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const fmt = (n) => `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const pct = (n) => `${(parseFloat(n || 0) * 100).toFixed(4)}%`
 
 // Statutory deduction fields — unchanged

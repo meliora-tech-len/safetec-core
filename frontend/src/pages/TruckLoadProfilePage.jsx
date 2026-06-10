@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
@@ -31,7 +31,7 @@ import SortableHeader, { useSort, applySort } from '../components/SortableHeader
 import DateInput from '../components/DateInput'
 import { PROFIT_SHEET_DEFAULTS_KEY, parseProfitSheetDefaults } from '../constants/profitSheet'
 
-const fmt    = (n) => n == null ? '—' : `R ${parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const fmt    = (n) => n == null ? '—' : `R ${parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtNum = (n) => n == null ? '—' : parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA') : '—'
 const today = new Date().toISOString().slice(0, 10)
@@ -361,10 +361,10 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
         </div>
       </td>
       <td style={{ ...S.td, textAlign: 'right', color: 'var(--text-muted)', fontSize: 12 }}>
-        {exclVat ? `R ${parseFloat(exclVat).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}
+        {exclVat ? `R ${parseFloat(exclVat).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}
       </td>
       <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, fontSize: 12 }}>
-        {inclVat ? `R ${parseFloat(inclVat).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}
+        {inclVat ? `R ${parseFloat(inclVat).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—'}
       </td>
       {showSub && <><td /><td /><td /></>}
       <td style={S.td}>
@@ -766,7 +766,7 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
                             {f.supplier_invoice_number || f.invoice_number || '⚠ missing'}
                           </td>
                           <td style={{ textAlign: 'right' }}>{parseFloat(f.litres).toFixed(1)}</td>
-                          <td style={{ textAlign: 'right', fontSize: 12 }}>R {parseFloat(f.rate_per_litre).toFixed(2)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 12 }}>R&nbsp;{parseFloat(f.rate_per_litre).toFixed(2)}</td>
                           <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(f.amount)}</td>
                           <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(f.admin_fee_amount)}</td>
                           <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(f.total_amount)}</td>
@@ -2843,8 +2843,8 @@ export default function TruckLoadProfilePage() {
             </div>
             {splitForm.tonnes && splitForm.rate_per_ton && (
               <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'right', marginTop: 10 }}>
-                Excl VAT: <strong style={{ color: 'var(--text-primary)' }}>R {(parseFloat(splitForm.tonnes) * parseFloat(splitForm.rate_per_ton)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
-                {vatRegistered && <> · Incl VAT: <strong style={{ color: 'var(--accent)' }}>R {(parseFloat(splitForm.tonnes) * parseFloat(splitForm.rate_per_ton) * (1 + vatRate)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong></>}
+                Excl VAT: <strong style={{ color: 'var(--text-primary)' }}>R&nbsp;{(parseFloat(splitForm.tonnes) * parseFloat(splitForm.rate_per_ton)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong>
+                {vatRegistered && <> · Incl VAT: <strong style={{ color: 'var(--accent)' }}>R&nbsp;{(parseFloat(splitForm.tonnes) * parseFloat(splitForm.rate_per_ton) * (1 + vatRate)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</strong></>}
               </div>
             )}
             <div style={{ marginTop: 12 }}>

@@ -10,16 +10,18 @@ export const dieselTypeForSupplier = (supplier) => {
   return (name.includes('merino') || name.includes('oukop')) ? 'topup' : 'fillup'
 }
 
+// Amounts use a non-breaking space (U+00A0) after R so the symbol never wraps onto its own line in narrow
+// table columns; en-ZA grouping separators are already non-breaking.
 export const formatCurrency = (amount) => {
-  if (amount == null) return 'R 0.00'
-  return `R ${parseFloat(amount).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (amount == null) return 'R 0.00'
+  return `R ${parseFloat(amount).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export const formatDate = (dateStr) => {
   if (!dateStr) return '—'
   try {
     const d = typeof dateStr === 'string' ? parseISO(dateStr) : dateStr
-    return isValid(d) ? format(d, 'dd MMM yyyy') : '—'
+    return isValid(d) ? format(d, 'dd MMM yyyy') : '—'
   } catch { return '—' }
 }
 

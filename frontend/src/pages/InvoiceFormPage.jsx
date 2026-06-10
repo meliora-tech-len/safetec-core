@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X, FileText } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
@@ -45,7 +45,7 @@ function LineTypeChip({ value, onChange }) {
 
 function formatCurrency(val) {
   const n = parseFloat(val) || 0
-  return `R ${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `R ${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export default function InvoiceFormPage({ docType = 'invoice' }) {

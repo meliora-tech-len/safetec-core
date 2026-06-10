@@ -10,7 +10,7 @@ import toast from 'react-hot-toast'
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const MONTH_OPTS = Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: MONTHS[i] }))
 
-const fmtR = (n) => `R ${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const fmtR = (n) => `R ${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtL = (n) => `${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`
 const fmtN = (n, d = 2) => Number(n || 0).toFixed(d)
 
@@ -160,7 +160,7 @@ function TruckReport({ data }) {
             <td style={styles.td}>{fmtR(r.total_admin_fee)}</td>
             <td style={{ ...styles.td, fontWeight: 700, color: 'var(--text-primary)' }}>{fmtR(r.grand_total)}</td>
             <td style={styles.td}>
-              {r.total_litres > 0 ? `R ${fmtN(r.total_amount / r.total_litres)}` : '—'}
+              {r.total_litres > 0 ? `R ${fmtN(r.total_amount / r.total_litres)}` : '—'}
             </td>
           </tr>
         ))}
@@ -172,7 +172,7 @@ function TruckReport({ data }) {
           <td style={styles.td}>{fmtR(totals.total_admin_fee)}</td>
           <td style={{ ...styles.td, fontWeight: 700 }}>{fmtR(totals.grand_total)}</td>
           <td style={styles.td}>
-            {totals.total_litres > 0 ? `R ${fmtN(totals.total_amount / totals.total_litres)}` : '—'}
+            {totals.total_litres > 0 ? `R ${fmtN(totals.total_amount / totals.total_litres)}` : '—'}
           </td>
         </tr>
       </tbody>

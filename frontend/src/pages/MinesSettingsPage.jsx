@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, Edit2, ChevronDown, ChevronRight, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
@@ -11,7 +11,7 @@ import DateInput from '../components/DateInput'
 const fmt = (n) =>
   n == null
     ? '—'
-    : `R ${parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `R ${parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-ZA') : 'current')
 

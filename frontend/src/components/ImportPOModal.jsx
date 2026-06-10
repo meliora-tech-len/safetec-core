@@ -456,7 +456,7 @@ export default function ImportPOModal({ onClose, entities = [], onImported = () 
                         <td style={{ padding: '9px 10px' }}>
                           <span style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--accent)', padding: '2px 8px', borderRadius: 4, fontWeight: 600, fontSize: 11 }}>{inv.entity}</span>
                         </td>
-                        <td style={{ padding: '9px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>R {fmt(inv.total)}</td>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>R&nbsp;{fmt(inv.total)}</td>
                         <td style={{ padding: '9px 10px', color: 'var(--text-muted)' }}><ChevronRight size={13} /></td>
                       </tr>
                     ))}
@@ -550,7 +550,7 @@ export default function ImportPOModal({ onClose, entities = [], onImported = () 
                         </td>
                         <td style={{ padding: '9px 10px', fontFamily: 'monospace' }}>{po.project_code || '—'}</td>
                         <td style={{ padding: '9px 10px', textAlign: 'right' }}>{itemLines.length}</td>
-                        <td style={{ padding: '9px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>R {fmt(po.total_excl)}</td>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>R&nbsp;{fmt(po.total_excl)}</td>
                         <td style={{ padding: '9px 10px' }}>
                           <button className="btn btn-primary btn-sm" onClick={() => handleCreateInvoice(po)}
                             style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', fontSize: 12 }}>

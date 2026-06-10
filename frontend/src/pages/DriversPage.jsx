@@ -25,7 +25,7 @@ const TYPE_BADGE = {
 }
 
 const formatCurrency = (n) =>
-  `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 // Coerce any API error shape into a plain string for toast().
 // FastAPI 422s return `detail` as an array of {loc, msg, type} objects — passing

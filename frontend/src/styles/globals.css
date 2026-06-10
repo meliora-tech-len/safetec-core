@@ -400,11 +400,17 @@ hr { border: none; border-top: 1px solid var(--border); }
   .page-title { font-size: 19px; }
   .modal-footer { flex-direction: column-reverse; }
   .modal-footer button { width: 100%; justify-content: center; }
+
+  /* Tables: keep rows on one line and let the card wrapper scroll
+     horizontally, rather than squashing columns until values wrap. */
+  .data-table td { white-space: nowrap; }
+  th { padding: 9px 10px; }
+  td { padding: 10px; }
 }
 
 /* ── Very small phones ─────────────────────────────────────── */
 @media (max-width: 480px) {
   .stat-card-value { font-size: 22px; }
-  th { padding: 9px 10px; }
-  td { padding: 10px; }
+  th { padding: 8px; }
+  td { padding: 9px 8px; font-size: 12.5px; }
 }
