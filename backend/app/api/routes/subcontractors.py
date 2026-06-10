@@ -289,12 +289,24 @@ def _enrich_invoice(db: Session, inv: SupplierInvoice) -> SupplierInvoiceOut:
     })
 
 
-def _truck_invoice_contribution(inv: SupplierInvoice, truck_reg: str):
+def _norm_reg(reg) -> str:
+    return (reg or "").replace(" ", "").strip().upper()
+
+
+def _truck_regs(truck: Truck) -> set:
+    """Every registration this truck is known by: the real plate plus any
+    temp/old plate, so invoices captured under either stay with the truck
+    after a registration change."""
+    return {r for r in (_norm_reg(truck.registration), _norm_reg(truck.temp_registration)) if r}
+
+
+def _truck_invoice_contribution(inv: SupplierInvoice, truck_regs: set):
     """How much of a non-diesel supplier invoice is attributable to one truck.
 
     Returns (matched, amount_excl, amount_incl). `matched` is True only when a
     positive amount applies to this truck.
 
+    - Matching is against ALL the truck's known regs (real + temp plate).
     - Multi-line / split invoices whose sub-lines carry a per-line vehicle reg
       (stored in ``unit``) are matched per sub-line: only the sub-lines whose
       reg matches this truck are summed, so one invoice can cover several trucks
@@ -303,8 +315,7 @@ def _truck_invoice_contribution(inv: SupplierInvoice, truck_reg: str):
       fall back to the main-line ``vehicle_reg`` and attribute the full amount.
     """
     D0 = Decimal("0")
-    target = (truck_reg or "").strip().upper()
-    if not target:
+    if not truck_regs:
         return False, D0, D0
 
     if inv.is_multi_line and inv.line_items:
@@ -312,13 +323,13 @@ def _truck_invoice_contribution(inv: SupplierInvoice, truck_reg: str):
         if has_line_reg:
             m_excl, m_incl = D0, D0
             for li in inv.line_items:
-                if (li.unit or "").strip().upper() == target:
+                if _norm_reg(li.unit) in truck_regs:
                     m_excl += Decimal(str(li.amount_excl_vat or 0))
                     m_incl += Decimal(str(li.amount_incl_vat or 0))
             matched = m_excl != 0 or m_incl != 0
             return matched, m_excl, m_incl
 
-    if (inv.vehicle_reg or "").strip().upper() == target:
+    if _norm_reg(inv.vehicle_reg) in truck_regs:
         amt = Decimal(str(inv.amount))
         return amt != 0, amt, amt
     return False, D0, D0
@@ -417,8 +428,9 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         exp_incl = admin_fee
         exp_excl = D0
         inv_contribs = []  # (invoice, amount_for_this_truck)
+        truck_regs = _truck_regs(truck)
         for inv in period_invoices:
-            matched, c_excl, c_incl = _truck_invoice_contribution(inv, truck.registration)
+            matched, c_excl, c_incl = _truck_invoice_contribution(inv, truck_regs)
             if not matched:
                 continue
             if inv.vat_applicable:
