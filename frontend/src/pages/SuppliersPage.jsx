@@ -6,17 +6,18 @@ import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, User, X, Copy } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
 import DeleteModal from '../components/DeleteModal'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 export default function SuppliersPage() {
-  const { activeEntity, isAdmin } = useAuth()
+  const { isAdmin } = useAuth()
   const [suppliers, setSuppliers] = useState([])
   const [entities, setEntities] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity] = useEntityFilter()
   const [modal, setModal] = useState(null) // null | { mode: 'create'|'edit', supplier?: {} }
   const loadSeqRef = useRef(0)
 
@@ -36,7 +37,6 @@ export default function SuppliersPage() {
       .finally(() => { if (loadSeqRef.current === seq) setLoading(false) })
   }, [filterEntity, debouncedSearch])
 
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
@@ -448,7 +448,7 @@ function SupplierModal({ mode, supplier, entities, onSave, onClose }) {
                             onChange={setCopyEntityIds}
                           />
                           {copyEntityIds.length > 0 && (
-                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, padding: '6px 10px', background: 'var(--accent-dim)', borderRadius: 6, color: 'var(--accent)' }}>
+                            <div style={{ fontSize: 12, marginTop: 8, padding: '6px 10px', background: 'var(--accent-dim)', borderRadius: 6, color: 'var(--accent)' }}>
                               A copy of this supplier will be created for {copyEntityIds.length} entit{copyEntityIds.length === 1 ? 'y' : 'ies'} when you save.
                             </div>
                           )}

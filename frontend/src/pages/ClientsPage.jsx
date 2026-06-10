@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Users, X } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 /**
@@ -13,13 +14,13 @@ import SortableHeader, { useSort, applySort } from '../components/SortableHeader
  * "suppliers" = who you purchase from (even if the same party can be both).
  */
 export default function ClientsPage() {
-  const { activeEntity, isAdmin } = useAuth()
+  const { isAdmin } = useAuth()
   const [clients, setClients]   = useState([])
   const [entities, setEntities] = useState([])
   const [loading, setLoading]   = useState(true)
   const [search, setSearch]     = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity] = useEntityFilter()
   const [modal, setModal]       = useState(null)
   const loadSeqRef = useRef(0)
 
@@ -39,7 +40,6 @@ export default function ClientsPage() {
       .finally(() => { if (loadSeqRef.current === seq) setLoading(false) })
   }, [filterEntity, debouncedSearch])
 
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 

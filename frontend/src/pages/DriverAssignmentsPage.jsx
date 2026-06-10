@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link2, ChevronDown, ChevronUp, AlertTriangle, Search, X, UserCheck } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
 import toast from 'react-hot-toast'
 import { getFleetTrucks, getDrivers, updateDriver, addDriverTruckAssignment, removeDriverTruckAssignment } from '../services/api'
 import { errorMessage } from '../utils/helpers'
@@ -395,9 +396,9 @@ function CasualPoolSection({ drivers, entityName, open, onToggle }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function DriverAssignmentsPage() {
-  const { entities, activeEntity } = useAuth()
+  const { entities } = useAuth()
 
-  const [filterEntity, setFilterEntity]     = useState(activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity]     = useEntityFilter()
   const [trucks, setTrucks]                 = useState([])
   const [drivers, setDrivers]               = useState([])
   const [loading, setLoading]               = useState(true)
@@ -409,8 +410,6 @@ export default function DriverAssignmentsPage() {
   // {truckId, slot} or null
   const [activePopover, setActivePopover]   = useState(null)
   const [saving, setSaving]                 = useState(false)
-
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
 
   const loadSeq = useRef(0)
   const load = useCallback(() => {

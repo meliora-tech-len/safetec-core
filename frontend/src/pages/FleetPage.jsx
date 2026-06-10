@@ -2,6 +2,7 @@
 import { useSearchParams } from 'react-router-dom'
 import { Truck, Car, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertTriangle, AlertCircle, Clock, ChevronsUpDown, Check } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
@@ -1077,7 +1078,7 @@ export default function FleetPage() {
   const [pvLoading, setPvLoading] = useState(false)
   const [search, setSearch]     = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filterEntity, setFilterEntity] = useState(urlEntityId || activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity] = useEntityFilter(urlEntityId)
   const [filterStatus, setFilterStatus]                 = useState('')
   const isObhi = activeEntity?.code === 'OBHI'
   const [filterSubcontractor, setFilterSubcontractor]   = useState(isObhi ? 'true' : 'false')
@@ -1092,7 +1093,6 @@ export default function FleetPage() {
 
   useEffect(() => {
     if (urlEntityId) return
-    setFilterEntity(activeEntity?.id?.toString() || '')
     setFilterSubcontractor(activeEntity?.code === 'OBHI' ? 'true' : 'false')
   }, [activeEntity, urlEntityId])
   useEffect(() => {

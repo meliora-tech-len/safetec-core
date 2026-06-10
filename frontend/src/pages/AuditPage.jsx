@@ -5,6 +5,7 @@ import { Shield, RefreshCw, Search, Calendar } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import Pagination from '../components/Pagination'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
 import SortableHeader, { useSort } from '../components/SortableHeader'
 
 const MONTH_NAMES = [
@@ -99,7 +100,7 @@ const RESOURCE_TYPES = [
 ]
 
 export default function AuditPage() {
-  const { activeEntity, isAdmin } = useAuth()
+  const { isAdmin } = useAuth()
   const PAGE_SIZE = 50
 
   const [logs, setLogs] = useState([])
@@ -108,7 +109,7 @@ export default function AuditPage() {
   const [entities, setEntities] = useState([])
   const [months, setMonths] = useState([])
   const [loading, setLoading] = useState(true)
-  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity] = useEntityFilter()
   const [filterResource, setFilterResource] = useState('')
   const [filterAction, setFilterAction] = useState('')
   const [filterMonth, setFilterMonth] = useState('') // 'YYYY-M' of the month being viewed
@@ -156,7 +157,6 @@ export default function AuditPage() {
     return () => clearTimeout(t)
   }, [search])
 
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
   useEffect(() => {
     const params = filterEntity ? { entity_id: filterEntity } : {}

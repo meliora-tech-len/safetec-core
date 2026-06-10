@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getInvoiceTemplates, getEntities, deleteInvoiceTemplate, cloneInvoiceTemplatePayload } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
 import toast from 'react-hot-toast'
 import { Plus, Copy, Edit2, Trash2, Search, X, LayoutTemplate } from 'lucide-react'
 import DeleteModal from '../components/DeleteModal'
@@ -20,13 +21,13 @@ function DocTypeBadge({ type }) {
 }
 
 export default function InvoiceTemplatesPage() {
-  const { activeEntity, isAdmin } = useAuth()
+  const { isAdmin } = useAuth()
   const navigate = useNavigate()
   const [templates, setTemplates] = useState([])
   const [entities, setEntities] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity] = useEntityFilter()
   const [filterDocType, setFilterDocType] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [cloningId, setCloningId] = useState(null)
@@ -43,7 +44,6 @@ export default function InvoiceTemplatesPage() {
       .finally(() => { if (loadSeqRef.current === seq) setLoading(false) })
   }, [filterEntity, filterDocType])
 
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 

@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
 import {
   getSuppliers, getDieselRates, createDieselRate, updateDieselRate,
   getDieselSettings, updateDieselSettings,
@@ -15,9 +16,9 @@ const fmt2 = (n) => Number(n || 0).toFixed(2)
 const fmtDate = (s) => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-ZA') : '—'
 
 export default function DieselRatesPage() {
-  const { isAdmin, activeEntity, entities } = useAuth()
+  const { isAdmin, entities } = useAuth()
 
-  const [entityId, setEntityId] = useState(activeEntity?.id || '')
+  const [entityId, setEntityId] = useEntityFilter()
   const [suppliers, setSuppliers] = useState([])
   const [rates, setRates] = useState([])
   const [loading, setLoading] = useState(false)
@@ -46,10 +47,6 @@ export default function DieselRatesPage() {
   const [alSaving, setAlSaving]     = useState(false)
 
   const today = new Date().toISOString().slice(0, 10)
-
-  useEffect(() => {
-    if (!isAdmin && activeEntity?.id) setEntityId(activeEntity.id)
-  }, [isAdmin, activeEntity])
 
   const loadData = useCallback(async () => {
     if (!entityId) return

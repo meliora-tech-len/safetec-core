@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, UserCheck, X } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
 import DeleteModal from '../components/DeleteModal'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
@@ -30,7 +31,7 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity] = useEntityFilter()
   const [modal, setModal] = useState(null) // null | { mode: 'create'|'edit', customer?: {} }
   const [deleteTarget, setDeleteTarget] = useState(null)
   const loadSeqRef = useRef(0)
@@ -51,7 +52,6 @@ export default function CustomersPage() {
       .finally(() => { if (loadSeqRef.current === seq) setLoading(false) })
   }, [filterEntity, debouncedSearch])
 
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
