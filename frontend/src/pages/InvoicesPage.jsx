@@ -9,18 +9,27 @@ import DeleteModal from '../components/DeleteModal'
 import { useTheme } from '../hooks/useTheme'
 import toast from 'react-hot-toast'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
+const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const now = new Date()
+const YEARS = []
+for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) YEARS.push(y)
+
 export default function InvoicesPage({ docType = 'invoice' }) {
-  const { activeEntity, isAdmin } = useAuth()
+  const { isAdmin } = useAuth()
   const [allInvoices, setAllInvoices] = useState([])
   const [entities, setEntities] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const loadSeqRef = useRef(0)
-  const [filterEntity, setFilterEntity] = useState(activeEntity?.id?.toString() || '')
+  const [filterEntity, setFilterEntity] = useEntityFilter()
   const [filterStatus, setFilterStatus] = useState('')
+  const [filterMonth, setFilterMonth] = useSessionState('period:invoices:month', now.getMonth() + 1) // '' = all months
+  const [filterYear, setFilterYear] = useSessionState('period:invoices:year', now.getFullYear())
   const [showCancelled, setShowCancelled] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [showImportPO, setShowImportPO] = useState(false)
@@ -38,12 +47,13 @@ export default function InvoicesPage({ docType = 'invoice' }) {
     const params = { document_type: docType, limit: 500 }
     if (filterEntity) params.entity_id = filterEntity
     if (debouncedSearch) params.search = debouncedSearch
+    if (filterMonth) params.month = filterMonth
+    if (filterYear) params.year = filterYear
     getInvoices(params)
       .then(r => { if (loadSeqRef.current === seq) setAllInvoices(r.data) })
       .finally(() => { if (loadSeqRef.current === seq) setLoading(false) })
-  }, [docType, filterEntity, debouncedSearch])
+  }, [docType, filterEntity, debouncedSearch, filterMonth, filterYear])
 
-  useEffect(() => { setFilterEntity(activeEntity?.id?.toString() || '') }, [activeEntity])
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
@@ -106,12 +116,12 @@ export default function InvoicesPage({ docType = 'invoice' }) {
       <div className="page-header">
         <div>
           <h1 className="page-title">{title}</h1>
-          <p className="page-subtitle">{displayedInvoices.length} {title.toLowerCase()}</p>
+          <p className="page-subtitle">{displayedInvoices.length} {title.toLowerCase()} — {filterMonth ? `${MONTHS[filterMonth]} ` : ''}{filterYear}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <ExportButton
-            title={`${title} Report`}
-            filename={isInvoice ? 'invoices' : 'quotes'}
+            title={`${title} Report — ${filterMonth ? `${MONTHS[filterMonth]} ` : ''}${filterYear}`}
+            filename={`${docPath}-${filterYear}${filterMonth ? `-${String(filterMonth).padStart(2, '0')}` : ''}`}
             data={displayedInvoices}
             columns={[
               { header: 'Number',      key: 'invoice_number' },
@@ -171,6 +181,13 @@ export default function InvoicesPage({ docType = 'invoice' }) {
             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         )}
+        <select value={filterMonth} onChange={e => setFilterMonth(e.target.value ? parseInt(e.target.value) : '')} style={{ width: 130 }}>
+          <option value="">All Months</option>
+          {MONTHS.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+        </select>
+        <select value={filterYear} onChange={e => setFilterYear(parseInt(e.target.value))} style={{ width: 90 }}>
+          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ width: 160 }}>
           <option value="">All Statuses</option>
           <option value="draft">Draft</option>

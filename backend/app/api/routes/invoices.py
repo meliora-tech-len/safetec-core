@@ -2,7 +2,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, extract
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from decimal import Decimal
@@ -69,6 +69,8 @@ def list_invoices(
     document_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, le=1000),
     db: Session = Depends(get_db),
@@ -96,6 +98,10 @@ def list_invoices(
         query = query.filter(Invoice.document_type == document_type)
     if status:
         query = query.filter(Invoice.status == status)
+    if month:
+        query = query.filter(extract("month", Invoice.issue_date) == month)
+    if year:
+        query = query.filter(extract("year", Invoice.issue_date) == year)
     if search:
         s = f"%{search}%"
         query = (
