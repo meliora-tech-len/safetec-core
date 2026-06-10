@@ -49,10 +49,11 @@ def _clear_truckload_diesel(db: Session, truckload_id: int) -> None:
         tl.diesel_rate = None
 
 
-def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, user_id: int) -> None:
+def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, user_id: int, commit: bool = True) -> None:
     """
     Called after a DieselFillUp is saved with an invoice_number or slip_number but no supplier_invoice_id.
     Links to an existing SupplierInvoice if found by invoice_number, otherwise auto-creates one.
+    Pass commit=False when running inside a larger transaction (e.g. the sheet import).
     """
     inv_num = fillup.invoice_number.strip() if fillup.invoice_number else None
 
@@ -65,7 +66,8 @@ def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, use
         ).first()
         if existing_inv:
             fillup.supplier_invoice_id = existing_inv.id
-            db.commit()
+            if commit:
+                db.commit()
             return
 
     supplier = db.query(Supplier).filter(Supplier.id == fillup.supplier_id).first()
@@ -88,7 +90,9 @@ def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, use
     inv = SupplierInvoice(
         entity_id=fillup.entity_id,
         supplier_id=fillup.supplier_id,
-        invoice_number=inv_num,
+        # Imported fill-ups carry only a depot slip number — use it as the
+        # invoice number so the supplier profile shows an identifiable document
+        invoice_number=inv_num or (fillup.slip_number.strip() if fillup.slip_number else None),
         invoice_date=inv_datetime,
         # Amount owed to the diesel supplier = litres × rate (the diesel cost).
         # The internal admin fee stays on the fill-up (total_amount) and in costing,
@@ -111,7 +115,8 @@ def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, use
         entity_id=fillup.entity_id, resource_type="supplier_invoice",
         description=f"Auto-created supplier invoice {ref} from diesel fill-up for {vehicle_reg} ({fillup.litres}L)",
     )
-    db.commit()
+    if commit:
+        db.commit()
 
 
 def _check_entity_access(entity_id: int, user: User):
@@ -694,21 +699,19 @@ def create_fillup(
 
 
 def _match_truck_by_reg(db: Session, entity_id: int, reg: str):
-    """Find a truck in the entity by real OR temp registration (case-insensitive).
-    Returns (truck, matched_by_temp)."""
-    if not reg:
+    """Find a truck in the entity by real OR temp registration.
+    Case- and space-insensitive ('KXH 519 MP' matches 'KXH519MP'), so sheet
+    formatting differences can't drop rows. Returns (truck, matched_by_temp)."""
+    target = (reg or "").replace(" ", "").strip().upper()
+    if not target:
         return None, False
-    r = reg.strip()
-    truck = db.query(Truck).filter(
-        Truck.entity_id == entity_id, Truck.registration.ilike(r)
-    ).first()
-    if truck:
-        return truck, False
-    truck = db.query(Truck).filter(
-        Truck.entity_id == entity_id, Truck.temp_registration.ilike(r)
-    ).first()
-    if truck:
-        return truck, True
+    trucks = db.query(Truck).filter(Truck.entity_id == entity_id).all()
+    for t in trucks:
+        if (t.registration or "").replace(" ", "").strip().upper() == target:
+            return t, False
+    for t in trucks:
+        if (t.temp_registration or "").replace(" ", "").strip().upper() == target:
+            return t, True
     return None, False
 
 
@@ -786,8 +789,12 @@ def import_diesel(
         rr.truck_registration = truck.registration
         rr.matched_by_temp = by_temp
 
+        # Duplicate = same truck + supplier + slip ON THE SAME DATE. The date
+        # must be part of the key: depots recycle slip numbers, and a truck's
+        # old- and new-reg rows resolve to the same truck — without the date a
+        # legitimate second fill-up would be silently dropped.
         slip = (row.slip_number or "").strip()
-        batch_key = (truck.id, supplier_id, slip)
+        batch_key = (truck.id, supplier_id, slip, row.fillup_date)
         dup = False
         if slip:
             if batch_key in seen_batch:
@@ -797,11 +804,12 @@ def import_diesel(
                     DieselFillUp.truck_id == truck.id,
                     DieselFillUp.supplier_id == supplier_id,
                     DieselFillUp.slip_number == slip,
+                    DieselFillUp.fillup_date == row.fillup_date,
                     DieselFillUp.is_archived == False,
                 ).first()
                 dup = existing is not None
         if dup:
-            rr.status = "duplicate"; rr.message = "Slip already exists for this truck"
+            rr.status = "duplicate"; rr.message = "Slip already exists for this truck on this date"
             result.duplicates += 1; result.rows.append(rr); continue
 
         result.matched += 1
@@ -822,6 +830,10 @@ def import_diesel(
                 **amounts, created_by=current_user.id,
             )
             db.add(f)
+            db.flush()
+            # Same as the manual fill-up path: create the supplier invoice so
+            # the fill-up also shows on the diesel supplier's profile
+            _auto_link_or_create_supplier_invoice(db, f, current_user.id, commit=False)
             result.created += 1
             rr.status = "created"
         else:
