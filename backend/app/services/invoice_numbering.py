@@ -1,13 +1,30 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
 from app.models.models import BusinessEntity, Invoice
 
 
-def _format_number(entity: BusinessEntity, document_type: str, counter: int) -> str:
-    prefix = entity.invoice_prefix or entity.code
+def prefix_for(entity: BusinessEntity, document_type: str) -> str:
     if document_type == "quote":
-        prefix = f"Q{prefix}"
-    return f"{prefix}{counter:05d}"
+        return entity.quote_prefix or "QT"
+    if document_type == "purchase_order":
+        return "PO"
+    return entity.invoice_prefix or entity.code or "INV"
+
+
+def resolve_next_number(db: Session, entity: BusinessEntity, document_type: str):
+    """
+    Return (prefix, counter, number) for the next auto number, skipping any
+    numbers already taken (typed manually on an invoice, or the counter was
+    lowered in Settings). Does NOT advance the stored counter.
+    """
+    prefix = prefix_for(entity, document_type)
+    if document_type == "quote":
+        counter = (entity.quote_counter or 0) + 1
+    else:
+        # purchase orders share the invoice counter (PO prefix, same sequence)
+        counter = (entity.invoice_counter or 0) + 1
+    while db.query(Invoice.id).filter(Invoice.invoice_number == f"{prefix}{counter:05d}").first():
+        counter += 1
+    return prefix, counter, f"{prefix}{counter:05d}"
 
 
 def peek_invoice_number(db: Session, entity_id: int, document_type: str = "invoice") -> str:
@@ -20,28 +37,23 @@ def peek_invoice_number(db: Session, entity_id: int, document_type: str = "invoi
     entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
     if not entity:
         raise ValueError(f"Entity {entity_id} not found")
-    if document_type == "quote":
-        counter = (entity.quote_counter or 0) + 1
-    else:
-        counter = (entity.invoice_counter or 0) + 1
-    return _format_number(entity, document_type, counter)
+    return resolve_next_number(db, entity, document_type)[2]
 
 
 def generate_invoice_number(db: Session, entity_id: int, document_type: str = "invoice") -> str:
     """
     Auto-increment invoice/quote number per entity.
-    Format: {PREFIX}{COUNTER:05d}  e.g. OBHI00001, SFT00023, TP00005
+    Format: {PREFIX}{COUNTER:05d}  e.g. OBHI00001, SFT00023, QT00005, PO00012
     """
     entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).with_for_update().first()
     if not entity:
         raise ValueError(f"Entity {entity_id} not found")
 
+    _, counter, number = resolve_next_number(db, entity, document_type)
     if document_type == "quote":
-        entity.quote_counter = (entity.quote_counter or 0) + 1
-        counter = entity.quote_counter
+        entity.quote_counter = counter
     else:
-        entity.invoice_counter = (entity.invoice_counter or 0) + 1
-        counter = entity.invoice_counter
+        entity.invoice_counter = counter
 
     db.flush()
-    return _format_number(entity, document_type, counter)
+    return number

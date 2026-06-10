@@ -10,6 +10,7 @@ from app.core.security import get_current_user, require_admin
 from app.models.models import User, BusinessEntity
 from app.schemas.schemas import EntityCreate, EntityUpdate, EntityOut, NextNumberOut
 from app.services.audit import log_action
+from app.services.invoice_numbering import resolve_next_number
 
 router = APIRouter(prefix="/api/entities", tags=["entities"])
 
@@ -111,18 +112,7 @@ def next_invoice_number(
     current_user: User = Depends(get_current_user),
 ):
     entity = _get_accessible_entity(entity_id, current_user, db)
-
-    if doc_type == "invoice":
-        prefix = entity.invoice_prefix or entity.code or "INV"
-        counter = (entity.invoice_counter or 0) + 1
-    elif doc_type == "purchase_order":
-        prefix = "PO"
-        counter = (entity.invoice_counter or 0) + 1
-    else:
-        prefix = entity.quote_prefix or "QT"
-        counter = (entity.quote_counter or 0) + 1
-
-    next_number = f"{prefix}{str(counter).zfill(5)}"
+    prefix, counter, next_number = resolve_next_number(db, entity, doc_type)
     return NextNumberOut(next_number=next_number, prefix=prefix, counter=counter)
 
 
