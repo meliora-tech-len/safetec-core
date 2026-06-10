@@ -1293,3 +1293,78 @@ class ValueVerification(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# ── Budgets (entity cash-flow budgets) ────────────────────────────────────────
+
+class Budget(Base):
+    """Monthly cash-flow budget for one entity (mirrors the Excel budget sheets).
+
+    A budget is anchored on a base period (period_month/year); line values can
+    reference the base month and any following months, matching the rolling
+    "TO PAY / PAID" month-pair columns in the original spreadsheets.
+    """
+    __tablename__ = "budgets"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    entity_id    = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False, index=True)
+    name         = Column(String(200), nullable=True)
+    period_month = Column(Integer, nullable=False)
+    period_year  = Column(Integer, nullable=False)
+    status       = Column(String(20), default="active")  # active | closed
+    notes        = Column(Text, nullable=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at    = Column(DateTime(timezone=True), onupdate=func.now())
+
+    entity   = relationship("BusinessEntity")
+    sections = relationship("BudgetSection", back_populates="budget",
+                            cascade="all, delete-orphan", order_by="BudgetSection.sort_order")
+
+    __table_args__ = (UniqueConstraint("entity_id", "period_month", "period_year"),)
+
+
+class BudgetSection(Base):
+    """Grouping within a budget: INCOME, 30 DAY SUPPLIERS, CASH SUPPLIERS, ..."""
+    __tablename__ = "budget_sections"
+
+    id           = Column(Integer, primary_key=True)
+    budget_id    = Column(Integer, ForeignKey("budgets.id", ondelete="CASCADE"), nullable=False, index=True)
+    name         = Column(String(200), nullable=False)
+    section_type = Column(String(20), default="expense")  # income | expense
+    sort_order   = Column(Integer, default=0)
+
+    budget = relationship("Budget", back_populates="sections")
+    lines  = relationship("BudgetLine", back_populates="section",
+                          cascade="all, delete-orphan", order_by="BudgetLine.sort_order")
+
+
+class BudgetLine(Base):
+    """One row in a section: a supplier, subcontractor, income source, ..."""
+    __tablename__ = "budget_lines"
+
+    id         = Column(Integer, primary_key=True)
+    section_id = Column(Integer, ForeignKey("budget_sections.id", ondelete="CASCADE"), nullable=False, index=True)
+    name       = Column(String(300), nullable=False)
+    notes      = Column(Text, nullable=True)
+    sort_order = Column(Integer, default=0)
+
+    section = relationship("BudgetSection", back_populates="lines")
+    values  = relationship("BudgetLineValue", back_populates="line", cascade="all, delete-orphan")
+
+
+class BudgetLineValue(Base):
+    """Amounts for a line in a specific month: TO PAY (due) and PAID."""
+    __tablename__ = "budget_line_values"
+
+    id          = Column(Integer, primary_key=True)
+    line_id     = Column(Integer, ForeignKey("budget_lines.id", ondelete="CASCADE"), nullable=False, index=True)
+    month       = Column(Integer, nullable=False)
+    year        = Column(Integer, nullable=False)
+    amount_due  = Column(Numeric(15, 2), nullable=True)
+    amount_paid = Column(Numeric(15, 2), nullable=True)
+
+    line = relationship("BudgetLine", back_populates="values")
+
+    __table_args__ = (UniqueConstraint("line_id", "month", "year"),)

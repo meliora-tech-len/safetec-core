@@ -1,0 +1,476 @@
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
+import {
+  getBudgets, getBudget, createBudget, deleteBudget,
+  addBudgetSection, updateBudgetSection, deleteBudgetSection,
+  addBudgetLine, deleteBudgetLine, upsertBudgetLineValue,
+} from '../services/api'
+import { Wallet, Plus, Trash2, Lock, X } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { errorMessage, formatCurrency } from '../utils/helpers'
+import DeleteModal from '../components/DeleteModal'
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// The spreadsheets track the base month plus the two following months
+// (rolling "TO PAY / PAID" column pairs), so the grid shows three months.
+const VISIBLE_MONTHS = 3
+
+function periodMonths(month, year) {
+  const out = []
+  for (let i = 0; i < VISIBLE_MONTHS; i++) {
+    const m = ((month - 1 + i) % 12) + 1
+    const y = year + Math.floor((month - 1 + i) / 12)
+    out.push({ month: m, year: y })
+  }
+  return out
+}
+
+const num = (v) => (v == null || v === '' ? 0 : parseFloat(v) || 0)
+
+export default function BudgetsPage() {
+  const { user, isAdmin, entities } = useAuth()
+  const now = new Date()
+
+  const [entityId, setEntityId] = useEntityFilter()
+  const [month, setMonth] = useSessionState('budgets.month', now.getMonth() + 1)
+  const [year, setYear] = useSessionState('budgets.year', now.getFullYear())
+
+  const [budget, setBudget] = useState(null)       // full detail or null
+  const [loading, setLoading] = useState(false)
+  const [noAccess, setNoAccess] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(null) // budget object
+  const [cellEdits, setCellEdits] = useState({})   // `${lineId}:${m}:${y}:${field}` -> string
+  const [newLine, setNewLine] = useState({})       // sectionId -> name
+  const [newSection, setNewSection] = useState(null) // null | { name, section_type }
+
+  // Entities this user can see budgets for (admin: all)
+  const budgetEntities = useMemo(() => {
+    if (isAdmin) return entities || []
+    return (entities || []).filter(e =>
+      user?.entity_access?.some(a =>
+        a.entity_id === e.id && (a.allowed_modules || []).includes('budgets')
+      )
+    )
+  }, [entities, isAdmin, user])
+
+  const months = periodMonths(Number(month), Number(year))
+
+  const loadBudget = useCallback(async () => {
+    if (!entityId) { setBudget(null); return }
+    setLoading(true)
+    setNoAccess(false)
+    try {
+      const res = await getBudgets({ entity_id: entityId, year })
+      const match = (res.data || []).find(b => b.period_month === Number(month) && b.period_year === Number(year))
+      if (!match) { setBudget(null); return }
+      const detail = await getBudget(match.id)
+      setBudget(detail.data)
+      setCellEdits({})
+    } catch (e) {
+      if (e.response?.status === 403) {
+        setNoAccess(true)
+        setBudget(null)
+      } else {
+        toast.error(errorMessage(e, 'Failed to load budget'))
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [entityId, month, year])
+
+  useEffect(() => { loadBudget() }, [loadBudget])
+
+  const handleCreate = async () => {
+    setCreating(true)
+    try {
+      const res = await createBudget({ entity_id: Number(entityId), period_month: Number(month), period_year: Number(year) })
+      setBudget(res.data)
+      toast.success('Budget created')
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to create budget'))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    try {
+      await deleteBudget(confirmDelete.id)
+      toast.success('Budget deleted')
+      setConfirmDelete(null)
+      setBudget(null)
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to delete budget'))
+    }
+  }
+
+  const handleAddSection = async () => {
+    if (!newSection?.name?.trim()) return
+    try {
+      const res = await addBudgetSection(budget.id, { name: newSection.name.trim(), section_type: newSection.section_type })
+      setBudget(b => ({ ...b, sections: [...b.sections, { ...res.data, lines: [] }] }))
+      setNewSection(null)
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to add section'))
+    }
+  }
+
+  const handleDeleteSection = async (section) => {
+    try {
+      await deleteBudgetSection(section.id)
+      setBudget(b => ({ ...b, sections: b.sections.filter(s => s.id !== section.id) }))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to delete section'))
+    }
+  }
+
+  const handleAddLine = async (section) => {
+    const name = (newLine[section.id] || '').trim()
+    if (!name) return
+    try {
+      const res = await addBudgetLine(section.id, { name })
+      setBudget(b => ({
+        ...b,
+        sections: b.sections.map(s =>
+          s.id === section.id ? { ...s, lines: [...s.lines, { ...res.data, values: [] }] } : s
+        ),
+      }))
+      setNewLine(p => ({ ...p, [section.id]: '' }))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to add line'))
+    }
+  }
+
+  const handleDeleteLine = async (section, line) => {
+    try {
+      await deleteBudgetLine(line.id)
+      setBudget(b => ({
+        ...b,
+        sections: b.sections.map(s =>
+          s.id === section.id ? { ...s, lines: s.lines.filter(l => l.id !== line.id) } : s
+        ),
+      }))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to delete line'))
+    }
+  }
+
+  const valueFor = (line, m, y) => (line.values || []).find(v => v.month === m && v.year === y)
+
+  const cellKey = (lineId, m, y, field) => `${lineId}:${m}:${y}:${field}`
+
+  const cellValue = (line, m, y, field) => {
+    const key = cellKey(line.id, m, y, field)
+    if (key in cellEdits) return cellEdits[key]
+    const v = valueFor(line, m, y)?.[field]
+    return v == null ? '' : String(parseFloat(v))
+  }
+
+  const commitCell = async (line, m, y, field) => {
+    const key = cellKey(line.id, m, y, field)
+    if (!(key in cellEdits)) return
+    const raw = cellEdits[key]
+    const stored = valueFor(line, m, y)?.[field]
+    const storedStr = stored == null ? '' : String(parseFloat(stored))
+    if (raw === storedStr) {
+      setCellEdits(p => { const q = { ...p }; delete q[key]; return q })
+      return
+    }
+    try {
+      const res = await upsertBudgetLineValue(line.id, {
+        month: m, year: y, [field]: raw === '' ? null : parseFloat(raw),
+      })
+      setBudget(b => ({
+        ...b,
+        sections: b.sections.map(s => ({
+          ...s,
+          lines: s.lines.map(l => {
+            if (l.id !== line.id) return l
+            const others = (l.values || []).filter(v => !(v.month === m && v.year === y))
+            return { ...l, values: [...others, res.data] }
+          }),
+        })),
+      }))
+      setCellEdits(p => { const q = { ...p }; delete q[key]; return q })
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to save amount'))
+    }
+  }
+
+  // ── Totals ──────────────────────────────────────────────────────────────────
+  const sectionTotal = (section, m, y, field) =>
+    section.lines.reduce((sum, l) => sum + num(valueFor(l, m, y)?.[field]), 0)
+
+  const totals = useMemo(() => {
+    if (!budget) return null
+    let income = 0, expensesDue = 0, expensesPaid = 0
+    for (const s of budget.sections) {
+      for (const l of s.lines) {
+        for (const v of l.values || []) {
+          if (s.section_type === 'income') income += num(v.amount_due)
+          else { expensesDue += num(v.amount_due); expensesPaid += num(v.amount_paid) }
+        }
+      }
+    }
+    return { income, expensesDue, expensesPaid, leftOver: income - expensesDue - expensesPaid }
+  }, [budget])
+
+  const selectedEntity = budgetEntities.find(e => String(e.id) === String(entityId))
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
+        <div>
+          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Wallet size={20} /> Budgets
+          </h1>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '3px 0 0' }}>
+            Entity cash-flow budget — income vs supplier payments per month
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <select className="form-input" style={{ width: 'auto' }} value={entityId} onChange={e => setEntityId(e.target.value)}>
+            <option value="">Select entity…</option>
+            {budgetEntities.map(e => (
+              <option key={e.id} value={e.id}>{e.code} — {e.name}</option>
+            ))}
+          </select>
+          <select className="form-input" style={{ width: 'auto' }} value={month} onChange={e => setMonth(Number(e.target.value))}>
+            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+          </select>
+          <select className="form-input" style={{ width: 'auto' }} value={year} onChange={e => setYear(Number(e.target.value))}>
+            {[year - 1, year, year + 1].filter((v, i, a) => a.indexOf(v) === i).map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* No entity selected */}
+      {!entityId && (
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+          Select an entity to view its budget.
+        </div>
+      )}
+
+      {/* No budget permission for this entity */}
+      {entityId && noAccess && (
+        <div className="card" style={{ padding: 40, textAlign: 'center' }}>
+          <Lock size={26} style={{ color: 'var(--text-muted)', marginBottom: 10 }} />
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>No budget access</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            You don&apos;t have permission to view budgets for {selectedEntity?.code || 'this entity'}.
+          </div>
+        </div>
+      )}
+
+      {entityId && !noAccess && loading && (
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+      )}
+
+      {/* No budget yet for this period */}
+      {entityId && !noAccess && !loading && !budget && (
+        <div className="card" style={{ padding: 40, textAlign: 'center' }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            No budget for {selectedEntity?.code} — {MONTHS[Number(month) - 1]} {year}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+            Create one to start capturing income and supplier payments for this period.
+          </div>
+          <button className="btn-primary" onClick={handleCreate} disabled={creating}>
+            <Plus size={14} /> {creating ? 'Creating…' : 'Create Budget'}
+          </button>
+        </div>
+      )}
+
+      {/* Budget grid */}
+      {entityId && !noAccess && !loading && budget && (
+        <>
+          {/* Summary */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 18 }}>
+            {[
+              { label: 'Income', value: totals.income, color: 'var(--text-primary)' },
+              { label: 'Expenses — To Pay', value: totals.expensesDue, color: 'var(--text-primary)' },
+              { label: 'Expenses — Paid', value: totals.expensesPaid, color: 'var(--text-primary)' },
+              { label: 'Left Over', value: totals.leftOver, color: totals.leftOver < 0 ? '#dc2626' : '#16a34a' },
+            ].map(c => (
+              <div key={c.label} className="card" style={{ padding: '12px 16px' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{c.label}</div>
+                <div style={{ fontSize: 17, fontWeight: 700, marginTop: 4, color: c.color, whiteSpace: 'nowrap' }}>{formatCurrency(c.value)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Sections */}
+          {budget.sections.map(section => {
+            const isIncome = section.section_type === 'income'
+            return (
+              <div key={section.id} className="card" style={{ padding: 0, marginBottom: 16, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>{section.name}</span>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 9,
+                      background: isIncome ? 'rgba(22,163,74,0.12)' : 'var(--accent-subtle)',
+                      color: isIncome ? '#16a34a' : 'var(--accent)',
+                      textTransform: 'uppercase', letterSpacing: '0.04em',
+                    }}>
+                      {isIncome ? 'Income' : 'Expense'}
+                    </span>
+                  </div>
+                  <button onClick={() => handleDeleteSection(section)} title="Delete section"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'flex' }}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>Item</th>
+                        {months.map(({ month: m, year: y }) => (
+                          isIncome
+                            ? <th key={`${m}-${y}`} style={{ ...thStyle, textAlign: 'right' }}>{MONTHS[m - 1]} {y}</th>
+                            : [
+                                <th key={`${m}-${y}-due`} style={{ ...thStyle, textAlign: 'right' }}>{MONTHS[m - 1]} To Pay</th>,
+                                <th key={`${m}-${y}-paid`} style={{ ...thStyle, textAlign: 'right' }}>{MONTHS[m - 1]} Paid</th>,
+                              ]
+                        ))}
+                        <th style={{ ...thStyle, width: 36 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {section.lines.map(line => (
+                        <tr key={line.id} style={{ borderTop: '1px solid var(--border)' }}>
+                          <td style={{ ...tdStyle, fontWeight: 500, minWidth: 180 }}>{line.name}</td>
+                          {months.map(({ month: m, year: y }) => {
+                            const fields = isIncome ? ['amount_due'] : ['amount_due', 'amount_paid']
+                            return fields.map(field => (
+                              <td key={`${m}-${y}-${field}`} style={{ ...tdStyle, textAlign: 'right', width: 110 }}>
+                                <input
+                                  type="number" step="0.01"
+                                  value={cellValue(line, m, y, field)}
+                                  onChange={e => setCellEdits(p => ({ ...p, [cellKey(line.id, m, y, field)]: e.target.value }))}
+                                  onBlur={() => commitCell(line, m, y, field)}
+                                  onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+                                  placeholder="—"
+                                  style={cellInputStyle}
+                                />
+                              </td>
+                            ))
+                          })}
+                          <td style={{ ...tdStyle, textAlign: 'center' }}>
+                            <button onClick={() => handleDeleteLine(section, line)} title="Delete line"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'inline-flex' }}>
+                              <X size={12} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+
+                      {/* Section totals */}
+                      {section.lines.length > 0 && (
+                        <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-secondary)' }}>
+                          <td style={{ ...tdStyle, fontWeight: 700 }}>Total</td>
+                          {months.map(({ month: m, year: y }) => {
+                            const fields = isIncome ? ['amount_due'] : ['amount_due', 'amount_paid']
+                            return fields.map(field => (
+                              <td key={`${m}-${y}-${field}`} style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                                {formatCurrency(sectionTotal(section, m, y, field))}
+                              </td>
+                            ))
+                          })}
+                          <td style={tdStyle}></td>
+                        </tr>
+                      )}
+
+                      {/* Add line */}
+                      <tr style={{ borderTop: '1px solid var(--border)' }}>
+                        <td colSpan={1 + months.length * (isIncome ? 1 : 2) + 1} style={{ padding: '6px 10px' }}>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <input
+                              className="form-input"
+                              style={{ maxWidth: 320, fontSize: 12, padding: '5px 9px' }}
+                              placeholder="Add item (supplier, income source…)"
+                              value={newLine[section.id] || ''}
+                              onChange={e => setNewLine(p => ({ ...p, [section.id]: e.target.value }))}
+                              onKeyDown={e => { if (e.key === 'Enter') handleAddLine(section) }}
+                            />
+                            <button className="btn-ghost btn-sm" onClick={() => handleAddLine(section)} disabled={!(newLine[section.id] || '').trim()}>
+                              <Plus size={13} /> Add
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })}
+
+          {/* Add section + delete budget */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+            {newSection ? (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  className="form-input" autoFocus
+                  style={{ width: 240, fontSize: 12 }}
+                  placeholder="Section name"
+                  value={newSection.name}
+                  onChange={e => setNewSection(p => ({ ...p, name: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddSection() }}
+                />
+                <select className="form-input" style={{ width: 'auto', fontSize: 12 }} value={newSection.section_type}
+                  onChange={e => setNewSection(p => ({ ...p, section_type: e.target.value }))}>
+                  <option value="expense">Expense</option>
+                  <option value="income">Income</option>
+                </select>
+                <button className="btn-primary btn-sm" onClick={handleAddSection}>Add</button>
+                <button className="btn-ghost btn-sm" onClick={() => setNewSection(null)}>Cancel</button>
+              </div>
+            ) : (
+              <button className="btn-ghost btn-sm" onClick={() => setNewSection({ name: '', section_type: 'expense' })}>
+                <Plus size={13} /> Add Section
+              </button>
+            )}
+
+            <button className="btn-ghost btn-sm" style={{ color: '#dc2626' }} onClick={() => setConfirmDelete(budget)}>
+              <Trash2 size={13} /> Delete Budget
+            </button>
+          </div>
+        </>
+      )}
+
+      <DeleteModal
+        isOpen={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onDelete={handleDelete}
+        title="Delete Budget"
+        description={confirmDelete
+          ? `Delete the ${MONTHS[confirmDelete.period_month - 1]} ${confirmDelete.period_year} budget for ${selectedEntity?.code || ''}? All sections, lines and amounts will be removed.`
+          : ''}
+      />
+    </div>
+  )
+}
+
+const thStyle = {
+  padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 700,
+  color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em',
+  whiteSpace: 'nowrap',
+}
+
+const tdStyle = { padding: '4px 10px' }
+
+const cellInputStyle = {
+  width: 100, textAlign: 'right', fontSize: 12.5,
+  background: 'transparent', border: '1px solid transparent', borderRadius: 5,
+  padding: '4px 6px', color: 'var(--text-primary)', outline: 'none',
+}

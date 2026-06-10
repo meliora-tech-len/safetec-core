@@ -2143,3 +2143,100 @@ class ValueVerificationOut(BaseModel):
     verified2_by_date: Optional[str] = None
     verified3_by_initials: Optional[str] = None
     verified3_by_date: Optional[str] = None
+
+# ── Budgets ───────────────────────────────────────────────────────────────────
+
+class BudgetLineValueIn(BaseModel):
+    month: int
+    year: int
+    amount_due: Optional[Decimal] = None
+    amount_paid: Optional[Decimal] = None
+
+
+class BudgetLineValueOut(BaseModel):
+    id: int
+    month: int
+    year: int
+    amount_due: Optional[Decimal] = None
+    amount_paid: Optional[Decimal] = None
+
+    class Config:
+        from_attributes = True
+
+
+class BudgetLineCreate(BaseModel):
+    name: str
+    notes: Optional[str] = None
+
+
+class BudgetLineUpdate(BaseModel):
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class BudgetLineOut(BaseModel):
+    id: int
+    section_id: int
+    name: str
+    notes: Optional[str] = None
+    sort_order: int = 0
+    values: List[BudgetLineValueOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class BudgetSectionCreate(BaseModel):
+    name: str
+    section_type: str = "expense"  # income | expense
+
+
+class BudgetSectionUpdate(BaseModel):
+    name: Optional[str] = None
+    section_type: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class BudgetSectionOut(BaseModel):
+    id: int
+    budget_id: int
+    name: str
+    section_type: str
+    sort_order: int = 0
+    lines: List[BudgetLineOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class BudgetCreate(BaseModel):
+    entity_id: int
+    period_month: int
+    period_year: int
+    name: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class BudgetUpdate(BaseModel):
+    name: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class BudgetOut(BaseModel):
+    id: int
+    entity_id: int
+    name: Optional[str] = None
+    period_month: int
+    period_year: int
+    status: str
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class BudgetDetailOut(BudgetOut):
+    sections: List[BudgetSectionOut] = []

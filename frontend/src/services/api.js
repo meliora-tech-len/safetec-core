@@ -317,4 +317,18 @@ export function saveBlob(data, mime, filename) {
 // ── Feedback ──────────────────────────────────────────────────────────────────
 export const submitFeedback = (data) => api.post('/feedback/', data)
 
+// ── Budgets ───────────────────────────────────────────────────────────────────
+export const getBudgets = (params = {}) => api.get('/budgets', { params })
+export const getBudget = (id) => api.get(`/budgets/${id}`)
+export const createBudget = (data) => api.post('/budgets', data)
+export const updateBudget = (id, data) => api.patch(`/budgets/${id}`, data)
+export const deleteBudget = (id) => api.delete(`/budgets/${id}`)
+export const addBudgetSection = (budgetId, data) => api.post(`/budgets/${budgetId}/sections`, data)
+export const updateBudgetSection = (sectionId, data) => api.patch(`/budgets/sections/${sectionId}`, data)
+export const deleteBudgetSection = (sectionId) => api.delete(`/budgets/sections/${sectionId}`)
+export const addBudgetLine = (sectionId, data) => api.post(`/budgets/sections/${sectionId}/lines`, data)
+export const updateBudgetLine = (lineId, data) => api.patch(`/budgets/lines/${lineId}`, data)
+export const deleteBudgetLine = (lineId) => api.delete(`/budgets/lines/${lineId}`)
+export const upsertBudgetLineValue = (lineId, data) => api.put(`/budgets/lines/${lineId}/values`, data)
+
 export default api
