@@ -10,7 +10,7 @@ import {
   LayoutDashboard, Users, Building2, FileText,
   LogOut, Shield, Sun, Moon, Settings, ChevronDown, Truck,
   FileCheck, FilePlus, ShoppingCart, Package, MapPin, Fuel, BarChart2, Link2,
-  Key, Eye, EyeOff, X, UserCheck, LayoutTemplate, LayoutList,
+  Key, Eye, EyeOff, X, UserCheck, LayoutTemplate, LayoutList, Wallet,
 } from 'lucide-react'
 
 function hexToRgb(hex) {
@@ -38,6 +38,7 @@ const NAV = [
   { to: '/fleet/assignments', icon: Link2,           label: 'Assignments',  module: 'drivers' },
   { to: '/truck-loads',       icon: Package,         label: 'Truck Loads',  module: 'truck_loads' },
   { to: '/diesel',            icon: Fuel,            label: 'Diesel',       module: 'diesel' },
+  { to: '/budgets',           icon: Wallet,          label: 'Budgets',      module: 'budgets' },
   { to: '/audit',             icon: Shield,          label: 'Audit Log',    adminOnly: true },
 ]
 

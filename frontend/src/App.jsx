@@ -35,6 +35,7 @@ import SubcontractorProfilePage from './pages/SubcontractorProfilePage'
 import CustomersPage from './pages/CustomersPage'
 import InvoiceTemplatesPage from './pages/InvoiceTemplatesPage'
 import InvoiceTemplateFormPage from './pages/InvoiceTemplateFormPage'
+import BudgetsPage from './pages/BudgetsPage'
 import { isNoTruckEntity } from './utils/helpers'
 import './styles/globals.css'
 
@@ -138,6 +139,9 @@ export default function App() {
             <Route path="/statements/new" element={<StatementEditorPage />} />
             <Route path="/statements/:id" element={<StatementEditorPage />} />
             <Route path="/settings/diesel-rates" element={<TruckRoute><DieselRatesPage /></TruckRoute>} />
+
+            {/* Budgets — per-entity module permission enforced server-side */}
+            <Route path="/budgets" element={<BudgetsPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

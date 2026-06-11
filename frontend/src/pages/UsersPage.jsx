@@ -17,6 +17,7 @@ const ALL_MODULES = [
   { key: 'drivers',     label: 'Drivers & Assignments', description: 'Driver records & truck assignments' },
   { key: 'truck_loads', label: 'Truck Loads',           description: 'Truck load records & route management' },
   { key: 'diesel',      label: 'Diesel',                description: 'Diesel logs, consumption & rates' },
+  { key: 'budgets',     label: 'Budgets',               description: 'Entity cash-flow budgets — separate permission, not granted by default' },
 ]
 
 const TABS_USER = ['Details', 'Password', 'Permissions']
