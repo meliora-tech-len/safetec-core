@@ -44,6 +44,14 @@ function extractPOH(inv) {
   return ''
 }
 
+// True when an invoice came from a Tradekor PO import (Obhi/Safetec). The
+// importer stamps the notes with "PO Ref: POH…" and a header line item with the
+// POH reference, so either signal marks it apart from a manually-keyed Tradekor
+// invoice. Used to flag these rows in the statement picker.
+function isPoImport(inv) {
+  return /PO\s*Ref/i.test(inv?.notes || '') || !!extractPOH(inv)
+}
+
 // Mine name sits at the start of the header line item, before "POH"
 // (e.g. "ASSMANG  POH 10126050000191 - TDK/…" → "ASSMANG"). May be absent.
 function extractMine(inv) {
@@ -672,6 +680,7 @@ export default function StatementEditorPage() {
                         <th style={{ ...thStyle, width: 36 }} />
                         <th style={thStyle}>Date</th>
                         <th style={thStyle}>Invoice #</th>
+                        <th style={thStyle}>Type</th>
                         <th style={thStyle}>Status</th>
                         <th style={{ ...thStyle, textAlign: 'right' }}>Total (R)</th>
                       </tr>
@@ -686,6 +695,11 @@ export default function StatementEditorPage() {
                             </td>
                             <td style={{ ...tdStyle, fontSize: 13 }}>{fmtDateDot(inv.issue_date)}</td>
                             <td style={{ ...tdStyle, fontSize: 13, fontWeight: 500 }}>{inv.invoice_number}</td>
+                            <td style={{ ...tdStyle, fontSize: 12 }}>
+                              {isPoImport(inv)
+                                ? <span style={{ display: 'inline-block', padding: '1px 7px', borderRadius: 4, fontSize: 11, fontWeight: 600, color: '#92400e', background: 'rgba(245,158,11,0.18)' }}>PO</span>
+                                : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                            </td>
                             <td style={{ ...tdStyle, fontSize: 12, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{inv.status}</td>
                             <td style={{ ...tdStyle, fontSize: 13, textAlign: 'right', fontFamily: 'monospace' }}>{fmtAmt(inv.total)}</td>
                           </tr>
