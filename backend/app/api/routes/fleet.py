@@ -6,11 +6,12 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, CasualTruckAssignment, TruckLoad, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck, BusinessEntity
+from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, CasualTruckAssignment, TruckLoad, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck, BusinessEntity, TruckWash
 from app.schemas.schemas import (
     TruckCreate, TruckUpdate, TruckOut, FleetStats, TrailerCreate,
     PersonalVehicleCreate, PersonalVehicleUpdate, PersonalVehicleOut,
     TruckMonthlyExpensesBase, TruckMonthlyExpensesOut, LicenceAlertAckIn,
+    TruckWashCreate, TruckWashUpdate, TruckWashOut,
 )
 from app.services.audit import log_action
 
@@ -316,6 +317,105 @@ def list_truck_additional_loads(
         d["driver_name"] = f"{driver.first_name} {driver.last_name}".strip()
         result.append(d)
     return result
+
+
+# ── Truck washes (basic capture: description + registration + amount) ─────────
+
+@router.get("/trucks/{truck_id}/washes", response_model=List[TruckWashOut])
+def list_truck_washes(
+    truck_id: int,
+    year: int = Query(...),
+    month: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    truck = db.query(Truck).filter(Truck.id == truck_id).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found")
+    _check_entity_access(truck.entity_id, current_user)
+
+    return (
+        db.query(TruckWash)
+        .filter(
+            TruckWash.truck_id == truck_id,
+            TruckWash.period_year == year,
+            TruckWash.period_month == month,
+        )
+        .order_by(TruckWash.created_at.asc())
+        .all()
+    )
+
+
+@router.post("/trucks/{truck_id}/washes", response_model=TruckWashOut)
+def create_truck_wash(
+    truck_id: int,
+    payload: TruckWashCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    truck = db.query(Truck).filter(Truck.id == truck_id).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found")
+    _check_entity_access(truck.entity_id, current_user)
+
+    wash = TruckWash(
+        truck_id=truck_id,
+        entity_id=truck.entity_id,
+        description=payload.description,
+        vehicle_registration=payload.vehicle_registration or truck.registration,
+        amount=payload.amount,
+        period_month=payload.period_month,
+        period_year=payload.period_year,
+        notes=payload.notes,
+    )
+    db.add(wash)
+    db.commit()
+    db.refresh(wash)
+    return wash
+
+
+@router.put("/trucks/{truck_id}/washes/{wash_id}", response_model=TruckWashOut)
+def update_truck_wash(
+    truck_id: int,
+    wash_id: int,
+    payload: TruckWashUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    truck = db.query(Truck).filter(Truck.id == truck_id).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found")
+    _check_entity_access(truck.entity_id, current_user)
+
+    wash = db.query(TruckWash).filter(TruckWash.id == wash_id, TruckWash.truck_id == truck_id).first()
+    if not wash:
+        raise HTTPException(status_code=404, detail="Wash not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(wash, field, value)
+    db.commit()
+    db.refresh(wash)
+    return wash
+
+
+@router.delete("/trucks/{truck_id}/washes/{wash_id}")
+def delete_truck_wash(
+    truck_id: int,
+    wash_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    truck = db.query(Truck).filter(Truck.id == truck_id).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found")
+    _check_entity_access(truck.entity_id, current_user)
+
+    wash = db.query(TruckWash).filter(TruckWash.id == wash_id, TruckWash.truck_id == truck_id).first()
+    if not wash:
+        raise HTTPException(status_code=404, detail="Wash not found")
+    db.delete(wash)
+    db.commit()
+    return {"detail": "Wash deleted"}
 
 
 # ── Food payments for a truck (cross-driver view) ─────────────────────────────

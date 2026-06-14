@@ -806,6 +806,23 @@ class AdditionalLoadRate(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class TruckWash(Base):
+    """Basic truck-wash capture (description + registration + amount), scoped per
+    truck and period. Capture-only for now — no costing/payroll effect."""
+    __tablename__ = "truck_washes"
+
+    id                   = Column(Integer, primary_key=True, index=True)
+    truck_id             = Column(Integer, ForeignKey("trucks.id", ondelete="CASCADE"), nullable=False)
+    entity_id            = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    description          = Column(String(200), nullable=False)
+    vehicle_registration = Column(String(50), nullable=True)
+    amount               = Column(Numeric(12, 2), nullable=False)
+    period_month         = Column(Integer, nullable=False)
+    period_year          = Column(Integer, nullable=False)
+    notes                = Column(String(500), nullable=True)
+    created_at           = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class DriverFoodPayment(Base):
     __tablename__ = "driver_food_payments"
 

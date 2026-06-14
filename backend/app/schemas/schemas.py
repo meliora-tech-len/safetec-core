@@ -1167,6 +1167,34 @@ class AdditionalLoadRateOut(AdditionalLoadRateCreate):
         from_attributes = True
 
 
+# ── Truck Washes (basic capture: description + registration + amount) ─────────
+
+class TruckWashCreate(BaseModel):
+    description: str
+    vehicle_registration: Optional[str] = None
+    amount: Decimal
+    period_month: int
+    period_year: int
+    notes: Optional[str] = None
+
+
+class TruckWashUpdate(BaseModel):
+    description: Optional[str] = None
+    vehicle_registration: Optional[str] = None
+    amount: Optional[Decimal] = None
+    notes: Optional[str] = None
+
+
+class TruckWashOut(TruckWashCreate):
+    id: int
+    truck_id: int
+    entity_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class DriverFoodPaymentCreate(BaseModel):
     payment_date: datetime
     amount: Decimal

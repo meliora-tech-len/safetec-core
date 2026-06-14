@@ -196,6 +196,14 @@ export const getTruckAdditionalLoads = (truckId, params = {}) =>
   api.get(`/fleet/trucks/${truckId}/additional-loads`, { params })
 export const getTruckFoodPayments = (truckId, params = {}) =>
   api.get(`/fleet/trucks/${truckId}/food-payments`, { params })
+export const getTruckWashes = (truckId, params = {}) =>
+  api.get(`/fleet/trucks/${truckId}/washes`, { params })
+export const addTruckWash = (truckId, data) =>
+  api.post(`/fleet/trucks/${truckId}/washes`, data)
+export const updateTruckWash = (truckId, washId, data) =>
+  api.put(`/fleet/trucks/${truckId}/washes/${washId}`, data)
+export const deleteTruckWash = (truckId, washId) =>
+  api.delete(`/fleet/trucks/${truckId}/washes/${washId}`)
 export const deleteDriverFoodPayment = (driverId, year, month, paymentId) =>
   api.delete(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}`)
 
