@@ -842,6 +842,9 @@ def import_diesel(
         result.rows.append(rr)
 
     result.unmatched_registrations = sorted(unmatched_regs)
+    # Present the imported rows sorted by registration so the preview/result
+    # lists trucks alphabetically rather than in raw file order.
+    result.rows.sort(key=lambda r: (r.registration or "").strip().upper())
 
     if payload.commit and result.created:
         log_action(

@@ -60,6 +60,17 @@ def _invoice_desc(line):
     return " - ".join(parts)
 
 
+def _desc_text(line):
+    """Description for the dedicated description column. The invoice number now
+    has its own column, so fall back to the line date only (not the invoice #)
+    when there is no free-text description."""
+    if line.description:
+        return line.description
+    if line.line_date:
+        return format_date(line.line_date)
+    return ""
+
+
 # ── PDF ───────────────────────────────────────────────────────────────────────
 
 def generate_statement_pdf(stmt, entity, customer) -> bytes:
@@ -202,9 +213,10 @@ def generate_statement_pdf(stmt, entity, customer) -> bytes:
     story.append(Spacer(1, 5*mm))
 
     # ── Lines table ───────────────────────────────────────────────────────────
-    col_widths = [98*mm, 26*mm, 30*mm, 36*mm]
+    col_widths = [80*mm, 24*mm, 22*mm, 28*mm, 36*mm]
     table_rows = [[
         Paragraph("DESCRIPTION", s_col_header),
+        Paragraph("INVOICE #",   s_col_hdr_c),
         Paragraph("DATE PAID",   s_col_hdr_c),
         Paragraph("PAID",        s_col_hdr_r),
         Paragraph("OUTSTANDING", s_col_hdr_r),
@@ -216,13 +228,15 @@ def generate_statement_pdf(stmt, entity, customer) -> bytes:
         if amt < 0:
             table_rows.append([
                 Paragraph(line.description or "", s_line_desc),
+                Paragraph(line.invoice_number or "", s_line_ctr),
                 Paragraph(format_date(line.line_date) if line.line_date else "", s_line_ctr),
                 Paragraph(format_currency(amt), s_pay_num),
                 Paragraph("", s_line_num),
             ])
         else:
             table_rows.append([
-                Paragraph(_invoice_desc(line), s_line_desc),
+                Paragraph(_desc_text(line), s_line_desc),
+                Paragraph(line.invoice_number or "", s_line_ctr),
                 Paragraph("", s_line_ctr),
                 Paragraph("", s_line_num),
                 Paragraph(format_currency(amt), s_line_num),
@@ -230,7 +244,7 @@ def generate_statement_pdf(stmt, entity, customer) -> bytes:
         item_row_idxs.append(idx)
 
     while len(table_rows) < 9:
-        table_rows.append(["", "", "", ""])
+        table_rows.append(["", "", "", "", ""])
 
     items_table = Table(table_rows, colWidths=col_widths)
     row_styles = [
@@ -325,6 +339,7 @@ def generate_statement_excel(stmt, entity, customer) -> bytes:
     ws.column_dimensions["B"].width = 16
     ws.column_dimensions["C"].width = 16
     ws.column_dimensions["D"].width = 16
+    ws.column_dimensions["E"].width = 16
 
     row = 1
 
@@ -371,39 +386,41 @@ def generate_statement_excel(stmt, entity, customer) -> bytes:
         put(row, 1, f"VAT NO: {customer.vat_number}"); row += 1
 
     # Date + amount due to the right of the customer name
-    put(name_row, 3, "Statement Date", font=Font(bold=True, color="667085"), align=Alignment(horizontal="right"))
-    put(name_row, 4, format_date(stmt.statement_date), align=Alignment(horizontal="right"))
-    put(name_row + 1, 3, "Amount Due", font=Font(bold=True, color="667085"), align=Alignment(horizontal="right"))
-    put(name_row + 1, 4, float(amount_due), align=Alignment(horizontal="right"), fmt=money_fmt)
+    put(name_row, 4, "Statement Date", font=Font(bold=True, color="667085"), align=Alignment(horizontal="right"))
+    put(name_row, 5, format_date(stmt.statement_date), align=Alignment(horizontal="right"))
+    put(name_row + 1, 4, "Amount Due", font=Font(bold=True, color="667085"), align=Alignment(horizontal="right"))
+    put(name_row + 1, 5, float(amount_due), align=Alignment(horizontal="right"), fmt=money_fmt)
 
     row += 1
     # Header row (brand colour)
-    headers = ["DESCRIPTION", "DATE PAID", "PAID", "OUTSTANDING"]
+    headers = ["DESCRIPTION", "INVOICE #", "DATE PAID", "PAID", "OUTSTANDING"]
     for c, h in enumerate(headers, start=1):
         put(row, c, h, font=white_bold, fill=brand_fill, bordered=True,
-            align=Alignment(horizontal="left" if c == 1 else ("center" if c == 2 else "right")))
+            align=Alignment(horizontal="left" if c == 1 else ("center" if c in (2, 3) else "right")))
     row += 1
 
     for line in lines:
         amt = float(line.amount or 0)
         if amt < 0:
             put(row, 1, line.description or "", bordered=True)
-            put(row, 2, format_date(line.line_date) if line.line_date else "", align=Alignment(horizontal="center"), bordered=True)
-            put(row, 3, amt, fmt=money_fmt, align=Alignment(horizontal="right"), bordered=True)
-            put(row, 4, None, bordered=True)
-        else:
-            put(row, 1, _invoice_desc(line), bordered=True)
-            put(row, 2, None, bordered=True)
-            put(row, 3, None, bordered=True)
+            put(row, 2, line.invoice_number or "", align=Alignment(horizontal="center"), bordered=True)
+            put(row, 3, format_date(line.line_date) if line.line_date else "", align=Alignment(horizontal="center"), bordered=True)
             put(row, 4, amt, fmt=money_fmt, align=Alignment(horizontal="right"), bordered=True)
+            put(row, 5, None, bordered=True)
+        else:
+            put(row, 1, _desc_text(line), bordered=True)
+            put(row, 2, line.invoice_number or "", align=Alignment(horizontal="center"), bordered=True)
+            put(row, 3, None, bordered=True)
+            put(row, 4, None, bordered=True)
+            put(row, 5, amt, fmt=money_fmt, align=Alignment(horizontal="right"), bordered=True)
         row += 1
 
     # Totals
-    put(row, 2, "PAID", font=Font(bold=True), align=Alignment(horizontal="right"))
-    put(row, 3, float(paid), fmt=money_fmt, font=Font(bold=True), align=Alignment(horizontal="right"))
+    put(row, 3, "PAID", font=Font(bold=True), align=Alignment(horizontal="right"))
+    put(row, 4, float(paid), fmt=money_fmt, font=Font(bold=True), align=Alignment(horizontal="right"))
     row += 1
-    put(row, 2, "AMOUNT DUE", font=white_bold, fill=grand_fill, align=Alignment(horizontal="right"))
-    put(row, 3, float(amount_due), fmt=money_fmt, font=white_bold, fill=grand_fill, align=Alignment(horizontal="right"))
+    put(row, 3, "AMOUNT DUE", font=white_bold, fill=grand_fill, align=Alignment(horizontal="right"))
+    put(row, 4, float(amount_due), fmt=money_fmt, font=white_bold, fill=grand_fill, align=Alignment(horizontal="right"))
     row += 2
 
     # Banking details
