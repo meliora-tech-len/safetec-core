@@ -111,7 +111,7 @@ export default function SubcontractorsPage() {
         <div className="search-bar" style={{ flex: 1, maxWidth: 320 }}>
           <Search size={14} />
           <input
-            placeholder="Search subcontractors..."
+            placeholder="Search name or truck reg..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />

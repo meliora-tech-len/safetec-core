@@ -56,11 +56,24 @@ def list_subcontractors(
 
     if search:
         term = f"%{search}%"
+        # Also match a subcontractor by any of its trucks' registration (real or
+        # temp plate) — users often know the reg but not the subbie's name.
+        truck_match = (
+            db.query(Truck.subcontractor_id)
+            .filter(
+                Truck.subcontractor_id.isnot(None),
+                or_(
+                    Truck.registration.ilike(term),
+                    Truck.temp_registration.ilike(term),
+                ),
+            )
+        )
         query = query.filter(or_(
             Subcontractor.name.ilike(term),
             Subcontractor.trading_name.ilike(term),
             Subcontractor.contact_person.ilike(term),
             Subcontractor.email.ilike(term),
+            Subcontractor.id.in_(truck_match),
         ))
 
     return query.order_by(Subcontractor.name).offset(skip).limit(limit).all()

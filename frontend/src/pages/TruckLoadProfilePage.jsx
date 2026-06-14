@@ -79,6 +79,13 @@ function TruckSwitcher({ trucks, currentId, currentLabel, entities, onSelect }) 
 
   const pick = (t) => { setOpen(false); setQuery(''); if (String(t.id) !== String(currentId)) onSelect(t.id) }
 
+  // First truck in the (sorted, grouped) result list — what Enter should select.
+  const firstMatch = groups[0]?.[1]?.[0]
+  const onSearchKey = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); if (firstMatch) pick(firstMatch) }
+    else if (e.key === 'Escape') { setOpen(false); setQuery('') }
+  }
+
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button
@@ -101,7 +108,7 @@ function TruckSwitcher({ trucks, currentId, currentLabel, entities, onSelect }) 
         }}>
           <div className="search-bar" style={{ margin: 8 }}>
             <Search size={14} />
-            <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="Search reg, fleet #, make…" />
+            <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)} onKeyDown={onSearchKey} placeholder="Search reg, fleet #, make…" />
           </div>
           <div style={{ overflowY: 'auto', padding: '0 4px 6px' }}>
             {groups.length === 0 && (
@@ -496,8 +503,8 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
   // Per-line verification — native DieselFillUp verification, shared with the
   // standalone Diesel module (verify once, reflected in both views).
   const { user: dieselUser, isAdmin: dieselIsAdmin } = useAuth()
-  const handleVerifyFillup   = async (f) => { try { await verifyDieselFillUp(f.id); fetchFillups() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
-  const handleFinalizeFillup = async (f) => { try { await finalizeDieselFillUp(f.id); fetchFillups() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
+  const handleVerifyFillup   = async (f, intent) => { try { await verifyDieselFillUp(f.id, intent); fetchFillups() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const handleFinalizeFillup = async (f, intent) => { try { await finalizeDieselFillUp(f.id, intent); fetchFillups() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
 
   const doAdd = async () => {
     setSaving(true)
@@ -921,8 +928,8 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
       .catch(() => setAlVerif({}))
   }, [alPrefix])
   useEffect(() => { fetchAlVerif() }, [fetchAlVerif])
-  const handleVerifyAl   = async (t) => { try { await verifyValue(t, truck?.entity_id); fetchAlVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
-  const handleFinalizeAl = async (t) => { try { await finalizeValue(t, truck?.entity_id); fetchAlVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
+  const handleVerifyAl   = async (t, intent) => { try { await verifyValue(t, truck?.entity_id, intent); fetchAlVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const handleFinalizeAl = async (t, intent) => { try { await finalizeValue(t, truck?.entity_id, intent); fetchAlVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
 
   useEffect(() => {
     if (!isSafetec) { setRates([]); return }
@@ -1182,8 +1189,8 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
                     <td onClick={ev => ev.stopPropagation()}>
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                         <VerifyBadge item={alVerif[alTarget(e.id)] || {}}
-                          onVerify={() => handleVerifyAl(alTarget(e.id))}
-                          onFinalize={() => handleFinalizeAl(alTarget(e.id))}
+                          onVerify={(_i, intent) => handleVerifyAl(alTarget(e.id), intent)}
+                          onFinalize={(_i, intent) => handleFinalizeAl(alTarget(e.id), intent)}
                           currentUserId={alUser?.id} isAdmin={alIsAdmin} />
                         <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(e)}>
                           <Trash2 size={13} />
@@ -1744,8 +1751,8 @@ function ProfitSheetSection({ truck, year, month, summary }) {
       .catch(() => setPVerif({}))
   }, [profitPrefix])
   useEffect(() => { fetchPVerif() }, [fetchPVerif])
-  const pVerify   = useCallback(async (t) => { try { await verifyValue(t, truck?.entity_id); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }, [truck?.entity_id, fetchPVerif])
-  const pFinalize = useCallback(async (t) => { try { await finalizeValue(t, truck?.entity_id); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }, [truck?.entity_id, fetchPVerif])
+  const pVerify   = useCallback(async (t, intent) => { try { await verifyValue(t, truck?.entity_id, intent); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }, [truck?.entity_id, fetchPVerif])
+  const pFinalize = useCallback(async (t, intent) => { try { await finalizeValue(t, truck?.entity_id, intent); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }, [truck?.entity_id, fetchPVerif])
   // Wrap any profit-sheet value; `field` is the stable sub-key. Memoised so its
   // identity is stable across keystrokes — otherwise every edit remounts the
   // wrapped <input>, dropping focus after a single character.
@@ -2126,8 +2133,8 @@ export default function TruckLoadProfilePage() {
       .catch(() => setLoadVerif({}))
   }, [loadsVerifPrefix])
   useEffect(() => { fetchLoadVerif() }, [fetchLoadVerif])
-  const handleVerifyLoad   = async (target) => { try { await verifyValue(target, truck?.entity_id); fetchLoadVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
-  const handleFinalizeLoad = async (target) => { try { await finalizeValue(target, truck?.entity_id); fetchLoadVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
+  const handleVerifyLoad   = async (target, intent) => { try { await verifyValue(target, truck?.entity_id, intent); fetchLoadVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const handleFinalizeLoad = async (target, intent) => { try { await finalizeValue(target, truck?.entity_id, intent); fetchLoadVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
 
   useEffect(() => {
     if (editingId && firstInputRef.current) firstInputRef.current.focus()
@@ -2863,8 +2870,8 @@ export default function TruckLoadProfilePage() {
                           onClick={e => handleDelete(l, e)}><Trash2 size={13} /></button>
                         <div style={{ marginTop: 4 }}>
                           <VerifyBadge item={loadVerif[loadVerifTarget(l.id)] || {}}
-                            onVerify={() => handleVerifyLoad(loadVerifTarget(l.id))}
-                            onFinalize={() => handleFinalizeLoad(loadVerifTarget(l.id))}
+                            onVerify={(_i, intent) => handleVerifyLoad(loadVerifTarget(l.id), intent)}
+                            onFinalize={(_i, intent) => handleFinalizeLoad(loadVerifTarget(l.id), intent)}
                             currentUserId={user?.id} isAdmin={isAdmin} />
                         </div>
                       </td>
