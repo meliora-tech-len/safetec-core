@@ -83,11 +83,17 @@ def verify_value(
 ):
     _check_entity_access(payload.entity_id, current_user)
     row = _get_or_create(db, payload.target, payload.entity_id)
+    before = (row.verified_by, row.verified2_by)
     apply_verify_step(row, current_user, is_admin=(current_user.role == "admin"))
+    after = (row.verified_by, row.verified2_by)
+    # apply_verify_step toggles: log whether a tick was added or removed
+    added = (after[0] and not before[0]) or (after[1] and not before[1])
     log_action(
-        db, "value.verified", user_id=current_user.id,
+        db, "value.verified" if added else "value.unverified",
+        user_id=current_user.id,
         entity_id=row.entity_id, resource_type="value_verification",
-        resource_id=row.id, description=f"Verified value {row.target}",
+        resource_id=row.id,
+        description=f"{'Verified' if added else 'Removed verification on'} value {row.target}",
     )
     db.commit()
     db.refresh(row)
@@ -104,10 +110,13 @@ def finalize_value(
     row = _get_or_create(db, payload.target, payload.entity_id)
     # require_step1=False: the owner may lock a value on her own, no prior user step.
     apply_finalize_step(row, current_user, is_admin=(current_user.role == "admin"), require_step1=False)
+    locked = bool(row.verified3_by)
     log_action(
-        db, "value.finalized", user_id=current_user.id,
+        db, "value.finalized" if locked else "value.unfinalized",
+        user_id=current_user.id,
         entity_id=row.entity_id, resource_type="value_verification",
-        resource_id=row.id, description=f"Final lock on value {row.target}",
+        resource_id=row.id,
+        description=f"{'Final lock on' if locked else 'Removed final lock on'} value {row.target}",
     )
     db.commit()
     db.refresh(row)

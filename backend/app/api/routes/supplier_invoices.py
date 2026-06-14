@@ -152,6 +152,50 @@ def _recalc_invoice_total(db: Session, invoice: SupplierInvoice) -> None:
     db.refresh(invoice)
 
 
+def _json_safe(v):
+    """Make a value storable in the audit log's JSON columns."""
+    if isinstance(v, Decimal):
+        return str(v)
+    if isinstance(v, (datetime, date_type)):
+        return v.isoformat()
+    return v
+
+
+def _values_equal(current, new) -> bool:
+    if isinstance(current, Decimal) or isinstance(new, Decimal):
+        try:
+            return Decimal(str(current)) == Decimal(str(new))
+        except Exception:
+            return False
+    if isinstance(current, datetime) and isinstance(new, datetime):
+        a = current if current.tzinfo else current.replace(tzinfo=timezone.utc)
+        b = new if new.tzinfo else new.replace(tzinfo=timezone.utc)
+        return a == b
+    return current == new
+
+
+def _changed_values(obj, updates: dict) -> tuple[dict, dict]:
+    """Field-level diff of requested `updates` against the current row,
+    returned as (old_values, new_values) for the audit log."""
+    old, new = {}, {}
+    for field, value in updates.items():
+        current = getattr(obj, field, None)
+        if not _values_equal(current, value):
+            old[field] = _json_safe(current)
+            new[field] = _json_safe(value)
+    return old, new
+
+
+_LINE_FIELDS = (
+    "item_code", "item_description", "quantity", "unit",
+    "amount_excl_vat", "amount_incl_vat", "line_date", "sort_order",
+)
+
+
+def _line_snapshot(li: SupplierInvoiceLineItem) -> dict:
+    return {f: _json_safe(getattr(li, f)) for f in _LINE_FIELDS}
+
+
 def _auto_create_diesel_fillup(
     db: Session,
     supplier_invoice: SupplierInvoice,
@@ -681,6 +725,8 @@ def update_supplier_invoice(
             updates["statement_month"] = new_date.month
             updates["statement_year"] = new_date.year
 
+    old_values, new_values = _changed_values(inv, updates)
+
     for field, value in updates.items():
         setattr(inv, field, value)
 
@@ -692,6 +738,7 @@ def update_supplier_invoice(
         db, "supplier_invoice.updated", user_id=current_user.id,
         entity_id=inv.entity_id, resource_type="supplier_invoice",
         resource_id=invoice_id, description=f"Updated invoice {inv.invoice_number}",
+        old_values=old_values or None, new_values=new_values or None,
     )
     db.commit()
     db.refresh(inv)
@@ -736,11 +783,22 @@ def verify_supplier_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(inv.entity_id, current_user)
 
+    before = (inv.verified_by, inv.verified2_by)
     apply_verify_step(inv, current_user, is_admin=(current_user.role == "admin"))
+    after = (inv.verified_by, inv.verified2_by)
+    # apply_verify_step toggles: log which tick was added or removed
+    if after[0] and not before[0]:
+        action, desc = "supplier_invoice.verified", f"Verified supplier invoice {inv.invoice_number} (step 1)"
+    elif after[1] and not before[1]:
+        action, desc = "supplier_invoice.verified", f"Verified supplier invoice {inv.invoice_number} (step 2)"
+    elif before[1] and not after[1]:
+        action, desc = "supplier_invoice.unverified", f"Removed step-2 verification on supplier invoice {inv.invoice_number}"
+    else:
+        action, desc = "supplier_invoice.unverified", f"Removed step-1 verification on supplier invoice {inv.invoice_number}"
     log_action(
-        db, "supplier_invoice.verified", user_id=current_user.id,
+        db, action, user_id=current_user.id,
         entity_id=inv.entity_id, resource_type="supplier_invoice",
-        resource_id=invoice_id, description=f"Verified supplier invoice {inv.invoice_number}",
+        resource_id=invoice_id, description=desc,
     )
     db.commit()
     db.refresh(inv)
@@ -760,11 +818,15 @@ def finalize_supplier_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(inv.entity_id, current_user)
     apply_finalize_step(inv, current_user, is_admin=(current_user.role == "admin"))
+    # apply_finalize_step toggles: verified3_by set afterwards = locked, cleared = unlocked
+    locked = bool(inv.verified3_by)
     log_action(
-        db, "supplier_invoice.finalized", user_id=current_user.id,
+        db, "supplier_invoice.finalized" if locked else "supplier_invoice.unfinalized",
+        user_id=current_user.id,
         entity_id=inv.entity_id, resource_type="supplier_invoice",
         resource_id=invoice_id,
-        description=f"Applied final lock on supplier invoice {inv.invoice_number}",
+        description=(f"Applied final lock on supplier invoice {inv.invoice_number}" if locked
+                     else f"Removed final lock on supplier invoice {inv.invoice_number}"),
     )
     db.commit()
     db.refresh(inv)
@@ -880,6 +942,7 @@ def add_line_item(
     _check_entity_access(inv.entity_id, current_user)
     ensure_not_locked(inv)
 
+    total_before = inv.amount
     li = SupplierInvoiceLineItem(invoice_id=invoice_id, **data.model_dump())
     db.add(li)
     db.flush()
@@ -887,6 +950,21 @@ def add_line_item(
         _link_fillup_from_slip(db, inv, data.item_code)
     _maybe_create_line_fillup(db, inv, li, current_user.id)
     _recalc_invoice_total(db, inv)
+    log_action(
+        db, "supplier_invoice.line_added", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice", resource_id=inv.id,
+        description=(
+            f"Added line {li.unit or li.item_description or f'#{li.id}'} "
+            f"(R{li.amount_incl_vat}) to invoice {inv.invoice_number}: "
+            f"total R{total_before} → R{inv.amount}"
+        ),
+        new_values={
+            "line_id": li.id, **_line_snapshot(li),
+            "invoice_amount_before": _json_safe(total_before),
+            "invoice_amount_after": _json_safe(inv.amount),
+        },
+    )
+    db.commit()
     db.refresh(li)
     return SupplierInvoiceLineItemOut.model_validate(li)
 
@@ -908,13 +986,36 @@ def update_line_item(
     _check_entity_access(li.invoice.entity_id, current_user)
     ensure_not_locked(li.invoice)
 
-    for k, v in data.model_dump(exclude_unset=True).items():
+    updates = data.model_dump(exclude_unset=True)
+    old_values, new_values = _changed_values(li, updates)
+    inv = li.invoice
+    total_before = inv.amount
+
+    for k, v in updates.items():
         setattr(li, k, v)
     db.flush()
     if data.item_code:
-        _link_fillup_from_slip(db, li.invoice, data.item_code)
-    _maybe_create_line_fillup(db, li.invoice, li, current_user.id)
-    _recalc_invoice_total(db, li.invoice)
+        _link_fillup_from_slip(db, inv, data.item_code)
+    _maybe_create_line_fillup(db, inv, li, current_user.id)
+    _recalc_invoice_total(db, inv)
+    # The edit form re-PUTs every line with re-indexed sort_order on each save —
+    # only log when something other than sort_order actually changed.
+    if any(k != "sort_order" for k in new_values):
+        log_action(
+            db, "supplier_invoice.line_updated", user_id=current_user.id,
+            entity_id=inv.entity_id, resource_type="supplier_invoice", resource_id=inv.id,
+            description=(
+                f"Updated line {li.unit or li.item_description or f'#{li.id}'} "
+                f"on invoice {inv.invoice_number}: total R{total_before} → R{inv.amount}"
+            ),
+            old_values={"line_id": li.id, **old_values},
+            new_values={
+                "line_id": li.id, **new_values,
+                "invoice_amount_before": _json_safe(total_before),
+                "invoice_amount_after": _json_safe(inv.amount),
+            },
+        )
+        db.commit()
     db.refresh(li)
     return SupplierInvoiceLineItemOut.model_validate(li)
 
@@ -935,9 +1036,26 @@ def delete_line_item(
     inv = li.invoice
     _check_entity_access(inv.entity_id, current_user)
     ensure_not_locked(inv)
+    total_before = inv.amount
+    snapshot = {"line_id": li.id, **_line_snapshot(li)}
+    label = li.unit or li.item_description or f"#{li.id}"
     db.delete(li)
     db.flush()
     _recalc_invoice_total(db, inv)
+    log_action(
+        db, "supplier_invoice.line_deleted", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice", resource_id=inv.id,
+        description=(
+            f"Deleted line {label} (R{snapshot['amount_incl_vat']}) "
+            f"from invoice {inv.invoice_number}: total R{total_before} → R{inv.amount}"
+        ),
+        old_values={
+            **snapshot,
+            "invoice_amount_before": _json_safe(total_before),
+            "invoice_amount_after": _json_safe(inv.amount),
+        },
+    )
+    db.commit()
 
 
 def _archive_orphaned_placeholder(db: Session, old_inv_id, new_inv_id: int, user_id: int) -> bool:

@@ -28,6 +28,25 @@ const ACTION_LABELS = {
   'supplier.created': 'Supplier Added',
   'supplier.updated': 'Supplier Updated',
   'supplier.deleted': 'Supplier Removed',
+  // Supplier invoices
+  'supplier_invoice.created': 'Supp. Invoice Created',
+  'supplier_invoice.updated': 'Supp. Invoice Updated',
+  'supplier_invoice.deleted': 'Supp. Invoice Deleted',
+  'supplier_invoice.archived': 'Supp. Invoice Archived',
+  'supplier_invoice.auto_created': 'Supp. Invoice Auto-Created',
+  'supplier_invoice.statement_paid': 'Statement Paid',
+  'supplier_invoice.verified': 'Invoice Verified',
+  'supplier_invoice.unverified': 'Verification Removed',
+  'supplier_invoice.finalized': 'Final Lock Applied',
+  'supplier_invoice.unfinalized': 'Final Lock Removed',
+  'supplier_invoice.line_added': 'Invoice Line Added',
+  'supplier_invoice.line_updated': 'Invoice Line Updated',
+  'supplier_invoice.line_deleted': 'Invoice Line Deleted',
+  // Value verifications (costing-page ticks)
+  'value.verified': 'Value Verified',
+  'value.unverified': 'Value Verification Removed',
+  'value.finalized': 'Value Final Lock',
+  'value.unfinalized': 'Value Lock Removed',
   // Users
   'user.created': 'User Created',
   'user.updated': 'User Updated',
@@ -60,6 +79,8 @@ const ACTION_COLORS = {
   'user.reactivated': 'var(--success)',
   'role.created': 'var(--success)',
   'setting.created': 'var(--success)',
+  'supplier_invoice.created': 'var(--success)',
+  'supplier_invoice.line_added': 'var(--success)',
   // red
   'invoice.cancelled': 'var(--danger)',
   'supplier.deleted': 'var(--danger)',
@@ -67,6 +88,12 @@ const ACTION_COLORS = {
   'entity.archived': 'var(--danger)',
   'role.deleted': 'var(--danger)',
   'setting.deleted': 'var(--danger)',
+  'supplier_invoice.deleted': 'var(--danger)',
+  'supplier_invoice.line_deleted': 'var(--danger)',
+  'supplier_invoice.unverified': 'var(--danger)',
+  'supplier_invoice.unfinalized': 'var(--danger)',
+  'value.unverified': 'var(--danger)',
+  'value.unfinalized': 'var(--danger)',
   // accent / blue
   'auth.login': 'var(--accent)',
   'invoice.emailed': 'var(--accent)',
@@ -79,13 +106,22 @@ const ACTION_COLORS = {
   'user.permissions_updated': '#f59e0b',
   'setting.updated': '#f59e0b',
   'entity.logo_uploaded': '#f59e0b',
+  'supplier_invoice.updated': '#f59e0b',
+  'supplier_invoice.line_updated': '#f59e0b',
+  // green-ish locks
+  'supplier_invoice.verified': 'var(--success)',
+  'supplier_invoice.finalized': 'var(--success)',
+  'value.verified': 'var(--success)',
+  'value.finalized': 'var(--success)',
 }
 
 const ACTION_GROUPS = [
   { label: 'All Actions', value: '' },
   { label: 'Logins', value: 'auth' },
   { label: 'Invoices & Quotes', value: 'invoice' },
+  { label: 'Supplier Invoices', value: 'supplier_invoice' },
   { label: 'Suppliers', value: 'supplier' },
+  { label: 'Value Verifications', value: 'value' },
   { label: 'Users', value: 'user' },
   { label: 'Entities', value: 'entity' },
   { label: 'Settings & Roles', value: 'setting' },
@@ -98,6 +134,34 @@ const RESOURCE_TYPES = [
   { label: 'Users', value: 'user' },
   { label: 'Entities', value: 'entity' },
 ]
+
+const fmtDiffVal = (v) => {
+  if (v === null || v === undefined || v === '') return '—'
+  if (typeof v === 'boolean') return v ? 'yes' : 'no'
+  return String(v)
+}
+
+/** Compact field-level old → new view for logs that carry value diffs. */
+function DiffView({ oldV, newV }) {
+  const keys = [...new Set([...Object.keys(oldV || {}), ...Object.keys(newV || {})])]
+  if (keys.length === 0) return null
+  return (
+    <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {keys.map(k => {
+        const o = oldV ? oldV[k] : undefined
+        const n = newV ? newV[k] : undefined
+        return (
+          <div key={k} style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            <span style={{ fontWeight: 600 }}>{k}</span>:{' '}
+            {o !== undefined && <span style={{ color: 'var(--danger)' }}>{fmtDiffVal(o)}</span>}
+            {o !== undefined && n !== undefined && ' → '}
+            {n !== undefined && <span style={{ color: 'var(--success)' }}>{fmtDiffVal(n)}</span>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 export default function AuditPage() {
   const { isAdmin } = useAuth()
@@ -281,7 +345,17 @@ export default function AuditPage() {
                 <td style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
                   {log.entity_id ? (entityMap[log.entity_id] || `#${log.entity_id}`) : '—'}
                 </td>
-                <td style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 380 }}>{log.description || '—'}</td>
+                <td style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 380 }}>
+                  {log.description || '—'}
+                  {(log.old_values || log.new_values) && (
+                    <details>
+                      <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--accent)', userSelect: 'none' }}>
+                        Field changes
+                      </summary>
+                      <DiffView oldV={log.old_values} newV={log.new_values} />
+                    </details>
+                  )}
+                </td>
                 <td className="text-muted" style={{ fontSize: 11 }}>{log.ip_address || '—'}</td>
               </tr>
             ))}

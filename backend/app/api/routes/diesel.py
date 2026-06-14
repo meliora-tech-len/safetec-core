@@ -1009,10 +1009,13 @@ def finalize_fillup(
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
     apply_finalize_step(f, current_user, is_admin=(current_user.role == "admin"))
+    locked = bool(f.verified3_by)
     log_action(
-        db, "diesel_fillup.finalized", user_id=current_user.id,
+        db, "diesel_fillup.finalized" if locked else "diesel_fillup.unfinalized",
+        user_id=current_user.id,
         entity_id=f.entity_id, resource_type="diesel_fillup",
-        resource_id=fillup_id, description=f"Applied final lock on diesel fill-up #{fillup_id}",
+        resource_id=fillup_id,
+        description=f"{'Applied' if locked else 'Removed'} final lock on diesel fill-up #{fillup_id}",
     )
     db.commit()
     db.refresh(f)

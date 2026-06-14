@@ -920,10 +920,12 @@ def finalize_additional_load(
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
     apply_finalize_step(entry, current_user, is_admin=(current_user.role == "admin"))
-    log_action(db, "additional_load.finalized", user_id=current_user.id,
+    locked = bool(entry.verified3_by)
+    log_action(db, "additional_load.finalized" if locked else "additional_load.unfinalized",
+               user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="additional_load",
                resource_id=load_id,
-               description=f"Applied final lock on additional load #{load_id} for {driver.first_name} {driver.last_name}")
+               description=f"{'Applied' if locked else 'Removed'} final lock on additional load #{load_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}
@@ -1045,10 +1047,12 @@ def finalize_food_payment(
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
     apply_finalize_step(entry, current_user, is_admin=(current_user.role == "admin"))
-    log_action(db, "food_payment.finalized", user_id=current_user.id,
+    locked = bool(entry.verified3_by)
+    log_action(db, "food_payment.finalized" if locked else "food_payment.unfinalized",
+               user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="food_payment",
                resource_id=payment_id,
-               description=f"Applied final lock on food payment #{payment_id} for {driver.first_name} {driver.last_name}")
+               description=f"{'Applied' if locked else 'Removed'} final lock on food payment #{payment_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}

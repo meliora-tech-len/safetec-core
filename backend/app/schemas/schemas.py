@@ -601,6 +601,8 @@ class AuditLogOut(BaseModel):
     description: Optional[str] = None
     ip_address: Optional[str] = None
     created_at: Optional[datetime] = None
+    old_values: Optional[Any] = None
+    new_values: Optional[Any] = None
     user: Optional[UserOut] = None
 
     class Config:
