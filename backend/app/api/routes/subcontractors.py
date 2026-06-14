@@ -314,18 +314,20 @@ def _truck_regs(truck: Truck) -> set:
 
 
 def _truck_invoice_contribution(inv: SupplierInvoice, truck_regs: set):
-    """How much of a non-diesel supplier invoice is attributable to one truck.
+    """How much of a non-diesel supplier invoice is attributable to one truck,
+    split into a non-VAT (excl) and a VAT (incl) bucket.
 
-    Returns (matched, amount_excl, amount_incl). `matched` is True only when a
-    positive amount applies to this truck.
+    Returns (matched, excl_nonvat, incl_vat). `matched` is True only when a
+    positive amount applies to this truck. The caller sums both buckets into the
+    truck's expenses; the split only drives the Excl-VAT vs Incl-VAT columns.
 
     - Matching is against ALL the truck's known regs (real + temp plate).
     - Multi-line / split invoices whose sub-lines carry a per-line vehicle reg
-      (stored in ``unit``) are matched per sub-line: only the sub-lines whose
-      reg matches this truck are summed, so one invoice can cover several trucks
-      with each picking up just its own portion.
+      (stored in ``unit``) are matched per sub-line, and each line is bucketed by
+      its OWN VAT status (a line is zero-rated when incl == excl), so a single
+      invoice can now mix VAT and non-VAT lines.
     - Single-line invoices (and legacy multi-line invoices with no per-line reg)
-      fall back to the main-line ``vehicle_reg`` and attribute the full amount.
+      fall back to the main-line ``vehicle_reg`` and the invoice-level VAT flag.
     """
     D0 = Decimal("0")
     if not truck_regs:
@@ -334,17 +336,29 @@ def _truck_invoice_contribution(inv: SupplierInvoice, truck_regs: set):
     if inv.is_multi_line and inv.line_items:
         has_line_reg = any((li.unit or "").strip() for li in inv.line_items)
         if has_line_reg:
-            m_excl, m_incl = D0, D0
+            excl_nonvat, incl_vat = D0, D0
+            matched = False
             for li in inv.line_items:
-                if _norm_reg(li.unit) in truck_regs:
-                    m_excl += Decimal(str(li.amount_excl_vat or 0))
-                    m_incl += Decimal(str(li.amount_incl_vat or 0))
-            matched = m_excl != 0 or m_incl != 0
-            return matched, m_excl, m_incl
+                if _norm_reg(li.unit) not in truck_regs:
+                    continue
+                e = Decimal(str(li.amount_excl_vat or 0))
+                i = Decimal(str(li.amount_incl_vat or 0))
+                if e == 0 and i == 0:
+                    continue
+                matched = True
+                if i > e:          # line carries VAT
+                    incl_vat += i
+                else:              # zero-rated / non-VAT line (incl == excl)
+                    excl_nonvat += e
+            return matched, excl_nonvat, incl_vat
 
     if _norm_reg(inv.vehicle_reg) in truck_regs:
         amt = Decimal(str(inv.amount))
-        return amt != 0, amt, amt
+        if amt == 0:
+            return False, D0, D0
+        if inv.vat_applicable:
+            return True, D0, amt
+        return True, amt, D0
     return False, D0, D0
 
 
@@ -446,12 +460,9 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             matched, c_excl, c_incl = _truck_invoice_contribution(inv, truck_regs)
             if not matched:
                 continue
-            if inv.vat_applicable:
-                exp_incl += c_incl
-                inv_contribs.append((inv, c_incl))
-            else:
-                exp_excl += c_excl
-                inv_contribs.append((inv, c_excl))
+            exp_excl += c_excl
+            exp_incl += c_incl
+            inv_contribs.append((inv, c_excl + c_incl))
 
         # Diesel fill-ups for this truck — bucketed by the supplier's payment term,
         # mirroring the non-diesel invoice rule above. Diesel has no statement period
