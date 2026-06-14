@@ -1,5 +1,5 @@
 import calendar
-from datetime import datetime, timezone, date as date_type
+from datetime import datetime, timezone, timedelta, date as date_type
 from decimal import Decimal
 from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,7 +13,7 @@ from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLi
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
     SupplierInvoiceLineItemCreate, SupplierInvoiceLineItemOut,
-    SupplierStatementGroup, SupplierPayablesDashboard,
+    SupplierStatementGroup, SupplierPayablesDashboard, PendingVerificationInvoice,
     SupplierCurrentPayable, Supplier30DaysPayable,
     BulkImportPayload, BulkImportResult,
     DieselConflict, DieselConflictSide, DieselConflictResolution,
@@ -619,6 +619,61 @@ def list_supplier_invoices(
             is_fully_paid=is_fully_paid,
         ))
 
+    return result
+
+
+# ── Pending verification (admin badge/modal) ──────────────────────────────────
+# IMPORTANT: declared BEFORE /{invoice_id} so "pending-verification" isn't parsed
+# as an invoice id.
+
+@router.get("/pending-verification", response_model=List[PendingVerificationInvoice])
+def list_pending_verification(
+    days: int = Query(7, ge=1, le=365),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Recently-created supplier invoices not yet final-locked (verified3_by is
+    null). Defaults to a 7-day window (new arrivals). Scoped to the user's
+    accessible entities; newest first."""
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
+    q = db.query(SupplierInvoice).filter(
+        SupplierInvoice.is_archived != True,
+        SupplierInvoice.verified3_by.is_(None),
+        SupplierInvoice.created_at >= cutoff,
+    )
+    accessible = _accessible_entity_ids(current_user)
+    if accessible is not None:
+        q = q.filter(SupplierInvoice.entity_id.in_(accessible))
+    invoices = q.order_by(SupplierInvoice.created_at.desc()).all()
+
+    initials_cache = build_initials_cache(db)
+    ent_ids = {i.entity_id for i in invoices}
+    ent_codes = {}
+    if ent_ids:
+        for eid, code in db.query(BusinessEntity.id, BusinessEntity.code).filter(
+            BusinessEntity.id.in_(ent_ids)
+        ).all():
+            ent_codes[eid] = code
+
+    result = []
+    for inv in invoices:
+        disp = get_verification_display(db, inv, initials_cache)
+        name = inv.supplier.name if inv.supplier else (inv.supplier_name_text or "—")
+        result.append(PendingVerificationInvoice(
+            id=inv.id,
+            supplier_id=inv.supplier_id,
+            supplier_name=name,
+            entity_id=inv.entity_id,
+            entity_code=ent_codes.get(inv.entity_id),
+            invoice_number=inv.invoice_number,
+            invoice_date=inv.invoice_date,
+            amount=inv.amount,
+            statement_month=inv.statement_month,
+            statement_year=inv.statement_year,
+            created_at=inv.created_at,
+            verified_by_initials=disp.get("verified_by_initials"),
+            verified2_by_initials=disp.get("verified2_by_initials"),
+        ))
     return result
 
 

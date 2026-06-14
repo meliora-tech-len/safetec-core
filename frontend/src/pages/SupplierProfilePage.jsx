@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   getSupplier, getSuppliers, getEntities,
   getSupplierInvoices, createSupplierInvoice,
@@ -527,6 +527,9 @@ function PaymentTermBadge({ term }) {
 export default function SupplierProfilePage() {
   const { supplierId } = useParams()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const focusInvoiceId = searchParams.get('invoice')
+  const [flashId, setFlashId] = useState(null)
   const { activeEntity, user, isAdmin } = useAuth()
 
   const [supplier, setSupplier] = useState(null)
@@ -547,6 +550,8 @@ export default function SupplierProfilePage() {
   const [showImport, setShowImport] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)  // invoice pending deletion
   const [openInvoiceIds, setOpenInvoiceIds] = useState(new Set())
+  const [selectedIds, setSelectedIds] = useState(new Set())  // invoices ticked for bulk verify
+  const [verifyingBulk, setVerifyingBulk] = useState(false)
   const firstInputRef = useRef(null)
 
   // Diesel rate auto-fill state (for diesel suppliers)
@@ -585,6 +590,23 @@ export default function SupplierProfilePage() {
   }, [supplier?.entity_id])
 
   useEffect(() => { if (!loading) loadInvoices() }, [loading, loadInvoices])
+
+  // Deep-link from the "to verify" modal: scroll to + briefly highlight the
+  // target invoice once its row exists, then drop the ?invoice param so a
+  // refresh doesn't re-trigger it.
+  useEffect(() => {
+    if (!focusInvoiceId || !groups.length) return
+    const exists = groups.some(g => g.invoices.some(i => String(i.id) === String(focusInvoiceId)))
+    if (!exists) return
+    const t = setTimeout(() => {
+      const el = document.getElementById(`si-row-${focusInvoiceId}`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      setFlashId(String(focusInvoiceId))
+      setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('invoice'); return p }, { replace: true })
+    }, 150)
+    const clear = setTimeout(() => setFlashId(null), 2600)
+    return () => { clearTimeout(t); clearTimeout(clear) }
+  }, [focusInvoiceId, groups, setSearchParams])
 
   // Per-line verification overlay for multi-line/split invoices: users tick a
   // sub-line once they've confirmed its amount on that subcontractor's costing
@@ -866,6 +888,48 @@ export default function SupplierProfilePage() {
     } catch (e) { toast.error(errorMessage(e)) }
   }
 
+  // Whether the current user can still ADD a verification tick to this invoice —
+  // mirrors VerifyBadge's add logic so the bulk checkbox only shows where a
+  // "Verify selected" would actually do something (step 1, or step 2 by another
+  // user). Records already verified by this user / fully handled are skipped.
+  const canUserVerify = (inv) => {
+    const step3 = !!(inv.verified3_by || inv.verified3_by_initials)
+    if (step3) return false   // final lock applied — no bulk verification
+    const step1 = !!(inv.verified || inv.is_verified)
+    const step2 = !!(inv.verified2_by || inv.verified2_by_initials)
+    if (!step1) return true
+    if (!step2 && inv.verified_by !== user?.id) return true
+    return false
+  }
+
+  const toggleSelect = (id) => setSelectedIds(s => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
+  })
+
+  const clearSelection = () => setSelectedIds(new Set())
+
+  // Apply the current user's next verification step to every selected invoice.
+  // Reuses the single-invoice endpoint with the explicit 'add' intent (safe — it
+  // no-ops server-side on anything this user can't tick), patching each row in
+  // place as it returns.
+  const handleVerifySelected = async () => {
+    const targets = groups.flatMap(g => g.invoices)
+      .filter(i => selectedIds.has(i.id) && canUserVerify(i))
+    if (!targets.length) return
+    setVerifyingBulk(true)
+    let ok = 0
+    for (const inv of targets) {
+      try {
+        const { data } = await verifySupplierInvoice(inv.id, 'add')
+        patchInvoice(data)
+        ok++
+      } catch (e) { toast.error(errorMessage(e)) }
+    }
+    setVerifyingBulk(false)
+    clearSelection()
+    if (ok) toast.success(`Verified ${ok} invoice${ok === 1 ? '' : 's'}`)
+  }
+
   const handleFinalize = async (inv, intent) => {
     try {
       const { data } = await finalizeSupplierInvoice(inv.id, intent)
@@ -903,6 +967,7 @@ export default function SupplierProfilePage() {
   })
 
   const allInvoices = groups.flatMap(g => g.invoices)
+  const selectedVerifiable = allInvoices.filter(i => selectedIds.has(i.id) && canUserVerify(i))
   const multiEntity = entities.length > 1
 
   // Map a vehicle registration to its owning subcontractor (purely for display).
@@ -1151,6 +1216,40 @@ export default function SupplierProfilePage() {
         </div>
       )}
 
+      {/* Bulk-verify action bar — floats while invoices are selected */}
+      {selectedVerifiable.length > 0 && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          display: 'flex', alignItems: 'center', gap: 14, zIndex: 900,
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '10px 16px',
+          boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
+            {selectedVerifiable.length} selected
+          </span>
+          <button
+            onClick={handleVerifySelected}
+            disabled={verifyingBulk}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 16px', borderRadius: 7, border: 'none',
+              background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
+              cursor: verifyingBulk ? 'default' : 'pointer', opacity: verifyingBulk ? 0.6 : 1,
+            }}>
+            <CheckCircle size={15} />
+            {verifyingBulk ? 'Verifying…' : 'Verify selected'}
+          </button>
+          <button
+            onClick={clearSelection}
+            disabled={verifyingBulk}
+            className="btn-ghost"
+            style={{ fontSize: 13, padding: '6px 10px' }}>
+            Clear
+          </button>
+        </div>
+      )}
+
       <DeleteModal
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -1225,6 +1324,14 @@ export default function SupplierProfilePage() {
         const key = `${group.statement_year}-${group.statement_month}`
         const isOpen = !collapsed[key]
         const unpaidCount = group.invoices.filter(i => !i.is_paid).length
+        const groupVerifiable = group.invoices.filter(canUserVerify)
+        const allGroupSelected = groupVerifiable.length > 0 && groupVerifiable.every(i => selectedIds.has(i.id))
+        const toggleGroupSelect = () => setSelectedIds(s => {
+          const n = new Set(s)
+          if (allGroupSelected) groupVerifiable.forEach(i => n.delete(i.id))
+          else groupVerifiable.forEach(i => n.add(i.id))
+          return n
+        })
 
         return (
           <div key={key} style={{
@@ -1301,6 +1408,17 @@ export default function SupplierProfilePage() {
                       )}
                       {isDiesel && !isWBGDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
                       <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
+                      <th style={{ ...styles.th, width: 28, textAlign: 'center' }}>
+                        {groupVerifiable.length > 0 && (
+                          <input
+                            type="checkbox"
+                            checked={allGroupSelected}
+                            onChange={toggleGroupSelect}
+                            title="Select all for bulk verify"
+                            style={{ cursor: 'pointer' }}
+                          />
+                        )}
+                      </th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
                       <th style={styles.th}>Notes</th>
@@ -1312,15 +1430,16 @@ export default function SupplierProfilePage() {
                       const isEditing = editingId === inv.id
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
-                      const totalCols = 12 + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
+                      const totalCols = 13 + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
 
                       return (
                         <Fragment key={inv.id}>
                           <tr
+                            id={`si-row-${inv.id}`}
                             onClick={() => !isEditing && startEdit(inv)}
                             style={{
                               borderBottom: isExpanded ? 'none' : '1px solid var(--border)',
-                              background: isEditing ? 'var(--accent-subtle)' : 'transparent',
+                              background: isEditing ? 'var(--accent-subtle)' : (flashId === String(inv.id) ? 'rgba(245,158,11,0.18)' : 'transparent'),
                               opacity: inv.is_paid && !isEditing ? 0.6 : 1,
                               cursor: isEditing ? 'default' : 'pointer',
                               transition: 'background 0.1s',
@@ -1578,6 +1697,19 @@ export default function SupplierProfilePage() {
                               )}
                             </td>
 
+                            {/* Bulk-select checkbox */}
+                            <td style={{ ...styles.td, textAlign: 'center', width: 28 }} onClick={e => e.stopPropagation()}>
+                              {canUserVerify(inv) && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds.has(inv.id)}
+                                  onChange={() => toggleSelect(inv.id)}
+                                  title="Select for bulk verify"
+                                  style={{ cursor: 'pointer' }}
+                                />
+                              )}
+                            </td>
+
                             {/* Verified */}
                             <td style={styles.td}>
                               <VerifyBadge item={inv} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} />
@@ -1695,7 +1827,7 @@ export default function SupplierProfilePage() {
                         Statement Total:
                       </td>
                       <td style={{ ...styles.td, fontWeight: 700 }}>{formatCurrency(group.subtotal)}</td>
-                      <td colSpan={7 + (isDiesel ? 2 : 0)} style={styles.td} />
+                      <td colSpan={8 + (isDiesel ? 2 : 0)} style={styles.td} />
                     </tr>
                   </tfoot>
                 </table>

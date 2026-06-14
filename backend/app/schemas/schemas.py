@@ -1717,6 +1717,24 @@ class SupplierStatementGroup(BaseModel):
     is_fully_paid: bool
 
 
+class PendingVerificationInvoice(BaseModel):
+    """A recently-created supplier invoice not yet final-locked — drives the
+    admin 'needs verification' badge/modal."""
+    id: int
+    supplier_id: Optional[int] = None
+    supplier_name: str
+    entity_id: int
+    entity_code: Optional[str] = None
+    invoice_number: Optional[str] = None
+    invoice_date: datetime
+    amount: Decimal
+    statement_month: Optional[int] = None
+    statement_year: Optional[int] = None
+    created_at: datetime
+    verified_by_initials: Optional[str] = None
+    verified2_by_initials: Optional[str] = None
+
+
 class SupplierCurrentPayable(BaseModel):
     supplier_id: int
     supplier_name: str

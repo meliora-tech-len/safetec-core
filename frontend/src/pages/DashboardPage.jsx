@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { getDashboardStats, getSupplierPayablesDashboard, getDieselWarnings, getProfitLossSummary } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import { usePendingInvoices } from '../hooks/usePendingInvoices'
+import PendingInvoicesModal from '../components/PendingInvoicesModal'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
-import { TrendingUp, TrendingDown, AlertCircle, FileText, Clock, Building2, ChevronRight, ChevronDown, CreditCard, Fuel, Scale } from 'lucide-react'
+import { TrendingUp, TrendingDown, AlertCircle, FileText, Clock, Building2, ChevronRight, ChevronDown, CreditCard, Fuel, Scale, ClipboardCheck } from 'lucide-react'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -17,6 +19,8 @@ export default function DashboardPage() {
   const [dieselWarnings, setDieselWarnings] = useState(null)
   const [profitLoss, setProfitLoss] = useState(null)
   const [showOtherPeriods, setShowOtherPeriods] = useState(false)
+  const [showPending, setShowPending] = useState(false)
+  const pending = usePendingInvoices(isAdmin)
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState(() => {
     const d = new Date()
@@ -104,6 +108,32 @@ export default function DashboardPage() {
         <div className="loading-center"><div className="spinner" /></div>
       ) : (stats || payables) && (
         <>
+          {/* ── Supplier invoices needing verification (admin) ───────── */}
+          {isAdmin && pending.count > 0 && (
+            <button
+              onClick={() => setShowPending(true)}
+              className="card"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 14, width: '100%',
+                textAlign: 'left', cursor: 'pointer', marginBottom: 24,
+                border: '1px solid var(--warning)', background: 'rgba(245,158,11,0.06)',
+              }}
+            >
+              <div className="stat-card-icon" style={{ background: '#f59e0b20', color: 'var(--warning)', flexShrink: 0 }}>
+                <ClipboardCheck size={20} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>
+                  {pending.count} supplier invoice{pending.count !== 1 ? 's' : ''} to verify
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  Created in the last 7 days and not yet final-locked — click to review
+                </div>
+              </div>
+              <ChevronRight size={18} color="var(--text-muted)" />
+            </button>
+          )}
+
           {/* ── Profit & Loss (BTP / Thembi) ─────────────────────────── */}
           {profitLoss?.length > 0 && (
             <div style={{ marginBottom: 24 }}>
@@ -416,6 +446,14 @@ export default function DashboardPage() {
             </div>
           </div>}
         </>
+      )}
+
+      {showPending && (
+        <PendingInvoicesModal
+          invoices={pending.invoices}
+          loading={pending.loading}
+          onClose={() => setShowPending(false)}
+        />
       )}
     </div>
   )

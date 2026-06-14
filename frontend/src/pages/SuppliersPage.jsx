@@ -3,10 +3,12 @@ import { Link } from 'react-router-dom'
 import { getSuppliers, getEntities, createSupplierBulk, updateSupplier, deleteSupplier } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { Plus, Search, Edit2, Trash2, User, X, Copy } from 'lucide-react'
+import { Plus, Search, Edit2, Trash2, User, X, Copy, AlertCircle } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
+import { usePendingInvoices } from '../hooks/usePendingInvoices'
+import PendingInvoicesModal from '../components/PendingInvoicesModal'
 import DeleteModal from '../components/DeleteModal'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
@@ -19,6 +21,8 @@ export default function SuppliersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterEntity, setFilterEntity] = useEntityFilter()
   const [modal, setModal] = useState(null) // null | { mode: 'create'|'edit', supplier?: {} }
+  const [showPending, setShowPending] = useState(false)
+  const pending = usePendingInvoices(isAdmin)
   const loadSeqRef = useRef(0)
 
   useEffect(() => {
@@ -84,6 +88,16 @@ export default function SuppliersPage() {
           <p className="page-subtitle">{suppliers.length} supplier{suppliers.length !== 1 ? 's' : ''}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          {isAdmin && pending.count > 0 && (
+            <button
+              className="btn-secondary"
+              onClick={() => setShowPending(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, borderColor: 'var(--warning)', color: 'var(--warning)' }}
+              title="Recently-created supplier invoices not yet final-locked"
+            >
+              <AlertCircle size={15} /> {pending.count} to verify
+            </button>
+          )}
           <ExportButton
             title="Suppliers Report"
             filename="suppliers"
@@ -137,15 +151,14 @@ export default function SuppliersPage() {
               <SortableHeader label="Email" col="email" sort={sort} onSort={onSort} />
               <th>Phone</th>
               <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
-              <SortableHeader label="Created" col="created_at" sort={sort} onSort={onSort} />
               <th style={{ width: 80 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
             ) : sortedSuppliers.length === 0 ? (
-              <tr><td colSpan={8}>
+              <tr><td colSpan={7}>
                 <div className="empty-state"><User size={32} /><p>No suppliers found</p></div>
               </td></tr>
             ) : sortedSuppliers.map(supplier => (
@@ -170,7 +183,6 @@ export default function SuppliersPage() {
                 <td>
                   <span style={styles.entityChip}>{entityCode(supplier.entity_id)}</span>
                 </td>
-                <td className="text-muted" style={{ fontSize: 12 }}>{formatDate(supplier.created_at)}</td>
                 <td>
                   <div style={{ display: 'flex', gap: 4 }}>
                     <button className="btn-icon btn-ghost" onClick={() => openEdit(supplier)} title="Edit">
@@ -194,6 +206,14 @@ export default function SuppliersPage() {
           entities={entities}
           onSave={handleSave}
           onClose={closeModal}
+        />
+      )}
+
+      {showPending && (
+        <PendingInvoicesModal
+          invoices={pending.invoices}
+          loading={pending.loading}
+          onClose={() => setShowPending(false)}
         />
       )}
 
