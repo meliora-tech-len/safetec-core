@@ -30,6 +30,32 @@ def _fmtd(v) -> str:
     return str(v)[:10]
 
 
+def _tonnes(v) -> str:
+    try:
+        return f"{float(v):.2f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _load_label(l) -> str:
+    """One-line description of a load for the collapsed Excel detail rows."""
+    parts = [f"    {_fmtd(getattr(l, 'load_date', None))}"]
+    mine = getattr(l, "mine_name", None)
+    if mine:
+        parts.append(str(mine))
+    slip = getattr(l, "slip_number", None)
+    if slip:
+        parts.append(f"slip {slip}")
+    tonnes = getattr(l, "tonnes", None)
+    if tonnes is not None:
+        tr = f"{_tonnes(tonnes)}t"
+        rate = getattr(l, "subcontractor_rate", None)
+        if rate is not None:
+            tr += f" @ {_fmt(rate)}"
+        parts.append(tr)
+    return "  ·  ".join(parts)
+
+
 # ── PDF ───────────────────────────────────────────────────────────────────────
 
 def generate_costing_pdf(costing, entity) -> bytes:
@@ -74,6 +100,7 @@ def generate_costing_pdf(costing, entity) -> bytes:
     s_bold    = sty("bold",  fontSize=8,  fontName=_FONT_BOLD, textColor=black)
     s_bold_r  = sty("br",    fontSize=8,  fontName=_FONT_BOLD, textColor=black,    alignment=TA_RIGHT)
     s_grp     = sty("grp",   fontSize=7.5, textColor=gray_mid, fontName=_FONT_BOLD)
+    s_grp_r   = sty("grpr",  fontSize=7.5, textColor=gray_mid, fontName=_FONT_BOLD, alignment=TA_RIGHT)
     s_net_pos = sty("np",    fontSize=9,  fontName=_FONT_BOLD, textColor=pos_col,  alignment=TA_RIGHT)
     s_net_neg = sty("nn",    fontSize=9,  fontName=_FONT_BOLD, textColor=neg_col,  alignment=TA_RIGHT)
     s_smry    = sty("sm",    fontSize=9,  fontName=_FONT_BOLD, textColor=white,    alignment=TA_RIGHT)
@@ -217,6 +244,37 @@ def generate_costing_pdf(costing, entity) -> bytes:
             colWidths=[sum(col_w)],
         )
         story.append(net_row)
+
+        # ── Load details (listed underneath the truck table) ──────────────────
+        if td.loads:
+            story.append(Spacer(1, 2.5*mm))
+            story.append(Paragraph("Load Details", s_grp))
+            ld_rows = [[
+                P("Date", s_grp), P("Mine", s_grp), P("Slip #", s_grp),
+                P("Tonnes", s_grp_r), P("Rate", s_grp_r), P("Amount", s_grp_r),
+            ]]
+            for l in td.loads:
+                amt = l.subcontractor_amount_incl_vat if is_vat else l.subcontractor_amount_excl_vat
+                ld_rows.append([
+                    P(_fmtd(l.load_date), s_dl),
+                    P(l.mine_name or "—", s_dl),
+                    P(l.slip_number or "—", s_dl),
+                    P(_tonnes(l.tonnes) if l.tonnes is not None else "—", s_dl_r),
+                    P(_fmt(l.subcontractor_rate) if l.subcontractor_rate is not None else "—", s_dl_r),
+                    P(_fmt(amt) if amt is not None else "—", s_dl_r),
+                ])
+            ld_tbl = Table(ld_rows, colWidths=[24*mm, 48*mm, 26*mm, 22*mm, 26*mm, 26*mm])
+            ld_tbl.setStyle(TableStyle([
+                ("LINEBELOW",    (0, 0), (-1, 0), 0.4, border_c),
+                ("LEFTPADDING",  (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING",   (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, gray_lt]),
+                ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+            story.append(ld_tbl)
+
         story.append(Spacer(1, 5*mm))
 
     # ── Summary ───────────────────────────────────────────────────────────────
@@ -265,6 +323,9 @@ def generate_costing_excel(costing, entity) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = f"{MONTH_NAMES[costing.month]} {costing.year}"
+    # Per-load detail rows are grouped under each truck's "Loads" summary row.
+    # summaryBelow=False puts the expand/collapse control on the summary row above.
+    ws.sheet_properties.outlinePr.summaryBelow = False
 
     # Style helpers
     def fill(hex_str):
@@ -394,22 +455,57 @@ def generate_costing_excel(costing, entity) -> bytes:
 
         inc_e = fmt_val(td.income_excl_vat)
         inc_i = fmt_val(td.income_incl_vat)
-        exp_i = fmt_val(td.total_expenses_incl_vat)
-        exp_e = fmt_val(td.total_expenses_excl_vat)
         net   = fmt_val(td.net_payable)
 
-        # Loads row
+        # Column letters: income lands in B (excl) or C (incl) per VAT status;
+        # expenses always in D (incl) and E (excl).
+        income_col = 3 if is_vat else 2
+        INC_L   = get_column_letter(income_col)
+        EXP_I_L = get_column_letter(4)
+        EXP_E_L = get_column_letter(5)
+        exp_incl_cells = []  # cells summed into the Expenses Incl VAT total
+        exp_excl_cells = []  # cells summed into the Expenses Excl VAT total
+
+        # ── Loads summary row — income is a SUM of the per-load detail rows
+        #    grouped (collapsed) directly beneath it ──────────────────────────
+        loads_row = row
+        n_loads   = len(td.loads)
+        if n_loads:
+            income_val = f"=SUM({INC_L}{loads_row + 1}:{INC_L}{loads_row + n_loads})"
+        else:
+            income_val = inc_i if is_vat else inc_e
         write_row(
-            [f"Loads ({len(td.loads)})", None if is_vat else inc_e, inc_i if is_vat else None, None, None],
+            [f"Loads ({n_loads})",
+             income_val if not is_vat else None,
+             income_val if is_vat else None,
+             None, None],
             fnt=LBL_FONT, fills=[None]*5, row_h=15,
         )
+
+        # Per-load detail rows (collapsed by default; expand via the +/- control)
+        detail_font = font(color="6B7280", size=8)
+        for l in td.loads:
+            amt = fmt_val(l.subcontractor_amount_incl_vat if is_vat else l.subcontractor_amount_excl_vat)
+            write_row(
+                [_load_label(l),
+                 amt if not is_vat else None,
+                 amt if is_vat else None,
+                 None, None],
+                fnt=detail_font, fills=[None]*5, row_h=14,
+            )
+            ws.row_dimensions[row - 1].outline_level = 1
+            ws.row_dimensions[row - 1].hidden = True
+
         # Admin fee
         write_row(["Admin Fee", None, None, fmt_val(td.admin_fee), None], fnt=LBL_FONT, row_h=15)
+        exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
 
         # Diesel groups
         for dg in (td.diesel_groups or []):
             write_row([f"{dg.supplier_name} Diesel", None, None, None, fmt_val(dg.tot_excl_admin_fee)], fnt=LBL_FONT, row_h=15)
+            exp_excl_cells.append(f"{EXP_E_L}{row - 1}")
             write_row([f"{dg.supplier_name} Diesel Admin Fee", None, None, fmt_val(dg.tot_admin_fee_incl), None], fnt=LBL_FONT, row_h=15)
+            exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
 
         # Supplier invoices
         if td.supplier_invoices:
@@ -423,15 +519,21 @@ def generate_costing_excel(costing, entity) -> bytes:
                 sup = inv.supplier_name or f"Supplier #{inv.supplier_id}"
                 if inv.vat_applicable:
                     write_row([sup, None, None, fmt_val(inv.amount), None], fnt=LBL_FONT, row_h=15)
+                    exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
                 else:
                     write_row([sup, None, None, None, fmt_val(inv.amount)], fnt=LBL_FONT, row_h=15)
+                    exp_excl_cells.append(f"{EXP_E_L}{row - 1}")
 
-        # Totals
+        # Totals — built from Excel SUM formulas so the component cells are
+        # visible: income references the Loads row, expenses sum their line items.
+        def _sum(cells):
+            return f"=SUM({','.join(cells)})" if cells else 0
+        inc_total = f"={INC_L}{loads_row}"
         write_row(
             ["Totals",
-             None if is_vat else inc_e,
-             inc_i if is_vat else None,
-             exp_i, exp_e],
+             inc_total if not is_vat else None,
+             inc_total if is_vat else None,
+             _sum(exp_incl_cells), _sum(exp_excl_cells)],
             fnt=TOT_WHITE,
             fills=[TOTAL_FILL] * 5,
             row_h=16,

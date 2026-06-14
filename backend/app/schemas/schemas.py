@@ -1611,6 +1611,7 @@ class BulkImportResult(BaseModel):
 
 class SupplierInvoiceCreate(BaseModel):
     supplier_id: Optional[int] = None
+    supplier_name_text: Optional[str] = None
     subcontractor_id: Optional[int] = None
     entity_id: int
     invoice_date: datetime
@@ -1659,6 +1660,7 @@ class SupplierInvoiceOut(BaseModel):
     id: int
     supplier_id: Optional[int] = None
     supplier_name: Optional[str] = None
+    supplier_name_text: Optional[str] = None
     subcontractor_id: Optional[int] = None
     entity_id: int
     invoice_date: datetime
@@ -2096,6 +2098,9 @@ class SubcontractorTruckCostingOut(BaseModel):
     total_expenses_incl_vat: Decimal
     net_payable: Decimal
     diesel_groups: List[DieselSupplierGroup] = []
+    # Free-text awareness note for this truck this period (e.g. a loss carried
+    # over from the previous month). Never included in any total.
+    note: Optional[str] = None
 
 
 class SubcontractorCostingSummary(BaseModel):
@@ -2163,6 +2168,10 @@ class SubcontractorCostingOut(BaseModel):
     summary: SubcontractorCostingSummary
     diesel_suppliers: List[str] = []
     is_vat_registered: bool = True
+
+
+class SubcontractorCostingNoteUpdate(BaseModel):
+    note: Optional[str] = None
 
 
 # ── Per-value verification overlay ────────────────────────────────────────────

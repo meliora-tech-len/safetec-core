@@ -6,7 +6,7 @@ import {
   getSubcontractor, getSuppliers, getFleetTrucks,
   createSubcontractorInvoice, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice,
-  getSubcontractorInvoices, getSubcontractorCosting,
+  getSubcontractorInvoices, getSubcontractorCosting, saveSubcontractorCostingNote,
   downloadSubcontractorCostingPdf, downloadSubcontractorCostingExcel,
   getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
@@ -16,7 +16,7 @@ import toast from 'react-hot-toast'
 import {
   ArrowLeft, Plus, Trash2, ChevronLeft, ChevronRight,
   Building2, X, Save, CheckCircle, ChevronDown, ChevronUp, FileSpreadsheet,
-  FileDown, Sheet,
+  FileDown, Sheet, AlertTriangle,
 } from 'lucide-react'
 import SearchableSelect from '../components/SearchableSelect'
 import DeleteModal from '../components/DeleteModal'
@@ -49,7 +49,7 @@ const blankInvoiceForm = () => ({
 const blankExpenseForm = (truckReg = '') => ({
   invoice_date:   todayStr,
   invoice_number: '',
-  supplier_id:    '',
+  supplier_input: '',   // free text OR a supplier name picked from the datalist
   amount:         '',
   vat_applicable: true,
   vehicle_reg:    truckReg,
@@ -151,6 +151,18 @@ export default function SubcontractorProfilePage() {
       .then(r => { if (reqId === costingReqId.current) setCosting(r.data) })
       .catch(() => { if (reqId === costingReqId.current) setCosting(null) })
       .finally(() => { if (reqId === costingReqId.current) setCostingLoading(false) })
+  }, [id, month, year])
+
+  // Save a per-truck carry-over note; patch the truck's note in place (no reload,
+  // so the card stays expanded). Returns the saved value to the card.
+  const saveTruckNote = useCallback(async (truckId, note) => {
+    const { data } = await saveSubcontractorCostingNote(id, { truck_id: truckId, month, year }, { note })
+    const saved = data?.note ?? null
+    setCosting(prev => prev ? {
+      ...prev,
+      trucks: prev.trucks.map(t => t.truck.id === truckId ? { ...t, note: saved } : t),
+    } : prev)
+    return saved
   }, [id, month, year])
 
   // ── Per-value verification overlay (costing) ────────────────────────────────
@@ -314,13 +326,21 @@ export default function SubcontractorProfilePage() {
 
   const setEF = (k, v) => setExpenseForm(f => ({ ...f, [k]: v }))
 
-  const isDieselExpenseSupplier = suppliers.find(
-    s => String(s.id) === String(expenseForm.supplier_id)
-  )?.is_diesel_supplier || false
+  // The supplier field is a creatable combo (system SearchableSelect): the user
+  // can pick an existing supplier (value = its id) or type a free-text name
+  // (value = the raw text). Resolve by id first, then by name; if neither
+  // matches we save the raw text as a custom supplier name.
+  const supplierInput = (expenseForm.supplier_input || '').trim()
+  const matchedSupplier =
+    suppliers.find(s => String(s.id) === supplierInput) ||
+    suppliers.find(s => (s.name || '').trim().toLowerCase() === supplierInput.toLowerCase()) ||
+    null
+  const isDieselExpenseSupplier = matchedSupplier?.is_diesel_supplier || false
 
   const saveExpense = async (e) => {
     e.preventDefault()
-    if (!expenseForm.supplier_id) { toast.error('Select a supplier'); return }
+    const supplierText = expenseForm.supplier_input.trim()
+    if (!supplierText) { toast.error('Select or enter a supplier'); return }
     if (!expenseForm.invoice_number.trim()) { toast.error('Invoice number is required'); return }
 
     const litresVal = parseFloat(expenseForm.litres) || 0
@@ -339,7 +359,8 @@ export default function SubcontractorProfilePage() {
     try {
       await createSupplierInvoice({
         entity_id:      subcontractor.entity_id,
-        supplier_id:    parseInt(expenseForm.supplier_id),
+        supplier_id:         matchedSupplier ? matchedSupplier.id : null,
+        supplier_name_text:  matchedSupplier ? null : supplierText,
         invoice_date:   new Date(expenseForm.invoice_date + 'T12:00:00').toISOString(),
         invoice_number: expenseForm.invoice_number.trim(),
         amount,
@@ -723,6 +744,7 @@ export default function SubcontractorProfilePage() {
                   templateSuppliers={costing.diesel_suppliers || []}
                   onAddExpense={() => openExpenseModal(td.truck.registration)}
                   onDeleteInvoice={setExpenseDeleteTarget}
+                  onSaveNote={saveTruckNote}
                   isVatRegistered={costing.is_vat_registered !== false}
                   verifPrefix={costingPrefix}
                   verif={verif}
@@ -787,12 +809,19 @@ export default function SubcontractorProfilePage() {
                 </div>
                 <div className="form-group">
                   <label>Supplier *</label>
-                  <select value={expenseForm.supplier_id || ''} onChange={e => setEF('supplier_id', e.target.value)} required>
-                    <option value="">— Select supplier —</option>
-                    {suppliers.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
+                  <SearchableSelect
+                    value={expenseForm.supplier_input}
+                    onChange={v => setEF('supplier_input', v)}
+                    options={suppliers}
+                    getValue={s => String(s.id)}
+                    getLabel={s => s.name}
+                    placeholder="Select a supplier or type a custom name"
+                    formInput
+                    creatable
+                  />
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                    Pick from the list, or type any name — whatever you enter is saved.
+                  </span>
                 </div>
                 <div className="form-row">
                   <div className="form-group">
@@ -1070,11 +1099,27 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice, isVatRegistered = true,
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice, onSaveNote, isVatRegistered = true,
   verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false }) {
   const [expanded, setExpanded] = useState(false)
   const [showLoadDetail, setShowLoadDetail] = useState(false)
   const [activeDieselTab, setActiveDieselTab] = useState(null)
+
+  // Per-truck carry-over note (awareness only — never part of any total)
+  const [noteText, setNoteText]     = useState(truckData.note || '')
+  const [noteEditing, setNoteEditing] = useState(false)
+  const [noteSaving, setNoteSaving] = useState(false)
+  useEffect(() => { setNoteText(truckData.note || ''); setNoteEditing(false) }, [truckData.note])
+
+  const cancelNoteEdit = (e) => { e?.stopPropagation(); setNoteText(truckData.note || ''); setNoteEditing(false) }
+  const submitNote = async (e) => {
+    e?.stopPropagation()
+    if (!onSaveNote) return
+    setNoteSaving(true)
+    try { await onSaveNote(truckData.truck.id, noteText.trim()); setNoteEditing(false) }
+    catch (err) { toast.error(errorMessage(err, 'Failed to save note')) }
+    finally { setNoteSaving(false) }
+  }
   const {
     truck, loads,
     income_excl_vat, income_incl_vat,
@@ -1146,6 +1191,46 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
             Net: {fmtC(net_payable)}
           </span>
         )}
+
+        {/* Per-truck carry-over note — awareness only, never totalled */}
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', gap: 8, cursor: 'default', minWidth: 0 }}
+        >
+          <AlertTriangle size={13} style={{ color: '#d97706', flexShrink: 0 }} />
+          {noteEditing ? (
+            <>
+              <input
+                autoFocus
+                value={noteText}
+                onChange={e => setNoteText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') submitNote(e); if (e.key === 'Escape') cancelNoteEdit(e) }}
+                placeholder="Note for this month (e.g. previous month loss)…"
+                style={{ flex: 1, maxWidth: 480, fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)' }}
+              />
+              <button className="btn btn-sm" onClick={submitNote} disabled={noteSaving} style={{ fontSize: 12 }}>
+                {noteSaving ? '…' : 'Save'}
+              </button>
+              <button className="btn-ghost btn-sm" onClick={cancelNoteEdit} style={{ fontSize: 12 }}>Cancel</button>
+            </>
+          ) : truckData.note ? (
+            <span
+              onClick={() => setNoteEditing(true)}
+              title="Click to edit"
+              style={{ fontSize: 12, fontWeight: 600, color: '#b45309', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >
+              {truckData.note}
+            </span>
+          ) : (
+            <button
+              onClick={() => setNoteEditing(true)}
+              className="btn-ghost btn-sm"
+              style={{ fontSize: 12, color: 'var(--text-muted)', padding: '2px 6px' }}
+            >
+              ＋ Add note
+            </button>
+          )}
+        </div>
       </div>
 
       {expanded && <div style={{ padding: '16px 20px' }}>

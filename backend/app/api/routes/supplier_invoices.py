@@ -651,25 +651,37 @@ def create_supplier_invoice(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    supplier = db.query(Supplier).filter(Supplier.id == payload.supplier_id).first()
-    if not supplier:
-        raise HTTPException(status_code=404, detail="Supplier not found")
     _check_entity_access(payload.entity_id, current_user)
 
-    # Hard block duplicate: same supplier + invoice number + entity
-    existing = db.query(SupplierInvoice).filter(
-        SupplierInvoice.supplier_id == payload.supplier_id,
-        SupplierInvoice.invoice_number == payload.invoice_number.strip(),
-        SupplierInvoice.entity_id == payload.entity_id,
-    ).first()
-    if existing:
+    # A supplier is optional: an expense may instead carry a free-text supplier
+    # name (one-off expenses captured against a name, not a registered supplier).
+    custom_name = (payload.supplier_name_text or "").strip() or None
+    supplier = None
+    if payload.supplier_id is not None:
+        supplier = db.query(Supplier).filter(Supplier.id == payload.supplier_id).first()
+        if not supplier:
+            raise HTTPException(status_code=404, detail="Supplier not found")
+    elif not custom_name:
         raise HTTPException(
-            status_code=409,
-            detail=f"Invoice '{payload.invoice_number}' already exists for this supplier",
+            status_code=422,
+            detail="Provide either a supplier or a custom supplier name",
         )
 
+    # Hard block duplicate (registered suppliers only): same supplier + invoice number + entity
+    if supplier is not None:
+        existing = db.query(SupplierInvoice).filter(
+            SupplierInvoice.supplier_id == payload.supplier_id,
+            SupplierInvoice.invoice_number == payload.invoice_number.strip(),
+            SupplierInvoice.entity_id == payload.entity_id,
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Invoice '{payload.invoice_number}' already exists for this supplier",
+            )
+
     inv_date = payload.invoice_date
-    due_date = calculate_supplier_due_date(inv_date, supplier.payment_term)
+    due_date = calculate_supplier_due_date(inv_date, supplier.payment_term) if supplier else None
 
     # Use whatever statement period the user sent; fall back to the invoice date's
     # own month/year. Payment-term costing offsets belong in reports only.
@@ -677,24 +689,26 @@ def create_supplier_invoice(
     stmt_year  = payload.statement_year  if payload.statement_year  is not None else inv_date.year
 
     inv = SupplierInvoice(
-        **payload.model_dump(exclude={'statement_month', 'statement_year'}),
+        **payload.model_dump(exclude={'statement_month', 'statement_year', 'supplier_name_text'}),
+        supplier_name_text=custom_name if supplier is None else None,
         statement_month=stmt_month,
         statement_year=stmt_year,
         payment_due_date=due_date,
         created_by_id=current_user.id,
     )
     db.add(inv)
+    supplier_label = supplier.name if supplier else custom_name
     log_action(
         db, "supplier_invoice.created", user_id=current_user.id,
         entity_id=payload.entity_id, resource_type="supplier_invoice",
-        description=f"Created invoice {payload.invoice_number} for supplier {supplier.name}",
+        description=f"Created invoice {payload.invoice_number} for supplier {supplier_label}",
     )
     db.commit()
     db.refresh(inv)
 
     # Auto-create DieselFillUp when supplier is a diesel supplier and enough data is provided
     diesel_fillup_id = None
-    if supplier.is_diesel_supplier and payload.vehicle_reg and payload.litres and payload.litres > 0:
+    if supplier and supplier.is_diesel_supplier and payload.vehicle_reg and payload.litres and payload.litres > 0:
         diesel_fillup_id = _auto_create_diesel_fillup(
             db=db,
             supplier_invoice=inv,

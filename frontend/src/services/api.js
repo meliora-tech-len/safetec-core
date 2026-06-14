@@ -153,6 +153,7 @@ export const deleteSubcontractor      = (id)          => api.delete(`/subcontrac
 export const getSubcontractorInvoices   = (id, params = {}) => api.get(`/subcontractors/${id}/invoices`, { params })
 export const createSubcontractorInvoice = (id, data)        => api.post(`/subcontractors/${id}/invoices`, data)
 export const getSubcontractorCosting        = (id, params = {}) => api.get(`/subcontractors/${id}/costing`, { params })
+export const saveSubcontractorCostingNote   = (id, params = {}, data = {}) => api.put(`/subcontractors/${id}/costing/note`, data, { params })
 export const downloadSubcontractorCostingPdf   = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/pdf`,   { params, responseType: 'blob' })
 export const downloadSubcontractorCostingExcel = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/excel`, { params, responseType: 'blob' })
 

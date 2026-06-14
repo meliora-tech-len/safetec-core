@@ -371,6 +371,9 @@ class SupplierInvoice(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=True)
+    # Free-text supplier name used when supplier_id is null (a one-off expense
+    # captured against a name rather than a registered supplier).
+    supplier_name_text = Column(String(300), nullable=True)
     subcontractor_id = Column(Integer, ForeignKey("subcontractors.id", ondelete="CASCADE"), nullable=True)
     entity_id = Column(Integer, ForeignKey("business_entities.id", ondelete="RESTRICT"), nullable=False)
 
@@ -804,6 +807,25 @@ class AdditionalLoadRate(Base):
     is_active  = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class TruckCostingNote(Base):
+    """Free-text note per truck + costing period (month/year). Used to flag
+    things like a loss carried over from the previous month — awareness only,
+    never included in any costing totals."""
+    __tablename__ = "truck_costing_notes"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    truck_id      = Column(Integer, ForeignKey("trucks.id", ondelete="CASCADE"), nullable=False)
+    month         = Column(Integer, nullable=False)
+    year          = Column(Integer, nullable=False)
+    note          = Column(Text)
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("truck_id", "month", "year", name="uq_truck_costing_note_period"),
+    )
 
 
 class TruckWash(Base):

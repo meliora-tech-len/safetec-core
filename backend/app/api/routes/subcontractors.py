@@ -8,14 +8,14 @@ from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, SupplierInvoiceLineItem, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, SupplierInvoiceLineItem, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType, TruckCostingNote
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
     TruckLoadOut, TruckOut, SupplierInvoiceOut,
     SubcontractorCostingOut, SubcontractorCostingSummary, SubcontractorTruckCostingOut,
     SupplierStatementGroup, SubcontractorInvoiceCreate,
-    DieselFillUpCostingRow, DieselSupplierGroup,
+    DieselFillUpCostingRow, DieselSupplierGroup, SubcontractorCostingNoteUpdate,
 )
 from app.services.audit import log_action
 from app.services.verification import get_verification_display
@@ -180,7 +180,7 @@ def update_subcontractor(
 def _invoice_to_out(db: Session, inv: SupplierInvoice) -> SupplierInvoiceOut:
     out = SupplierInvoiceOut.model_validate(inv)
     return out.model_copy(update={
-        "supplier_name": inv.supplier.name if inv.supplier else None,
+        "supplier_name": inv.supplier.name if inv.supplier else inv.supplier_name_text,
         **get_verification_display(db, inv),
     })
 
@@ -297,7 +297,7 @@ def _enrich_load(load: TruckLoad) -> TruckLoadOut:
 def _enrich_invoice(db: Session, inv: SupplierInvoice) -> SupplierInvoiceOut:
     out = SupplierInvoiceOut.model_validate(inv)
     return out.model_copy(update={
-        "supplier_name": inv.supplier.name if inv.supplier else None,
+        "supplier_name": inv.supplier.name if inv.supplier else inv.supplier_name_text,
         **get_verification_display(db, inv),
     })
 
@@ -370,6 +370,18 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
 
     trucks = db.query(Truck).filter(Truck.subcontractor_id == subcontractor_id).all()
 
+    # Per-truck carry-over notes for this period (awareness only, never totalled)
+    notes_by_truck = {}
+    if trucks:
+        notes_by_truck = {
+            n.truck_id: n.note
+            for n in db.query(TruckCostingNote).filter(
+                TruckCostingNote.truck_id.in_([t.id for t in trucks]),
+                TruckCostingNote.month == month,
+                TruckCostingNote.year == year,
+            ).all()
+        }
+
     D0 = Decimal("0")
     truck_results = []
 
@@ -390,12 +402,13 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     # costing, regardless of payment term. Other entities keep the rule above.
     is_safetec = bool(entity and (entity.code or "").upper() == "SFT")
     if is_safetec:
-        period_clause = and_(
+        supplier_period_clause = and_(
+            SupplierInvoice.supplier_id.isnot(None),
             SupplierInvoice.statement_month == month,
             SupplierInvoice.statement_year == year,
         )
     else:
-        period_clause = or_(
+        supplier_period_clause = or_(
             and_(
                 Supplier.payment_term == PaymentTermType.days_30,
                 SupplierInvoice.statement_month == month,
@@ -408,19 +421,29 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             ),
         )
 
+    # Custom (free-text) expenses have no supplier and therefore no payment term,
+    # so the cash-vs-30-day timing rule can't apply — they simply belong to the
+    # statement period they were captured in (the costing month/year).
+    custom_period_clause = and_(
+        SupplierInvoice.supplier_id.is_(None),
+        SupplierInvoice.statement_month == month,
+        SupplierInvoice.statement_year == year,
+    )
+
     # All candidate non-diesel invoices for this entity/period, fetched once.
     # Per-truck matching (main-line reg vs. per-sub-line reg) happens in Python
     # via `_truck_invoice_contribution`, so a multi-line/split invoice can pull
     # through to several trucks with each picking up just its own sub-lines.
+    # Outer join so custom expenses (null supplier) come through too.
     period_invoices = (
         db.query(SupplierInvoice)
-        .join(Supplier, Supplier.id == SupplierInvoice.supplier_id)
+        .outerjoin(Supplier, Supplier.id == SupplierInvoice.supplier_id)
         .options(joinedload(SupplierInvoice.line_items))
         .filter(
             SupplierInvoice.entity_id == sub.entity_id,
             SupplierInvoice.is_archived == False,
-            Supplier.is_diesel_supplier == False,
-            period_clause,
+            or_(Supplier.is_diesel_supplier == False, SupplierInvoice.supplier_id.is_(None)),
+            or_(supplier_period_clause, custom_period_clause),
         )
         .all()
     )
@@ -551,6 +574,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             total_expenses_incl_vat=exp_incl,
             net_payable=net_payable,
             diesel_groups=diesel_groups,
+            note=notes_by_truck.get(truck.id),
         ))
 
     summary = SubcontractorCostingSummary(
@@ -592,6 +616,61 @@ def get_subcontractor_costing(
     current_user: User = Depends(get_current_user),
 ):
     return _build_subcontractor_costing(subcontractor_id, month, year, db, current_user)
+
+
+@router.put("/{subcontractor_id}/costing/note")
+def upsert_truck_costing_note(
+    subcontractor_id: int,
+    payload: SubcontractorCostingNoteUpdate,
+    truck_id: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    truck = db.query(Truck).filter(
+        Truck.id == truck_id,
+        Truck.subcontractor_id == subcontractor_id,
+    ).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found for this subcontractor")
+
+    text_val = (payload.note or "").strip() or None
+    note_row = (
+        db.query(TruckCostingNote)
+        .filter(
+            TruckCostingNote.truck_id == truck_id,
+            TruckCostingNote.month == month,
+            TruckCostingNote.year == year,
+        )
+        .first()
+    )
+
+    if text_val is None:
+        if note_row:
+            db.delete(note_row)
+            db.commit()
+        return {"note": None}
+
+    if note_row:
+        note_row.note = text_val
+        note_row.updated_by_id = current_user.id
+    else:
+        note_row = TruckCostingNote(
+            truck_id=truck_id,
+            month=month,
+            year=year,
+            note=text_val,
+            updated_by_id=current_user.id,
+        )
+        db.add(note_row)
+    db.commit()
+    return {"note": text_val}
 
 
 @router.get("/{subcontractor_id}/costing/export/pdf")
