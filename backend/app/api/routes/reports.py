@@ -32,6 +32,25 @@ def _name_is_intercompany(name: str, tokens: set) -> bool:
     up = (name or '').upper()
     return any(t in up for t in tokens)
 
+
+# ── Report-only supplier-invoice adjustments ───────────────────────────────────
+# These reclassify a few specific suppliers for the Income vs Expenses / SARS VAT
+# report ONLY. They do not change stored data or any other module.
+def _supplier_name(inv) -> str:
+    return (inv.supplier.name if (inv.supplier_id and inv.supplier) else '') or ''
+
+
+def _is_sasfin_supplier(inv) -> bool:
+    """Sasfin supplier invoices are excluded from the report entirely."""
+    return 'sasfin' in _supplier_name(inv).lower()
+
+
+def _is_crack_logic_insurance(inv) -> bool:
+    """Crack Logic 'Insurance Claim' invoices are counted as income, not expense."""
+    return ('crack logic' in _supplier_name(inv).lower()
+            and 'insurance claim' in (inv.description or '').lower())
+
+
 MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
@@ -168,6 +187,14 @@ def income_expenses_report(
             excl = incl / 1.15
         else:
             excl = incl
+        # Report-only reclassification (source data untouched):
+        #   Sasfin → excluded entirely; Crack Logic 'Insurance Claim' → income.
+        if _is_sasfin_supplier(inv):
+            continue
+        if _is_crack_logic_insurance(inv):
+            truck_income_incl[m] = truck_income_incl.get(m, 0.0) + round(incl, 2)
+            truck_income_excl[m] = truck_income_excl.get(m, 0.0) + round(excl, 2)
+            continue
         # Round per-invoice (matching the SARS VAT detail) so the month-line totals
         # tie exactly to the drill-down rather than drifting a few cents on incl/1.15.
         supplier_incl_by_month[m] = supplier_incl_by_month.get(m, 0.0) + round(incl, 2)
@@ -341,23 +368,8 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             'category':    ocat,
         })
 
-    # Order Tradekor → Intercompany → Other (then date) and build per-group subtotals.
-    _OCAT_ORDER = {'tradekor': 0, 'intercompany': 1, 'other': 2}
-    _OCAT_LABEL = {'tradekor': 'Tradekor', 'intercompany': 'Intercompany', 'other': 'Other'}
-    output_invoices.sort(key=lambda x: (_OCAT_ORDER.get(x['category'], 9), x['date'] or ''))
-    output_groups = []
-    for key in ('tradekor', 'intercompany', 'other'):
-        rows = [x for x in output_invoices if x['category'] == key]
-        if not rows:
-            continue
-        output_groups.append({
-            'key':         key,
-            'label':       _OCAT_LABEL[key],
-            'count':       len(rows),
-            'amount_incl': round(sum(x['amount_incl'] for x in rows), 2),
-            'amount_excl': round(sum(x['amount_excl'] for x in rows), 2),
-            'vat':         round(sum(x['vat'] for x in rows), 2),
-        })
+    # (Output grouping is built below, after supplier invoices are processed —
+    #  Crack Logic 'Insurance Claim' invoices get reclassified onto the income side.)
 
     sup_invoices = (
         db.query(SupplierInvoice)
@@ -399,6 +411,21 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             name = inv.supplier.name
         elif inv.subcontractor_id and inv.subcontractor:
             name = inv.subcontractor.name
+        # Report-only reclassification (source data untouched):
+        #   Sasfin → excluded from the report; Crack Logic 'Insurance Claim' →
+        #   moved onto the income/output side as an insurance-claim reimbursement.
+        if _is_sasfin_supplier(inv):
+            continue
+        if _is_crack_logic_insurance(inv):
+            output_invoices.append({
+                'date':        inv.invoice_date.strftime('%Y-%m-%d') if inv.invoice_date else None,
+                'description': f"{name} — {inv.description}".strip(' —') or (inv.invoice_number or ''),
+                'amount_incl': round(incl, 2),
+                'amount_excl': round(excl, 2),
+                'vat':         round(incl - excl, 2),
+                'category':    'other',
+            })
+            continue
         # Categorise for the grouped expense breakdown:
         #   subcontractor → diesel → intercompany → other (first match wins)
         if inv.subcontractor_id:
@@ -435,6 +462,26 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         input_groups.append({
             'key':         key,
             'label':       _CAT_LABEL[key],
+            'count':       len(rows),
+            'amount_incl': round(sum(x['amount_incl'] for x in rows), 2),
+            'amount_excl': round(sum(x['amount_excl'] for x in rows), 2),
+            'vat':         round(sum(x['vat'] for x in rows), 2),
+        })
+
+    # Order Tradekor → Intercompany → Other (then date) and build per-group subtotals.
+    # Built here (not right after the income loop) so Crack Logic 'Insurance Claim'
+    # invoices reclassified from the supplier side are included.
+    _OCAT_ORDER = {'tradekor': 0, 'intercompany': 1, 'other': 2}
+    _OCAT_LABEL = {'tradekor': 'Tradekor', 'intercompany': 'Intercompany', 'other': 'Other'}
+    output_invoices.sort(key=lambda x: (_OCAT_ORDER.get(x['category'], 9), x['date'] or ''))
+    output_groups = []
+    for key in ('tradekor', 'intercompany', 'other'):
+        rows = [x for x in output_invoices if x['category'] == key]
+        if not rows:
+            continue
+        output_groups.append({
+            'key':         key,
+            'label':       _OCAT_LABEL[key],
             'count':       len(rows),
             'amount_incl': round(sum(x['amount_incl'] for x in rows), 2),
             'amount_excl': round(sum(x['amount_excl'] for x in rows), 2),
