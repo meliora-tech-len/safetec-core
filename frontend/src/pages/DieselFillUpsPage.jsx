@@ -210,13 +210,17 @@ export default function DieselFillUpsPage() {
     finally { setSaving(false) }
   }
 
-  const handleVerify = async (f) => {
-    try { await verifyDieselFillUp(f.id); load() }
+  // Patch just the affected fill-up (endpoint returns the enriched row) rather
+  // than reloading the whole list + summary; verification doesn't change totals.
+  const patchFillup = (data) => setFillups(prev => prev.map(x => x.id === data.id ? { ...x, ...data } : x))
+
+  const handleVerify = async (f, intent) => {
+    try { const { data } = await verifyDieselFillUp(f.id, intent); patchFillup(data) }
     catch (err) { toast.error(errorMessage(err)) }
   }
 
-  const handleFinalize = async (f) => {
-    try { await finalizeDieselFillUp(f.id); load() }
+  const handleFinalize = async (f, intent) => {
+    try { const { data } = await finalizeDieselFillUp(f.id, intent); patchFillup(data) }
     catch (err) { toast.error(errorMessage(err)) }
   }
 

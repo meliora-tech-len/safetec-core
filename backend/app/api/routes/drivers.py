@@ -33,6 +33,7 @@ from app.services.payroll_calculator import calculate_pay_cycle
 from app.services.payslip_generator import generate_payslip_pdf
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
+    build_initials_cache, intent_from_action,
 )
 from app.api.routes.payroll_settings import _get_current as _get_payroll_settings
 
@@ -126,12 +127,13 @@ def _cycle_with_calc(
     out = DriverPayCycleOut.model_validate(cycle)
     out.calc = calc_serialisable
     out.was_prefilled = was_prefilled
+    _vcache = build_initials_cache(db)
     out.additional_loads = [
-        DriverAdditionalLoadOut.model_validate(al).model_copy(update=get_verification_display(db, al))
+        DriverAdditionalLoadOut.model_validate(al).model_copy(update=get_verification_display(db, al, _vcache))
         for al in cycle.additional_loads
     ]
     out.food_payments = [
-        DriverFoodPaymentOut.model_validate(fp).model_copy(update=get_verification_display(db, fp))
+        DriverFoodPaymentOut.model_validate(fp).model_copy(update=get_verification_display(db, fp, _vcache))
         for fp in cycle.food_payments
     ]
     return out
@@ -884,6 +886,7 @@ def archive_additional_load(
 @router.patch("/{driver_id}/cycles/{year}/{month}/additional-loads/{load_id}/verify")
 def verify_additional_load(
     driver_id: int, year: int, month: int, load_id: int,
+    action: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -894,11 +897,17 @@ def verify_additional_load(
     entry = db.query(DriverAdditionalLoad).filter(DriverAdditionalLoad.id == load_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
-    apply_verify_step(entry, current_user, is_admin=(current_user.role == "admin"))
-    log_action(db, "additional_load.verified", user_id=current_user.id,
-               entity_id=driver.entity_id, resource_type="additional_load",
-               resource_id=load_id,
-               description=f"Verified additional load #{load_id} for {driver.first_name} {driver.last_name}")
+    before = (entry.verified_by, entry.verified2_by)
+    apply_verify_step(entry, current_user, is_admin=(current_user.role == "admin"),
+                      desired=intent_from_action(action))
+    after = (entry.verified_by, entry.verified2_by)
+    if after != before:
+        added = (after[0] and not before[0]) or (after[1] and not before[1])
+        log_action(db, "additional_load.verified" if added else "additional_load.unverified",
+                   user_id=current_user.id,
+                   entity_id=driver.entity_id, resource_type="additional_load",
+                   resource_id=load_id,
+                   description=f"{'Verified' if added else 'Removed verification on'} additional load #{load_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}
@@ -909,6 +918,7 @@ def verify_additional_load(
 @router.patch("/{driver_id}/cycles/{year}/{month}/additional-loads/{load_id}/finalize")
 def finalize_additional_load(
     driver_id: int, year: int, month: int, load_id: int,
+    action: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -919,13 +929,16 @@ def finalize_additional_load(
     entry = db.query(DriverAdditionalLoad).filter(DriverAdditionalLoad.id == load_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
-    apply_finalize_step(entry, current_user, is_admin=(current_user.role == "admin"))
+    was_locked = bool(entry.verified3_by)
+    apply_finalize_step(entry, current_user, is_admin=(current_user.role == "admin"),
+                        desired=intent_from_action(action))
     locked = bool(entry.verified3_by)
-    log_action(db, "additional_load.finalized" if locked else "additional_load.unfinalized",
-               user_id=current_user.id,
-               entity_id=driver.entity_id, resource_type="additional_load",
-               resource_id=load_id,
-               description=f"{'Applied' if locked else 'Removed'} final lock on additional load #{load_id} for {driver.first_name} {driver.last_name}")
+    if locked != was_locked:
+        log_action(db, "additional_load.finalized" if locked else "additional_load.unfinalized",
+                   user_id=current_user.id,
+                   entity_id=driver.entity_id, resource_type="additional_load",
+                   resource_id=load_id,
+                   description=f"{'Applied' if locked else 'Removed'} final lock on additional load #{load_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}
@@ -1011,6 +1024,7 @@ def delete_food_payment(
 @router.patch("/{driver_id}/cycles/{year}/{month}/food-payments/{payment_id}/verify")
 def verify_food_payment(
     driver_id: int, year: int, month: int, payment_id: int,
+    action: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1021,11 +1035,17 @@ def verify_food_payment(
     entry = db.query(DriverFoodPayment).filter(DriverFoodPayment.id == payment_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
-    apply_verify_step(entry, current_user, is_admin=(current_user.role == "admin"))
-    log_action(db, "food_payment.verified", user_id=current_user.id,
-               entity_id=driver.entity_id, resource_type="food_payment",
-               resource_id=payment_id,
-               description=f"Verified food payment #{payment_id} for {driver.first_name} {driver.last_name}")
+    before = (entry.verified_by, entry.verified2_by)
+    apply_verify_step(entry, current_user, is_admin=(current_user.role == "admin"),
+                      desired=intent_from_action(action))
+    after = (entry.verified_by, entry.verified2_by)
+    if after != before:
+        added = (after[0] and not before[0]) or (after[1] and not before[1])
+        log_action(db, "food_payment.verified" if added else "food_payment.unverified",
+                   user_id=current_user.id,
+                   entity_id=driver.entity_id, resource_type="food_payment",
+                   resource_id=payment_id,
+                   description=f"{'Verified' if added else 'Removed verification on'} food payment #{payment_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}
@@ -1036,6 +1056,7 @@ def verify_food_payment(
 @router.patch("/{driver_id}/cycles/{year}/{month}/food-payments/{payment_id}/finalize")
 def finalize_food_payment(
     driver_id: int, year: int, month: int, payment_id: int,
+    action: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1046,13 +1067,16 @@ def finalize_food_payment(
     entry = db.query(DriverFoodPayment).filter(DriverFoodPayment.id == payment_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
-    apply_finalize_step(entry, current_user, is_admin=(current_user.role == "admin"))
+    was_locked = bool(entry.verified3_by)
+    apply_finalize_step(entry, current_user, is_admin=(current_user.role == "admin"),
+                        desired=intent_from_action(action))
     locked = bool(entry.verified3_by)
-    log_action(db, "food_payment.finalized" if locked else "food_payment.unfinalized",
-               user_id=current_user.id,
-               entity_id=driver.entity_id, resource_type="food_payment",
-               resource_id=payment_id,
-               description=f"{'Applied' if locked else 'Removed'} final lock on food payment #{payment_id} for {driver.first_name} {driver.last_name}")
+    if locked != was_locked:
+        log_action(db, "food_payment.finalized" if locked else "food_payment.unfinalized",
+                   user_id=current_user.id,
+                   entity_id=driver.entity_id, resource_type="food_payment",
+                   resource_id=payment_id,
+                   description=f"{'Applied' if locked else 'Removed'} final lock on food payment #{payment_id} for {driver.first_name} {driver.last_name}")
     db.commit()
     db.refresh(entry)
     d = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}

@@ -2159,6 +2159,9 @@ class SubcontractorCostingOut(BaseModel):
 class ValueVerificationActionIn(BaseModel):
     target: str
     entity_id: Optional[int] = None
+    # Client intent so a stale tab can't toggle the wrong way:
+    # "add"/"apply" = set, "remove"/"undo" = clear, None = legacy toggle.
+    action: Optional[str] = None
 
 
 class ValueVerificationOut(BaseModel):

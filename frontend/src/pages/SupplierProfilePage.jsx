@@ -60,6 +60,7 @@ const blankLineItem = () => ({
   amount_incl_vat: '',
   sort_order: 0,
   line_date: '',
+  _vat: true,            // per-line VAT, on by default; cleared for non-VAT lines
 })
 
 // ── WBG Excel import helpers & modal ─────────────────────────────────────────
@@ -600,12 +601,12 @@ export default function SupplierProfilePage() {
   }, [supplierId])
   useEffect(() => { if (!loading) loadLineVerif() }, [loading, loadLineVerif])
 
-  const handleVerifyLine = async (target) => {
-    try { await verifyValue(target, supplier?.entity_id); loadLineVerif() }
+  const handleVerifyLine = async (target, intent) => {
+    try { const { data } = await verifyValue(target, supplier?.entity_id, intent); setLineVerif(prev => ({ ...prev, [data.target]: data })) }
     catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
   }
-  const handleFinalizeLine = async (target) => {
-    try { await finalizeValue(target, supplier?.entity_id); loadLineVerif() }
+  const handleFinalizeLine = async (target, intent) => {
+    try { const { data } = await finalizeValue(target, supplier?.entity_id, intent); setLineVerif(prev => ({ ...prev, [data.target]: data })) }
     catch (e) { toast.error(errorMessage(e, 'Lock failed')) }
   }
 
@@ -715,7 +716,10 @@ export default function SupplierProfilePage() {
       line_items: inv.line_items ? inv.line_items.map(li => {
         const qty = parseFloat(li.quantity) || 0
         const excl = parseFloat(li.amount_excl_vat) || 0
-        return { ...li, _key: li.id, _rate: qty > 0 ? String(Math.round(excl / qty * 10000) / 10000) : '', line_date: li.line_date ? String(li.line_date).slice(0, 10) : '' }
+        const incl = parseFloat(li.amount_incl_vat) || 0
+        // A line is non-VAT when its incl == excl; default new/zero lines to VAT.
+        const _vat = excl > 0 ? incl > excl : true
+        return { ...li, _key: li.id, _vat, _rate: qty > 0 ? String(Math.round(excl / qty * 10000) / 10000) : '', line_date: li.line_date ? String(li.line_date).slice(0, 10) : '' }
       }) : [],
       statement_month: inv.statement_month || currentMonth(),
       statement_year: inv.statement_year || currentYear(),
@@ -845,17 +849,27 @@ export default function SupplierProfilePage() {
     }
   }
 
-  const handleVerify = async (inv) => {
+  // Patch a single invoice's verification fields in place (the verify/finalize
+  // endpoints return the full row) instead of refetching every statement group.
+  // Merge — the response omits line_items / is_multi_line / diesel_fillup_id, so
+  // spreading over the existing row preserves them.
+  const patchInvoice = (updated) =>
+    setGroups(prev => prev.map(g => ({
+      ...g,
+      invoices: g.invoices.map(i => i.id === updated.id ? { ...i, ...updated } : i),
+    })))
+
+  const handleVerify = async (inv, intent) => {
     try {
-      await verifySupplierInvoice(inv.id)
-      loadInvoices()
+      const { data } = await verifySupplierInvoice(inv.id, intent)
+      patchInvoice(data)
     } catch (e) { toast.error(errorMessage(e)) }
   }
 
-  const handleFinalize = async (inv) => {
+  const handleFinalize = async (inv, intent) => {
     try {
-      await finalizeSupplierInvoice(inv.id)
-      loadInvoices()
+      const { data } = await finalizeSupplierInvoice(inv.id, intent)
+      patchInvoice(data)
     } catch (e) { toast.error(errorMessage(e)) }
   }
 
@@ -1551,7 +1565,9 @@ export default function SupplierProfilePage() {
 
                             {/* VAT */}
                             <td style={{ ...styles.td, textAlign: 'center' }}>
-                              {isEditing ? (
+                              {inv.is_multi_line && !isDiesel ? (
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>per line</span>
+                              ) : isEditing ? (
                                 <input
                                   type="checkbox" checked={f.vat_applicable}
                                   onChange={e => setEditForm(p => ({ ...p, vat_applicable: e.target.checked }))}
@@ -1653,7 +1669,6 @@ export default function SupplierProfilePage() {
                                     : <LineItemsEditor
                                         items={editForm.line_items || []}
                                         onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
-                                        vatApplicable={editForm.vat_applicable !== false}
                                         showReg={showVehicleReg}
                                         trucks={trucks}
                                         amountInclOnly={amountInclOnly}
@@ -1938,15 +1953,19 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
             style={{ ...CS.input, textAlign: 'right' }} />
         </div>
 
-        <div style={{ ...CS.field(110), flex: 'none' }}>
-          <label style={CS.label}>VAT</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 7 }}>
-            <input type="checkbox" checked={form.vat_applicable}
-              onChange={e => set('vat_applicable', e.target.checked)}
-              style={{ cursor: 'pointer', width: 15, height: 15 }} />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Applicable</span>
+        {/* Multi-line non-diesel invoices set VAT per line, so the invoice-level
+            toggle is hidden in that mode. Single, split and diesel keep it. */}
+        {!(form.is_multi_line && !splitMode && !isDiesel) && (
+          <div style={{ ...CS.field(110), flex: 'none' }}>
+            <label style={CS.label}>VAT</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 7 }}>
+              <input type="checkbox" checked={form.vat_applicable}
+                onChange={e => set('vat_applicable', e.target.checked)}
+                style={{ cursor: 'pointer', width: 15, height: 15 }} />
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Applicable</span>
+            </div>
           </div>
-        </div>
+        )}
 
         <div style={CS.field(170)}>
           <label style={CS.label}>{isDiesel ? 'Subbie Name' : 'Description'}</label>
@@ -2107,7 +2126,6 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
             <LineItemsEditor
               items={form.line_items || []}
               onChange={items => setForm(f => ({ ...f, line_items: items }))}
-              vatApplicable={form.vat_applicable !== false}
               showReg={showReg || (form.line_items || []).some(li => li.unit)}
               trucks={trucks}
               amountInclOnly={amountInclOnly}
@@ -2120,12 +2138,15 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
 }
 
 
-function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = false, trucks = [], amountInclOnly = false }) {
-  const vatMult = vatApplicable ? 1.15 : 1
+function LineItemsEditor({ items, onChange, showReg = false, trucks = [], amountInclOnly = false }) {
+  // Each line carries its own VAT flag (default on). incl == excl when off.
+  const lineVat = (li) => li._vat !== false
+  const multOf = (li) => (lineVat(li) ? 1.15 : 1)
   const addLine = () => onChange([...items, blankLineItem()])
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
   const updateLine = (idx, field, value) => {
     const updated = { ...items[idx], [field]: value }
+    const vatMult = multOf(updated)
     if (field === 'amount_incl_vat') {
       // Supplier invoices the VAT-inclusive amount directly (no qty/rate breakdown).
       const incl = parseFloat(value) || 0
@@ -2136,6 +2157,20 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
       const rate = parseFloat(field === '_rate' ? value : updated._rate) || 0
       const excl = qty && rate ? Math.round(qty * rate * 100) / 100 : 0
       updated.amount_excl_vat = excl || ''
+      updated.amount_incl_vat = excl ? String(Math.round(excl * vatMult * 100) / 100) : ''
+    }
+    onChange(items.map((li, i) => i === idx ? updated : li))
+  }
+  // Flip a line's VAT and re-derive the dependent amount from the stable one
+  // (the typed incl in incl-only mode, otherwise the qty×rate excl).
+  const toggleVat = (idx) => {
+    const updated = { ...items[idx], _vat: !lineVat(items[idx]) }
+    const vatMult = updated._vat ? 1.15 : 1
+    if (amountInclOnly) {
+      const incl = parseFloat(updated.amount_incl_vat) || 0
+      updated.amount_excl_vat = incl ? String(Math.round(incl / vatMult * 100) / 100) : ''
+    } else {
+      const excl = parseFloat(updated.amount_excl_vat) || 0
       updated.amount_incl_vat = excl ? String(Math.round(excl * vatMult * 100) / 100) : ''
     }
     onChange(items.map((li, i) => i === idx ? updated : li))
@@ -2155,6 +2190,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
           {!amountInclOnly && <col style={{ width: 105 }} />}
           {!amountInclOnly && <col style={{ width: 95 }} />}
           <col style={{ width: amountInclOnly ? 130 : 95 }} />
+          <col style={{ width: 44 }} />
           <col style={{ width: 28 }} />
         </colgroup>
         <thead>
@@ -2166,6 +2202,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
             {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>}
             {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>}
             <th style={{ ...liStyles.th, textAlign: 'right' }}>{amountInclOnly ? 'Amount (incl. VAT)' : 'Incl. VAT'}</th>
+            <th style={{ ...liStyles.th, textAlign: 'center' }} title="VAT applies to this line">VAT</th>
             <th style={liStyles.th} />
           </tr>
         </thead>
@@ -2232,6 +2269,12 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
                 )}
               </td>
               <td style={{ ...liStyles.td, textAlign: 'center' }}>
+                <input type="checkbox" checked={lineVat(li)}
+                  onChange={() => toggleVat(idx)}
+                  title={lineVat(li) ? 'VAT applies — uncheck for a non-VAT line' : 'Non-VAT line — check to add VAT'}
+                  style={{ cursor: 'pointer', width: 14, height: 14, accentColor: 'var(--accent)' }} />
+              </td>
+              <td style={{ ...liStyles.td, textAlign: 'center' }}>
                 <button onClick={() => removeLine(idx)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}>
                   <X size={12} color="var(--danger)" />
@@ -2258,6 +2301,7 @@ function LineItemsEditor({ items, onChange, vatApplicable = true, showReg = fals
             <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
               {totalIncl.toFixed(2)}
             </td>
+            <td />
             <td />
           </tr>
         </tfoot>
@@ -2335,8 +2379,15 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
           {displayItems.map(li => {
             const qty = parseFloat(li.quantity) || 0
             const excl = parseFloat(li.amount_excl_vat) || 0
+            const incl = parseFloat(li.amount_incl_vat) || 0
             const rate = qty > 0 ? excl / qty : null
-            const inclFmt = <>R&nbsp;{parseFloat(li.amount_incl_vat ?? 0).toFixed(2)}</>
+            const noVat = excl > 0 && incl <= excl
+            const inclFmt = (
+              <>
+                R&nbsp;{incl.toFixed(2)}
+                {noVat && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.3 }}>no&nbsp;VAT</span>}
+              </>
+            )
             return (
               <tr key={li.id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={liStyles.td}>{li.item_code || '—'}</td>

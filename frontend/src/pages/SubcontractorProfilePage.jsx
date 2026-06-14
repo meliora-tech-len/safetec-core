@@ -169,12 +169,12 @@ export default function SubcontractorProfilePage() {
       .catch(() => { if (reqId === verifReqId.current) setVerif({}) })
   }, [costingPrefix])
 
-  const handleVerifyValue = async (target) => {
-    try { await verifyValue(target, subcontractor?.entity_id); loadVerif() }
+  const handleVerifyValue = async (target, intent) => {
+    try { const { data } = await verifyValue(target, subcontractor?.entity_id, intent); setVerif(prev => ({ ...prev, [data.target]: data })) }
     catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
   }
-  const handleFinalizeValue = async (target) => {
-    try { await finalizeValue(target, subcontractor?.entity_id); loadVerif() }
+  const handleFinalizeValue = async (target, intent) => {
+    try { const { data } = await finalizeValue(target, subcontractor?.entity_id, intent); setVerif(prev => ({ ...prev, [data.target]: data })) }
     catch (e) { toast.error(errorMessage(e, 'Lock failed')) }
   }
 

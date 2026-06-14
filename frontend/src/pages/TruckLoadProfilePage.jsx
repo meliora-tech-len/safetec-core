@@ -503,8 +503,9 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
   // Per-line verification — native DieselFillUp verification, shared with the
   // standalone Diesel module (verify once, reflected in both views).
   const { user: dieselUser, isAdmin: dieselIsAdmin } = useAuth()
-  const handleVerifyFillup   = async (f, intent) => { try { await verifyDieselFillUp(f.id, intent); fetchFillups() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
-  const handleFinalizeFillup = async (f, intent) => { try { await finalizeDieselFillUp(f.id, intent); fetchFillups() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
+  const patchFillup = (data) => setFillups(prev => prev.map(x => x.id === data.id ? { ...x, ...data } : x))
+  const handleVerifyFillup   = async (f, intent) => { try { const { data } = await verifyDieselFillUp(f.id, intent); patchFillup(data) } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const handleFinalizeFillup = async (f, intent) => { try { const { data } = await finalizeDieselFillUp(f.id, intent); patchFillup(data) } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
 
   const doAdd = async () => {
     setSaving(true)
@@ -928,8 +929,8 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
       .catch(() => setAlVerif({}))
   }, [alPrefix])
   useEffect(() => { fetchAlVerif() }, [fetchAlVerif])
-  const handleVerifyAl   = async (t, intent) => { try { await verifyValue(t, truck?.entity_id, intent); fetchAlVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
-  const handleFinalizeAl = async (t, intent) => { try { await finalizeValue(t, truck?.entity_id, intent); fetchAlVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
+  const handleVerifyAl   = async (t, intent) => { try { const { data } = await verifyValue(t, truck?.entity_id, intent); setAlVerif(prev => ({ ...prev, [data.target]: data })) } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const handleFinalizeAl = async (t, intent) => { try { const { data } = await finalizeValue(t, truck?.entity_id, intent); setAlVerif(prev => ({ ...prev, [data.target]: data })) } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
 
   useEffect(() => {
     if (!isSafetec) { setRates([]); return }
@@ -1751,8 +1752,8 @@ function ProfitSheetSection({ truck, year, month, summary }) {
       .catch(() => setPVerif({}))
   }, [profitPrefix])
   useEffect(() => { fetchPVerif() }, [fetchPVerif])
-  const pVerify   = useCallback(async (t, intent) => { try { await verifyValue(t, truck?.entity_id, intent); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }, [truck?.entity_id, fetchPVerif])
-  const pFinalize = useCallback(async (t, intent) => { try { await finalizeValue(t, truck?.entity_id, intent); fetchPVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }, [truck?.entity_id, fetchPVerif])
+  const pVerify   = useCallback(async (t, intent) => { try { const { data } = await verifyValue(t, truck?.entity_id, intent); setPVerif(prev => ({ ...prev, [data.target]: data })) } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }, [truck?.entity_id])
+  const pFinalize = useCallback(async (t, intent) => { try { const { data } = await finalizeValue(t, truck?.entity_id, intent); setPVerif(prev => ({ ...prev, [data.target]: data })) } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }, [truck?.entity_id])
   // Wrap any profit-sheet value; `field` is the stable sub-key. Memoised so its
   // identity is stable across keystrokes — otherwise every edit remounts the
   // wrapped <input>, dropping focus after a single character.
@@ -2133,8 +2134,8 @@ export default function TruckLoadProfilePage() {
       .catch(() => setLoadVerif({}))
   }, [loadsVerifPrefix])
   useEffect(() => { fetchLoadVerif() }, [fetchLoadVerif])
-  const handleVerifyLoad   = async (target, intent) => { try { await verifyValue(target, truck?.entity_id, intent); fetchLoadVerif() } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
-  const handleFinalizeLoad = async (target, intent) => { try { await finalizeValue(target, truck?.entity_id, intent); fetchLoadVerif() } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
+  const handleVerifyLoad   = async (target, intent) => { try { const { data } = await verifyValue(target, truck?.entity_id, intent); setLoadVerif(prev => ({ ...prev, [data.target]: data })) } catch (e) { toast.error(errorMessage(e, 'Verification failed')) } }
+  const handleFinalizeLoad = async (target, intent) => { try { const { data } = await finalizeValue(target, truck?.entity_id, intent); setLoadVerif(prev => ({ ...prev, [data.target]: data })) } catch (e) { toast.error(errorMessage(e, 'Lock failed')) } }
 
   useEffect(() => {
     if (editingId && firstInputRef.current) firstInputRef.current.focus()

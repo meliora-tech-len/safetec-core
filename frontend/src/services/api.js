@@ -239,27 +239,29 @@ export const createDieselFillUp = (data) => api.post('/diesel/fillups', data)
 export const updateDieselFillUp = (id, data) => api.put(`/diesel/fillups/${id}`, data)
 export const deleteDieselFillUp = (id) => api.delete(`/diesel/fillups/${id}`)
 export const archiveDieselFillUp = (id) => api.patch(`/diesel/fillups/${id}/archive`)
-export const verifyDieselFillUp       = (id) => api.patch(`/diesel/fillups/${id}/verify`)
-export const finalizeDieselFillUp     = (id) => api.patch(`/diesel/fillups/${id}/finalize`)
+export const verifyDieselFillUp       = (id, action) => api.patch(`/diesel/fillups/${id}/verify`, null, { params: action ? { action } : {} })
+export const finalizeDieselFillUp     = (id, action) => api.patch(`/diesel/fillups/${id}/finalize`, null, { params: action ? { action } : {} })
 export const getDieselWarnings        = (params = {}) => api.get('/diesel/warnings', { params })
 export const bulkImportSupplierInvoices = (data) => api.post('/supplier-invoices/bulk-import', data)
 export const resolveSupplierDieselConflicts = (resolutions) => api.post('/supplier-invoices/resolve-diesel-conflicts', resolutions)
 export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)
-export const verifySupplierInvoice    = (id) => api.patch(`/supplier-invoices/${id}/verify`)
-export const finalizeSupplierInvoice  = (id) => api.patch(`/supplier-invoices/${id}/finalize`)
-export const verifyAdditionalLoad     = (driverId, year, month, loadId) =>
-  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/verify`)
-export const finalizeAdditionalLoad   = (driverId, year, month, loadId) =>
-  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/finalize`)
-export const verifyFoodPayment        = (driverId, year, month, paymentId) =>
-  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}/verify`)
-export const finalizeFoodPayment      = (driverId, year, month, paymentId) =>
-  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}/finalize`)
+export const verifySupplierInvoice    = (id, action) => api.patch(`/supplier-invoices/${id}/verify`, null, { params: action ? { action } : {} })
+export const finalizeSupplierInvoice  = (id, action) => api.patch(`/supplier-invoices/${id}/finalize`, null, { params: action ? { action } : {} })
+export const verifyAdditionalLoad     = (driverId, year, month, loadId, action) =>
+  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/verify`, null, { params: action ? { action } : {} })
+export const finalizeAdditionalLoad   = (driverId, year, month, loadId, action) =>
+  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${loadId}/finalize`, null, { params: action ? { action } : {} })
+export const verifyFoodPayment        = (driverId, year, month, paymentId, action) =>
+  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}/verify`, null, { params: action ? { action } : {} })
+export const finalizeFoodPayment      = (driverId, year, month, paymentId, action) =>
+  api.patch(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}/finalize`, null, { params: action ? { action } : {} })
 
 // ── Generic per-value verification overlay ──────────────────────────────────
+// `action` ('add'/'apply' | 'remove') carries the client's intent so a stale tab
+// can't toggle a verification the wrong way. Omit for legacy toggle behaviour.
 export const getVerifications = (prefix) => api.get('/verifications', { params: { prefix } })
-export const verifyValue      = (target, entityId = null) => api.patch('/verifications/verify', { target, entity_id: entityId })
-export const finalizeValue    = (target, entityId = null) => api.patch('/verifications/finalize', { target, entity_id: entityId })
+export const verifyValue      = (target, entityId = null, action = null) => api.patch('/verifications/verify', { target, entity_id: entityId, action })
+export const finalizeValue    = (target, entityId = null, action = null) => api.patch('/verifications/finalize', { target, entity_id: entityId, action })
 
 // ── Payroll Settings ──────────────────────────────────────────────────────────
 export const getPayrollSettings = () => api.get('/payroll-settings')

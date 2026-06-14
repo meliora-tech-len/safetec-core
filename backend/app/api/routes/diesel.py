@@ -25,6 +25,7 @@ from app.services.diesel_service import DieselCalculationService, diesel_type_fo
 from app.services.audit import log_action
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
+    intent_from_action,
 )
 
 router = APIRouter(prefix="/api/diesel", tags=["diesel"])
@@ -979,6 +980,7 @@ def delete_fillup(
 @router.patch("/fillups/{fillup_id}/verify")
 def verify_fillup(
     fillup_id: int,
+    action: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -987,12 +989,19 @@ def verify_fillup(
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
 
-    apply_verify_step(f, current_user, is_admin=(current_user.role == "admin"))
-    log_action(
-        db, "diesel_fillup.verified", user_id=current_user.id,
-        entity_id=f.entity_id, resource_type="diesel_fillup",
-        resource_id=fillup_id, description=f"Verified diesel fill-up #{fillup_id}",
-    )
+    before = (f.verified_by, f.verified2_by)
+    apply_verify_step(f, current_user, is_admin=(current_user.role == "admin"),
+                      desired=intent_from_action(action))
+    after = (f.verified_by, f.verified2_by)
+    if after != before:
+        added = (after[0] and not before[0]) or (after[1] and not before[1])
+        log_action(
+            db, "diesel_fillup.verified" if added else "diesel_fillup.unverified",
+            user_id=current_user.id,
+            entity_id=f.entity_id, resource_type="diesel_fillup",
+            resource_id=fillup_id,
+            description=f"{'Verified' if added else 'Removed verification on'} diesel fill-up #{fillup_id}",
+        )
     db.commit()
     db.refresh(f)
     return _enrich_fillup(f, db)
@@ -1001,6 +1010,7 @@ def verify_fillup(
 @router.patch("/fillups/{fillup_id}/finalize")
 def finalize_fillup(
     fillup_id: int,
+    action: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1008,15 +1018,18 @@ def finalize_fillup(
     if not f:
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
-    apply_finalize_step(f, current_user, is_admin=(current_user.role == "admin"))
+    was_locked = bool(f.verified3_by)
+    apply_finalize_step(f, current_user, is_admin=(current_user.role == "admin"),
+                        desired=intent_from_action(action))
     locked = bool(f.verified3_by)
-    log_action(
-        db, "diesel_fillup.finalized" if locked else "diesel_fillup.unfinalized",
-        user_id=current_user.id,
-        entity_id=f.entity_id, resource_type="diesel_fillup",
-        resource_id=fillup_id,
-        description=f"{'Applied' if locked else 'Removed'} final lock on diesel fill-up #{fillup_id}",
-    )
+    if locked != was_locked:
+        log_action(
+            db, "diesel_fillup.finalized" if locked else "diesel_fillup.unfinalized",
+            user_id=current_user.id,
+            entity_id=f.entity_id, resource_type="diesel_fillup",
+            resource_id=fillup_id,
+            description=f"{'Applied' if locked else 'Removed'} final lock on diesel fill-up #{fillup_id}",
+        )
     db.commit()
     db.refresh(f)
     return _enrich_fillup(f, db)

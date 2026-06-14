@@ -32,8 +32,8 @@ export default function VerifiableAmount({
       <span style={valueStyle}>{children}</span>
       <VerifyBadge
         item={state || {}}
-        onVerify={() => onVerify(target)}
-        onFinalize={() => onFinalize(target)}
+        onVerify={(_item, intent) => onVerify(target, intent)}
+        onFinalize={(_item, intent) => onFinalize(target, intent)}
         currentUserId={currentUserId}
         isAdmin={isAdmin}
         adminFinalizeAnytime

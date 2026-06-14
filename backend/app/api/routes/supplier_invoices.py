@@ -21,6 +21,7 @@ from app.schemas.schemas import (
 from app.services.audit import log_action
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
+    build_initials_cache, intent_from_action,
 )
 from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
 
@@ -336,7 +337,20 @@ def get_dashboard_summary(
     is_obhi = bool(entity_id) and db.query(BusinessEntity.code).filter(
         BusinessEntity.id == entity_id).scalar() == "OBHI"
 
-    q = db.query(SupplierInvoice).join(Supplier).filter(SupplierInvoice.is_paid == False, SupplierInvoice.is_archived != True)
+    # The "Truck/Trailer (purchases)" supplier is shown only in the reports, never
+    # on the dashboard — exclude it from every payables figure here. (Matches the
+    # slash name only; the separate "Arqs Truck & Trailer" repair vendor stays.)
+    exclude_truck_trailer = ~Supplier.name.ilike("%truck/trailer%")
+
+    q = (
+        db.query(SupplierInvoice)
+        .join(Supplier)
+        .filter(
+            SupplierInvoice.is_paid == False,
+            SupplierInvoice.is_archived != True,
+            exclude_truck_trailer,
+        )
+    )
 
     if accessible is not None:
         q = q.filter(SupplierInvoice.entity_id.in_(accessible))
@@ -441,9 +455,10 @@ def get_dashboard_summary(
         for inv in all_unpaid
     )
 
-    paid_q = db.query(SupplierInvoice).filter(
+    paid_q = db.query(SupplierInvoice).join(Supplier).filter(
         SupplierInvoice.is_paid == True,
         SupplierInvoice.paid_date != None,
+        exclude_truck_trailer,
     )
     if accessible is not None:
         paid_q = paid_q.filter(SupplierInvoice.entity_id.in_(accessible))
@@ -568,6 +583,9 @@ def list_supplier_invoices(
         )
         fillup_data_by_inv = {sup_inv_id: {"fillup_id": fid, "slip_number": sn} for sup_inv_id, fid, sn in rows}
 
+    # One query for all verifier initials, reused across every invoice (avoids N+1).
+    initials_cache = build_initials_cache(db)
+
     def _to_out(inv) -> SupplierInvoiceOut:
         out = SupplierInvoiceOut.model_validate(inv)
         fillup_data = fillup_data_by_inv.get(inv.id, {})
@@ -576,7 +594,7 @@ def list_supplier_invoices(
             "slip_number": fillup_data.get("slip_number"),
             "is_multi_line": inv.is_multi_line,
             "line_items": [SupplierInvoiceLineItemOut.model_validate(li) for li in inv.line_items],
-            **get_verification_display(db, inv),
+            **get_verification_display(db, inv, initials_cache),
         })
 
     # Group by (year, month)
@@ -775,6 +793,7 @@ def update_supplier_invoice(
 @router.patch("/{invoice_id}/verify")
 def verify_supplier_invoice(
     invoice_id: int,
+    action: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -784,22 +803,25 @@ def verify_supplier_invoice(
     _check_entity_access(inv.entity_id, current_user)
 
     before = (inv.verified_by, inv.verified2_by)
-    apply_verify_step(inv, current_user, is_admin=(current_user.role == "admin"))
+    apply_verify_step(inv, current_user, is_admin=(current_user.role == "admin"),
+                      desired=intent_from_action(action))
     after = (inv.verified_by, inv.verified2_by)
-    # apply_verify_step toggles: log which tick was added or removed
-    if after[0] and not before[0]:
-        action, desc = "supplier_invoice.verified", f"Verified supplier invoice {inv.invoice_number} (step 1)"
-    elif after[1] and not before[1]:
-        action, desc = "supplier_invoice.verified", f"Verified supplier invoice {inv.invoice_number} (step 2)"
-    elif before[1] and not after[1]:
-        action, desc = "supplier_invoice.unverified", f"Removed step-2 verification on supplier invoice {inv.invoice_number}"
-    else:
-        action, desc = "supplier_invoice.unverified", f"Removed step-1 verification on supplier invoice {inv.invoice_number}"
-    log_action(
-        db, action, user_id=current_user.id,
-        entity_id=inv.entity_id, resource_type="supplier_invoice",
-        resource_id=invoice_id, description=desc,
-    )
+    # apply_verify_step toggles: log which tick was added or removed. A no-op
+    # (stale/contradictory click) leaves state unchanged — don't log it.
+    if after != before:
+        if after[0] and not before[0]:
+            log_act, desc = "supplier_invoice.verified", f"Verified supplier invoice {inv.invoice_number} (step 1)"
+        elif after[1] and not before[1]:
+            log_act, desc = "supplier_invoice.verified", f"Verified supplier invoice {inv.invoice_number} (step 2)"
+        elif before[1] and not after[1]:
+            log_act, desc = "supplier_invoice.unverified", f"Removed step-2 verification on supplier invoice {inv.invoice_number}"
+        else:
+            log_act, desc = "supplier_invoice.unverified", f"Removed step-1 verification on supplier invoice {inv.invoice_number}"
+        log_action(
+            db, log_act, user_id=current_user.id,
+            entity_id=inv.entity_id, resource_type="supplier_invoice",
+            resource_id=invoice_id, description=desc,
+        )
     db.commit()
     db.refresh(inv)
     d = {c.name: getattr(inv, c.name) for c in inv.__table__.columns}
@@ -810,6 +832,7 @@ def verify_supplier_invoice(
 @router.patch("/{invoice_id}/finalize")
 def finalize_supplier_invoice(
     invoice_id: int,
+    action: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -817,17 +840,20 @@ def finalize_supplier_invoice(
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(inv.entity_id, current_user)
-    apply_finalize_step(inv, current_user, is_admin=(current_user.role == "admin"))
-    # apply_finalize_step toggles: verified3_by set afterwards = locked, cleared = unlocked
+    was_locked = bool(inv.verified3_by)
+    apply_finalize_step(inv, current_user, is_admin=(current_user.role == "admin"),
+                        desired=intent_from_action(action))
     locked = bool(inv.verified3_by)
-    log_action(
-        db, "supplier_invoice.finalized" if locked else "supplier_invoice.unfinalized",
-        user_id=current_user.id,
-        entity_id=inv.entity_id, resource_type="supplier_invoice",
-        resource_id=invoice_id,
-        description=(f"Applied final lock on supplier invoice {inv.invoice_number}" if locked
-                     else f"Removed final lock on supplier invoice {inv.invoice_number}"),
-    )
+    # Only log when the lock state actually changed (a stale-tab no-op leaves it as-is).
+    if locked != was_locked:
+        log_action(
+            db, "supplier_invoice.finalized" if locked else "supplier_invoice.unfinalized",
+            user_id=current_user.id,
+            entity_id=inv.entity_id, resource_type="supplier_invoice",
+            resource_id=invoice_id,
+            description=(f"Applied final lock on supplier invoice {inv.invoice_number}" if locked
+                         else f"Removed final lock on supplier invoice {inv.invoice_number}"),
+        )
     db.commit()
     db.refresh(inv)
     d = {c.name: getattr(inv, c.name) for c in inv.__table__.columns}

@@ -82,13 +82,13 @@ export default function VerifyBadge({
     e.stopPropagation()
     if (isSteps12Locked) return
     if (isUndo) { setConfirmOpen(true); return }
-    onVerify(item)
+    onVerify(item, 'add')
   }
 
   const handleConfirm = (e) => {
     e.stopPropagation()
     setConfirmOpen(false)
-    onVerify(item)
+    onVerify(item, 'remove')
   }
 
   const handleFinalizeClick = (e) => {
@@ -103,20 +103,20 @@ export default function VerifyBadge({
     if (e.key !== 'Enter') return
     e.preventDefault()
     e.stopPropagation()
-    if (canDoStep3) { onFinalize(item); return }
+    if (canDoStep3) { onFinalize(item, 'apply'); return }
     if (step3Done && isOwnStep3) setUndoFinalizeOpen(true)
   }
 
   const handleFinalizeConfirm = (e) => {
     e.stopPropagation()
     setFinalizeOpen(false)
-    onFinalize(item)
+    onFinalize(item, 'apply')
   }
 
   const handleUndoFinalizeConfirm = (e) => {
     e.stopPropagation()
     setUndoFinalizeOpen(false)
-    onFinalize(item)
+    onFinalize(item, 'remove')
   }
 
   const handleCancel = (e) => {

@@ -20,6 +20,7 @@ from app.schemas.schemas import ValueVerificationActionIn, ValueVerificationOut
 from app.services.audit import log_action
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display,
+    build_initials_cache, intent_from_action,
 )
 
 router = APIRouter(prefix="/api/verifications", tags=["verifications"])
@@ -33,7 +34,7 @@ def _check_entity_access(entity_id: Optional[int], user: User):
         raise HTTPException(status_code=403, detail="Access denied to this entity")
 
 
-def _to_out(db: Session, row: ValueVerification) -> dict:
+def _to_out(db: Session, row: ValueVerification, user_cache: dict | None = None) -> dict:
     out = {
         "target": row.target,
         "is_verified": bool(row.is_verified),
@@ -41,7 +42,7 @@ def _to_out(db: Session, row: ValueVerification) -> dict:
         "verified2_by": row.verified2_by,
         "verified3_by": row.verified3_by,
     }
-    out.update(get_verification_display(db, row))
+    out.update(get_verification_display(db, row, user_cache))
     return out
 
 
@@ -72,7 +73,8 @@ def list_verifications(
         .filter(ValueVerification.target.like(f"{prefix}%"))
         .all()
     )
-    return [_to_out(db, r) for r in rows]
+    user_cache = build_initials_cache(db)
+    return [_to_out(db, r, user_cache) for r in rows]
 
 
 @router.patch("/verify", response_model=ValueVerificationOut)
@@ -84,17 +86,20 @@ def verify_value(
     _check_entity_access(payload.entity_id, current_user)
     row = _get_or_create(db, payload.target, payload.entity_id)
     before = (row.verified_by, row.verified2_by)
-    apply_verify_step(row, current_user, is_admin=(current_user.role == "admin"))
+    apply_verify_step(row, current_user, is_admin=(current_user.role == "admin"),
+                      desired=intent_from_action(payload.action))
     after = (row.verified_by, row.verified2_by)
-    # apply_verify_step toggles: log whether a tick was added or removed
-    added = (after[0] and not before[0]) or (after[1] and not before[1])
-    log_action(
-        db, "value.verified" if added else "value.unverified",
-        user_id=current_user.id,
-        entity_id=row.entity_id, resource_type="value_verification",
-        resource_id=row.id,
-        description=f"{'Verified' if added else 'Removed verification on'} value {row.target}",
-    )
+    # apply_verify_step toggles: log whether a tick was added or removed. A no-op
+    # (stale/contradictory click) changes nothing — don't log it.
+    if after != before:
+        added = (after[0] and not before[0]) or (after[1] and not before[1])
+        log_action(
+            db, "value.verified" if added else "value.unverified",
+            user_id=current_user.id,
+            entity_id=row.entity_id, resource_type="value_verification",
+            resource_id=row.id,
+            description=f"{'Verified' if added else 'Removed verification on'} value {row.target}",
+        )
     db.commit()
     db.refresh(row)
     return _to_out(db, row)
@@ -108,16 +113,20 @@ def finalize_value(
 ):
     _check_entity_access(payload.entity_id, current_user)
     row = _get_or_create(db, payload.target, payload.entity_id)
+    was_locked = bool(row.verified3_by)
     # require_step1=False: the owner may lock a value on her own, no prior user step.
-    apply_finalize_step(row, current_user, is_admin=(current_user.role == "admin"), require_step1=False)
+    apply_finalize_step(row, current_user, is_admin=(current_user.role == "admin"),
+                        require_step1=False, desired=intent_from_action(payload.action))
     locked = bool(row.verified3_by)
-    log_action(
-        db, "value.finalized" if locked else "value.unfinalized",
-        user_id=current_user.id,
-        entity_id=row.entity_id, resource_type="value_verification",
-        resource_id=row.id,
-        description=f"{'Final lock on' if locked else 'Removed final lock on'} value {row.target}",
-    )
+    # Only log when the lock state actually changed (a stale-tab no-op leaves it as-is).
+    if locked != was_locked:
+        log_action(
+            db, "value.finalized" if locked else "value.unfinalized",
+            user_id=current_user.id,
+            entity_id=row.entity_id, resource_type="value_verification",
+            resource_id=row.id,
+            description=f"{'Final lock on' if locked else 'Removed final lock on'} value {row.target}",
+        )
     db.commit()
     db.refresh(row)
     return _to_out(db, row)

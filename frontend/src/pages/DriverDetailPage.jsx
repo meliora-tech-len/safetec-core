@@ -348,14 +348,19 @@ export default function DriverDetailPage() {
   }, [cyclePrefix])
   useEffect(() => { loadVerif() }, [loadVerif])
 
-  const handleVerifyValue = async (target) => {
-    try { await verifyValue(target, driver?.entity_id); loadVerif() }
+  const handleVerifyValue = async (target, intent) => {
+    try { const { data } = await verifyValue(target, driver?.entity_id, intent); setVerif(prev => ({ ...prev, [data.target]: data })) }
     catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
   }
-  const handleFinalizeValue = async (target) => {
-    try { await finalizeValue(target, driver?.entity_id); loadVerif() }
+  const handleFinalizeValue = async (target, intent) => {
+    try { const { data } = await finalizeValue(target, driver?.entity_id, intent); setVerif(prev => ({ ...prev, [data.target]: data })) }
     catch (e) { toast.error(errorMessage(e, 'Lock failed')) }
   }
+
+  // Patch one row inside the loaded cycle (verify/finalize return the full row)
+  // instead of reloading the whole cycle; verification doesn't affect calc totals.
+  const patchCycleRow = (key, data) =>
+    setCycle(prev => prev ? { ...prev, [key]: (prev[key] || []).map(r => r.id === data.id ? { ...r, ...data } : r) } : prev)
 
   // Month navigation
   const prevMonth = () => {
@@ -783,16 +788,16 @@ export default function DriverDetailPage() {
                           }}>{fmt(al.amount)}</td>
                           <td>
                             <VerifyBadge item={al} currentUserId={user?.id} isAdmin={isAdmin}
-                              onVerify={async (item) => {
+                              onVerify={async (item, intent) => {
                                 try {
-                                  await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/verify`)
-                                  loadCycle()
+                                  const { data } = await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/verify`, null, { params: intent ? { action: intent } : {} })
+                                  patchCycleRow('additional_loads', data)
                                 } catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
                               }}
-                              onFinalize={async (item) => {
+                              onFinalize={async (item, intent) => {
                                 try {
-                                  await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/finalize`)
-                                  loadCycle()
+                                  const { data } = await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/finalize`, null, { params: intent ? { action: intent } : {} })
+                                  patchCycleRow('additional_loads', data)
                                 } catch (e) { toast.error(errorMessage(e, 'Finalise failed')) }
                               }}
                             />
@@ -854,16 +859,16 @@ export default function DriverDetailPage() {
                           }}>{fmt(fp.amount)}</td>
                           <td>
                             <VerifyBadge item={fp} currentUserId={user?.id} isAdmin={isAdmin}
-                              onVerify={async (item) => {
+                              onVerify={async (item, intent) => {
                                 try {
-                                  await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/verify`)
-                                  loadCycle()
+                                  const { data } = await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/verify`, null, { params: intent ? { action: intent } : {} })
+                                  patchCycleRow('food_payments', data)
                                 } catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
                               }}
-                              onFinalize={async (item) => {
+                              onFinalize={async (item, intent) => {
                                 try {
-                                  await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/finalize`)
-                                  loadCycle()
+                                  const { data } = await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/finalize`, null, { params: intent ? { action: intent } : {} })
+                                  patchCycleRow('food_payments', data)
                                 } catch (e) { toast.error(errorMessage(e, 'Finalise failed')) }
                               }}
                             />
