@@ -4,7 +4,7 @@ import { getInvoice, updateInvoice, deleteInvoice, downloadInvoicePdf } from '..
 import { useTheme } from '../hooks/useTheme'
 import { formatCurrency, formatDate, statusBadgeClass, statusLabel, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail, Send } from 'lucide-react'
+import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail, Send, AlertTriangle } from 'lucide-react'
 import DeleteModal from '../components/DeleteModal'
 import DateInput from '../components/DateInput'
 
@@ -29,8 +29,14 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   const [showPayModal, setShowPayModal] = useState(false)
+  const [payConfirming, setPayConfirming] = useState(false)
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10))
   const [payRef, setPayRef] = useState('')
+
+  const closePayModal = () => {
+    setShowPayModal(false)
+    setPayConfirming(false)
+  }
 
   const load = () => {
     setLoading(true)
@@ -62,6 +68,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
       })
       toast.success('Payment recorded')
       setShowPayModal(false)
+      setPayConfirming(false)
       setPayRef('')
       load()
     } catch (err) {
@@ -343,44 +350,74 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
 
       {/* Record Payment Modal */}
       {showPayModal && (
-        <div style={styles.modalOverlay} onClick={() => setShowPayModal(false)}>
+        <div style={styles.modalOverlay} onClick={closePayModal}>
           <div style={styles.modal} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Record Payment</span>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>{payConfirming ? 'Mark as Paid?' : 'Record Payment'}</span>
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{invoice.invoice_number}</span>
             </div>
-            <div style={styles.modalBody}>
-              <div style={styles.field}>
-                <label style={styles.fieldLabel}>Payment Date</label>
-                <DateInput
-                  value={payDate}
-                  onChange={e => setPayDate(e.target.value)}
-                  style={styles.input}
-                />
-              </div>
-              <div style={styles.field}>
-                <label style={styles.fieldLabel}>Payment Reference <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
-                <input
-                  type="text"
-                  placeholder="e.g. EFT123, Cheque #456"
-                  value={payRef}
-                  onChange={e => setPayRef(e.target.value)}
-                  style={styles.input}
-                />
-              </div>
-              <div style={{ background: 'var(--bg-surface)', borderRadius: 6, padding: '10px 14px', marginTop: 4 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                  <span style={{ color: 'var(--text-muted)' }}>Amount Paid</span>
-                  <span style={{ fontWeight: 800, color: 'var(--success)' }}>{formatCurrency(invoice.total)}</span>
+
+            {payConfirming ? (
+              <>
+                <div style={styles.modalBody}>
+                  <div style={{
+                    display: 'flex', gap: 10, alignItems: 'flex-start',
+                    background: 'rgba(217,119,6,0.08)', border: '1px solid rgba(217,119,6,0.3)',
+                    borderRadius: 6, padding: '12px 14px',
+                  }}>
+                    <AlertTriangle size={18} color="#d97706" style={{ flexShrink: 0, marginTop: 1 }} />
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+                      Mark <strong>{invoice.invoice_number}</strong> as <strong>paid</strong> for{' '}
+                      <strong style={{ color: 'var(--success)' }}>{formatCurrency(invoice.total)}</strong>?
+                      <div style={{ marginTop: 6 }}>
+                        A paid invoice is locked — its status <strong>cannot be changed</strong> afterwards.
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            <div style={styles.modalFooter}>
-              <button className="btn-ghost btn-sm" onClick={() => setShowPayModal(false)}>Cancel</button>
-              <button className="btn-primary btn-sm" onClick={handleRecordPayment} disabled={updating || !payDate}>
-                <CheckCircle size={13} /> Confirm Payment
-              </button>
-            </div>
+                <div style={styles.modalFooter}>
+                  <button className="btn-ghost btn-sm" onClick={() => setPayConfirming(false)} disabled={updating}>← Back</button>
+                  <button className="btn-primary btn-sm" onClick={handleRecordPayment} disabled={updating}>
+                    <CheckCircle size={13} /> {updating ? 'Saving…' : 'Yes, Mark as Paid'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={styles.modalBody}>
+                  <div style={styles.field}>
+                    <label style={styles.fieldLabel}>Payment Date</label>
+                    <DateInput
+                      value={payDate}
+                      onChange={e => setPayDate(e.target.value)}
+                      style={styles.input}
+                    />
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.fieldLabel}>Payment Reference <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
+                    <input
+                      type="text"
+                      placeholder="e.g. EFT123, Cheque #456"
+                      value={payRef}
+                      onChange={e => setPayRef(e.target.value)}
+                      style={styles.input}
+                    />
+                  </div>
+                  <div style={{ background: 'var(--bg-surface)', borderRadius: 6, padding: '10px 14px', marginTop: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Amount Paid</span>
+                      <span style={{ fontWeight: 800, color: 'var(--success)' }}>{formatCurrency(invoice.total)}</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={styles.modalFooter}>
+                  <button className="btn-ghost btn-sm" onClick={closePayModal}>Cancel</button>
+                  <button className="btn-primary btn-sm" onClick={() => setPayConfirming(true)} disabled={updating || !payDate}>
+                    <CheckCircle size={13} /> Confirm Payment
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
