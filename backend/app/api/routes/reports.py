@@ -168,8 +168,10 @@ def income_expenses_report(
             excl = incl / 1.15
         else:
             excl = incl
-        supplier_incl_by_month[m] = supplier_incl_by_month.get(m, 0.0) + incl
-        supplier_excl_by_month[m] = supplier_excl_by_month.get(m, 0.0) + excl
+        # Round per-invoice (matching the SARS VAT detail) so the month-line totals
+        # tie exactly to the drill-down rather than drifting a few cents on incl/1.15.
+        supplier_incl_by_month[m] = supplier_incl_by_month.get(m, 0.0) + round(incl, 2)
+        supplier_excl_by_month[m] = supplier_excl_by_month.get(m, 0.0) + round(excl, 2)
 
     # ── Payroll: prefer finalized PayrollEntry, fall back to DriverPayCycle ────
 
@@ -238,7 +240,12 @@ def income_expenses_report(
         sup_incl    = supplier_incl_by_month.get(m, 0.0)
         sup_excl    = supplier_excl_by_month.get(m, 0.0)
         dsl_vat     = diesel_input_vat.get(m, 0.0)
-        input_vat   = (sup_incl - sup_excl) + dsl_vat
+        # Input VAT is the supplier-invoice VAT only — matching the SARS VAT detail
+        # drill-down (_build_month_detail). diesel_input_vat is the VAT on the internal
+        # 1% diesel admin-fee markup, NOT supplier input VAT, so it must not be added
+        # here (doing so over-claimed input VAT and understated VAT payable, most
+        # visibly for OBHI where diesel volume is high). Reported separately for info.
+        input_vat   = (sup_incl - sup_excl)
         vat_payable = output_vat - input_vat
 
         diesel      = diesel_expense.get(m, 0.0)
