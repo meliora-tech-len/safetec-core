@@ -1104,6 +1104,11 @@ class DriverTripLogOut(DriverTripLogCreate):
     pay_cycle_id: int
     truck_load_id: Optional[int] = None
     created_at: datetime
+    # Enriched live from the linked truck load so users can see where each trip
+    # came from and whether it still counts toward this cycle's pay.
+    vehicle_reg: Optional[str] = None      # registration of the truck the load was on
+    already_paid: bool = False             # load was paid in a prior period (not re-paid here)
+    cross_truck: bool = False              # driven on a truck other than the driver's own
 
     class Config:
         from_attributes = True

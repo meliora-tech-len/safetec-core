@@ -17,7 +17,7 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, Driver, DriverType,
     DriverPayCycle, DriverTripLog, DriverAdditionalLoad, DriverFoodPayment,
-    TruckLoad, TruckLoadDriverSplit, PayrollEntry, CasualTruckAssignment, Mine,
+    TruckLoad, TruckLoadDriverSplit, PayrollEntry, CasualTruckAssignment, Mine, Truck,
 )
 from app.schemas.schemas import (
     DriverCreate, DriverUpdate, DriverOut, DriverSummary, DriverStats,
@@ -136,6 +136,31 @@ def _cycle_with_calc(
         DriverFoodPaymentOut.model_validate(fp).model_copy(update=get_verification_display(db, fp, _vcache))
         for fp in cycle.food_payments
     ]
+    # Enrich each auto trip with the reg of the truck it was driven on and whether
+    # the underlying load was already paid in a prior period — derived live so the
+    # flags stay accurate if the load changes. Trips with no linked load (manual
+    # entries) keep the bare values.
+    load_ids = [t.truck_load_id for t in cycle.trip_log if t.truck_load_id]
+    load_map = {}
+    if load_ids:
+        rows = (
+            db.query(TruckLoad.id, TruckLoad.truck_id, TruckLoad.driver_already_paid, Truck.registration)
+            .outerjoin(Truck, TruckLoad.truck_id == Truck.id)
+            .filter(TruckLoad.id.in_(load_ids))
+            .all()
+        )
+        load_map = {r[0]: (r[1], bool(r[2]), r[3]) for r in rows}
+    trip_out = []
+    for t in cycle.trip_log:
+        item = DriverTripLogOut.model_validate(t)
+        info = load_map.get(t.truck_load_id)
+        if info:
+            truck_id, already_paid, reg = info
+            item.vehicle_reg = reg
+            item.already_paid = already_paid
+            item.cross_truck = bool(driver.truck_id and truck_id and truck_id != driver.truck_id)
+        trip_out.append(item)
+    out.trip_log = trip_out
     return out
 
 
@@ -240,12 +265,19 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
         return empty
 
     perm_filter = [
-        TruckLoad.truck_id == driver.truck_id,
         TruckLoad.entity_id == driver.entity_id,
         TruckLoad.is_archived != True,
         TruckLoad.is_split_load != True,
         TruckLoad.driver_already_paid != True,
-        or_(TruckLoad.driver_id.is_(None), TruckLoad.driver_id == driver.id),
+        # Credit this permanent driver for: an unassigned load on his OWN truck
+        # (default = him), OR any load explicitly tagged as driven by him — even on
+        # another truck. The cross-truck case would otherwise fall through to nobody:
+        # the other truck's driver count filters by ITS own driver_id, so a load this
+        # driver physically drove on a borrowed truck went unpaid.
+        or_(
+            and_(TruckLoad.truck_id == driver.truck_id, TruckLoad.driver_id.is_(None)),
+            TruckLoad.driver_id == driver.id,
+        ),
         pay_period_clause,
     ]
     load_count = db.query(func.count(TruckLoad.id)).filter(*perm_filter).scalar() or 0

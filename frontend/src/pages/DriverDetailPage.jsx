@@ -899,7 +899,7 @@ export default function DriverDetailPage() {
               {cycle?.trip_log?.length > 0 ? (
                 <div className="table-wrapper">
                   <table>
-                    <thead><tr><th>#</th><th>Date</th><th>Mine</th><th>Notes</th><th style={{ width: 40 }}></th></tr></thead>
+                    <thead><tr><th>#</th><th>Date</th><th>Mine</th><th>Truck</th><th>Notes</th><th style={{ width: 40 }}></th></tr></thead>
                     <tbody>
                       {cycle.trip_log.map((t, i) => (
                         <tr key={t.id}>
@@ -909,6 +909,15 @@ export default function DriverDetailPage() {
                             {t.mine_name}
                             {t.truck_load_id && (
                               <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '1px 5px', borderRadius: 4 }}>auto</span>
+                            )}
+                            {t.already_paid && (
+                              <span title="Paid in a prior period — not paid again here" style={{ marginLeft: 5, fontSize: 10, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '1px 5px', borderRadius: 4 }}>PAID</span>
+                            )}
+                          </td>
+                          <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                            {t.vehicle_reg || '—'}
+                            {t.cross_truck && (
+                              <span title="Driven on another driver's truck — credited to this driver because they drove it" style={{ marginLeft: 5, fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '1px 5px', borderRadius: 4 }}>other truck</span>
                             )}
                           </td>
                           <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
