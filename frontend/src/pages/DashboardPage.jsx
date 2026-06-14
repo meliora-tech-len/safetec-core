@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { getDashboardStats, getSupplierPayablesDashboard, getDieselWarnings } from '../services/api'
+import { getDashboardStats, getSupplierPayablesDashboard, getDieselWarnings, getProfitLossSummary } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
-import { TrendingUp, AlertCircle, FileText, Clock, Building2, ChevronRight, ChevronDown, CreditCard, Fuel } from 'lucide-react'
+import { TrendingUp, TrendingDown, AlertCircle, FileText, Clock, Building2, ChevronRight, ChevronDown, CreditCard, Fuel, Scale } from 'lucide-react'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState(null)
   const [payables, setPayables] = useState(null)
   const [dieselWarnings, setDieselWarnings] = useState(null)
+  const [profitLoss, setProfitLoss] = useState(null)
   const [showOtherPeriods, setShowOtherPeriods] = useState(false)
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState(() => {
@@ -43,11 +44,13 @@ export default function DashboardPage() {
       getDashboardStats(activeEntity?.id || undefined, { month: period.month, year: period.year }),
       getSupplierPayablesDashboard(params),
       getDieselWarnings(params),
-    ]).then(([statsRes, payablesRes, warningsRes]) => {
+      getProfitLossSummary(params),
+    ]).then(([statsRes, payablesRes, warningsRes, profitLossRes]) => {
       if (!ignore) {
         setStats(statsRes.data)
         setPayables(payablesRes.data)
         setDieselWarnings(warningsRes.data)
+        setProfitLoss(profitLossRes.data)
       }
     }).finally(() => {
       if (!ignore) setLoading(false)
@@ -101,6 +104,16 @@ export default function DashboardPage() {
         <div className="loading-center"><div className="spinner" /></div>
       ) : (stats || payables) && (
         <>
+          {/* ── Profit & Loss (BTP / Thembi) ─────────────────────────── */}
+          {profitLoss?.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <SectionLabel icon={<Scale size={13} />} label={`Profit & Loss · ${periodLabel}`} />
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                {profitLoss.map(pl => <ProfitLossCard key={pl.entity_id} pl={pl} />)}
+              </div>
+            </div>
+          )}
+
           {/* ── PRIMARY: Supplier Payables ───────────────────────────── */}
           <SectionLabel icon={<CreditCard size={13} />} label="Supplier Payables" />
           <div className="grid-4" style={{ marginBottom: 24 }}>
@@ -416,6 +429,46 @@ function SectionLabel({ icon, label }) {
   )
 }
 
+function ProfitLossCard({ pl }) {
+  const profit = Number(pl.profit_loss) >= 0
+  const accent = profit ? '#16a34a' : 'var(--danger)'
+  return (
+    <div className="card" style={{ flex: 1, minWidth: 280 }}>
+      <div style={styles.cardHeader}>
+        <span style={styles.cardTitle}>{pl.entity_name}</span>
+        <span style={styles.entityChip}>{pl.entity_code}</span>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <div style={styles.plRow}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Invoices generated</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              {pl.invoices_count} invoice{pl.invoices_count !== 1 ? 's' : ''}
+            </div>
+          </div>
+          <span style={{ fontWeight: 700, color: '#16a34a' }}>{formatCurrency(pl.invoices_total)}</span>
+        </div>
+        <div style={styles.plRow}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Supplier invoices</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              {pl.supplier_invoices_count} invoice{pl.supplier_invoices_count !== 1 ? 's' : ''}
+            </div>
+          </div>
+          <span style={{ fontWeight: 700, color: 'var(--danger)' }}>−{formatCurrency(pl.supplier_invoices_total)}</span>
+        </div>
+        <div style={{ ...styles.plRow, borderBottom: 'none', marginTop: 4, paddingTop: 12, borderTop: '2px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {profit ? <TrendingUp size={16} color={accent} /> : <TrendingDown size={16} color={accent} />}
+            <span style={{ fontSize: 14, fontWeight: 700 }}>{profit ? 'Profit' : 'Loss'}</span>
+          </div>
+          <span style={{ fontSize: 16, fontWeight: 800, color: accent }}>{formatCurrency(pl.profit_loss)}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function StatCard({ icon, iconBg, iconColor, label, value, sub }) {
   return (
     <div className="stat-card">
@@ -449,6 +502,10 @@ const styles = {
     background: 'var(--accent)', flexShrink: 0,
   },
   payableRow: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '8px 0', borderBottom: '1px solid var(--border)', gap: 12,
+  },
+  plRow: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     padding: '8px 0', borderBottom: '1px solid var(--border)', gap: 12,
   },

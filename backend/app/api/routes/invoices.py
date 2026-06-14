@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Supplier, Customer
-from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, DashboardStats, InvoiceSummary
+from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, DashboardStats, InvoiceSummary, EntityProfitLoss
 from app.services.audit import log_action
 from app.services.invoice_numbering import generate_invoice_number, peek_invoice_number
 from app.services.pdf_generator import generate_invoice_pdf
@@ -213,6 +213,116 @@ def dashboard_stats(
         recent_invoices=recent_out,
         entity_breakdown=list(entity_map.values()),
     )
+
+
+# Entities that get a profit/loss panel on the dashboard, in display order.
+_PROFIT_LOSS_ENTITY_CODES = ["BTP", "TP"]
+
+
+@router.get("/profit-loss", response_model=List[EntityProfitLoss])
+def profit_loss_summary(
+    entity_id: Optional[int] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Per-entity profit/loss for Border Trade Post (BTP) and Thembi (TP), scoped to
+    the selected statement period. When an entity_id is given, only that entity's
+    panel is returned (empty if it isn't BTP/TP) so each entity dashboard shows
+    only its own figures.
+
+    Invoices generated : every invoice (not quotes) issued in the period, any status
+                         except cancelled, incl. VAT (Invoice.total).
+    Supplier invoices  : every supplier invoice whose statement period falls in the
+                         month (falling back to invoice_date), excl. archived, full
+                         amount.
+    Profit/loss        : invoices_total − supplier_invoices_total.
+    """
+    from sqlalchemy import func
+    from app.models.models import SupplierInvoice, DocumentType, InvoiceStatus
+
+    now = datetime.now(timezone.utc)
+    period_month = month or now.month
+    period_year  = year or now.year
+
+    entities = (
+        db.query(BusinessEntity)
+        .filter(BusinessEntity.code.in_(_PROFIT_LOSS_ENTITY_CODES))
+        .all()
+    )
+    if entity_id:
+        entities = [e for e in entities if e.id == entity_id]
+    if current_user.role != "admin":
+        access_ids = {a.entity_id for a in current_user.entity_access}
+        entities = [e for e in entities if e.id in access_ids]
+    if not entities:
+        return []
+
+    entity_ids = [e.id for e in entities]
+
+    inv_rows = (
+        db.query(
+            Invoice.entity_id,
+            func.coalesce(func.sum(Invoice.total), 0).label("total"),
+            func.count(Invoice.id).label("count"),
+        )
+        .filter(
+            Invoice.entity_id.in_(entity_ids),
+            Invoice.document_type == DocumentType.invoice,
+            Invoice.status != InvoiceStatus.cancelled,
+            func.extract("month", Invoice.issue_date) == period_month,
+            func.extract("year", Invoice.issue_date) == period_year,
+        )
+        .group_by(Invoice.entity_id)
+        .all()
+    )
+    inv_by_entity = {r.entity_id: r for r in inv_rows}
+
+    sup_rows = (
+        db.query(
+            SupplierInvoice.entity_id,
+            func.coalesce(func.sum(SupplierInvoice.amount), 0).label("total"),
+            func.count(SupplierInvoice.id).label("count"),
+        )
+        .filter(
+            SupplierInvoice.entity_id.in_(entity_ids),
+            SupplierInvoice.is_archived != True,
+            func.coalesce(
+                SupplierInvoice.statement_month,
+                func.extract("month", SupplierInvoice.invoice_date),
+            ) == period_month,
+            func.coalesce(
+                SupplierInvoice.statement_year,
+                func.extract("year", SupplierInvoice.invoice_date),
+            ) == period_year,
+        )
+        .group_by(SupplierInvoice.entity_id)
+        .all()
+    )
+    sup_by_entity = {r.entity_id: r for r in sup_rows}
+
+    order = {code: i for i, code in enumerate(_PROFIT_LOSS_ENTITY_CODES)}
+    entities.sort(key=lambda e: order.get(e.code, len(order)))
+
+    out: List[EntityProfitLoss] = []
+    for e in entities:
+        inv = inv_by_entity.get(e.id)
+        sup = sup_by_entity.get(e.id)
+        inv_total = Decimal(str(inv.total)) if inv else Decimal("0")
+        sup_total = Decimal(str(sup.total)) if sup else Decimal("0")
+        out.append(EntityProfitLoss(
+            entity_id=e.id,
+            entity_code=e.code,
+            entity_name=e.name,
+            invoices_total=inv_total,
+            invoices_count=inv.count if inv else 0,
+            supplier_invoices_total=sup_total,
+            supplier_invoices_count=sup.count if sup else 0,
+            profit_loss=inv_total - sup_total,
+        ))
+    return out
 
 
 @router.get("/{invoice_id}", response_model=InvoiceOut)

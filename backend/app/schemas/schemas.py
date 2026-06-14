@@ -630,6 +630,17 @@ class DashboardStats(BaseModel):
     entity_breakdown: List[dict] = []
 
 
+class EntityProfitLoss(BaseModel):
+    entity_id: int
+    entity_code: str
+    entity_name: str
+    invoices_total: Decimal = Decimal("0")
+    invoices_count: int = 0
+    supplier_invoices_total: Decimal = Decimal("0")
+    supplier_invoices_count: int = 0
+    profit_loss: Decimal = Decimal("0")
+
+
 # ── Rebuild forward references ────────────────────────────────────────────────
 Token.model_rebuild()
 
