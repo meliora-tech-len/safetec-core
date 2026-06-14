@@ -1,3 +1,4 @@
+import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { X, AlertCircle, ChevronRight } from 'lucide-react'
 import { formatCurrency } from '../utils/helpers'
@@ -13,13 +14,45 @@ function verifyState(inv) {
   return { label: 'Not started', color: 'var(--danger)', note: 'No verification yet' }
 }
 
+const periodKey = (inv) => (inv.statement_month ? `${inv.statement_year}-${inv.statement_month}` : '')
+
 /**
- * Lists supplier invoices created recently that aren't final-locked.
+ * Lists supplier invoices created recently that aren't final-locked, with
+ * client-side entity + statement-period filters (derived from the fetched set).
  * Clicking a row (with a registered supplier) opens that supplier's profile,
  * deep-linked to the invoice so it scrolls into view and highlights.
  */
 export default function PendingInvoicesModal({ invoices, loading, onClose }) {
   const navigate = useNavigate()
+  const [entity, setEntity] = useState('')   // entity_id as string, '' = all
+  const [period, setPeriod] = useState('')   // 'year-month', '' = all
+
+  // Distinct entities and periods present in the current result set.
+  const entityOpts = useMemo(() => {
+    const seen = new Map()
+    for (const inv of invoices) {
+      if (inv.entity_id != null && !seen.has(inv.entity_id)) {
+        seen.set(inv.entity_id, inv.entity_code || `Entity ${inv.entity_id}`)
+      }
+    }
+    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+  }, [invoices])
+
+  const periodOpts = useMemo(() => {
+    const seen = new Set()
+    for (const inv of invoices) { const k = periodKey(inv); if (k) seen.add(k) }
+    return [...seen]
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))  // newest first
+      .map(k => {
+        const [y, m] = k.split('-')
+        return { key: k, label: `${MONTH_NAMES[+m]} ${y}` }
+      })
+  }, [invoices])
+
+  const filtered = useMemo(() => invoices.filter(inv =>
+    (!entity || String(inv.entity_id) === entity) &&
+    (!period || periodKey(inv) === period)
+  ), [invoices, entity, period])
 
   const go = (inv) => {
     if (!inv.supplier_id) return
@@ -34,7 +67,11 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
           <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <AlertCircle size={18} color="var(--warning)" />
             Supplier invoices to verify
-            {!loading && <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)' }}>{invoices.length}</span>}
+            {!loading && (
+              <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)' }}>
+                {filtered.length}{filtered.length !== invoices.length ? ` of ${invoices.length}` : ''}
+              </span>
+            )}
           </h2>
           <button className="btn-icon btn-ghost" onClick={onClose}><X size={16} /></button>
         </div>
@@ -42,10 +79,31 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
           <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--text-muted)' }}>
             Created in the last 7 days and not yet final-locked. Click one to open it for verification.
           </p>
+
+          {!loading && invoices.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+              <select value={entity} onChange={e => setEntity(e.target.value)} style={{ width: 170 }}>
+                <option value="">All entities</option>
+                {entityOpts.map(([id, code]) => <option key={id} value={String(id)}>{code}</option>)}
+              </select>
+              <select value={period} onChange={e => setPeriod(e.target.value)} style={{ width: 170 }}>
+                <option value="">All periods</option>
+                {periodOpts.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+              </select>
+              {(entity || period) && (
+                <button className="btn-ghost" style={{ fontSize: 12, padding: '4px 8px' }} onClick={() => { setEntity(''); setPeriod('') }}>
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+
           {loading ? (
             <div style={{ textAlign: 'center', padding: 30 }}><div className="spinner" style={{ margin: '0 auto' }} /></div>
           ) : invoices.length === 0 ? (
             <div className="empty-state" style={{ padding: 30 }}><p>Nothing waiting — all caught up.</p></div>
+          ) : filtered.length === 0 ? (
+            <div className="empty-state" style={{ padding: 30 }}><p>No invoices match these filters.</p></div>
           ) : (
             <table>
               <thead>
@@ -59,7 +117,7 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
                 </tr>
               </thead>
               <tbody>
-                {invoices.map(inv => {
+                {filtered.map(inv => {
                   const v = verifyState(inv)
                   return (
                     <tr
