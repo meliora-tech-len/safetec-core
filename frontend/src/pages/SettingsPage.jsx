@@ -110,13 +110,25 @@ export default function SettingsPage() {
 
   const saveEntityInvoiceConfig = async (entity) => {
     setSaving(p => ({ ...p, [`entity_${entity.id}`]: true }))
+    setErrors(p => ({ ...p, [`entity_${entity.id}`]: null }))
     try {
-      await updateEntity(entity.id, {
+      const { data: saved } = await updateEntity(entity.id, {
         invoice_prefix: entity.invoice_prefix,
         invoice_counter: entity.invoice_counter,
         quote_prefix: entity.quote_prefix,
         quote_counter: entity.quote_counter,
       })
+      // Reflect exactly what the server stored, so a save can never *look* successful
+      // while the value silently reverts on the next page load.
+      setEntityConfigs(p => ({
+        ...p,
+        [saved.id]: {
+          invoice_prefix: saved.invoice_prefix ?? '',
+          invoice_counter: saved.invoice_counter ?? 0,
+          quote_prefix: saved.quote_prefix ?? 'QT',
+          quote_counter: saved.quote_counter ?? 0,
+        },
+      }))
       setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: true }))
       setTimeout(() => setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: false })), 2000)
     } catch (e) {
@@ -259,6 +271,7 @@ export default function SettingsPage() {
                 const nextInv = `${cfg.invoice_prefix || entity.code}${String((parseInt(cfg.invoice_counter) || 0) + 1).padStart(5, '0')}`
                 const isSaving = saving[`entity_${entity.id}`]
                 const isSaved = savedOk[`entity_${entity.id}`]
+                const saveError = errors[`entity_${entity.id}`]
 
                 return (
                   <tr key={entity.id} style={{ borderTop: '1px solid var(--border)' }}>
@@ -296,6 +309,9 @@ export default function SettingsPage() {
                         onClick={() => saveEntityInvoiceConfig({ ...entity, ...cfg })}
                         compact
                       />
+                      {saveError && (
+                        <div style={{ ...errorStyle, whiteSpace: 'normal', maxWidth: 180 }}>{saveError}</div>
+                      )}
                     </td>
                   </tr>
                 )
