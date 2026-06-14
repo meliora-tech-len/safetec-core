@@ -97,6 +97,16 @@ export default function VerifyBadge({
     if (canDoStep3) { setFinalizeOpen(true); return }
   }
 
+  // Keyboard: Enter on the focused final-lock control applies the lock directly,
+  // no confirmation dialog (per heavy-keyboard-use request). Undo still confirms.
+  const handleFinalizeKeyDown = (e) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    e.stopPropagation()
+    if (canDoStep3) { onFinalize(item); return }
+    if (step3Done && isOwnStep3) setUndoFinalizeOpen(true)
+  }
+
   const handleFinalizeConfirm = (e) => {
     e.stopPropagation()
     setFinalizeOpen(false)
@@ -162,10 +172,13 @@ export default function VerifyBadge({
         {showStep3Row && (
           <div
             onClick={handleFinalizeClick}
-            title={step3Tooltip}
+            onKeyDown={(canDoStep3 || isOwnStep3) ? handleFinalizeKeyDown : undefined}
+            tabIndex={(canDoStep3 || isOwnStep3) ? 0 : undefined}
+            title={(canDoStep3 ? 'Press Enter to apply final lock — ' : '') + step3Tooltip}
             style={{
               cursor: (canDoStep3 || isOwnStep3) ? 'pointer' : 'default',
               display: 'flex', alignItems: 'center', gap: 4, marginTop: 1,
+              borderRadius: 4,
               opacity: step3Done ? 1 : canDoStep3 ? 0.75 : 0.35,
             }}>
             <ShieldCheck

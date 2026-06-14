@@ -7,12 +7,16 @@ import FeedbackWidget from '../FeedbackWidget'
 import ErrorBoundary from '../ErrorBoundary'
 import { useAuth } from '../../hooks/useAuth'
 import { useIsMobile } from '../../hooks/useIsMobile'
+import { useFieldArrowNav } from '../../hooks/useFieldArrowNav'
 
 export default function AppLayout() {
   const isMobile = useIsMobile()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const location = useLocation()
   const { activeEntity } = useAuth()
+
+  // Excel-style Left/Right arrow navigation between form fields, app-wide.
+  useFieldArrowNav()
 
   // Close the drawer on route change and whenever we leave mobile width
   useEffect(() => { setDrawerOpen(false) }, [location.pathname])
