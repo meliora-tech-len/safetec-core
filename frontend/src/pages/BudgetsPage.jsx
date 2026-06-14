@@ -222,16 +222,15 @@ export default function BudgetsPage() {
   const selectedEntity = budgetEntities.find(e => String(e.id) === String(entityId))
 
   return (
-    <div>
+    <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
+      <div className="page-header" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Wallet size={20} /> Budgets
-          </h1>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '3px 0 0' }}>
-            Entity cash-flow budget — income vs supplier payments per month
-          </p>
+          <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Wallet size={22} style={{ color: 'var(--accent)' }} />
+            Budgets
+          </div>
+          <div className="page-subtitle">Entity cash-flow budget — income vs supplier payments per month</div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <select className="form-input" style={{ width: 'auto' }} value={entityId} onChange={e => setEntityId(e.target.value)}>
@@ -253,38 +252,40 @@ export default function BudgetsPage() {
 
       {/* No entity selected */}
       {!entityId && (
-        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-          Select an entity to view its budget.
+        <div className="card" style={{ padding: 0 }}>
+          <div className="empty-state">
+            <Wallet size={32} />
+            <p>Select an entity to view its budget</p>
+          </div>
         </div>
       )}
 
       {/* No budget permission for this entity */}
       {entityId && noAccess && (
-        <div className="card" style={{ padding: 40, textAlign: 'center' }}>
-          <Lock size={26} style={{ color: 'var(--text-muted)', marginBottom: 10 }} />
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>No budget access</div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            You don&apos;t have permission to view budgets for {selectedEntity?.code || 'this entity'}.
+        <div className="card" style={{ padding: 0 }}>
+          <div className="empty-state">
+            <Lock size={32} />
+            <p>You don&apos;t have permission to view budgets for {selectedEntity?.code || 'this entity'}</p>
           </div>
         </div>
       )}
 
       {entityId && !noAccess && loading && (
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+        <div className="loading-center">
+          <div className="spinner" />
+        </div>
       )}
 
       {/* No budget yet for this period */}
       {entityId && !noAccess && !loading && !budget && (
-        <div className="card" style={{ padding: 40, textAlign: 'center' }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            No budget for {selectedEntity?.code} — {MONTHS[Number(month) - 1]} {year}
+        <div className="card" style={{ padding: 0 }}>
+          <div className="empty-state">
+            <Wallet size={32} />
+            <p>No budget for {selectedEntity?.code} — {MONTHS[Number(month) - 1]} {year}</p>
+            <button className="btn-primary" onClick={handleCreate} disabled={creating}>
+              <Plus size={15} /> {creating ? 'Creating…' : 'Create Budget'}
+            </button>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
-            Create one to start capturing income and supplier payments for this period.
-          </div>
-          <button className="btn-primary" onClick={handleCreate} disabled={creating}>
-            <Plus size={14} /> {creating ? 'Creating…' : 'Create Budget'}
-          </button>
         </div>
       )}
 
@@ -292,16 +293,16 @@ export default function BudgetsPage() {
       {entityId && !noAccess && !loading && budget && (
         <>
           {/* Summary */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 18 }}>
+          <div className="grid-4" style={{ marginBottom: 24 }}>
             {[
-              { label: 'Income', value: totals.income, color: 'var(--text-primary)' },
-              { label: 'Expenses — To Pay', value: totals.expensesDue, color: 'var(--text-primary)' },
-              { label: 'Expenses — Paid', value: totals.expensesPaid, color: 'var(--text-primary)' },
-              { label: 'Left Over', value: totals.leftOver, color: totals.leftOver < 0 ? '#dc2626' : '#16a34a' },
+              { label: 'Income', value: totals.income },
+              { label: 'Expenses — To Pay', value: totals.expensesDue },
+              { label: 'Expenses — Paid', value: totals.expensesPaid },
+              { label: 'Left Over', value: totals.leftOver, cls: totals.leftOver < 0 ? ' text-danger' : ' text-success' },
             ].map(c => (
-              <div key={c.label} className="card" style={{ padding: '12px 16px' }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{c.label}</div>
-                <div style={{ fontSize: 17, fontWeight: 700, marginTop: 4, color: c.color, whiteSpace: 'nowrap' }}>{formatCurrency(c.value)}</div>
+              <div key={c.label} className="stat-card">
+                <div className="stat-card-label">{c.label}</div>
+                <div className={`stat-card-value${c.cls || ''}`} style={{ fontSize: 24 }}>{formatCurrency(c.value)}</div>
               </div>
             ))}
           </div>
@@ -311,48 +312,43 @@ export default function BudgetsPage() {
             const isIncome = section.section_type === 'income'
             return (
               <div key={section.id} className="card" style={{ padding: 0, marginBottom: 16, overflow: 'hidden' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>{section.name}</span>
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 9,
-                      background: isIncome ? 'rgba(22,163,74,0.12)' : 'var(--accent-subtle)',
-                      color: isIncome ? '#16a34a' : 'var(--accent)',
-                      textTransform: 'uppercase', letterSpacing: '0.04em',
-                    }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{section.name}</span>
+                    <span className={`badge ${isIncome ? 'badge-paid' : 'badge-sent'}`}>
                       {isIncome ? 'Income' : 'Expense'}
                     </span>
                   </div>
-                  <button onClick={() => handleDeleteSection(section)} title="Delete section"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'flex' }}>
-                    <Trash2 size={13} />
+                  <button className="btn-icon" onClick={() => handleDeleteSection(section)} title="Delete section"
+                    style={{ color: 'var(--danger)' }}>
+                    <Trash2 size={14} />
                   </button>
                 </div>
 
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+                  <table className="compact-table">
                     <thead>
                       <tr>
-                        <th style={thStyle}>Item</th>
+                        <th>Item</th>
                         {months.map(({ month: m, year: y }) => (
                           isIncome
-                            ? <th key={`${m}-${y}`} style={{ ...thStyle, textAlign: 'right' }}>{MONTHS[m - 1]} {y}</th>
+                            ? <th key={`${m}-${y}`} style={{ textAlign: 'right' }}>{MONTHS[m - 1]} {y}</th>
                             : [
-                                <th key={`${m}-${y}-due`} style={{ ...thStyle, textAlign: 'right' }}>{MONTHS[m - 1]} To Pay</th>,
-                                <th key={`${m}-${y}-paid`} style={{ ...thStyle, textAlign: 'right' }}>{MONTHS[m - 1]} Paid</th>,
+                                <th key={`${m}-${y}-due`} style={{ textAlign: 'right' }}>{MONTHS[m - 1]} To Pay</th>,
+                                <th key={`${m}-${y}-paid`} style={{ textAlign: 'right' }}>{MONTHS[m - 1]} Paid</th>,
                               ]
                         ))}
-                        <th style={{ ...thStyle, width: 36 }}></th>
+                        <th style={{ width: 36 }}></th>
                       </tr>
                     </thead>
                     <tbody>
                       {section.lines.map(line => (
-                        <tr key={line.id} style={{ borderTop: '1px solid var(--border)' }}>
-                          <td style={{ ...tdStyle, fontWeight: 500, minWidth: 180 }}>{line.name}</td>
+                        <tr key={line.id}>
+                          <td style={{ fontWeight: 500, minWidth: 180, whiteSpace: 'nowrap' }}>{line.name}</td>
                           {months.map(({ month: m, year: y }) => {
                             const fields = isIncome ? ['amount_due'] : ['amount_due', 'amount_paid']
                             return fields.map(field => (
-                              <td key={`${m}-${y}-${field}`} style={{ ...tdStyle, textAlign: 'right', width: 110 }}>
+                              <td key={`${m}-${y}-${field}`} style={{ textAlign: 'right', width: 110, padding: '3px 8px' }}>
                                 <input
                                   type="number" step="0.01"
                                   value={cellValue(line, m, y, field)}
@@ -365,10 +361,10 @@ export default function BudgetsPage() {
                               </td>
                             ))
                           })}
-                          <td style={{ ...tdStyle, textAlign: 'center' }}>
-                            <button onClick={() => handleDeleteLine(section, line)} title="Delete line"
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'inline-flex' }}>
-                              <X size={12} />
+                          <td style={{ textAlign: 'center' }}>
+                            <button className="btn-icon" onClick={() => handleDeleteLine(section, line)} title="Delete line"
+                              style={{ color: 'var(--text-muted)', padding: 3 }}>
+                              <X size={13} />
                             </button>
                           </td>
                         </tr>
@@ -376,26 +372,25 @@ export default function BudgetsPage() {
 
                       {/* Section totals */}
                       {section.lines.length > 0 && (
-                        <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-secondary)' }}>
-                          <td style={{ ...tdStyle, fontWeight: 700 }}>Total</td>
+                        <tr style={{ background: 'var(--bg-surface)' }}>
+                          <td style={{ fontWeight: 700 }}>Total</td>
                           {months.map(({ month: m, year: y }) => {
                             const fields = isIncome ? ['amount_due'] : ['amount_due', 'amount_paid']
                             return fields.map(field => (
-                              <td key={`${m}-${y}-${field}`} style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                              <td key={`${m}-${y}-${field}`} style={{ textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>
                                 {formatCurrency(sectionTotal(section, m, y, field))}
                               </td>
                             ))
                           })}
-                          <td style={tdStyle}></td>
+                          <td></td>
                         </tr>
                       )}
 
                       {/* Add line */}
-                      <tr style={{ borderTop: '1px solid var(--border)' }}>
-                        <td colSpan={1 + months.length * (isIncome ? 1 : 2) + 1} style={{ padding: '6px 10px' }}>
+                      <tr>
+                        <td colSpan={1 + months.length * (isIncome ? 1 : 2) + 1}>
                           <div style={{ display: 'flex', gap: 6 }}>
                             <input
-                              className="form-input"
                               style={{ maxWidth: 320, fontSize: 12, padding: '5px 9px' }}
                               placeholder="Add item (supplier, income source…)"
                               value={newLine[section.id] || ''}
@@ -441,7 +436,7 @@ export default function BudgetsPage() {
               </button>
             )}
 
-            <button className="btn-ghost btn-sm" style={{ color: '#dc2626' }} onClick={() => setConfirmDelete(budget)}>
+            <button className="btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setConfirmDelete(budget)}>
               <Trash2 size={13} /> Delete Budget
             </button>
           </div>
@@ -460,14 +455,6 @@ export default function BudgetsPage() {
     </div>
   )
 }
-
-const thStyle = {
-  padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 700,
-  color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em',
-  whiteSpace: 'nowrap',
-}
-
-const tdStyle = { padding: '4px 10px' }
 
 const cellInputStyle = {
   width: 100, textAlign: 'right', fontSize: 12.5,
