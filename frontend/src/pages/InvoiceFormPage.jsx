@@ -621,11 +621,17 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                           placeholder="—"
                           value={line.quantity !== '' && line.quantity != null
                             ? (() => {
-                                const n = parseFloat(line.quantity)
-                                if (isNaN(n)) return line.quantity
-                                return Number.isInteger(n)
-                                  ? n.toLocaleString('en-US')
-                                  : n.toLocaleString('en-US', { maximumFractionDigits: 4 })
+                                // Group the integer part with commas but keep the
+                                // decimal portion exactly as typed (so "7082." and
+                                // trailing digits like ".358"/".3580" don't get stripped).
+                                const raw = String(line.quantity)
+                                const neg = raw.startsWith('-')
+                                const [intPart, ...rest] = raw.replace('-', '').split('.')
+                                const grouped = intPart === ''
+                                  ? ''
+                                  : Number(intPart).toLocaleString('en-US')
+                                const decPart = raw.includes('.') ? '.' + rest.join('') : ''
+                                return (neg ? '-' : '') + grouped + decPart
                               })()
                             : ''}
                           onChange={e => updateLine(idx, 'quantity', e.target.value.replace(/,/g, ''))}

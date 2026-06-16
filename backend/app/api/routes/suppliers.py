@@ -5,7 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Supplier
+from app.models.models import User, Supplier, Invoice, SupplierInvoice, DieselRate, DieselFillUp
 from app.schemas.schemas import SupplierCreate, SupplierBulkCreate, SupplierUpdate, SupplierOut
 from app.services.audit import log_action
 
@@ -175,3 +175,38 @@ def delete_supplier(
                resource_id=supplier_id, description=f"Deactivated supplier {supplier.name}")
     db.commit()
     return {"detail": "Supplier deactivated"}
+
+
+@router.delete("/{supplier_id}/permanent")
+def permanently_delete_supplier(
+    supplier_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    _check_entity_access(supplier.entity_id, current_user)
+
+    # Refuse if other records still reference this supplier — archive instead.
+    blockers = []
+    for label, count in (
+        ("invoice(s)",         db.query(Invoice).filter(Invoice.supplier_id == supplier_id).count()),
+        ("supplier invoice(s)", db.query(SupplierInvoice).filter(SupplierInvoice.supplier_id == supplier_id).count()),
+        ("diesel rate(s)",     db.query(DieselRate).filter(DieselRate.supplier_id == supplier_id).count()),
+        ("diesel fill-up(s)",  db.query(DieselFillUp).filter(DieselFillUp.supplier_id == supplier_id).count()),
+    ):
+        if count:
+            blockers.append(f"{count} {label}")
+    if blockers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot permanently delete supplier '{supplier.name}' — {', '.join(blockers)} reference it. Archive instead or remove those first.",
+        )
+
+    log_action(db, "supplier.permanently_deleted", user_id=current_user.id,
+               entity_id=supplier.entity_id, resource_type="supplier",
+               resource_id=supplier_id, description=f"Permanently deleted supplier {supplier.name}")
+    db.delete(supplier)
+    db.commit()
+    return {"detail": "Supplier permanently deleted"}

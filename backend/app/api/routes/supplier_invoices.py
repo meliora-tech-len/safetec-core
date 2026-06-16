@@ -761,6 +761,13 @@ def create_supplier_invoice(
     db.commit()
     db.refresh(inv)
 
+    # A fixed (recurring) expense anchors its own carry-forward chain: the origin
+    # row's group id is its own id. Later months are cloned with this same id.
+    if inv.is_fixed_expense and not inv.fixed_expense_group_id:
+        inv.fixed_expense_group_id = inv.id
+        db.commit()
+        db.refresh(inv)
+
     # Auto-create DieselFillUp when supplier is a diesel supplier and enough data is provided
     diesel_fillup_id = None
     if supplier and supplier.is_diesel_supplier and payload.vehicle_reg and payload.litres and payload.litres > 0:
@@ -1153,22 +1160,48 @@ def delete_line_item(
     db.commit()
 
 
-def _archive_orphaned_placeholder(db: Session, old_inv_id, new_inv_id: int, user_id: int) -> bool:
-    """When a bulk import absorbs a slip that was already logged, the fill-up's
-    original auto-created placeholder invoice (pending, no number, no line items)
-    is left orphaned. Archive it so it stops showing on the Supplier Profile.
+def _resolve_truck_by_reg(db: Session, entity_id: int, reg: str) -> Optional[Truck]:
+    """Match a truck by real OR temp registration, space- and case-insensitively
+    ('KXH 519 MP' from a supplier sheet must match a stored 'KXH519MP'). Without
+    this, a formatting difference silently skips the diesel match and leaves the
+    pending placeholder behind as a duplicate."""
+    target = (reg or '').replace(' ', '').strip().upper()
+    if not target:
+        return None
+    trucks = db.query(Truck).filter(Truck.entity_id == entity_id).all()
+    for t in trucks:
+        if (t.registration or '').replace(' ', '').strip().upper() == target:
+            return t
+    for t in trucks:
+        if (t.temp_registration or '').replace(' ', '').strip().upper() == target:
+            return t
+    return None
 
-    Only touches a bare placeholder: un-numbered, no line items of its own, and no
-    fill-ups still pointing at it after the re-link. Returns True if archived.
+
+def _archive_orphaned_placeholder(db: Session, old_inv_id, new_inv_id: int, user_id: int, slip: Optional[str] = None) -> bool:
+    """When a bulk import absorbs a slip that was already logged, the fill-up's
+    original auto-created placeholder invoice is left orphaned. Archive it so it
+    stops showing on the Supplier Profile as a duplicate.
+
+    An auto-created diesel placeholder carries EITHER no invoice number OR the depot
+    slip number itself standing in as the number (see diesel._auto_link_or_create_
+    supplier_invoice) — both are placeholders. A genuine imported/manual invoice has
+    a real number we must never archive. Only touches a single-line placeholder with
+    no line items of its own and no fill-ups still pointing at it after the re-link.
+    Returns True if archived.
     """
     if not old_inv_id or old_inv_id == new_inv_id:
         return False
     old = db.query(SupplierInvoice).filter(SupplierInvoice.id == old_inv_id).first()
     if not old or old.is_archived:
         return False
-    if old.invoice_number:          # a real invoice, not a placeholder
+    if old.is_multi_line or old.line_items:   # an imported/real invoice — leave it alone
         return False
-    if old.line_items:              # carries its own lines — leave it alone
+    number = (old.invoice_number or '').strip()
+    slip_norm = (slip or '').strip()
+    # A placeholder has no number, or the slip we just absorbed used as a stand-in.
+    # Anything else is a real invoice number → not a placeholder.
+    if number and number.lower() != slip_norm.lower():
         return False
     remaining = db.query(DieselFillUp).filter(
         DieselFillUp.supplier_invoice_id == old_inv_id,
@@ -1276,11 +1309,10 @@ def bulk_import_invoices(
             # Resolve the truck first so the duplicate check is scoped to the
             # correct registration — the same slip number can legitimately appear
             # for different trucks, so matching on slip+entity alone would wrongly
-            # block creation for a truck that hasn't been imported yet.
-            truck = db.query(Truck).filter(
-                Truck.registration.ilike(li.unit.strip()),
-                Truck.entity_id == payload.entity_id,
-            ).first()
+            # block creation for a truck that hasn't been imported yet. Matches
+            # space/case-insensitively and on temp registrations so a sheet's
+            # formatting can't drop the match and orphan the placeholder.
+            truck = _resolve_truck_by_reg(db, payload.entity_id, li.unit)
             if not truck:
                 continue
 
@@ -1302,8 +1334,15 @@ def bulk_import_invoices(
             ).order_by(DieselFillUp.fillup_date.desc()).first()
 
             if existing_fillup:
-                if abs(float(existing_fillup.litres or 0) - float(litres_d)) > 0.01:
-                    # Same truck + slip but different litres — flag as conflict.
+                litres_mismatch = abs(float(existing_fillup.litres or 0) - float(litres_d)) > 0.01
+                # Even when litres agree, a different rate/amount is a real discrepancy
+                # (one side has the wrong price) — surface it for review rather than
+                # silently keeping the originally-logged figure. Compare the diesel
+                # cost (litres × rate), which is what both the fill-up amount and the
+                # import's amount_excl_vat represent.
+                amount_mismatch = abs(float(existing_fillup.amount or 0) - float(excl_d)) > 0.01
+                if litres_mismatch or amount_mismatch:
+                    # Same truck + slip but different litres or amount — flag as conflict.
                     conflicts.append(DieselConflict(
                         slip_number=slip,
                         fillup_id=existing_fillup.id,
@@ -1333,7 +1372,7 @@ def bulk_import_invoices(
                     existing_fillup.invoice_number = num or None
                     existing_fillup.supplier_invoice_id = inv.id
                     diesel_linked += 1
-                    _archive_orphaned_placeholder(db, old_inv_id, inv.id, current_user.id)
+                    _archive_orphaned_placeholder(db, old_inv_id, inv.id, current_user.id, slip=slip)
                 continue
 
             amounts = DieselCalculationService.calculate_fillup_amounts(
@@ -1397,8 +1436,15 @@ def resolve_diesel_conflicts(
             continue
         _check_entity_access(fillup.entity_id, current_user)
 
+        # Re-link the fill-up to the resolved invoice, then archive the placeholder
+        # it was auto-created under (same orphan the import's re-link branch clears —
+        # the conflict path bypasses that, so do it here too).
+        old_inv_id = fillup.supplier_invoice_id
         fillup.invoice_number = invoice.invoice_number
         fillup.supplier_invoice_id = invoice.id
+        _archive_orphaned_placeholder(
+            db, old_inv_id, invoice.id, current_user.id, slip=fillup.slip_number,
+        )
 
         if res.use_import_values and res.litres and res.rate_per_litre:
             litres_d = Decimal(str(res.litres))

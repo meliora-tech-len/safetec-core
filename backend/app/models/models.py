@@ -404,6 +404,11 @@ class SupplierInvoice(Base):
     notes = Column(Text)
     deposit_paid = Column(Numeric(12, 2), nullable=True)
     is_multi_line = Column(Boolean, default=False, nullable=False, server_default='false')
+    # Fixed (recurring) general expense: flagged once, then carried forward into
+    # each later month's costing as an independent (still-editable) clone. All
+    # clones in one chain share fixed_expense_group_id (= the origin invoice id).
+    is_fixed_expense = Column(Boolean, nullable=False, default=False, server_default='false')
+    fixed_expense_group_id = Column(Integer, nullable=True, index=True)
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

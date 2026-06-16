@@ -1629,6 +1629,7 @@ class SupplierInvoiceCreate(BaseModel):
     notes: Optional[str] = None
     deposit_paid: Optional[Decimal] = None
     is_multi_line: bool = False
+    is_fixed_expense: bool = False
     statement_month: Optional[int] = None
     statement_year: Optional[int] = None
 
@@ -1702,6 +1703,7 @@ class SupplierInvoiceOut(BaseModel):
     verified3_by_initials: Optional[str] = None
     verified3_by_date: Optional[str] = None
     is_multi_line: bool = False
+    is_fixed_expense: bool = False
     line_items: List[SupplierInvoiceLineItemOut] = []
 
     class Config:

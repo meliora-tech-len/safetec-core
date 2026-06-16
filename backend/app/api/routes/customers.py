@@ -4,7 +4,7 @@ from sqlalchemy import or_
 from typing import List, Optional
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Customer
+from app.models.models import User, Customer, Invoice, Statement
 from app.schemas.schemas import CustomerCreate, CustomerUpdate, CustomerOut
 from app.services.audit import log_action
 
@@ -129,3 +129,36 @@ def delete_customer(
                resource_id=customer_id, description=f"Deactivated customer {customer.name}")
     db.commit()
     return {"detail": "Customer deactivated"}
+
+
+@router.delete("/{customer_id}/permanent")
+def permanently_delete_customer(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    _check_entity_access(customer.entity_id, current_user)
+
+    # Refuse if other records still reference this customer — archive instead.
+    blockers = []
+    for label, count in (
+        ("invoice(s)",   db.query(Invoice).filter(Invoice.customer_id == customer_id).count()),
+        ("statement(s)", db.query(Statement).filter(Statement.customer_id == customer_id).count()),
+    ):
+        if count:
+            blockers.append(f"{count} {label}")
+    if blockers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot permanently delete customer '{customer.name}' — {', '.join(blockers)} reference it. Archive instead or remove those first.",
+        )
+
+    log_action(db, "customer.permanently_deleted", user_id=current_user.id,
+               entity_id=customer.entity_id, resource_type="customer",
+               resource_id=customer_id, description=f"Permanently deleted customer {customer.name}")
+    db.delete(customer)
+    db.commit()
+    return {"detail": "Customer permanently deleted"}

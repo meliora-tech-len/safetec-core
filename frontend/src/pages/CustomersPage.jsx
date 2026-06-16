@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { getCustomers, getEntities, createCustomer, updateCustomer, deleteCustomer } from '../services/api'
+import { getCustomers, getEntities, createCustomer, updateCustomer, deleteCustomer, permanentlyDeleteCustomer } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, UserCheck, X } from 'lucide-react'
@@ -165,7 +165,7 @@ export default function CustomersPage() {
                     <button className="btn-icon btn-ghost" onClick={() => setModal({ mode: 'edit', customer })} title="Edit">
                       <Edit2 size={13} />
                     </button>
-                    <button className="btn-icon btn-ghost" onClick={() => setDeleteTarget(customer)} title="Deactivate">
+                    <button className="btn-icon btn-ghost" onClick={() => setDeleteTarget(customer)} title="Delete">
                       <Trash2 size={13} color="var(--danger)" />
                     </button>
                   </div>
@@ -190,10 +190,15 @@ export default function CustomersPage() {
       <DeleteModal
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title="Deactivate Customer"
-        description={deleteTarget ? `"${deleteTarget.name}" will be marked as inactive and hidden from active customer lists.` : ''}
+        title="Delete Customer"
+        description={deleteTarget ? `"${deleteTarget.name}"` : ''}
         onArchive={async () => {
           try { await deleteCustomer(deleteTarget.id); toast.success('Customer deactivated'); load() }
+          catch (err) { toast.error(errorMessage(err)) }
+          setDeleteTarget(null)
+        }}
+        onDelete={async () => {
+          try { await permanentlyDeleteCustomer(deleteTarget.id); toast.success('Customer permanently deleted'); load() }
           catch (err) { toast.error(errorMessage(err)) }
           setDeleteTarget(null)
         }}

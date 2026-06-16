@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { getSuppliers, getEntities, createSupplierBulk, updateSupplier, deleteSupplier } from '../services/api'
+import { getSuppliers, getEntities, createSupplierBulk, updateSupplier, deleteSupplier, permanentlyDeleteSupplier } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, User, X, Copy, AlertCircle } from 'lucide-react'
@@ -188,7 +188,7 @@ export default function SuppliersPage() {
                     <button className="btn-icon btn-ghost" onClick={() => openEdit(supplier)} title="Edit">
                       <Edit2 size={13} />
                     </button>
-                    <button className="btn-icon btn-ghost" onClick={() => handleDelete(supplier)} title="Deactivate">
+                    <button className="btn-icon btn-ghost" onClick={() => handleDelete(supplier)} title="Delete">
                       <Trash2 size={13} color="var(--danger)" />
                     </button>
                   </div>
@@ -220,10 +220,15 @@ export default function SuppliersPage() {
       <DeleteModal
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title="Deactivate Supplier"
-        description={deleteTarget ? `"${deleteTarget.name}" will be marked as inactive and hidden from all active supplier lists.` : ''}
+        title="Delete Supplier"
+        description={deleteTarget ? `"${deleteTarget.name}"` : ''}
         onArchive={async () => {
           try { await deleteSupplier(deleteTarget.id); toast.success('Supplier deactivated'); load() }
+          catch (err) { toast.error(errorMessage(err)) }
+          setDeleteTarget(null)
+        }}
+        onDelete={async () => {
+          try { await permanentlyDeleteSupplier(deleteTarget.id); toast.success('Supplier permanently deleted'); load() }
           catch (err) { toast.error(errorMessage(err)) }
           setDeleteTarget(null)
         }}

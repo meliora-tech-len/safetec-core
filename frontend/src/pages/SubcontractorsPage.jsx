@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Link } from 'react-router-dom'
-import { getSubcontractors, getEntities, createSubcontractorBulk, updateSubcontractor, deleteSubcontractor } from '../services/api'
+import { Link, useNavigate } from 'react-router-dom'
+import { getSubcontractors, getEntities, createSubcontractorBulk, updateSubcontractor, deleteSubcontractor, permanentlyDeleteSubcontractor } from '../services/api'
 import { errorMessage, formatDate } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, Building2, X, Copy } from 'lucide-react'
@@ -12,6 +12,7 @@ import SortableHeader, { useSort, applySort } from '../components/SortableHeader
 
 export default function SubcontractorsPage() {
   const { isAdmin } = useAuth()
+  const navigate = useNavigate()
   const [subcontractors, setSubcontractors] = useState([])
   const [entities, setEntities] = useState([])
   const [loading, setLoading] = useState(true)
@@ -42,6 +43,17 @@ export default function SubcontractorsPage() {
 
   const { sort, onSort } = useSort('name', 'asc')
   const sortedSubs = useMemo(() => applySort(subcontractors, sort), [subcontractors, sort])
+
+  // When a reg was searched, carry it into the profile so it jumps to that truck.
+  const regQuery = debouncedSearch.trim()
+  const subLink = (sub) => `/subcontractors/${sub.id}${regQuery ? `?reg=${encodeURIComponent(regQuery)}` : ''}`
+
+  // Enter in the search box opens the first match (jumping to the searched reg)
+  const openFirstMatch = () => {
+    const term = search.trim()
+    if (!term || sortedSubs.length === 0) return
+    navigate(`/subcontractors/${sortedSubs[0].id}?reg=${encodeURIComponent(term)}`)
+  }
 
   const openCreate = () => setModal({ mode: 'create' })
   const openEdit   = (sub) => setModal({ mode: 'edit', sub })
@@ -111,9 +123,10 @@ export default function SubcontractorsPage() {
         <div className="search-bar" style={{ flex: 1, maxWidth: 320 }}>
           <Search size={14} />
           <input
-            placeholder="Search name or truck reg..."
+            placeholder="Search name or truck reg… (Enter to open)"
             value={search}
             onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); openFirstMatch() } }}
           />
           {search && <button className="btn-icon" onClick={() => setSearch('')}><X size={13} /></button>}
         </div>
@@ -148,7 +161,7 @@ export default function SubcontractorsPage() {
             ) : sortedSubs.map(sub => (
               <tr key={sub.id}>
                 <td>
-                  <Link to={`/subcontractors/${sub.id}`} style={{ fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>
+                  <Link to={subLink(sub)} style={{ fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>
                     {sub.name}
                   </Link>
                   {sub.trading_name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sub.trading_name}</div>}
@@ -160,7 +173,7 @@ export default function SubcontractorsPage() {
                 <td>
                   <div style={{ display: 'flex', gap: 4 }}>
                     <button className="btn-icon btn-ghost" onClick={() => openEdit(sub)} title="Edit"><Edit2 size={13} /></button>
-                    <button className="btn-icon btn-ghost" onClick={() => setDeleteTarget(sub)} title="Deactivate"><Trash2 size={13} color="var(--danger)" /></button>
+                    <button className="btn-icon btn-ghost" onClick={() => setDeleteTarget(sub)} title="Delete"><Trash2 size={13} color="var(--danger)" /></button>
                   </div>
                 </td>
               </tr>
@@ -182,10 +195,15 @@ export default function SubcontractorsPage() {
       <DeleteModal
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title="Deactivate Subcontractor"
-        description={deleteTarget ? `"${deleteTarget.name}" will be marked as inactive.` : ''}
+        title="Delete Subcontractor"
+        description={deleteTarget ? `"${deleteTarget.name}"` : ''}
         onArchive={async () => {
           try { await deleteSubcontractor(deleteTarget.id); toast.success('Subcontractor deactivated'); load() }
+          catch (err) { toast.error(errorMessage(err)) }
+          setDeleteTarget(null)
+        }}
+        onDelete={async () => {
+          try { await permanentlyDeleteSubcontractor(deleteTarget.id); toast.success('Subcontractor permanently deleted'); load() }
           catch (err) { toast.error(errorMessage(err)) }
           setDeleteTarget(null)
         }}

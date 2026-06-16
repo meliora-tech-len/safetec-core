@@ -362,11 +362,96 @@ def _truck_invoice_contribution(inv: SupplierInvoice, truck_regs: set):
     return False, D0, D0
 
 
+def _period_add(year: int, month: int, delta: int):
+    """Shift a (year, month) pair by `delta` whole months."""
+    idx = year * 12 + (month - 1) + delta
+    return idx // 12, idx % 12 + 1
+
+
+def _materialize_fixed_expenses(sub, month: int, year: int, db: Session, current_user: User) -> None:
+    """Roll fixed (recurring) general expenses forward into (month, year).
+
+    Each fixed general expense (supplier_id null, is_fixed_expense set) is cloned
+    one month at a time so every later month gets its own independent, editable
+    row. The walk extends only from an ACTIVE predecessor and never recreates a
+    month that already has a row (active or archived) — so archiving the latest
+    occurrence stops the carry-over, and a deleted month is never back-filled.
+    """
+    rows = (
+        db.query(SupplierInvoice)
+        .filter(
+            SupplierInvoice.entity_id == sub.entity_id,
+            SupplierInvoice.is_fixed_expense == True,
+            SupplierInvoice.supplier_id.is_(None),
+        )
+        .all()
+    )
+    if not rows:
+        return
+
+    target = (year, month)
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault(r.fixed_expense_group_id or r.id, []).append(r)
+
+    created = False
+    for gid, instances in groups.items():
+        by_period: dict = {}
+        for r in instances:
+            if r.statement_year is None or r.statement_month is None:
+                continue
+            key = (r.statement_year, r.statement_month)
+            cur = by_period.get(key)
+            if cur is None or (cur.is_archived and not r.is_archived):
+                by_period[key] = r
+        if not by_period:
+            continue
+        origin = min(by_period)
+        if target <= origin:
+            continue
+
+        cur_p = origin
+        while cur_p != target:
+            cur_p = _period_add(cur_p[0], cur_p[1], 1)
+            prev_inst = by_period.get(_period_add(cur_p[0], cur_p[1], -1))
+            if prev_inst is None or prev_inst.is_archived:
+                break                      # chain stopped — no active predecessor
+            if cur_p in by_period:
+                continue                   # already materialised / intentionally emptied
+            clone = SupplierInvoice(
+                supplier_id=None,
+                supplier_name_text=prev_inst.supplier_name_text,
+                entity_id=prev_inst.entity_id,
+                invoice_date=prev_inst.invoice_date,
+                invoice_number=None,
+                amount=prev_inst.amount,
+                vat_applicable=prev_inst.vat_applicable,
+                vehicle_reg=prev_inst.vehicle_reg,
+                description=prev_inst.description,
+                statement_month=cur_p[1],
+                statement_year=cur_p[0],
+                is_fixed_expense=True,
+                fixed_expense_group_id=gid,
+                created_by_id=current_user.id if current_user else None,
+            )
+            db.add(clone)
+            db.flush()
+            by_period[cur_p] = clone
+            created = True
+
+    if created:
+        db.commit()
+
+
 def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, db: Session, current_user: User) -> SubcontractorCostingOut:
     sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Subcontractor not found")
     _check_entity_access(sub.entity_id, current_user)
+
+    # Carry recurring (fixed) general expenses forward into this period first, so
+    # the clones are picked up by the normal per-period invoice query below.
+    _materialize_fixed_expenses(sub, month, year, db, current_user)
 
     trucks = db.query(Truck).filter(Truck.subcontractor_id == subcontractor_id).all()
 
@@ -743,3 +828,38 @@ def delete_subcontractor(
     )
     db.commit()
     return {"detail": "Subcontractor deactivated"}
+
+
+@router.delete("/{subcontractor_id}/permanent")
+def permanently_delete_subcontractor(
+    subcontractor_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    # Refuse if other records still reference this subcontractor — archive instead.
+    blockers = []
+    for label, count in (
+        ("truck(s)",            db.query(Truck).filter(Truck.subcontractor_id == subcontractor_id).count()),
+        ("supplier invoice(s)", db.query(SupplierInvoice).filter(SupplierInvoice.subcontractor_id == subcontractor_id).count()),
+    ):
+        if count:
+            blockers.append(f"{count} {label}")
+    if blockers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot permanently delete subcontractor '{sub.name}' — {', '.join(blockers)} reference it. Archive instead or remove those first.",
+        )
+
+    log_action(
+        db, "subcontractor.permanently_deleted", user_id=current_user.id,
+        entity_id=sub.entity_id, resource_type="subcontractor",
+        resource_id=subcontractor_id, description=f"Permanently deleted subcontractor {sub.name}",
+    )
+    db.delete(sub)
+    db.commit()
+    return {"detail": "Subcontractor permanently deleted"}

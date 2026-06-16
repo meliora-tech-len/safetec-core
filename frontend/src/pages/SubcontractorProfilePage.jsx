@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useSessionState } from '../hooks/useSessionState'
 import {
@@ -31,6 +31,9 @@ const todayStr = now.toISOString().slice(0, 10)
 function fmtC(v) { return v != null ? formatCurrency(v) : '—' }
 function fmtT(v) { return v != null ? Number(v).toFixed(3) : '—' }
 
+// Registrations are compared ignoring spaces/case so "CA 123 456" matches "CA123456"
+const normReg = (s) => (s || '').replace(/\s+/g, '').toUpperCase()
+
 const tblStyle = { width: '100%', borderCollapse: 'collapse', fontSize: 13 }
 const thStyle  = { padding: '8px 12px', textAlign: 'left', fontWeight: 600, fontSize: 12, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }
 const tdStyle  = { padding: '8px 12px', borderBottom: '1px solid var(--border)' }
@@ -47,6 +50,8 @@ const blankInvoiceForm = () => ({
 })
 
 const blankExpenseForm = (truckReg = '') => ({
+  expense_type:   'invoiced',   // 'invoiced' (full) | 'general' (description + amount only)
+  is_fixed:       false,        // general only: carry forward into each later month
   invoice_date:   todayStr,
   invoice_number: '',
   supplier_input: '',   // free text OR a supplier name picked from the datalist
@@ -63,7 +68,12 @@ const blankExpenseForm = (truckReg = '') => ({
 export default function SubcontractorProfilePage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { entities, user, isAdmin } = useAuth()
+
+  // When arriving from a reg search (?reg=…), jump to that truck's costing card
+  const regParam = searchParams.get('reg')
+  const [highlightTruckId, setHighlightTruckId] = useState(null)
 
   const [subcontractor, setSubcontractor] = useState(null)
   const [activeTab, setActiveTab]         = useState('costing')
@@ -192,6 +202,25 @@ export default function SubcontractorProfilePage() {
 
   useEffect(() => { if (activeTab === 'invoices') loadInvoices() }, [activeTab, loadInvoices])
   useEffect(() => { if (activeTab === 'costing')  { loadCosting(); loadVerif() } }, [activeTab, loadCosting, loadVerif])
+
+  // Once the costing data is in, find the truck matching the searched reg, scroll
+  // to it and flash a highlight. The ?reg= param is consumed (removed) so the
+  // highlight doesn't re-fire when the user later changes month.
+  useEffect(() => {
+    if (!regParam || !costing?.trucks?.length) return
+    const target = normReg(regParam)
+    const match = costing.trucks.find(t => normReg(t.truck.registration) === target)
+      || costing.trucks.find(t => normReg(t.truck.registration).includes(target))
+    setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('reg'); return p }, { replace: true })
+    if (!match) return
+    setHighlightTruckId(match.truck.id)
+    const scrollT = setTimeout(() => {
+      document.getElementById(`truck-card-${match.truck.id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
+    const clearT = setTimeout(() => setHighlightTruckId(null), 3000)
+    return () => { clearTimeout(scrollT); clearTimeout(clearT) }
+  }, [regParam, costing, setSearchParams])
 
   const handleExport = async (type) => {
     setExportLoading(type)
@@ -339,6 +368,47 @@ export default function SubcontractorProfilePage() {
 
   const saveExpense = async (e) => {
     e.preventDefault()
+
+    // General expense: just a description + amount (incl/excl VAT). No supplier,
+    // invoice number, truck or diesel fields. The description doubles as the row
+    // label in the costing table.
+    if (expenseForm.expense_type === 'general') {
+      const desc = expenseForm.description.trim()
+      if (!desc) { toast.error('Description is required'); return }
+      const genAmount = parseFloat(expenseForm.amount) || 0
+      if (genAmount <= 0) { toast.error('Enter a valid amount'); return }
+
+      setExpenseSaving(true)
+      try {
+        await createSupplierInvoice({
+          entity_id:          subcontractor.entity_id,
+          supplier_id:        null,
+          supplier_name_text: desc,
+          invoice_date:       new Date(expenseForm.invoice_date + 'T12:00:00').toISOString(),
+          invoice_number:     null,
+          amount:             genAmount,
+          vat_applicable:     expenseForm.vat_applicable,
+          // Inherit the truck the card was opened from — an expense only attaches
+          // to a truck's costing via its reg.
+          vehicle_reg:        expenseForm.vehicle_reg || null,
+          description:        desc,
+          // Fixed expense → carried forward into every later month's costing.
+          is_fixed_expense:   expenseForm.is_fixed,
+          // No date field on a general expense → pin it to the costing period in view.
+          statement_month:    month,
+          statement_year:     year,
+        })
+        toast.success('Expense added')
+        setShowExpenseModal(false)
+        loadCosting()
+      } catch (err) {
+        toast.error(errorMessage(err))
+      } finally {
+        setExpenseSaving(false)
+      }
+      return
+    }
+
     const supplierText = expenseForm.supplier_input.trim()
     if (!supplierText) { toast.error('Select or enter a supplier'); return }
     if (!expenseForm.invoice_number.trim()) { toast.error('Invoice number is required'); return }
@@ -741,6 +811,8 @@ export default function SubcontractorProfilePage() {
                 <TruckCostingCard
                   key={td.truck.id}
                   truckData={td}
+                  highlight={highlightTruckId === td.truck.id}
+                  autoExpand={highlightTruckId === td.truck.id}
                   templateSuppliers={costing.diesel_suppliers || []}
                   onAddExpense={() => openExpenseModal(td.truck.registration)}
                   onDeleteInvoice={setExpenseDeleteTarget}
@@ -797,6 +869,49 @@ export default function SubcontractorProfilePage() {
             </div>
             <form onSubmit={saveExpense}>
               <div className="modal-body">
+                {/* Expense type toggle — invoiced (full capture) vs general (description + amount) */}
+                <div className="form-group">
+                  <label>Expense Type</label>
+                  <div style={{ display: 'flex', gap: 0, borderRadius: 7, overflow: 'hidden', border: '1px solid var(--border)', width: 'fit-content' }}>
+                    <button
+                      type="button"
+                      onClick={() => setEF('expense_type', 'invoiced')}
+                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', background: expenseForm.expense_type === 'invoiced' ? 'var(--accent)' : 'var(--bg-surface)', color: expenseForm.expense_type === 'invoiced' ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                    >
+                      Invoiced Expense
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEF('expense_type', 'general')}
+                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', background: expenseForm.expense_type === 'general' ? 'var(--accent)' : 'var(--bg-surface)', color: expenseForm.expense_type === 'general' ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                    >
+                      General Expense
+                    </button>
+                  </div>
+                </div>
+
+                {expenseForm.expense_type === 'general' ? (
+                  <>
+                    <div className="form-group">
+                      <label>Description *</label>
+                      <input value={expenseForm.description} onChange={e => setEF('description', e.target.value)} required placeholder="e.g. Toll fees" />
+                    </div>
+                    <div className="form-group">
+                      <label>Amount *</label>
+                      <input type="number" step="0.01" min="0" value={expenseForm.amount} onChange={e => setEF('amount', e.target.value)} placeholder="0.00" />
+                    </div>
+                    <div className="form-group">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={expenseForm.is_fixed} onChange={e => setEF('is_fixed', e.target.checked)} style={{ width: 16, height: 16 }} />
+                        Fixed expense
+                      </label>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                        Carried over automatically into each following month's costing (still editable per month). To stop it, archive its most recent month.
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
                 <div className="form-row">
                   <div className="form-group">
                     <label>Date *</label>
@@ -856,6 +971,8 @@ export default function SubcontractorProfilePage() {
                   <label>Description</label>
                   <input value={expenseForm.description} onChange={e => setEF('description', e.target.value)} placeholder="Optional" />
                 </div>
+                  </>
+                )}
                 <div className="form-group">
                   <label>VAT</label>
                   <div style={{ display: 'flex', gap: 0, borderRadius: 7, overflow: 'hidden', border: '1px solid var(--border)', width: 'fit-content' }}>
@@ -1100,8 +1217,10 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
 function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice, onSaveNote, isVatRegistered = true,
-  verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false }) {
+  verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false, highlight = false, autoExpand = false }) {
   const [expanded, setExpanded] = useState(false)
+  // Open the card automatically when it's the target of a reg search
+  useEffect(() => { if (autoExpand) setExpanded(true) }, [autoExpand])
   const [showLoadDetail, setShowLoadDetail] = useState(false)
   const [activeDieselTab, setActiveDieselTab] = useState(null)
 
@@ -1173,7 +1292,16 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
   const dash = <span style={{ color: 'var(--text-muted)' }}>—</span>
 
   return (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 24, overflow: 'hidden' }}>
+    <div
+      id={`truck-card-${truck.id}`}
+      style={{
+        background: 'var(--bg-card)',
+        border: `1px solid ${highlight ? 'var(--accent)' : 'var(--border)'}`,
+        boxShadow: highlight ? '0 0 0 2px var(--accent-dim)' : 'none',
+        borderRadius: 10, marginBottom: 24, overflow: 'hidden',
+        transition: 'box-shadow 0.3s, border-color 0.3s',
+      }}
+    >
       {/* Truck header — click to expand */}
       <div
         onClick={() => setExpanded(v => !v)}
@@ -1191,46 +1319,15 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
             Net: {fmtC(net_payable)}
           </span>
         )}
-
-        {/* Per-truck carry-over note — awareness only, never totalled */}
-        <div
-          onClick={e => e.stopPropagation()}
-          style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', gap: 8, cursor: 'default', minWidth: 0 }}
-        >
-          <AlertTriangle size={13} style={{ color: '#d97706', flexShrink: 0 }} />
-          {noteEditing ? (
-            <>
-              <input
-                autoFocus
-                value={noteText}
-                onChange={e => setNoteText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') submitNote(e); if (e.key === 'Escape') cancelNoteEdit(e) }}
-                placeholder="Note for this month (e.g. previous month loss)…"
-                style={{ flex: 1, maxWidth: 480, fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)' }}
-              />
-              <button className="btn btn-sm" onClick={submitNote} disabled={noteSaving} style={{ fontSize: 12 }}>
-                {noteSaving ? '…' : 'Save'}
-              </button>
-              <button className="btn-ghost btn-sm" onClick={cancelNoteEdit} style={{ fontSize: 12 }}>Cancel</button>
-            </>
-          ) : truckData.note ? (
-            <span
-              onClick={() => setNoteEditing(true)}
-              title="Click to edit"
-              style={{ fontSize: 12, fontWeight: 600, color: '#b45309', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-            >
+        {/* Collapsed cue that a carry-over note exists (full note lives under the totals) */}
+        {!expanded && truckData.note && (
+          <span style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <AlertTriangle size={13} style={{ color: '#d97706', flexShrink: 0 }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#b45309', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {truckData.note}
             </span>
-          ) : (
-            <button
-              onClick={() => setNoteEditing(true)}
-              className="btn-ghost btn-sm"
-              style={{ fontSize: 12, color: 'var(--text-muted)', padding: '2px 6px' }}
-            >
-              ＋ Add note
-            </button>
-          )}
-        </div>
+          </span>
+        )}
       </div>
 
       {expanded && <div style={{ padding: '16px 20px' }}>
@@ -1340,7 +1437,14 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                   <tr key={inv.id}>
                     <td style={{ ...tdStyle, fontSize: 12 }}>
                       <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <span>{label}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {label}
+                          {inv.is_fixed_expense && (
+                            <span title="Fixed expense — carried forward each month" style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(59,130,246,0.12)', color: 'var(--accent)', borderRadius: 10, padding: '1px 6px' }}>
+                              FIXED
+                            </span>
+                          )}
+                        </span>
                         {inv.invoice_number && (
                           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
                         )}
@@ -1406,6 +1510,43 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
             </div>
           )
         })()}
+
+        {/* Per-truck carry-over note — under the totals so it's clearly visible (awareness only, never totalled) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, padding: '8px 12px', borderRadius: 8, border: '1px solid #f5d0a9', background: 'rgba(217,119,6,0.06)', minWidth: 0 }}>
+          <AlertTriangle size={14} style={{ color: '#d97706', flexShrink: 0 }} />
+          {noteEditing ? (
+            <>
+              <input
+                autoFocus
+                value={noteText}
+                onChange={e => setNoteText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') submitNote(e); if (e.key === 'Escape') cancelNoteEdit(e) }}
+                placeholder="Note for this month (e.g. previous month loss)…"
+                style={{ flex: 1, maxWidth: 480, fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)' }}
+              />
+              <button className="btn btn-sm" onClick={submitNote} disabled={noteSaving} style={{ fontSize: 12 }}>
+                {noteSaving ? '…' : 'Save'}
+              </button>
+              <button className="btn-ghost btn-sm" onClick={cancelNoteEdit} style={{ fontSize: 12 }}>Cancel</button>
+            </>
+          ) : truckData.note ? (
+            <span
+              onClick={() => setNoteEditing(true)}
+              title="Click to edit"
+              style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#b45309', cursor: 'pointer' }}
+            >
+              {truckData.note}
+            </span>
+          ) : (
+            <button
+              onClick={() => setNoteEditing(true)}
+              className="btn-ghost btn-sm"
+              style={{ fontSize: 12, color: 'var(--text-muted)', padding: '2px 6px' }}
+            >
+              ＋ Add note
+            </button>
+          )}
+        </div>
 
         {/* Add Expense */}
         <button
