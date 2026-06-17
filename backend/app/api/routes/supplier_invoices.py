@@ -292,30 +292,44 @@ def _auto_create_diesel_fillup(
     """
     Try to create a DieselFillUp linked to a supplier invoice.
     Returns the new fill-up ID, or None if the truck wasn't found or creation failed.
+
+    Uses the same robust registration matcher as the bulk import (space/case-
+    insensitive + temp-registration aware) rather than a strict ilike, so a
+    single-line capture resolves to the same truck the import would — otherwise
+    the fill-up was silently never created and the diesel never showed under the
+    truck or in the Diesel module. For top-up suppliers (Merino/Oukop) the typed
+    invoice number IS the depot slip, so it's tagged as slip_number — that's what
+    lets a later statement import match by slip+truck and fold this capture in
+    instead of leaving it as a separate log.
     """
     try:
-        truck = (
-            db.query(Truck)
-            .filter(
-                Truck.registration.ilike(vehicle_reg),
-                Truck.entity_id == entity_id,
-            )
-            .first()
-        )
+        truck = _resolve_truck_by_reg(db, entity_id, vehicle_reg)
         if not truck:
             return None
 
         inv_date = supplier_invoice.invoice_date.date() if hasattr(supplier_invoice.invoice_date, 'date') else supplier_invoice.invoice_date
 
-        # Link to an existing DieselFillUp if the same supplier + invoice number
-        # already exists — but only when there's a real invoice number to match on.
-        # Matching on a NULL/blank invoice number would wrongly collapse distinct
-        # fill-ups (e.g. different trucks) from the same supplier onto one record.
+        slip = (supplier_invoice.invoice_number or "").strip()
+        # Only top-up suppliers use the invoice-number field to carry a depot slip;
+        # for everyone else it's a genuine invoice number, not a slip.
+        slip_number = slip if (slip and diesel_type_for_supplier(supplier) == "topup") else None
+
+        # Link to an existing DieselFillUp rather than duplicating. Prefer a
+        # slip+truck match (mirrors the import, and handles a slip already logged
+        # via the Diesel module); fall back to supplier+invoice_number for
+        # non-top-up suppliers where the number is a real invoice number.
         existing_fillup = None
-        if supplier_invoice.invoice_number:
+        if slip_number:
+            existing_fillup = db.query(DieselFillUp).filter(
+                DieselFillUp.slip_number == slip_number,
+                DieselFillUp.truck_id == truck.id,
+                DieselFillUp.entity_id == entity_id,
+                DieselFillUp.is_archived != True,
+            ).first()
+        elif slip:
             existing_fillup = db.query(DieselFillUp).filter(
                 DieselFillUp.supplier_id == supplier.id,
-                DieselFillUp.invoice_number == supplier_invoice.invoice_number,
+                DieselFillUp.invoice_number == slip,
             ).first()
         if existing_fillup:
             if not existing_fillup.supplier_invoice_id:
@@ -345,6 +359,7 @@ def _auto_create_diesel_fillup(
             litres=litres,
             rate_per_litre=rate_per_litre,
             invoice_number=supplier_invoice.invoice_number,
+            slip_number=slip_number,
             supplier_invoice_id=supplier_invoice.id,
             admin_fee_pct=admin_fee_pct,
             diesel_type=diesel_type_for_supplier(supplier),
