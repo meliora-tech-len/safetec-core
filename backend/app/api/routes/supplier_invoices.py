@@ -884,8 +884,9 @@ def update_supplier_invoice(
 
     updates = payload.model_dump(exclude_none=True)
 
-    # Final-verification lock: only payment-status fields may still change
-    ensure_not_locked(inv, updates, {"is_paid", "paid_date", "payment_reference"})
+    # Final-verification lock: only payment-status fields and a free-text note
+    # may still change (a note-only edit sends just `notes`).
+    ensure_not_locked(inv, updates, {"is_paid", "paid_date", "payment_reference", "notes"})
 
     # Auto-set verified_at when marking verified
     if updates.get("is_verified") is True and not inv.is_verified:

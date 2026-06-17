@@ -856,8 +856,9 @@ def update_additional_load(
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
     updates = payload.model_dump(exclude_none=True)
-    # Final-verification lock: only the paid status may still change
-    ensure_not_locked(entry, updates, {"is_paid"})
+    # Final-verification lock: only the paid status and a free-text note may
+    # still change (a note-only edit sends just `notes`).
+    ensure_not_locked(entry, updates, {"is_paid", "notes"})
     for field, value in updates.items():
         setattr(entry, field, value)
     log_action(db, "additional_load.updated", user_id=current_user.id,
@@ -1018,8 +1019,11 @@ def update_food_payment(
     entry = db.query(DriverFoodPayment).filter(DriverFoodPayment.id == payment_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
-    ensure_not_locked(entry)
-    for field, value in payload.model_dump(exclude_none=True).items():
+    updates = payload.model_dump(exclude_none=True)
+    # Final-verification lock: a free-text note may still be added/edited
+    # (a note-only edit sends just `notes`).
+    ensure_not_locked(entry, updates, {"notes"})
+    for field, value in updates.items():
         setattr(entry, field, value)
     log_action(db, "food_payment.updated", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="food_payment",

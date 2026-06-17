@@ -38,7 +38,7 @@ const NAV = [
   { to: '/fleet/assignments', icon: Link2,           label: 'Assignments',  module: 'drivers' },
   { to: '/truck-loads',       icon: Package,         label: 'Truck Loads',  module: 'truck_loads' },
   { to: '/diesel',            icon: Fuel,            label: 'Diesel',       module: 'diesel' },
-  { to: '/budgets',           icon: Wallet,          label: 'Budgets',      module: 'budgets' },
+  // Hidden from users for now — keep in code. { to: '/budgets', icon: Wallet, label: 'Budgets', module: 'budgets' },
   { to: '/audit',             icon: Shield,          label: 'Audit Log',    adminOnly: true },
 ]
 

@@ -148,6 +148,8 @@ function TripModal({ defaultDate, onSave, onClose }) {
 
 function AdditionalLoadModal({ entry, defaultTruckReg, onSave, onClose }) {
   const isEdit = !!entry?.id
+  // Final verification lock: every field but Notes is read-only; save sends only notes.
+  const locked = !!entry?.verified3_by
   const [form, setForm] = useState({
     load_date:          entry?.load_date  ? new Date(entry.load_date).toISOString().slice(0,10)  : new Date().toISOString().slice(0,10),
     route_name:         entry?.route_name         || '',
@@ -160,37 +162,43 @@ function AdditionalLoadModal({ entry, defaultTruckReg, onSave, onClose }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return (
     <Modal title={isEdit ? 'Edit Additional Load' : 'Add Additional Load'} onClose={onClose}>
+      {locked && (
+        <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 6, background: 'rgba(253,224,71,0.18)', fontSize: 12, color: 'var(--text-secondary)' }}>
+          This load is locked by final verification — only the note can be changed.
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: '12px 16px' }}>
         <div>
           <label className="form-label">Date *</label>
-          <DateInput className="form-input" value={form.load_date} onChange={e => set('load_date', e.target.value)} />
+          <DateInput className="form-input" value={form.load_date} onChange={e => set('load_date', e.target.value)} disabled={locked} />
         </div>
         <div>
           <label className="form-label">Amount (R) *</label>
-          <input className="form-input" type="number" step="0.01" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
+          <input className="form-input" type="number" step="0.01" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" disabled={locked} />
         </div>
         <div>
           <label className="form-label">Route / Mine *</label>
-          <input className="form-input" value={form.route_name} onChange={e => set('route_name', e.target.value)} placeholder="e.g. Droefontein" />
+          <input className="form-input" value={form.route_name} onChange={e => set('route_name', e.target.value)} placeholder="e.g. Droefontein" disabled={locked} />
         </div>
         <div>
           <label className="form-label">Truck Reg</label>
-          <input className="form-input" value={form.truck_registration} onChange={e => set('truck_registration', e.target.value)} />
+          <input className="form-input" value={form.truck_registration} onChange={e => set('truck_registration', e.target.value)} disabled={locked} />
         </div>
         <div>
           <label className="form-label">Litres</label>
-          <input className="form-input" type="number" step="0.01" value={form.litres} onChange={e => set('litres', e.target.value)} placeholder="Optional" />
+          <input className="form-input" type="number" step="0.01" value={form.litres} onChange={e => set('litres', e.target.value)} placeholder="Optional" disabled={locked} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 22 }}>
-          <input type="checkbox" id="al-verified" checked={form.is_verified} onChange={e => set('is_verified', e.target.checked)} />
+          <input type="checkbox" id="al-verified" checked={form.is_verified} onChange={e => set('is_verified', e.target.checked)} disabled={locked} />
           <label htmlFor="al-verified" className="form-label" style={{ margin: 0 }}>Verified</label>
         </div>
       </div>
       <label className="form-label" style={{ marginTop: 12 }}>Notes</label>
-      <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
+      <input className="form-input" autoFocus={locked} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
       <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
         <button className="btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
         <button className="btn-primary" style={{ flex: 1 }} onClick={() => {
+          if (locked) { onSave({ notes: form.notes.trim() }); return }
           if (!form.route_name.trim() || !form.amount) { toast.error('Route and amount are required'); return }
           onSave({ ...form, load_date: new Date(form.load_date + 'T12:00:00').toISOString(), litres: form.litres ? parseFloat(form.litres) : null, amount: parseFloat(form.amount) })
         }}>Save</button>
@@ -201,6 +209,8 @@ function AdditionalLoadModal({ entry, defaultTruckReg, onSave, onClose }) {
 
 function FoodPaymentModal({ entry, onSave, onClose }) {
   const isEdit = !!entry?.id
+  // Final verification lock: every field but Notes is read-only; save sends only notes.
+  const locked = !!entry?.verified3_by
   const [form, setForm] = useState({
     payment_date: entry?.payment_date ? new Date(entry.payment_date).toISOString().slice(0,10) : new Date().toISOString().slice(0,10),
     amount:       entry?.amount != null ? String(entry.amount) : '',
@@ -211,29 +221,35 @@ function FoodPaymentModal({ entry, onSave, onClose }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   return (
     <Modal title={isEdit ? 'Edit Food Payment' : 'Add Food Payment'} onClose={onClose}>
+      {locked && (
+        <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 6, background: 'rgba(253,224,71,0.18)', fontSize: 12, color: 'var(--text-secondary)' }}>
+          This payment is locked by final verification — only the note can be changed.
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: '12px 16px' }}>
         <div>
           <label className="form-label">Date *</label>
-          <DateInput className="form-input" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} />
+          <DateInput className="form-input" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} disabled={locked} />
         </div>
         <div>
           <label className="form-label">Amount (R) *</label>
-          <input className="form-input" type="number" step="0.01" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
+          <input className="form-input" type="number" step="0.01" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" disabled={locked} />
         </div>
         <div>
           <label className="form-label">Paid By</label>
-          <input className="form-input" value={form.paid_by} onChange={e => set('paid_by', e.target.value)} placeholder="e.g. SAFETEC" />
+          <input className="form-input" value={form.paid_by} onChange={e => set('paid_by', e.target.value)} placeholder="e.g. SAFETEC" disabled={locked} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 22 }}>
-          <input type="checkbox" id="fp-verified" checked={form.is_verified} onChange={e => set('is_verified', e.target.checked)} />
+          <input type="checkbox" id="fp-verified" checked={form.is_verified} onChange={e => set('is_verified', e.target.checked)} disabled={locked} />
           <label htmlFor="fp-verified" className="form-label" style={{ margin: 0 }}>Verified</label>
         </div>
       </div>
       <label className="form-label" style={{ marginTop: 12 }}>Notes</label>
-      <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
+      <input className="form-input" autoFocus={locked} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
       <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
         <button className="btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
         <button className="btn-primary" style={{ flex: 1 }} onClick={() => {
+          if (locked) { onSave({ notes: form.notes.trim() }); return }
           if (!form.amount) { toast.error('Amount is required'); return }
           onSave({ ...form, payment_date: new Date(form.payment_date + 'T12:00:00').toISOString(), amount: parseFloat(form.amount) })
         }}>Save</button>
@@ -803,7 +819,7 @@ export default function DriverDetailPage() {
                             />
                           </td>
                           <td style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn-icon" onClick={() => setAlModal(al)} style={{ padding: 4 }}><Edit2 size={11} /></button>
+                            <button className="btn-icon" onClick={() => setAlModal(al)} style={{ padding: 4 }} title={al.verified3_by ? 'Locked — edit note only' : 'Edit'}><Edit2 size={11} /></button>
                             <button className="btn-icon" onClick={async () => {
                               if (!confirm('Delete this entry?')) return
                               try { await api.del(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${al.id}`); loadCycle() }
@@ -874,7 +890,7 @@ export default function DriverDetailPage() {
                             />
                           </td>
                           <td style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn-icon" onClick={() => setFpModal(fp)} style={{ padding: 4 }}><Edit2 size={11} /></button>
+                            <button className="btn-icon" onClick={() => setFpModal(fp)} style={{ padding: 4 }} title={fp.verified3_by ? 'Locked — edit note only' : 'Edit'}><Edit2 size={11} /></button>
                             <button className="btn-icon" onClick={async () => {
                               if (!confirm('Delete?')) return
                               try { await api.del(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${fp.id}`); loadCycle() }

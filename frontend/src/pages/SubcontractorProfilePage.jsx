@@ -17,7 +17,7 @@ import toast from 'react-hot-toast'
 import {
   ArrowLeft, Plus, Trash2, ChevronLeft, ChevronRight,
   Building2, X, Save, CheckCircle, ChevronDown, ChevronUp, FileSpreadsheet,
-  FileDown, Sheet, AlertTriangle, Pencil, RotateCcw,
+  FileDown, Sheet, AlertTriangle, Pencil, RotateCcw, Info,
 } from 'lucide-react'
 import SearchableSelect from '../components/SearchableSelect'
 import DeleteModal from '../components/DeleteModal'
@@ -1244,6 +1244,8 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
   useEffect(() => { if (autoExpand) setExpanded(true) }, [autoExpand])
   const [showLoadDetail, setShowLoadDetail] = useState(false)
   const [activeDieselTab, setActiveDieselTab] = useState(null)
+  // Diesel spot-check modal: holds the supplier group whose invoices to list
+  const [dieselModal, setDieselModal] = useState(null)
 
   // Per-truck carry-over note (awareness only — never part of any total)
   const [noteText, setNoteText]     = useState(truckData.note || '')
@@ -1443,7 +1445,23 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
               return (
                 <React.Fragment key={supplierName}>
                   <tr>
-                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>{key} DIESEL</td>
+                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {key} DIESEL
+                        {/* Diesel spot-check "i" icon — hidden from users for now, keep in code.
+                        {hasDiesel && (
+                          <button
+                            type="button"
+                            onClick={() => setDieselModal(dg)}
+                            title="View the diesel invoices in this total"
+                            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent)', display: 'inline-flex' }}
+                          >
+                            <Info size={13} />
+                          </button>
+                        )}
+                        */}
+                      </span>
+                    </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
@@ -1698,6 +1716,27 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
           </div>
         )}
       </div>}
+
+      {/* Diesel spot-check modal — lists the invoices behind a diesel total */}
+      {dieselModal && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setDieselModal(null)}>
+          <div className="modal" style={{ maxWidth: 1040, width: '95%' }}>
+            <div className="modal-header">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                <Info size={16} style={{ color: 'var(--accent)' }} />
+                {dieselModal.supplier_name} Diesel — {truck.registration}
+              </h2>
+              <button className="btn-icon btn-ghost" onClick={() => setDieselModal(null)}><X size={16} /></button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '72vh', overflow: 'auto' }}>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0 }}>
+                {dieselModal.rows.length} diesel invoice{dieselModal.rows.length === 1 ? '' : 's'} included in this total — cross-check each against the Supplier Invoices.
+              </p>
+              <DieselGroupTable group={dieselModal} truckReg={truck.registration} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

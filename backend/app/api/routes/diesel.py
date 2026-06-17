@@ -868,9 +868,12 @@ def update_fillup(
     if not f:
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
-    ensure_not_locked(f)
 
     updates = payload.model_dump(exclude_none=True)
+
+    # Final-verification lock: a free-text note may still be added/edited
+    # (a note-only edit sends just `notes`).
+    ensure_not_locked(f, updates, {"notes"})
 
     # Recalculate amounts if litres or rate changes
     litres = Decimal(str(updates.get("litres", f.litres)))

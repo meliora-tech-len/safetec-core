@@ -42,6 +42,8 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const [showCancelled, setShowCancelled] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [showImportPO, setShowImportPO] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(new Set())  // rows ticked for bulk mark-paid
+  const [payingBulk, setPayingBulk] = useState(false)
   const navigate = useNavigate()
   const { theme } = useTheme()
 
@@ -119,6 +121,44 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const isPO      = docType === 'purchase_order'
   const title     = isInvoice ? 'Invoices' : isPO ? 'Purchase Orders' : 'Quotes'
   const docPath   = isInvoice ? 'invoices' : isPO ? 'purchase-orders' : 'quotes'
+
+  // Bulk mark-paid (for one received payment covering many invoices). Not for
+  // quotes — "paid" isn't part of their lifecycle.
+  const allowBulkPaid = docType !== 'quote'
+  const canMarkPaid = (inv) => inv.status !== 'paid' && inv.status !== 'cancelled'
+
+  const toggleSelect = (id) => setSelectedIds(s => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
+  })
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const payableSelectable = displayedInvoices.filter(canMarkPaid)
+  const allSelected = payableSelectable.length > 0 && payableSelectable.every(i => selectedIds.has(i.id))
+  const toggleSelectAll = () => setSelectedIds(s => {
+    const n = new Set(s)
+    if (allSelected) payableSelectable.forEach(i => n.delete(i.id))
+    else payableSelectable.forEach(i => n.add(i.id))
+    return n
+  })
+  const selectedPayable = displayedInvoices.filter(i => selectedIds.has(i.id) && canMarkPaid(i))
+
+  const handleMarkPaidSelected = async () => {
+    if (!selectedPayable.length) return
+    setPayingBulk(true)
+    let ok = 0
+    for (const inv of selectedPayable) {
+      try {
+        await updateInvoice(inv.id, { status: 'paid' })
+        ok++
+      } catch (e) { toast.error(errorMessage(e)) }
+    }
+    setPayingBulk(false)
+    clearSelection()
+    if (ok) {
+      toast.success(`Marked ${ok} as paid`)
+      load()
+    }
+  }
 
   return (
     <div style={styles.page}>
@@ -223,6 +263,19 @@ export default function InvoicesPage({ docType = 'invoice' }) {
         <table>
           <thead>
             <tr>
+              {allowBulkPaid && (
+                <th style={{ width: 28, textAlign: 'center' }}>
+                  {payableSelectable.length > 0 && (
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleSelectAll}
+                      title="Select all"
+                      style={{ cursor: 'pointer' }}
+                    />
+                  )}
+                </th>
+              )}
               <SortableHeader label="Number" col="invoice_number" sort={sort} onSort={onSort} />
               <SortableHeader label="Supplier / Customer" col="recipient" sort={sort} onSort={onSort} />
               <SortableHeader label="Entity" col="entity_code" sort={sort} onSort={onSort} />
@@ -236,13 +289,26 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={isInvoice ? 9 : 8} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
+              <tr><td colSpan={(isInvoice ? 9 : 8) + (allowBulkPaid ? 1 : 0)} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
             ) : displayedInvoices.length === 0 ? (
-              <tr><td colSpan={isInvoice ? 9 : 8}>
+              <tr><td colSpan={(isInvoice ? 9 : 8) + (allowBulkPaid ? 1 : 0)}>
                 <div className="empty-state"><FileText size={32} /><p>No {title.toLowerCase()} found</p></div>
               </td></tr>
             ) : displayedInvoices.map(inv => (
               <tr key={inv.id} onClick={() => navigate(`/${docPath}/${inv.id}`)} style={{ cursor: 'pointer' }}>
+                {allowBulkPaid && (
+                  <td style={{ textAlign: 'center', width: 28 }} onClick={e => e.stopPropagation()}>
+                    {canMarkPaid(inv) && (
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(inv.id)}
+                        onChange={() => toggleSelect(inv.id)}
+                        title="Select"
+                        style={{ cursor: 'pointer' }}
+                      />
+                    )}
+                  </td>
+                )}
                 <td className="font-mono text-accent" style={{ fontSize: 12 }}>{inv.invoice_number}</td>
                 <td style={{ fontWeight: 500 }}>
                   {inv.supplier?.name || inv.customer?.name || '—'}
@@ -306,6 +372,38 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           </tbody>
         </table>
       </div>
+
+      {/* Bulk mark-paid action bar — floats while rows are selected */}
+      {allowBulkPaid && selectedPayable.length > 0 && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          display: 'flex', alignItems: 'center', gap: 14, zIndex: 900,
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '10px 16px',
+          boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{selectedPayable.length} selected</span>
+          <button
+            onClick={handleMarkPaidSelected}
+            disabled={payingBulk}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 16px', borderRadius: 7, border: 'none',
+              background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
+              cursor: payingBulk ? 'default' : 'pointer', opacity: payingBulk ? 0.6 : 1,
+            }}>
+            <CheckCircle size={15} />
+            {payingBulk ? 'Marking…' : `Mark paid (${selectedPayable.length})`}
+          </button>
+          <button
+            onClick={clearSelection}
+            disabled={payingBulk}
+            className="btn-ghost"
+            style={{ fontSize: 13, padding: '6px 10px' }}>
+            Clear
+          </button>
+        </div>
+      )}
 
       {showImportPO && <ImportPOModal onClose={() => setShowImportPO(false)} entities={entities} onImported={load} />}
 

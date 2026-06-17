@@ -545,14 +545,18 @@ export default function SupplierProfilePage() {
   // Inline editing state
   const [editingId, setEditingId] = useState(null)   // invoice id being edited
   const [editForm, setEditForm] = useState({})
+  // True when the row being edited carries the final verification lock — only
+  // its notes field stays editable (everything else renders disabled).
+  const [editLocked, setEditLocked] = useState(false)
   const [showNew, setShowNew] = useState(false)       // new inline row visible
   const [newForm, setNewForm] = useState(blankForm(''))
   const [saving, setSaving] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)  // invoice pending deletion
   const [openInvoiceIds, setOpenInvoiceIds] = useState(new Set())
-  const [selectedIds, setSelectedIds] = useState(new Set())  // invoices ticked for bulk verify
+  const [selectedIds, setSelectedIds] = useState(new Set())  // invoices ticked for bulk verify / pay
   const [verifyingBulk, setVerifyingBulk] = useState(false)
+  const [payingBulk, setPayingBulk] = useState(false)
   const firstInputRef = useRef(null)
   // Physical-invoice attachment: one shared hidden file input, targeted at a row.
   const attachInputRef = useRef(null)
@@ -727,6 +731,7 @@ export default function SupplierProfilePage() {
     if (editingId !== null) return   // intentional exit required (Esc or X) before switching rows
     setShowNew(false)
     setEditingId(inv.id)
+    setEditLocked(!!(inv.verified3_by || inv.verified3_by_initials))
     setEditForm({
       entity_id: inv.entity_id,
       invoice_date: inv.invoice_date?.slice(0, 10) || today,
@@ -756,7 +761,7 @@ export default function SupplierProfilePage() {
     }
   }
 
-  const cancelEdit = () => { setEditingId(null); setEditForm({}) }
+  const cancelEdit = () => { setEditingId(null); setEditForm({}); setEditLocked(false) }
   const cancelNew = () => { setShowNew(false); setNewForm(blankForm(supplier?.entity_id, supplier?.is_diesel_supplier)); setAmountAutoFilled(false) }
 
   const handleAddClick = () => {
@@ -832,6 +837,19 @@ export default function SupplierProfilePage() {
   }
 
   const saveEdit = async () => {
+    // Locked (finalised) record: notes is the only editable field, so send just
+    // that — the server's final-lock whitelist permits a note-only update.
+    if (editLocked) {
+      setSaving(true)
+      try {
+        await updateSupplierInvoice(editingId, { notes: (editForm.notes || '').trim() })
+        toast.success('Note saved')
+        setEditingId(null); setEditLocked(false)
+        await loadInvoices()
+      } catch (e) { toast.error(errorMessage(e)) }
+      finally { setSaving(false) }
+      return
+    }
     const err = validate(editForm)
     if (err) return toast.error(err)
     if (isDuplicateInvoiceNumber(editForm.invoice_number, editingId))
@@ -956,6 +974,10 @@ export default function SupplierProfilePage() {
     return false
   }
 
+  // A row is selectable if there's a bulk action it can take part in:
+  // a pending verification tick, or it's still unpaid (for bulk mark-paid).
+  const canUserSelect = (inv) => canUserVerify(inv) || !inv.is_paid
+
   const toggleSelect = (id) => setSelectedIds(s => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
   })
@@ -982,6 +1004,29 @@ export default function SupplierProfilePage() {
     setVerifyingBulk(false)
     clearSelection()
     if (ok) toast.success(`Verified ${ok} invoice${ok === 1 ? '' : 's'}`)
+  }
+
+  // Mark every selected unpaid invoice as paid (a single payment covering many
+  // invoices). Already-paid selections are skipped.
+  const handleMarkPaidSelected = async () => {
+    const targets = groups.flatMap(g => g.invoices)
+      .filter(i => selectedIds.has(i.id) && !i.is_paid)
+    if (!targets.length) return
+    setPayingBulk(true)
+    const paidDate = new Date().toISOString()
+    let ok = 0
+    for (const inv of targets) {
+      try {
+        await updateSupplierInvoice(inv.id, { is_paid: true, paid_date: paidDate })
+        ok++
+      } catch (e) { toast.error(errorMessage(e)) }
+    }
+    setPayingBulk(false)
+    clearSelection()
+    if (ok) {
+      toast.success(`Marked ${ok} invoice${ok === 1 ? '' : 's'} as paid`)
+      loadInvoices()
+    }
   }
 
   const handleFinalize = async (inv, intent) => {
@@ -1022,6 +1067,7 @@ export default function SupplierProfilePage() {
 
   const allInvoices = groups.flatMap(g => g.invoices)
   const selectedVerifiable = allInvoices.filter(i => selectedIds.has(i.id) && canUserVerify(i))
+  const selectedUnpaid     = allInvoices.filter(i => selectedIds.has(i.id) && !i.is_paid)
   const multiEntity = entities.length > 1
 
   // Map a vehicle registration to its owning subcontractor (purely for display).
@@ -1270,8 +1316,8 @@ export default function SupplierProfilePage() {
         </div>
       )}
 
-      {/* Bulk-verify action bar — floats while invoices are selected */}
-      {selectedVerifiable.length > 0 && (
+      {/* Bulk-action bar — floats while invoices are selected */}
+      {selectedIds.size > 0 && (
         <div style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
           display: 'flex', alignItems: 'center', gap: 14, zIndex: 900,
@@ -1280,23 +1326,39 @@ export default function SupplierProfilePage() {
           boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
         }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>
-            {selectedVerifiable.length} selected
+            {selectedIds.size} selected
           </span>
-          <button
-            onClick={handleVerifySelected}
-            disabled={verifyingBulk}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '7px 16px', borderRadius: 7, border: 'none',
-              background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
-              cursor: verifyingBulk ? 'default' : 'pointer', opacity: verifyingBulk ? 0.6 : 1,
-            }}>
-            <CheckCircle size={15} />
-            {verifyingBulk ? 'Verifying…' : 'Verify selected'}
-          </button>
+          {selectedVerifiable.length > 0 && (
+            <button
+              onClick={handleVerifySelected}
+              disabled={verifyingBulk || payingBulk}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 7, border: 'none',
+                background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
+                cursor: verifyingBulk ? 'default' : 'pointer', opacity: (verifyingBulk || payingBulk) ? 0.6 : 1,
+              }}>
+              <CheckCircle size={15} />
+              {verifyingBulk ? 'Verifying…' : `Verify selected (${selectedVerifiable.length})`}
+            </button>
+          )}
+          {selectedUnpaid.length > 0 && (
+            <button
+              onClick={handleMarkPaidSelected}
+              disabled={verifyingBulk || payingBulk}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 7, border: 'none',
+                background: '#2563eb', color: '#fff', fontWeight: 600, fontSize: 13,
+                cursor: payingBulk ? 'default' : 'pointer', opacity: (verifyingBulk || payingBulk) ? 0.6 : 1,
+              }}>
+              <CheckCircle size={15} />
+              {payingBulk ? 'Marking…' : `Mark paid (${selectedUnpaid.length})`}
+            </button>
+          )}
           <button
             onClick={clearSelection}
-            disabled={verifyingBulk}
+            disabled={verifyingBulk || payingBulk}
             className="btn-ghost"
             style={{ fontSize: 13, padding: '6px 10px' }}>
             Clear
@@ -1387,12 +1449,12 @@ export default function SupplierProfilePage() {
         const key = `${group.statement_year}-${group.statement_month}`
         const isOpen = !collapsed[key]
         const unpaidCount = group.invoices.filter(i => !i.is_paid).length
-        const groupVerifiable = group.invoices.filter(canUserVerify)
-        const allGroupSelected = groupVerifiable.length > 0 && groupVerifiable.every(i => selectedIds.has(i.id))
+        const groupSelectable = group.invoices.filter(canUserSelect)
+        const allGroupSelected = groupSelectable.length > 0 && groupSelectable.every(i => selectedIds.has(i.id))
         const toggleGroupSelect = () => setSelectedIds(s => {
           const n = new Set(s)
-          if (allGroupSelected) groupVerifiable.forEach(i => n.delete(i.id))
-          else groupVerifiable.forEach(i => n.add(i.id))
+          if (allGroupSelected) groupSelectable.forEach(i => n.delete(i.id))
+          else groupSelectable.forEach(i => n.add(i.id))
           return n
         })
 
@@ -1472,12 +1534,12 @@ export default function SupplierProfilePage() {
                       {isDiesel && !isWBGDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
                       <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
                       <th style={{ ...styles.th, width: 28, textAlign: 'center' }}>
-                        {groupVerifiable.length > 0 && (
+                        {groupSelectable.length > 0 && (
                           <input
                             type="checkbox"
                             checked={allGroupSelected}
                             onChange={toggleGroupSelect}
-                            title="Select all for bulk verify"
+                            title="Select all"
                             style={{ cursor: 'pointer' }}
                           />
                         )}
@@ -1491,6 +1553,12 @@ export default function SupplierProfilePage() {
                   <tbody>
                     {processInvoices(group.invoices).map(inv => {
                       const isEditing = editingId === inv.id
+                      const isLocked = !!(inv.verified3_by || inv.verified3_by_initials)
+                      // When editing a locked row, every field but notes is read-only
+                      // (rendered as plain text). `editFields` gates the editable inputs;
+                      // `lockEdit` is true only while editing a locked row.
+                      const lockEdit = isEditing && isLocked
+                      const editFields = isEditing && !isLocked
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
                       const totalCols = 13 + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
@@ -1519,7 +1587,7 @@ export default function SupplierProfilePage() {
 
                             {/* Date */}
                             <td style={styles.td}>
-                              {isEditing ? (
+                              {editFields ? (
                                 <DateInput
                                   ref={firstInputRef} value={f.invoice_date}
                                   onChange={e => setEditForm(p => ({ ...p, invoice_date: e.target.value }))}
@@ -1532,7 +1600,7 @@ export default function SupplierProfilePage() {
 
                             {/* Period */}
                             <td style={styles.td}>
-                              {isEditing ? (
+                              {editFields ? (
                                 <div style={{ display: 'flex', gap: 3 }} onClick={e => e.stopPropagation()}>
                                   <select
                                     value={f.statement_month}
@@ -1558,8 +1626,8 @@ export default function SupplierProfilePage() {
                             </td>
 
                             {/* Invoice # */}
-                            <td style={{ ...styles.td, fontWeight: isEditing ? 400 : 600 }}>
-                              {isEditing ? (
+                            <td style={{ ...styles.td, fontWeight: editFields ? 400 : 600 }}>
+                              {editFields ? (
                                 <input
                                   value={f.invoice_number}
                                   onChange={e => setEditForm(p => ({ ...p, invoice_number: e.target.value }))}
@@ -1579,7 +1647,7 @@ export default function SupplierProfilePage() {
                             {/* Vehicle Reg */}
                             {showVehicleReg && !isWBGDiesel && (
                               <td style={styles.td}>
-                                {isEditing ? (
+                                {editFields ? (
                                   <div onClick={e => e.stopPropagation()}>
                                     <SearchableSelect
                                       value={f.vehicle_reg}
@@ -1611,7 +1679,7 @@ export default function SupplierProfilePage() {
                             {/* Description (non-diesel only) */}
                             {!isDiesel && (
                               <td style={{ ...styles.td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {isEditing ? (
+                                {editFields ? (
                                   <input
                                     value={f.description}
                                     onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
@@ -1635,7 +1703,7 @@ export default function SupplierProfilePage() {
                               ...styles.td, fontWeight: 600,
                               ...(inv.verified3_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
                             }}>
-                              {isEditing && !f.is_multi_line ? (
+                              {editFields && !f.is_multi_line ? (
                                 <input
                                   type="number" step="0.01"
                                   value={f.amount}
@@ -1653,7 +1721,7 @@ export default function SupplierProfilePage() {
 
                             {/* Deposit Paid */}
                             <td style={{ ...styles.td, textAlign: 'right' }}>
-                              {isEditing ? (
+                              {editFields ? (
                                 <input
                                   type="number" step="0.01" min="0" placeholder="0.00"
                                   value={f.deposit_paid || ''}
@@ -1684,7 +1752,7 @@ export default function SupplierProfilePage() {
                             {/* Litres — diesel suppliers only (not WBG bulk-import) */}
                             {isDiesel && !isWBGDiesel && (
                               <td style={{ ...styles.td, textAlign: 'right' }}>
-                                {isEditing ? (
+                                {editFields ? (
                                   <input
                                     type="number" step="0.001" min="0" placeholder="0.000"
                                     value={f.litres || ''}
@@ -1716,7 +1784,7 @@ export default function SupplierProfilePage() {
                             {/* Rate/L — diesel suppliers only (not WBG bulk-import) */}
                             {isDiesel && !isWBGDiesel && (
                               <td style={{ ...styles.td, textAlign: 'right' }}>
-                                {isEditing ? (
+                                {editFields ? (
                                   <input
                                     type="number" step="0.0001" min="0" placeholder="0.0000"
                                     value={f._rate || ''}
@@ -1746,7 +1814,7 @@ export default function SupplierProfilePage() {
                             <td style={{ ...styles.td, textAlign: 'center' }}>
                               {inv.is_multi_line && !isDiesel ? (
                                 <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>per line</span>
-                              ) : isEditing ? (
+                              ) : editFields ? (
                                 <input
                                   type="checkbox" checked={f.vat_applicable}
                                   onChange={e => setEditForm(p => ({ ...p, vat_applicable: e.target.checked }))}
@@ -1762,12 +1830,12 @@ export default function SupplierProfilePage() {
 
                             {/* Bulk-select checkbox */}
                             <td style={{ ...styles.td, textAlign: 'center', width: 28 }} onClick={e => e.stopPropagation()}>
-                              {canUserVerify(inv) && (
+                              {canUserSelect(inv) && (
                                 <input
                                   type="checkbox"
                                   checked={selectedIds.has(inv.id)}
                                   onChange={() => toggleSelect(inv.id)}
-                                  title="Select for bulk verify"
+                                  title="Select"
                                   style={{ cursor: 'pointer' }}
                                 />
                               )}
@@ -1793,6 +1861,7 @@ export default function SupplierProfilePage() {
                             <td style={{ ...styles.td, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {isEditing ? (
                                 <input
+                                  autoFocus={lockEdit}
                                   value={f.notes}
                                   onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))}
                                   onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
@@ -1884,7 +1953,7 @@ export default function SupplierProfilePage() {
                           {inv.is_multi_line && isExpanded && (
                             <tr style={{ borderBottom: '1px solid var(--border)' }}>
                               <td colSpan={totalCols} style={{ padding: '0 0 12px 0', background: 'var(--bg-base)' }}>
-                                {isEditing ? (
+                                {editFields ? (
                                   isDiesel
                                     ? <DieselLineItemsEditor
                                         items={editForm.line_items || []}
