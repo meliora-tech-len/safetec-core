@@ -7,6 +7,7 @@ import {
   createSubcontractorInvoice, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice,
   getSubcontractorInvoices, getSubcontractorCosting, saveSubcontractorCostingNote,
+  saveSubcontractorCostingNetOverride,
   downloadSubcontractorCostingPdf, downloadSubcontractorCostingExcel,
   getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
@@ -16,7 +17,7 @@ import toast from 'react-hot-toast'
 import {
   ArrowLeft, Plus, Trash2, ChevronLeft, ChevronRight,
   Building2, X, Save, CheckCircle, ChevronDown, ChevronUp, FileSpreadsheet,
-  FileDown, Sheet, AlertTriangle,
+  FileDown, Sheet, AlertTriangle, Pencil, RotateCcw,
 } from 'lucide-react'
 import SearchableSelect from '../components/SearchableSelect'
 import DeleteModal from '../components/DeleteModal'
@@ -173,6 +174,25 @@ export default function SubcontractorProfilePage() {
       trucks: prev.trucks.map(t => t.truck.id === truckId ? { ...t, note: saved } : t),
     } : prev)
     return saved
+  }, [id, month, year])
+
+  // Set (value = number) or clear (value = null) a manual "To Be Paid Out"
+  // override for one truck. Patch the truck + recompute the monthly summary net
+  // in place so the card stays expanded.
+  const saveTruckNetOverride = useCallback(async (truckId, value) => {
+    const { data } = await saveSubcontractorCostingNetOverride(id, { truck_id: truckId, month, year }, { net_payable: value })
+    const override = data?.net_payable_override != null ? data.net_payable_override : null
+    setCosting(prev => {
+      if (!prev) return prev
+      const trucks = prev.trucks.map(t => {
+        if (t.truck.id !== truckId) return t
+        const eff = override != null ? override : t.net_payable_calculated
+        return { ...t, net_payable_override: override, net_payable: eff }
+      })
+      const sumNet = trucks.reduce((s, t) => s + (parseFloat(t.net_payable) || 0), 0)
+      return { ...prev, trucks, summary: { ...prev.summary, net_payable: sumNet } }
+    })
+    return override
   }, [id, month, year])
 
   // ── Per-value verification overlay (costing) ────────────────────────────────
@@ -817,6 +837,7 @@ export default function SubcontractorProfilePage() {
                   onAddExpense={() => openExpenseModal(td.truck.registration)}
                   onDeleteInvoice={setExpenseDeleteTarget}
                   onSaveNote={saveTruckNote}
+                  onSaveNetOverride={saveTruckNetOverride}
                   isVatRegistered={costing.is_vat_registered !== false}
                   verifPrefix={costingPrefix}
                   verif={verif}
@@ -1216,7 +1237,7 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice, onSaveNote, isVatRegistered = true,
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice, onSaveNote, onSaveNetOverride, isVatRegistered = true,
   verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false, highlight = false, autoExpand = false }) {
   const [expanded, setExpanded] = useState(false)
   // Open the card automatically when it's the target of a reg search
@@ -1244,9 +1265,38 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
     income_excl_vat, income_incl_vat,
     admin_fee, supplier_invoices,
     total_expenses_excl_vat, total_expenses_incl_vat,
-    net_payable,
+    net_payable, net_payable_calculated, net_payable_override,
     diesel_groups = [],
   } = truckData
+
+  // Manual "To Be Paid Out" override (inline-editable; revert restores the
+  // system-calculated figure)
+  const isNetOverridden = net_payable_override != null && net_payable_override !== ''
+  const [netEditing, setNetEditing] = useState(false)
+  const [netText, setNetText]       = useState('')
+  const [netSaving, setNetSaving]   = useState(false)
+  useEffect(() => { setNetEditing(false) }, [net_payable, net_payable_override])
+
+  const startNetEdit = (e) => { e?.stopPropagation(); setNetText(net_payable != null ? String(net_payable) : ''); setNetEditing(true) }
+  const cancelNetEdit = (e) => { e?.stopPropagation(); setNetEditing(false) }
+  const submitNet = async (e) => {
+    e?.stopPropagation()
+    if (!onSaveNetOverride) return
+    const num = parseFloat((netText || '').trim())
+    if (isNaN(num)) { toast.error('Enter a valid amount'); return }
+    setNetSaving(true)
+    try { await onSaveNetOverride(truck.id, num); setNetEditing(false) }
+    catch (err) { toast.error(errorMessage(err, 'Failed to save amount')) }
+    finally { setNetSaving(false) }
+  }
+  const revertNet = async (e) => {
+    e?.stopPropagation()
+    if (!onSaveNetOverride) return
+    setNetSaving(true)
+    try { await onSaveNetOverride(truck.id, null) }
+    catch (err) { toast.error(errorMessage(err, 'Failed to revert')) }
+    finally { setNetSaving(false) }
+  }
 
   // Per-value verification helper for this truck's amounts
   const vKey = (field) => `${verifPrefix}:truck:${truck.id}:${field}`
@@ -1502,10 +1552,50 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                 </div>
               </div>
               <div style={{ flex: 1, padding: '10px 16px' }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>To Be Paid Out</div>
-                <div style={{ fontWeight: 700, fontSize: 16, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
-                  <V field="net_payable">{fmtC(net_payable)}</V>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)' }}>To Be Paid Out</span>
+                  {isNetOverridden && (
+                    <span title={`Manually edited — calculated value ${fmtC(net_payable_calculated)}`} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(217,119,6,0.14)', color: '#b45309', borderRadius: 10, padding: '1px 6px' }}>
+                      EDITED
+                    </span>
+                  )}
                 </div>
+                {netEditing ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      autoFocus
+                      type="text"
+                      inputMode="decimal"
+                      value={netText}
+                      onChange={e => setNetText(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') submitNet(e); if (e.key === 'Escape') cancelNetEdit(e) }}
+                      style={{ width: 120, fontSize: 14, fontWeight: 700, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)' }}
+                    />
+                    <button className="btn btn-sm" onClick={submitNet} disabled={netSaving} style={{ fontSize: 12 }}>{netSaving ? '…' : 'Save'}</button>
+                    <button className="btn-ghost btn-sm" onClick={cancelNetEdit} style={{ fontSize: 12 }}>Cancel</button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 16, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
+                      <V field="net_payable">{fmtC(net_payable)}</V>
+                    </span>
+                    {onSaveNetOverride && (
+                      <button className="btn-icon btn-ghost" title="Edit amount" onClick={startNetEdit} style={{ padding: 2 }}>
+                        <Pencil size={13} />
+                      </button>
+                    )}
+                    {isNetOverridden && onSaveNetOverride && (
+                      <button className="btn-icon btn-ghost" title={`Revert to calculated (${fmtC(net_payable_calculated)})`} onClick={revertNet} disabled={netSaving} style={{ padding: 2 }}>
+                        <RotateCcw size={13} color="var(--text-muted)" />
+                      </button>
+                    )}
+                  </div>
+                )}
+                {isNetOverridden && !netEditing && (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                    Calculated: {fmtC(net_payable_calculated)}
+                  </div>
+                )}
               </div>
             </div>
           )
@@ -1670,6 +1760,11 @@ function SummaryCard({ summary, trucks = [], isVatRegistered = true,
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.total_expenses_excl_vat)}</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.total_expenses_incl_vat)}</td>
                   <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: parseFloat(td.net_payable) >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
+                    {td.net_payable_override != null && (
+                      <span title="Manually edited" style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(217,119,6,0.14)', color: '#b45309', borderRadius: 10, padding: '1px 5px', marginRight: 6 }}>
+                        EDITED
+                      </span>
+                    )}
                     {fmtC(td.net_payable)}
                   </td>
                 </tr>

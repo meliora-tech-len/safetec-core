@@ -2130,7 +2130,14 @@ class SubcontractorTruckCostingOut(BaseModel):
     supplier_invoices: List[SupplierInvoiceOut]
     total_expenses_excl_vat: Decimal
     total_expenses_incl_vat: Decimal
+    # Effective net payable: the manual override when set, else the calculated value.
     net_payable: Decimal
+    # The system-computed net payable (income − expenses), always present so the UI
+    # can show what the figure would be and offer a revert-to-calculated action.
+    net_payable_calculated: Decimal
+    # The manual override, if the user has entered one for this truck/period; null
+    # means the calculated value is in effect.
+    net_payable_override: Optional[Decimal] = None
     diesel_groups: List[DieselSupplierGroup] = []
     # Free-text awareness note for this truck this period (e.g. a loss carried
     # over from the previous month). Never included in any total.
@@ -2206,6 +2213,12 @@ class SubcontractorCostingOut(BaseModel):
 
 class SubcontractorCostingNoteUpdate(BaseModel):
     note: Optional[str] = None
+
+
+class SubcontractorCostingNetOverrideUpdate(BaseModel):
+    # The manual "To Be Paid Out" value; null clears the override (revert to
+    # the system-calculated figure).
+    net_payable: Optional[Decimal] = None
 
 
 # ── Per-value verification overlay ────────────────────────────────────────────

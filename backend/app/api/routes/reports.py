@@ -51,6 +51,22 @@ def _is_crack_logic_insurance(inv) -> bool:
             and 'insurance claim' in (inv.description or '').lower())
 
 
+def _is_general_expense(inv) -> bool:
+    """Free-text 'general' expenses added in the costing module: no registered
+    supplier and no invoice number (the invoiced capture mode always requires an
+    invoice number). These are internal costing allocations, not SARS-deductible
+    supplier invoices, so the Income vs Expenses / SARS report excludes them for
+    OBHI (see _exclude_general_expenses)."""
+    return inv.supplier_id is None and not (inv.invoice_number or '').strip()
+
+
+def _exclude_general_expenses(db: Session, entity_id: int) -> bool:
+    """General costing expenses are dropped from the report for OBHI only;
+    every other entity keeps counting them as before."""
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+    return bool(entity and (entity.code or '').upper() == 'OBHI')
+
+
 MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
@@ -84,6 +100,7 @@ def income_expenses_report(
          calculated via the payroll calculator so results are always up-to-date.
     """
     _check_entity_access(entity_id, current_user)
+    exclude_general = _exclude_general_expenses(db, entity_id)
 
     # ── Income source: customer invoices (output VAT basis) ────────────────────
     # Income is every customer invoice issued in the period — the actual tax
@@ -188,8 +205,11 @@ def income_expenses_report(
         else:
             excl = incl
         # Report-only reclassification (source data untouched):
-        #   Sasfin → excluded entirely; Crack Logic 'Insurance Claim' → income.
+        #   Sasfin → excluded entirely; general costing expenses → excluded
+        #   (OBHI only); Crack Logic 'Insurance Claim' → income.
         if _is_sasfin_supplier(inv):
+            continue
+        if exclude_general and _is_general_expense(inv):
             continue
         if _is_crack_logic_insurance(inv):
             truck_income_incl[m] = truck_income_incl.get(m, 0.0) + round(incl, 2)
@@ -331,6 +351,7 @@ def income_expenses_report(
 
 def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
     """Build per-invoice detail dict for one month (shared by single and annual endpoints)."""
+    exclude_general = _exclude_general_expenses(db, entity_id)
     # Income side: every customer invoice issued in the month (output VAT basis),
     # for all entities — the actual tax invoices, not operational truck loads.
     income_invoices = (
@@ -412,9 +433,12 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         elif inv.subcontractor_id and inv.subcontractor:
             name = inv.subcontractor.name
         # Report-only reclassification (source data untouched):
-        #   Sasfin → excluded from the report; Crack Logic 'Insurance Claim' →
-        #   moved onto the income/output side as an insurance-claim reimbursement.
+        #   Sasfin → excluded from the report; general costing expenses →
+        #   excluded (OBHI only); Crack Logic 'Insurance Claim' → moved onto the
+        #   income/output side as an insurance-claim reimbursement.
         if _is_sasfin_supplier(inv):
+            continue
+        if exclude_general and _is_general_expense(inv):
             continue
         if _is_crack_logic_insurance(inv):
             output_invoices.append({

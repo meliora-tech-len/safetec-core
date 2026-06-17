@@ -826,9 +826,11 @@ class AdditionalLoadRate(Base):
 
 
 class TruckCostingNote(Base):
-    """Free-text note per truck + costing period (month/year). Used to flag
-    things like a loss carried over from the previous month — awareness only,
-    never included in any costing totals."""
+    """Per truck + costing period (month/year) overlay row. Holds a free-text
+    awareness note (e.g. a loss carried over from the previous month — never
+    totalled) and an optional manual override of the computed "To Be Paid Out"
+    figure. When `net_payable_override` is set the costing uses it verbatim in
+    place of the calculated net payable; left null the system value stands."""
     __tablename__ = "truck_costing_notes"
 
     id            = Column(Integer, primary_key=True, index=True)
@@ -836,6 +838,9 @@ class TruckCostingNote(Base):
     month         = Column(Integer, nullable=False)
     year          = Column(Integer, nullable=False)
     note          = Column(Text)
+    # Manual override of the computed net payable for this truck/period. Null ⇒
+    # use the calculated value.
+    net_payable_override = Column(Numeric(12, 2), nullable=True)
     updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     updated_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 

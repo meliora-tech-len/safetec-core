@@ -16,6 +16,7 @@ from app.schemas.schemas import (
     SubcontractorCostingOut, SubcontractorCostingSummary, SubcontractorTruckCostingOut,
     SupplierStatementGroup, SubcontractorInvoiceCreate,
     DieselFillUpCostingRow, DieselSupplierGroup, SubcontractorCostingNoteUpdate,
+    SubcontractorCostingNetOverrideUpdate,
 )
 from app.services.audit import log_action
 from app.services.verification import get_verification_display
@@ -455,11 +456,12 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
 
     trucks = db.query(Truck).filter(Truck.subcontractor_id == subcontractor_id).all()
 
-    # Per-truck carry-over notes for this period (awareness only, never totalled)
-    notes_by_truck = {}
+    # Per-truck overlay rows for this period: carry-over note (awareness only,
+    # never totalled) + optional manual net-payable override.
+    note_rows_by_truck = {}
     if trucks:
-        notes_by_truck = {
-            n.truck_id: n.note
+        note_rows_by_truck = {
+            n.truck_id: n
             for n in db.query(TruckCostingNote).filter(
                 TruckCostingNote.truck_id.in_([t.id for t in trucks]),
                 TruckCostingNote.month == month,
@@ -642,7 +644,14 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         exp_excl += sum((g.tot_excl_admin_fee for g in diesel_groups), D0)
         exp_incl += sum((g.tot_admin_fee_incl  for g in diesel_groups), D0)
         income_for_net = income_excl if not is_vat_registered else income_incl
-        net_payable = income_for_net - exp_excl - exp_incl
+        net_payable_calc = income_for_net - exp_excl - exp_incl
+
+        # Apply a manual "To Be Paid Out" override when the user has set one for
+        # this truck/period; otherwise the calculated figure stands.
+        note_row = note_rows_by_truck.get(truck.id)
+        override = note_row.net_payable_override if note_row else None
+        override = Decimal(str(override)) if override is not None else None
+        net_payable = override if override is not None else net_payable_calc
 
         truck.subcontractor_display_name = sub.name
         truck_results.append(SubcontractorTruckCostingOut(
@@ -658,8 +667,10 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             total_expenses_excl_vat=exp_excl,
             total_expenses_incl_vat=exp_incl,
             net_payable=net_payable,
+            net_payable_calculated=net_payable_calc,
+            net_payable_override=override,
             diesel_groups=diesel_groups,
-            note=notes_by_truck.get(truck.id),
+            note=note_row.note if note_row else None,
         ))
 
     summary = SubcontractorCostingSummary(
@@ -738,7 +749,13 @@ def upsert_truck_costing_note(
 
     if text_val is None:
         if note_row:
-            db.delete(note_row)
+            # Keep the row if it still carries a net-payable override; only the
+            # note is being cleared here.
+            if note_row.net_payable_override is not None:
+                note_row.note = None
+                note_row.updated_by_id = current_user.id
+            else:
+                db.delete(note_row)
             db.commit()
         return {"note": None}
 
@@ -756,6 +773,68 @@ def upsert_truck_costing_note(
         db.add(note_row)
     db.commit()
     return {"note": text_val}
+
+
+@router.put("/{subcontractor_id}/costing/net-override")
+def upsert_truck_costing_net_override(
+    subcontractor_id: int,
+    payload: SubcontractorCostingNetOverrideUpdate,
+    truck_id: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set or clear a manual "To Be Paid Out" override for a truck/period.
+    A null `net_payable` reverts to the system-calculated figure."""
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    truck = db.query(Truck).filter(
+        Truck.id == truck_id,
+        Truck.subcontractor_id == subcontractor_id,
+    ).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found for this subcontractor")
+
+    value = payload.net_payable
+    note_row = (
+        db.query(TruckCostingNote)
+        .filter(
+            TruckCostingNote.truck_id == truck_id,
+            TruckCostingNote.month == month,
+            TruckCostingNote.year == year,
+        )
+        .first()
+    )
+
+    if value is None:
+        # Clearing the override — drop the row entirely unless it still holds a note.
+        if note_row:
+            if note_row.note:
+                note_row.net_payable_override = None
+                note_row.updated_by_id = current_user.id
+            else:
+                db.delete(note_row)
+            db.commit()
+        return {"net_payable_override": None}
+
+    if note_row:
+        note_row.net_payable_override = value
+        note_row.updated_by_id = current_user.id
+    else:
+        note_row = TruckCostingNote(
+            truck_id=truck_id,
+            month=month,
+            year=year,
+            net_payable_override=value,
+            updated_by_id=current_user.id,
+        )
+        db.add(note_row)
+    db.commit()
+    return {"net_payable_override": str(value)}
 
 
 @router.get("/{subcontractor_id}/costing/export/pdf")
