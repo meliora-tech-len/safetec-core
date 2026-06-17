@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react'
 import {
   getDieselFillUps, getDieselFillUpSummary, createDieselFillUp,
   updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp, finalizeDieselFillUp,
@@ -9,7 +9,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
 import toast from 'react-hot-toast'
-import { Plus, Search, X, Trash2, Fuel, Save, Upload } from 'lucide-react'
+import { Plus, Search, X, Trash2, Fuel, Save, Upload, Pencil } from 'lucide-react'
 import ImportDieselModal from '../components/ImportDieselModal'
 import ExportButton from '../components/ExportButton'
 import SearchableSelect from '../components/SearchableSelect'
@@ -67,17 +67,24 @@ export default function DieselFillUpsPage() {
   const [saving,       setSaving]       = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [showImport,   setShowImport]   = useState(false)
+  // Note-only editing (allowed even on records under the final verification lock)
+  const [noteEditId,   setNoteEditId]   = useState(null)
+  const [noteText,     setNoteText]     = useState('')
+  const [noteSaving,   setNoteSaving]   = useState(false)
   const firstInputRef = useRef(null)
   const { sort, onSort } = useSort('truck_registration', 'asc')
 
   // Reference data — entities once on mount
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
-  // Filter bar: trucks and suppliers scoped to the selected entity
+  // Filter bar: trucks and suppliers scoped to the selected entity.
+  // No entity selected ("All Entities") → show all accessible trucks/suppliers.
   useEffect(() => {
-    if (!filterEntity) { setTrucks([]); setSuppliers([]); return }
-    rawApi(`/api/fleet/trucks?entity_id=${filterEntity}&limit=200`).then(setTrucks).catch(() => setTrucks([]))
-    getSuppliers({ entity_id: filterEntity, is_diesel_supplier: true, limit: 500 }).then(r => setSuppliers(r.data || [])).catch(() => setSuppliers([]))
+    const entityQs = filterEntity ? `&entity_id=${filterEntity}` : ''
+    rawApi(`/api/fleet/trucks?limit=500${entityQs}`).then(setTrucks).catch(() => setTrucks([]))
+    const supParams = { is_diesel_supplier: true, limit: 500 }
+    if (filterEntity) supParams.entity_id = filterEntity
+    getSuppliers(supParams).then(r => setSuppliers(r.data || [])).catch(() => setSuppliers([]))
   }, [filterEntity])
 
   const buildParams = useCallback(() => {
@@ -174,6 +181,29 @@ export default function DieselFillUpsPage() {
   }
 
   const cancelEdit = () => { setEditingId(null); setEditForm({ ...BLANK }) }
+
+  // Note-only edit — the one change still permitted on a locked (finalised) row.
+  // Sends just `notes` so the server's final-lock whitelist lets it through.
+  const startNoteEdit = (f) => {
+    if (editingId !== null) return
+    setNoteEditId(f.id)
+    setNoteText(f.notes || '')
+  }
+  const cancelNoteEdit = () => { setNoteEditId(null); setNoteText('') }
+  const saveNote = async () => {
+    setNoteSaving(true)
+    try {
+      const { data } = await updateDieselFillUp(noteEditId, { notes: noteText.trim() })
+      patchFillup(data)
+      setNoteEditId(null)
+      toast.success('Note saved')
+    } catch (err) { toast.error(errorMessage(err)) }
+    finally { setNoteSaving(false) }
+  }
+  const onNoteKeyDown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveNote() }
+    if (e.key === 'Escape') cancelNoteEdit()
+  }
 
   const handleSave = async () => {
     const f = editForm
@@ -364,10 +394,15 @@ export default function DieselFillUpsPage() {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
           <div className="form-group" style={{ margin: 0, width: 160 }}>
             <label className="form-label">Truck</label>
-            <select className="form-control" value={filterTruck} onChange={e => setFilterTruck(e.target.value)}>
-              <option value="">All Trucks</option>
-              {trucks.map(t => <option key={t.id} value={t.id}>{t.registration}</option>)}
-            </select>
+            <SearchableSelect
+              value={String(filterTruck)}
+              onChange={v => setFilterTruck(v)}
+              options={[{ id: '', registration: 'All Trucks' }, ...trucks]}
+              getValue={t => String(t.id)}
+              getLabel={t => t.registration}
+              placeholder="All Trucks"
+              formInput
+            />
           </div>
           <div className="form-group" style={{ margin: 0, width: 110 }}>
             <label className="form-label">Month</label>
@@ -454,8 +489,9 @@ export default function DieselFillUpsPage() {
                   firstInputRef={firstInputRef}
                 />
               ) : (
-                <tr key={f.id}
-                  onClick={() => startEdit(f)}
+                <Fragment key={f.id}>
+                <tr
+                  onClick={() => f.verified3_by ? startNoteEdit(f) : startEdit(f)}
                   style={{ cursor: editingId !== null ? 'default' : 'pointer' }}>
                   {multiEntity && (
                     <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -496,12 +532,46 @@ export default function DieselFillUpsPage() {
                   <td>
                     <VerifyBadge item={f} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} />
                   </td>
-                  <td onClick={e => e.stopPropagation()}>
+                  <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                    {!!f.verified3_by && (
+                      <button
+                        className="btn-icon btn-ghost"
+                        onClick={e => { e.stopPropagation(); startNoteEdit(f) }}
+                        title={f.notes ? `Edit note: ${f.notes}` : 'Add note'}
+                        style={{ marginRight: 4, color: f.notes ? '#d97706' : undefined }}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    )}
                     <button className="btn-icon btn-ghost" onClick={e => handleDelete(f, e)} title="Delete">
                       <Trash2 size={13} color="var(--danger)" />
                     </button>
                   </td>
                 </tr>
+                {noteEditId === f.id && (
+                  <tr style={{ background: 'var(--accent-subtle)' }}>
+                    <td colSpan={COLS} style={{ padding: '6px 12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Note:</span>
+                        <input
+                          autoFocus
+                          value={noteText}
+                          onChange={e => setNoteText(e.target.value)}
+                          onKeyDown={onNoteKeyDown}
+                          placeholder="Add a note for this locked diesel log"
+                          style={{ flex: 1, maxWidth: 420, padding: '4px 8px', fontSize: 13 }}
+                        />
+                        <button className="btn-icon btn-primary" onClick={saveNote} disabled={noteSaving} title="Save note (Enter)">
+                          <Save size={13} />
+                        </button>
+                        <button className="btn-icon btn-ghost" onClick={cancelNoteEdit} title="Cancel (Esc)">
+                          <X size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               )
             })}
           </tbody>
