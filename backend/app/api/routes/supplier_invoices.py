@@ -1,8 +1,12 @@
 import calendar
+import os
+import httpx
+from pathlib import Path
 from datetime import datetime, timezone, timedelta, date as date_type
 from decimal import Decimal
 from collections import defaultdict
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
@@ -26,6 +30,84 @@ from app.services.verification import (
 from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
 
 router = APIRouter(prefix="/api/supplier-invoices", tags=["supplier-invoices"])
+
+# ── Attachment storage (physical supplier invoice document) ────────────────────
+# Mirrors the entity-logo pattern (entities.py) but stores files PRIVATELY: these
+# are sensitive financial documents, so they are never served on a public URL —
+# the bytes are streamed back through the authenticated GET endpoint below.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+ATTACH_BUCKET = "supplier-invoices"
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+IS_LOCAL = DATABASE_URL.startswith("sqlite") or not SUPABASE_URL
+
+# Private uploads dir — deliberately NOT under static/ (which is mounted at /static)
+# so the files are never publicly reachable.
+LOCAL_ATTACH_DIR = Path(__file__).resolve().parents[3] / "uploads" / "supplier-invoices"
+
+ALLOWED_ATTACH_TYPES = {
+    "application/pdf": "pdf",
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+}
+MAX_ATTACH_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _attach_save(invoice_id: int, file_bytes: bytes, ext: str, content_type: str) -> str:
+    """Persist the file and return its storage key (deterministic per invoice, so a
+    re-upload overwrites the previous file)."""
+    key = f"si_{invoice_id}.{ext}"
+    if IS_LOCAL:
+        LOCAL_ATTACH_DIR.mkdir(parents=True, exist_ok=True)
+        (LOCAL_ATTACH_DIR / key).write_bytes(file_bytes)
+    else:
+        upload_url = f"{SUPABASE_URL}/storage/v1/object/{ATTACH_BUCKET}/{key}"
+        resp = httpx.put(
+            upload_url, content=file_bytes,
+            headers={
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "Content-Type": content_type,
+                "x-upsert": "true",
+            },
+        )
+        if resp.status_code not in (200, 201):
+            raise HTTPException(status_code=500, detail=f"Attachment upload failed: {resp.text}")
+    return key
+
+
+def _attach_read(key: str) -> bytes:
+    """Read the stored file bytes (local disk or private Supabase object)."""
+    if IS_LOCAL:
+        path = LOCAL_ATTACH_DIR / key
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Attachment file not found")
+        return path.read_bytes()
+    download_url = f"{SUPABASE_URL}/storage/v1/object/{ATTACH_BUCKET}/{key}"
+    resp = httpx.get(download_url, headers={"Authorization": f"Bearer {SUPABASE_SERVICE_KEY}"})
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Attachment file not found")
+    return resp.content
+
+
+def _attach_delete(key: str) -> None:
+    """Remove the stored file. Best-effort: clearing the DB metadata is what matters."""
+    if IS_LOCAL:
+        try:
+            (LOCAL_ATTACH_DIR / key).unlink(missing_ok=True)
+        except OSError:
+            pass
+    else:
+        delete_url = f"{SUPABASE_URL}/storage/v1/object/{ATTACH_BUCKET}/{key}"
+        try:
+            httpx.request(
+                "DELETE", delete_url,
+                headers={"Authorization": f"Bearer {SUPABASE_SERVICE_KEY}"},
+            )
+        except httpx.HTTPError:
+            pass
 
 
 def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, slip_number: str) -> None:
@@ -902,6 +984,7 @@ def verify_supplier_invoice(
     db.refresh(inv)
     d = {c.name: getattr(inv, c.name) for c in inv.__table__.columns}
     d.update(get_verification_display(db, inv))
+    d["has_attachment"] = bool(inv.attachment_key)
     return d
 
 
@@ -934,6 +1017,7 @@ def finalize_supplier_invoice(
     db.refresh(inv)
     d = {c.name: getattr(inv, c.name) for c in inv.__table__.columns}
     d.update(get_verification_display(db, inv))
+    d["has_attachment"] = bool(inv.attachment_key)
     return d
 
 
@@ -1158,6 +1242,110 @@ def delete_line_item(
         },
     )
     db.commit()
+
+
+# ── Attachment (physical invoice document) ─────────────────────────────────────
+# Adding/replacing/removing the physical document is allowed even after the final
+# lock (verified3_by) — like adding verification ticks, it changes no financial
+# figures — so these endpoints deliberately do NOT call ensure_not_locked.
+
+@router.post("/{invoice_id}/attachment", response_model=SupplierInvoiceOut)
+async def upload_attachment(
+    invoice_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+
+    ext = ALLOWED_ATTACH_TYPES.get(file.content_type)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Only PDF, JPG, PNG or WebP files are allowed")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_ATTACH_BYTES:
+        raise HTTPException(status_code=400, detail="Attachment must be under 10MB")
+
+    key = _attach_save(invoice_id, file_bytes, ext, file.content_type)
+
+    inv.attachment_key = key
+    inv.attachment_filename = file.filename or f"invoice.{ext}"
+    inv.attachment_content_type = file.content_type
+    inv.attachment_size = len(file_bytes)
+    inv.attachment_uploaded_at = datetime.now(timezone.utc)
+    inv.attachment_uploaded_by_id = current_user.id
+
+    log_action(
+        db, "supplier_invoice.attachment_added", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice", resource_id=inv.id,
+        description=f"Attached document '{inv.attachment_filename}' to invoice {inv.invoice_number}",
+    )
+    db.commit()
+    db.refresh(inv)
+
+    fillup = db.query(DieselFillUp).filter(DieselFillUp.supplier_invoice_id == invoice_id).first()
+    out = SupplierInvoiceOut.model_validate(inv)
+    return out.model_copy(update={
+        **get_verification_display(db, inv),
+        "slip_number": fillup.slip_number if fillup else None,
+        "diesel_fillup_id": fillup.id if fillup else None,
+    })
+
+
+@router.get("/{invoice_id}/attachment")
+def view_attachment(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+    if not inv.attachment_key:
+        raise HTTPException(status_code=404, detail="No attachment for this invoice")
+
+    file_bytes = _attach_read(inv.attachment_key)
+    filename = inv.attachment_filename or inv.attachment_key
+    return Response(
+        content=file_bytes,
+        media_type=inv.attachment_content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.delete("/{invoice_id}/attachment")
+def delete_attachment(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+    if not inv.attachment_key:
+        raise HTTPException(status_code=404, detail="No attachment for this invoice")
+
+    removed_name = inv.attachment_filename
+    _attach_delete(inv.attachment_key)
+    inv.attachment_key = None
+    inv.attachment_filename = None
+    inv.attachment_content_type = None
+    inv.attachment_size = None
+    inv.attachment_uploaded_at = None
+    inv.attachment_uploaded_by_id = None
+
+    log_action(
+        db, "supplier_invoice.attachment_removed", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice", resource_id=inv.id,
+        description=f"Removed document '{removed_name}' from invoice {inv.invoice_number}",
+    )
+    db.commit()
+    return {"detail": "Attachment removed"}
 
 
 def _resolve_truck_by_reg(db: Session, entity_id: int, reg: str) -> Optional[Truck]:

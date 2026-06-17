@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, computed_field
 from typing import Optional, List, Any, Dict
 from datetime import datetime, date
 from decimal import Decimal
@@ -1705,6 +1705,15 @@ class SupplierInvoiceOut(BaseModel):
     is_multi_line: bool = False
     is_fixed_expense: bool = False
     line_items: List[SupplierInvoiceLineItemOut] = []
+    # Physical-invoice attachment. attachment_filename comes straight off the
+    # model; has_attachment is derived so the row can show a paperclip without
+    # exposing the storage key.
+    attachment_filename: Optional[str] = None
+
+    @computed_field
+    @property
+    def has_attachment(self) -> bool:
+        return bool(self.attachment_filename)
 
     class Config:
         from_attributes = True

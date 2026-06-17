@@ -304,6 +304,20 @@ export const updateInvoiceLineItem = (invoiceId, lineId, data) =>
 export const deleteInvoiceLineItem = (invoiceId, lineId) =>
   api.delete(`/supplier-invoices/${invoiceId}/line-items/${lineId}`)
 
+// Physical-invoice attachment (the document received from the supplier)
+export const uploadSupplierInvoiceAttachment = (id, formData) =>
+  api.post(`/supplier-invoices/${id}/attachment`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+export const deleteSupplierInvoiceAttachment = (id) =>
+  api.delete(`/supplier-invoices/${id}/attachment`)
+// Fetches the file with the auth header, then opens it inline in a new tab.
+// (A plain window.open of the endpoint would not send the JWT bearer header.)
+export const viewSupplierInvoiceAttachment = async (id) => {
+  const res = await api.get(`/supplier-invoices/${id}/attachment`, { responseType: 'blob' })
+  const url = window.URL.createObjectURL(res.data)
+  window.open(url, '_blank')
+  setTimeout(() => window.URL.revokeObjectURL(url), 60_000)
+}
+
 // ── Truck Monthly Expenses (Profit Sheet) ─────────────────────────────────────
 export const getTruckMonthlyExpenses = (truckId, params) =>
   api.get(`/fleet/trucks/${truckId}/monthly-expenses`, { params })

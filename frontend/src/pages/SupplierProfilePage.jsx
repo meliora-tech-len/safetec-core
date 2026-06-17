@@ -9,11 +9,12 @@ import {
   getSubcontractors, getDieselFillUpSlips,
   finalizeSupplierInvoice, bulkImportSupplierInvoices, resolveSupplierDieselConflicts,
   getVerifications, verifyValue, finalizeValue,
+  uploadSupplierInvoiceAttachment, deleteSupplierInvoiceAttachment, viewSupplierInvoiceAttachment,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
@@ -553,6 +554,10 @@ export default function SupplierProfilePage() {
   const [selectedIds, setSelectedIds] = useState(new Set())  // invoices ticked for bulk verify
   const [verifyingBulk, setVerifyingBulk] = useState(false)
   const firstInputRef = useRef(null)
+  // Physical-invoice attachment: one shared hidden file input, targeted at a row.
+  const attachInputRef = useRef(null)
+  const attachTargetId = useRef(null)
+  const [attachBusyId, setAttachBusyId] = useState(null)
 
   // Diesel rate auto-fill state (for diesel suppliers)
   const [dieselRate, setDieselRate] = useState(null)
@@ -868,6 +873,55 @@ export default function SupplierProfilePage() {
     } catch (e) {
       toast.error(errorMessage(e))
       setDeleteTarget(null)
+    }
+  }
+
+  // ── Physical-invoice attachment ───────────────────────────────────────────
+  const openAttachPicker = (inv) => {
+    attachTargetId.current = inv.id
+    if (attachInputRef.current) {
+      attachInputRef.current.value = ''  // allow re-picking the same filename
+      attachInputRef.current.click()
+    }
+  }
+
+  const handleAttachFile = async (e) => {
+    const file = e.target.files?.[0]
+    const id = attachTargetId.current
+    if (!file || !id) return
+    setAttachBusyId(id)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const { data } = await uploadSupplierInvoiceAttachment(id, formData)
+      patchInvoice(data)
+      toast.success('Invoice document attached')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setAttachBusyId(null)
+      attachTargetId.current = null
+    }
+  }
+
+  const handleViewAttachment = async (inv) => {
+    try {
+      await viewSupplierInvoiceAttachment(inv.id)
+    } catch (err) {
+      toast.error(errorMessage(err))
+    }
+  }
+
+  const handleRemoveAttachment = async (inv) => {
+    setAttachBusyId(inv.id)
+    try {
+      await deleteSupplierInvoiceAttachment(inv.id)
+      patchInvoice({ id: inv.id, has_attachment: false, attachment_filename: null })
+      toast.success('Attachment removed')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setAttachBusyId(null)
     }
   }
 
@@ -1249,6 +1303,15 @@ export default function SupplierProfilePage() {
           </button>
         </div>
       )}
+
+      {/* Shared hidden picker for invoice-document attachments (targeted per row) */}
+      <input
+        ref={attachInputRef}
+        type="file"
+        accept="application/pdf,image/png,image/jpeg,image/webp"
+        style={{ display: 'none' }}
+        onChange={handleAttachFile}
+      />
 
       <DeleteModal
         isOpen={!!deleteTarget}
@@ -1759,6 +1822,43 @@ export default function SupplierProfilePage() {
                                 </>
                               ) : (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  {/* Physical invoice document — attachable even when locked */}
+                                  {inv.has_attachment ? (
+                                    <>
+                                      <button
+                                        className="btn-icon btn-ghost"
+                                        onClick={e => { e.stopPropagation(); handleViewAttachment(inv) }}
+                                        title={inv.attachment_filename ? `View ${inv.attachment_filename}` : 'View attached invoice'}
+                                      >
+                                        <Eye size={14} color="var(--accent)" />
+                                      </button>
+                                      <button
+                                        className="btn-icon btn-ghost"
+                                        disabled={attachBusyId === inv.id}
+                                        onClick={e => { e.stopPropagation(); openAttachPicker(inv) }}
+                                        title="Replace attached invoice"
+                                      >
+                                        <Upload size={12} />
+                                      </button>
+                                      <button
+                                        className="btn-icon btn-ghost"
+                                        disabled={attachBusyId === inv.id}
+                                        onClick={e => { e.stopPropagation(); handleRemoveAttachment(inv) }}
+                                        title="Remove attachment"
+                                      >
+                                        <X size={12} color="var(--danger)" />
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      className="btn-icon btn-ghost"
+                                      disabled={attachBusyId === inv.id}
+                                      onClick={e => { e.stopPropagation(); openAttachPicker(inv) }}
+                                      title="Attach invoice document"
+                                    >
+                                      <Paperclip size={13} color="var(--text-muted)" />
+                                    </button>
+                                  )}
                                   {inv.is_multi_line && (
                                     <button
                                       className="btn-icon btn-ghost"

@@ -409,6 +409,17 @@ class SupplierInvoice(Base):
     # clones in one chain share fixed_expense_group_id (= the origin invoice id).
     is_fixed_expense = Column(Boolean, nullable=False, default=False, server_default='false')
     fixed_expense_group_id = Column(Integer, nullable=True, index=True)
+
+    # Physical invoice document received from the supplier (one file per record).
+    # attachment_key is the local relative path (dev) or Supabase object key (prod).
+    # Files are stored privately and streamed back via an authenticated endpoint.
+    attachment_key = Column(String(500))
+    attachment_filename = Column(String(300))
+    attachment_content_type = Column(String(100))
+    attachment_size = Column(Integer)
+    attachment_uploaded_at = Column(DateTime(timezone=True))
+    attachment_uploaded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
