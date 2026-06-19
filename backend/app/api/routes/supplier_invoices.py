@@ -7,7 +7,7 @@ from decimal import Decimal
 from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 
@@ -110,26 +110,55 @@ def _attach_delete(key: str) -> None:
             pass
 
 
-def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, slip_number: str) -> None:
-    """Set supplier_invoice_id (and invoice_number if known) on the DieselFillUp matching slip_number."""
+def _norm_slip(s: Optional[str]) -> str:
+    """Normalise a slip / depot code for matching: drop spaces, upper-case.
+
+    Mirrors _resolve_truck_by_reg's reg normalisation. A diesel-sheet slip and the
+    same slip on the supplier statement (item_code) routinely differ only by case
+    or stray spaces; without this, absorption silently fails to find the pre-logged
+    fill-up, creates a second one under the statement invoice, and leaves the
+    placeholder behind as a duplicate on the Supplier Profile."""
+    return (s or '').replace(' ', '').strip().upper()
+
+
+def _slip_eq(value: str):
+    """SQLAlchemy predicate matching DieselFillUp.slip_number to `value`
+    space- and case-insensitively (DB-side; works on SQLite and PostgreSQL)."""
+    return func.upper(func.replace(DieselFillUp.slip_number, ' ', '')) == _norm_slip(value)
+
+
+def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, slip_number: str, user_id: int) -> None:
+    """Re-link the DieselFillUp matching slip_number to this invoice (and copy its
+    invoice_number), then archive the placeholder invoice the fill-up was previously
+    auto-created under.
+
+    Without the archive step a manually-captured multi-line invoice (e.g. a Merino/
+    Oukop statement) re-points the fill-up but leaves its old single-line placeholder
+    behind, so it lingers as a "Pending" duplicate on the Supplier Profile — exactly
+    the symptom the bulk import already guards against."""
     if not slip_number:
         return
     fillup = db.query(DieselFillUp).filter(
-        DieselFillUp.slip_number == slip_number,
+        _slip_eq(slip_number),
         DieselFillUp.entity_id == invoice.entity_id,
+        DieselFillUp.is_archived != True,
     ).first()
-    if fillup:
-        fillup.supplier_invoice_id = invoice.id
-        if invoice.invoice_number:
-            fillup.invoice_number = invoice.invoice_number
+    if not fillup:
+        return
+    old_inv_id = fillup.supplier_invoice_id
+    fillup.supplier_invoice_id = invoice.id
+    if invoice.invoice_number:
+        fillup.invoice_number = invoice.invoice_number
+    db.flush()
+    _archive_orphaned_placeholder(db, old_inv_id, invoice.id, user_id, slip=slip_number)
 
 
-def _propagate_invoice_number_to_fillups(db: Session, invoice: SupplierInvoice) -> None:
+def _propagate_invoice_number_to_fillups(db: Session, invoice: SupplierInvoice, user_id: int) -> None:
     """After invoice_number is set/changed, push it to all DieselFillUps linked via sub-line slip numbers."""
     if not invoice.invoice_number:
         return
     for li in invoice.line_items:
-        _link_fillup_from_slip(db, invoice, li.item_code)
+        _link_fillup_from_slip(db, invoice, li.item_code, user_id)
 
 
 def _maybe_create_line_fillup(
@@ -157,11 +186,9 @@ def _maybe_create_line_fillup(
     if not li.amount_excl_vat or li.amount_excl_vat <= 0:
         return
 
-    truck = (
-        db.query(Truck)
-        .filter(Truck.registration.ilike(reg), Truck.entity_id == invoice.entity_id)
-        .first()
-    )
+    # Use the same robust matcher as the bulk import (space/case-insensitive, temp
+    # regs) so a sheet's formatting can't skip the match and orphan a placeholder.
+    truck = _resolve_truck_by_reg(db, invoice.entity_id, reg)
     if not truck:
         return
 
@@ -171,7 +198,7 @@ def _maybe_create_line_fillup(
     existing = (
         db.query(DieselFillUp)
         .filter(
-            DieselFillUp.slip_number == slip,
+            _slip_eq(slip),
             DieselFillUp.truck_id == truck.id,
             DieselFillUp.entity_id == invoice.entity_id,
             DieselFillUp.is_archived != True,
@@ -321,7 +348,7 @@ def _auto_create_diesel_fillup(
         existing_fillup = None
         if slip_number:
             existing_fillup = db.query(DieselFillUp).filter(
-                DieselFillUp.slip_number == slip_number,
+                _slip_eq(slip_number),
                 DieselFillUp.truck_id == truck.id,
                 DieselFillUp.entity_id == entity_id,
                 DieselFillUp.is_archived != True,
@@ -924,7 +951,7 @@ def update_supplier_invoice(
 
     # When invoice_number is filled in (e.g. Pending → confirmed), push to linked fill-ups
     if "invoice_number" in updates and inv.is_multi_line:
-        _propagate_invoice_number_to_fillups(db, inv)
+        _propagate_invoice_number_to_fillups(db, inv, current_user.id)
 
     log_action(
         db, "supplier_invoice.updated", user_id=current_user.id,
@@ -1149,7 +1176,7 @@ def add_line_item(
     db.add(li)
     db.flush()
     if data.item_code:
-        _link_fillup_from_slip(db, inv, data.item_code)
+        _link_fillup_from_slip(db, inv, data.item_code, current_user.id)
     _maybe_create_line_fillup(db, inv, li, current_user.id)
     _recalc_invoice_total(db, inv)
     log_action(
@@ -1197,7 +1224,7 @@ def update_line_item(
         setattr(li, k, v)
     db.flush()
     if data.item_code:
-        _link_fillup_from_slip(db, inv, data.item_code)
+        _link_fillup_from_slip(db, inv, data.item_code, current_user.id)
     _maybe_create_line_fillup(db, inv, li, current_user.id)
     _recalc_invoice_total(db, inv)
     # The edit form re-PUTs every line with re-indexed sort_order on each save —
@@ -1401,11 +1428,12 @@ def _archive_orphaned_placeholder(db: Session, old_inv_id, new_inv_id: int, user
         return False
     if old.is_multi_line or old.line_items:   # an imported/real invoice — leave it alone
         return False
-    number = (old.invoice_number or '').strip()
-    slip_norm = (slip or '').strip()
+    number = _norm_slip(old.invoice_number)
+    slip_norm = _norm_slip(slip)
     # A placeholder has no number, or the slip we just absorbed used as a stand-in.
-    # Anything else is a real invoice number → not a placeholder.
-    if number and number.lower() != slip_norm.lower():
+    # Anything else is a real invoice number → not a placeholder. Normalised the
+    # same way the slip match is, so case/spacing can't keep it from being archived.
+    if number and number != slip_norm:
         return False
     remaining = db.query(DieselFillUp).filter(
         DieselFillUp.supplier_invoice_id == old_inv_id,
@@ -1531,7 +1559,7 @@ def bulk_import_invoices(
             # lets the import absorb a pre-logged slip — re-linking it to the imported
             # invoice and archiving its pending placeholder — instead of duplicating it.
             existing_fillup = db.query(DieselFillUp).filter(
-                DieselFillUp.slip_number == slip,
+                _slip_eq(slip),
                 DieselFillUp.truck_id == truck.id,
                 DieselFillUp.entity_id == payload.entity_id,
                 DieselFillUp.is_archived != True,
@@ -1673,4 +1701,114 @@ def resolve_diesel_conflicts(
 
     db.commit()
     return {"resolved": resolved}
+
+
+# ── One-off cleanup: archive stranded diesel placeholders ─────────────────────
+
+@router.post("/cleanup-diesel-placeholders")
+def cleanup_diesel_placeholders(
+    entity_id: Optional[int] = Query(None),
+    supplier_id: Optional[int] = Query(None),
+    commit: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Admin-only, idempotent. Clears the "Pending" placeholder invoices left
+    behind before the auto-archive fix: for every slip that now appears on a real
+    multi-line statement invoice, re-link its fill-up onto that statement and
+    archive the single-line placeholder it was auto-created under.
+
+    DRY RUN by default (commit=false) — returns exactly what *would* be archived so
+    it can be reviewed first; nothing is saved. Pass commit=true to apply.
+    Optionally scope to one entity and/or supplier. Safe to run repeatedly."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    q = db.query(SupplierInvoice).filter(
+        SupplierInvoice.is_multi_line == True,
+        SupplierInvoice.is_archived != True,
+    )
+    if entity_id is not None:
+        _check_entity_access(entity_id, current_user)
+        q = q.filter(SupplierInvoice.entity_id == entity_id)
+    if supplier_id is not None:
+        q = q.filter(SupplierInvoice.supplier_id == supplier_id)
+    multiline_invs = q.all()
+
+    archived: List[dict] = []
+    seen_placeholders: set = set()
+
+    for inv in multiline_invs:
+        for li in inv.line_items:
+            slip = (li.item_code or "").strip()
+            if not slip:
+                continue
+            # Candidate placeholders: same supplier+entity, single-line, not the
+            # statement itself, whose number is this slip standing in as the number
+            # (the diesel auto-create placeholder pattern). Normalised the same way
+            # the slip match is, so case/spacing can't hide one.
+            placeholders = db.query(SupplierInvoice).filter(
+                SupplierInvoice.entity_id == inv.entity_id,
+                SupplierInvoice.supplier_id == inv.supplier_id,
+                SupplierInvoice.id != inv.id,
+                SupplierInvoice.is_archived != True,
+                SupplierInvoice.is_multi_line != True,
+                func.upper(func.replace(SupplierInvoice.invoice_number, ' ', '')) == _norm_slip(slip),
+            ).all()
+            for ph in placeholders:
+                if ph.id in seen_placeholders or ph.line_items:
+                    continue
+                # Re-link this slip's fill-ups off the placeholder onto the statement
+                # (Scenario B). When the manual flow already re-linked them, there are
+                # none left and we just retire the empty placeholder (Scenario A).
+                fups = db.query(DieselFillUp).filter(
+                    DieselFillUp.supplier_invoice_id == ph.id,
+                    DieselFillUp.is_archived != True,
+                    _slip_eq(slip),
+                ).all()
+                for fu in fups:
+                    fu.supplier_invoice_id = inv.id
+                    if inv.invoice_number:
+                        fu.invoice_number = inv.invoice_number
+                db.flush()
+                # Never archive a placeholder that still backs other (different-slip)
+                # fill-ups — that would orphan real diesel records.
+                remaining = db.query(DieselFillUp).filter(
+                    DieselFillUp.supplier_invoice_id == ph.id,
+                    DieselFillUp.is_archived != True,
+                ).count()
+                if remaining > 0:
+                    continue
+                ph.is_archived = True
+                seen_placeholders.add(ph.id)
+                archived.append({
+                    "placeholder_invoice_id": ph.id,
+                    "placeholder_number": ph.invoice_number,
+                    "slip": slip,
+                    "absorbed_into_invoice_id": inv.id,
+                    "statement_number": inv.invoice_number,
+                    "entity_id": inv.entity_id,
+                    "supplier_id": inv.supplier_id,
+                    "relinked_fillup_ids": [fu.id for fu in fups],
+                })
+                if commit:
+                    log_action(
+                        db, "supplier_invoice.placeholder_merged", user_id=current_user.id,
+                        entity_id=ph.entity_id, resource_type="supplier_invoice", resource_id=ph.id,
+                        description=(
+                            f"Cleanup: archived placeholder invoice #{ph.id} (slip {slip}) — "
+                            f"absorbed into statement #{inv.id}"
+                        ),
+                    )
+
+    if commit:
+        db.commit()
+    else:
+        db.rollback()
+
+    return {
+        "committed": commit,
+        "archived_count": len(archived),
+        "archived": archived,
+    }
 

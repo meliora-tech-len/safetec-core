@@ -289,6 +289,9 @@ export const repairDieselInvoiceLinks = () => api.post('/diesel/fillups/repair-i
 
 // ── Supplier Invoices ─────────────────────────────────────────────────────────
 export const getSupplierInvoices = (params = {}) => api.get('/supplier-invoices/', { params })
+// One-off admin cleanup of stranded diesel "Pending" placeholders. Dry run by
+// default; pass { commit: true } to apply. Optionally scope { entity_id, supplier_id }.
+export const cleanupDieselPlaceholders = (params = {}) => api.post('/supplier-invoices/cleanup-diesel-placeholders', null, { params })
 export const getSupplierInvoicesByVehicle = (params = {}) => api.get('/supplier-invoices/by-vehicle', { params })
 export const getSupplierInvoice = (id) => api.get(`/supplier-invoices/${id}`)
 export const createSupplierInvoice = (data) => api.post('/supplier-invoices/', data)
