@@ -8,15 +8,9 @@ import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail, Sen
 import DeleteModal from '../components/DeleteModal'
 import DateInput from '../components/DateInput'
 
-const STATUS_FLOW = {
-  draft:     ['ready', 'cancelled'],
-  ready:     ['sent', 'cancelled'],
-  sent:      ['accepted', 'overdue', 'cancelled'],
-  accepted:  ['overdue', 'cancelled'],
-  overdue:   ['cancelled'],
-  paid:      [],
-  cancelled: [],
-}
+// Any status can be set from the "Change Status" override menu — this also lets
+// users correct mistakes (e.g. an invoice marked paid by accident).
+const ALL_STATUSES = ['draft', 'ready', 'sent', 'accepted', 'paid', 'overdue', 'cancelled']
 
 export default function InvoiceDetailPage({ docType = 'invoice' }) {
   const { id } = useParams()
@@ -30,6 +24,8 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   const [updating, setUpdating] = useState(false)
   const [showPayModal, setShowPayModal] = useState(false)
   const [payConfirming, setPayConfirming] = useState(false)
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false)
+  const [revertTarget, setRevertTarget] = useState(null)
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10))
   const [payRef, setPayRef] = useState('')
 
@@ -56,6 +52,16 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
     } finally {
       setUpdating(false)
     }
+  }
+
+  // Route a status pick: "paid" goes through the Record Payment modal (to capture
+  // date/ref); reverting a paid invoice asks for confirmation first; anything
+  // else applies immediately.
+  const onPickStatus = (s) => {
+    setStatusMenuOpen(false)
+    if (s === 'paid') { setShowPayModal(true); return }
+    if (invoice.status === 'paid') { setRevertTarget(s); return }
+    handleStatusChange(s)
   }
 
   const handleRecordPayment = async () => {
@@ -103,7 +109,6 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   if (loading) return <div className="loading-center"><div className="spinner" /></div>
   if (!invoice) return null
 
-  const nextStatuses = STATUS_FLOW[invoice.status] || []
   const canRecordPayment = ['sent', 'overdue', 'accepted'].includes(invoice.status)
 
   return (
@@ -144,12 +149,35 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
               <CheckCircle size={13} /> Record Payment
             </button>
           )}
-          {nextStatuses.filter(s => !(invoice.status === 'ready' && s === 'sent')).map(s => (
-            <button key={s} className="btn-ghost btn-sm"
-              onClick={() => handleStatusChange(s)} disabled={updating}>
-              Mark as {statusLabel(s)}
+          {/* Change Status override — set any status (corrects mistakes incl. paid → unpaid) */}
+          <div style={{ position: 'relative', display: 'inline-flex' }}>
+            <button className="btn-ghost btn-sm" onClick={() => setStatusMenuOpen(o => !o)} disabled={updating}>
+              Change Status <ChevronDown size={12} />
             </button>
-          ))}
+            {statusMenuOpen && (
+              <>
+                <div onClick={() => setStatusMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                <div style={{
+                  position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 41,
+                  background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6,
+                  boxShadow: '0 6px 18px rgba(0,0,0,0.18)', minWidth: 180, overflow: 'hidden', padding: 4,
+                }}>
+                  {ALL_STATUSES.filter(s => s !== invoice.status).map(s => (
+                    <button key={s} onClick={() => onPickStatus(s)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                        padding: '7px 10px', background: 'none', border: 'none', borderRadius: 5,
+                        cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                      <span className={statusBadgeClass(s)}>{statusLabel(s)}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           {invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
             <button className="btn-ghost btn-sm" onClick={handleDelete}><Trash2 size={13} color="var(--danger)" /></button>
           )}
@@ -348,6 +376,39 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
         </div>
       </div>
 
+      {/* Revert-from-paid confirmation */}
+      {revertTarget && (
+        <div style={styles.modalOverlay} onClick={() => setRevertTarget(null)}>
+          <div style={styles.modal} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Revert paid invoice?</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{invoice.invoice_number}</span>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+                background: 'rgba(217,119,6,0.08)', border: '1px solid rgba(217,119,6,0.3)',
+                borderRadius: 6, padding: '12px 14px',
+              }}>
+                <AlertTriangle size={18} color="#d97706" style={{ flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+                  Change <strong>{invoice.invoice_number}</strong> from <strong>Paid</strong> to{' '}
+                  <strong>{statusLabel(revertTarget)}</strong>?
+                  <div style={{ marginTop: 6 }}>The recorded payment date and reference will be cleared.</div>
+                </div>
+              </div>
+            </div>
+            <div style={styles.modalFooter}>
+              <button className="btn-ghost btn-sm" onClick={() => setRevertTarget(null)} disabled={updating}>Cancel</button>
+              <button className="btn-primary btn-sm" disabled={updating}
+                onClick={async () => { const t = revertTarget; setRevertTarget(null); await handleStatusChange(t) }}>
+                {updating ? 'Saving…' : `Yes, change to ${statusLabel(revertTarget)}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Record Payment Modal */}
       {showPayModal && (
         <div style={styles.modalOverlay} onClick={closePayModal}>
@@ -370,7 +431,7 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
                       Mark <strong>{invoice.invoice_number}</strong> as <strong>paid</strong> for{' '}
                       <strong style={{ color: 'var(--success)' }}>{formatCurrency(invoice.total)}</strong>?
                       <div style={{ marginTop: 6 }}>
-                        A paid invoice is locked — its status <strong>cannot be changed</strong> afterwards.
+                        A paid invoice is locked for edits. If it was a mistake, you can revert it later from <strong>Change Status</strong>.
                       </div>
                     </div>
                   </div>

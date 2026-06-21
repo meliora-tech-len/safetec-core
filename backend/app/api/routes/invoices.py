@@ -454,8 +454,14 @@ def update_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(invoice.entity_id, current_user)
 
-    if invoice.status == "paid":
-        raise HTTPException(status_code=400, detail="Cannot edit a paid invoice")
+    # A paid invoice is locked against content edits, but its status may be
+    # reverted (e.g. it was marked paid by mistake). Allow the request only
+    # when it changes the status away from "paid"; block plain field edits.
+    if invoice.status == "paid" and not (payload.status and payload.status != "paid"):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot edit a paid invoice. Change its status first if you need to make corrections.",
+        )
 
     # invoice_number is globally unique — guard a collision with a clear message
     # instead of letting the DB raise an opaque IntegrityError on flush.
@@ -476,6 +482,11 @@ def update_invoice(
         update_data = payload.model_dump(exclude={"line_items"}, exclude_none=True)
         for field, value in update_data.items():
             setattr(invoice, field, value)
+
+        # Reverting a paid invoice clears the recorded payment so it stays consistent.
+        if old_status == "paid" and invoice.status != "paid":
+            invoice.paid_date = None
+            invoice.payment_reference = None
 
         if payload.line_items is not None:
             db.query(InvoiceLineItem).filter(InvoiceLineItem.invoice_id == invoice_id).delete()
