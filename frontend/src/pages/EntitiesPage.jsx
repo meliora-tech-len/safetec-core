@@ -186,8 +186,9 @@ export default function EntitiesPage() {
     }
   }
 
-  const nextInvoice = `${form.invoice_prefix || form.code || 'INV'}${String((parseInt(form.invoice_counter) || 0) + 1).padStart(5, '0')}`
-  const nextQuote = `${form.quote_prefix || 'QT'}${String((parseInt(form.quote_counter) || 0) + 1).padStart(5, '0')}`
+  const formPad = Math.max(0, parseInt(form.invoice_number_padding ?? 5) || 0)
+  const nextInvoice = `${form.invoice_prefix || form.code || 'INV'}${String((parseInt(form.invoice_counter) || 0) + 1).padStart(formPad, '0')}`
+  const nextQuote = `${form.quote_prefix || 'QT'}${String((parseInt(form.quote_counter) || 0) + 1).padStart(formPad, '0')}`
 
   return (
     <div style={{ padding: 'var(--page-pad)', maxWidth: 960 }}>
@@ -561,7 +562,7 @@ export default function EntitiesPage() {
 function EntityCard({ entity, onEdit, onArchive, onRestore }) {
   const isArchived = !entity.is_active
   const color = entity.primary_color || '#2563eb'
-  const nextInv = `${entity.invoice_prefix || entity.code}${String((entity.invoice_counter || 0) + 1).padStart(5, '0')}`
+  const nextInv = `${entity.invoice_prefix || entity.code}${String((entity.invoice_counter || 0) + 1).padStart(Math.max(0, entity.invoice_number_padding ?? 5), '0')}`
 
   return (
     <div style={{

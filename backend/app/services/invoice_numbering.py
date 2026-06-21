@@ -10,6 +10,13 @@ def prefix_for(entity: BusinessEntity, document_type: str) -> str:
     return entity.invoice_prefix or entity.code or "INV"
 
 
+def format_number(prefix: str, counter: int, padding: int) -> str:
+    """Build a document number, zero-padding the counter to `padding` digits.
+    padding=0 means no padding (BTP739); padding=5 is legacy (OBHI03667)."""
+    pad = padding if padding is not None else 5
+    return f"{prefix}{counter:0{pad}d}"
+
+
 def resolve_next_number(db: Session, entity: BusinessEntity, document_type: str):
     """
     Return (prefix, counter, number) for the next auto number, skipping any
@@ -17,14 +24,15 @@ def resolve_next_number(db: Session, entity: BusinessEntity, document_type: str)
     lowered in Settings). Does NOT advance the stored counter.
     """
     prefix = prefix_for(entity, document_type)
+    padding = entity.invoice_number_padding if entity.invoice_number_padding is not None else 5
     if document_type == "quote":
         counter = (entity.quote_counter or 0) + 1
     else:
         # purchase orders share the invoice counter (PO prefix, same sequence)
         counter = (entity.invoice_counter or 0) + 1
-    while db.query(Invoice.id).filter(Invoice.invoice_number == f"{prefix}{counter:05d}").first():
+    while db.query(Invoice.id).filter(Invoice.invoice_number == format_number(prefix, counter, padding)).first():
         counter += 1
-    return prefix, counter, f"{prefix}{counter:05d}"
+    return prefix, counter, format_number(prefix, counter, padding)
 
 
 def peek_invoice_number(db: Session, entity_id: int, document_type: str = "invoice") -> str:

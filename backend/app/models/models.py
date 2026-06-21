@@ -99,6 +99,9 @@ class BusinessEntity(Base):
     invoice_counter = Column(Integer, default=0)
     quote_prefix = Column(String(10), default="QT")
     quote_counter = Column(Integer, default=0)
+    # Minimum digit width for the numeric part. 0 = no padding (BTP739);
+    # 5 = legacy zero-padded (OBHI03667). Applies to invoices and quotes.
+    invoice_number_padding = Column(Integer, default=5, nullable=False, server_default="5")
 
     # Tax
     vat_rate = Column(Numeric(5, 4), default=0.15)
