@@ -12,7 +12,7 @@ import SearchableSelect from '../components/SearchableSelect'
 import {
   getTruck, getTruckLoads, getTruckLoadSummary, getFleetTrucks,
   createTruckLoad, createSplitLoad, updateTruckLoad, deleteTruckLoad, archiveTruckLoad,
-  getMines, getDrivers, getSettings, getSetting, getSuppliers,
+  getMines, getDrivers, getSettings, getSuppliers,
   getDieselFillUps, createDieselFillUp, updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, getCurrentDieselRate,
   addDriverAdditionalLoad, updateDriverAdditionalLoad, deleteDriverAdditionalLoad, archiveDriverAdditionalLoad,
   getAdditionalLoadRates,
@@ -30,7 +30,6 @@ import VerifyBadge from '../components/VerifyBadge'
 import VerifiableAmount from '../components/VerifiableAmount'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 import DateInput from '../components/DateInput'
-import { PROFIT_SHEET_DEFAULTS_KEY, parseProfitSheetDefaults } from '../constants/profitSheet'
 
 const fmt    = (n) => n == null ? '—' : `R ${parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtNum = (n) => n == null ? '—' : parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
@@ -1701,34 +1700,26 @@ function ProfitSheetSection({ truck, year, month, summary }) {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [expRes, invRes, defRes] = await Promise.all([
+      const [expRes, invRes] = await Promise.all([
         getTruckMonthlyExpenses(truck.id, { year, month }),
         truck.registration ? getSupplierInvoicesByVehicle({ vehicle_reg: truck.registration, month, year }) : Promise.resolve({ data: [] }),
-        getSetting(PROFIT_SHEET_DEFAULTS_KEY).catch(() => null),
       ])
       const expData = expRes.data
-      // Per-Safetec default expense amounts set in Settings, keyed by description.
-      // Used only as a fallback for standard rows that have no saved value yet, so a
-      // profit-sheet entry is never overwritten. Wages aren't in this map (per truck).
-      const defaults = parseProfitSheetDefaults(defRes?.data?.value)
       // Unify every expense into a single editable list (custom_lines): the named
       // standard-expense columns become rows (carrying any saved value), merged with
-      // existing custom lines. Standard labels not already present are seeded so the
-      // default set always appears. Idempotent: after the first save the standard
-      // columns are null, so they won't re-seed or double-count.
+      // existing custom lines. A new month opens pre-filled with the PREVIOUS month's
+      // expense lines + amounts (carried forward server-side) so the user only edits
+      // what changed. Only a brand-new truck's first sheet is empty — there we seed
+      // the standard template lines (blank) as a starting point.
       const existing = expData.custom_lines || []
       const isFresh = existing.length === 0
       const existingDescs = new Set(existing.map(l => (l.description || '').trim().toLowerCase()))
-      // Per-row fallback: a standard expense already saved on this sheet keeps its
-      // value (the user's profit-sheet entry ALWAYS wins, even a deliberately blank
-      // one). Only standard rows with no saved value fall back to the settings
-      // default — so defaults pull through without ever overwriting an edit.
       const stdRows = EXPENSE_ROWS
         .filter(r => !existingDescs.has(r.label.toLowerCase()))
-        .map(r => ({ id: crypto.randomUUID(), description: r.label, amount: expData[r.key] ?? defaults[r.label] ?? null }))
+        .map(r => ({ id: crypto.randomUUID(), description: r.label, amount: expData[r.key] ?? null }))
       let lines = [...stdRows, ...existing]
       if (isFresh) {
-        lines = [...lines, ...DEFAULT_PRESET_LINES.map(d => ({ id: crypto.randomUUID(), description: d.description, amount: defaults[d.description] ?? null }))]
+        lines = [...lines, ...DEFAULT_PRESET_LINES.map(d => ({ id: crypto.randomUUID(), description: d.description, amount: null }))]
       }
       // Clear the named columns locally so totals come solely from the unified list.
       const cleared = {}

@@ -3,7 +3,6 @@ import { Settings, Save, Plus, Trash2, RefreshCw } from 'lucide-react'
 import { getSettings, updateSetting, getEntities, updateEntity, getRoles, createRole, deleteRole } from '../services/api'
 import DeleteModal from '../components/DeleteModal'
 import { errorMessage } from '../utils/helpers'
-import { PROFIT_SHEET_DEFAULTS_KEY, PROFIT_SHEET_DEFAULT_FIELDS, parseProfitSheetDefaults } from '../constants/profitSheet'
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState({})
@@ -18,7 +17,6 @@ export default function SettingsPage() {
   const [roles, setRoles] = useState([])
   const [newRoleKey, setNewRoleKey] = useState('')
   const [newRoleDisplay, setNewRoleDisplay] = useState('')
-  const [profitDefaults, setProfitDefaults] = useState({}) // { description: stringAmount }
 
   const load = async () => {
     setLoading(true)
@@ -37,12 +35,6 @@ export default function SettingsPage() {
       // Parse initial values
       if (map.vat_rate) setVatRate(String(parseFloat(map.vat_rate.value) * 100))
       if (map.fleet_licence_warn_days) setLicenceWarnDays(map.fleet_licence_warn_days.value)
-      if (map[PROFIT_SHEET_DEFAULTS_KEY]) {
-        const parsed = parseProfitSheetDefaults(map[PROFIT_SHEET_DEFAULTS_KEY].value)
-        const asStrings = {}
-        for (const [k, v] of Object.entries(parsed)) asStrings[k] = v == null ? '' : String(v)
-        setProfitDefaults(asStrings)
-      }
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
@@ -70,18 +62,6 @@ export default function SettingsPage() {
       return
     }
     saveSetting('vat_rate', rate.toFixed(4), 'Global VAT Rate')
-  }
-
-  const handleProfitDefaultsSave = () => {
-    // Keep only fields with a valid, non-negative number; store as { description: number }.
-    const out = {}
-    for (const field of PROFIT_SHEET_DEFAULT_FIELDS) {
-      const raw = (profitDefaults[field] ?? '').toString().trim()
-      if (raw === '') continue
-      const n = parseFloat(raw)
-      if (!isNaN(n) && n >= 0) out[field] = n
-    }
-    saveSetting(PROFIT_SHEET_DEFAULTS_KEY, JSON.stringify(out), 'Profit Sheet Default Expenses')
   }
 
   const handleAddRole = async () => {
@@ -117,6 +97,7 @@ export default function SettingsPage() {
         invoice_counter: entity.invoice_counter,
         quote_prefix: entity.quote_prefix,
         quote_counter: entity.quote_counter,
+        invoice_number_padding: entity.invoice_number_padding,
       })
       // Reflect exactly what the server stored, so a save can never *look* successful
       // while the value silently reverts on the next page load.
@@ -127,6 +108,7 @@ export default function SettingsPage() {
           invoice_counter: saved.invoice_counter ?? 0,
           quote_prefix: saved.quote_prefix ?? 'QT',
           quote_counter: saved.quote_counter ?? 0,
+          invoice_number_padding: saved.invoice_number_padding ?? 5,
         },
       }))
       setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: true }))
@@ -148,6 +130,7 @@ export default function SettingsPage() {
         invoice_counter: e.invoice_counter || 0,
         quote_prefix: e.quote_prefix || 'QT',
         quote_counter: e.quote_counter || 0,
+        invoice_number_padding: e.invoice_number_padding ?? 5,
       }
     })
     setEntityConfigs(cfg)
@@ -255,12 +238,12 @@ export default function SettingsPage() {
       </Section>
 
       {/* ── Invoice Numbering ────────────────────────────────────────── */}
-      <Section title="Invoice Numbering" subtitle="Configure prefix and counter per entity. The app increments automatically but you can edit on individual invoices.">
+      <Section title="Invoice Numbering" subtitle="Set each entity's counter to the LAST invoice number you used — the next invoice continues from there (see the Next Invoice preview). The app then increments automatically; you can still override the number on individual invoices.">
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'var(--bg-secondary)' }}>
-                {['Entity', 'Invoice Prefix', 'Invoice Counter', 'Quote Prefix', 'Quote Counter', 'Next Invoice', ''].map(h => (
+                {['Entity', 'Invoice Prefix', 'Last Invoice #', 'Quote Prefix', 'Last Quote #', 'Digits', 'Next Invoice', ''].map(h => (
                   <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
                 ))}
               </tr>
@@ -268,7 +251,8 @@ export default function SettingsPage() {
             <tbody>
               {entities.map(entity => {
                 const cfg = entityConfigs[entity.id] || {}
-                const nextInv = `${cfg.invoice_prefix || entity.code}${String((parseInt(cfg.invoice_counter) || 0) + 1).padStart(5, '0')}`
+                const pad = Math.max(0, parseInt(cfg.invoice_number_padding) || 0)
+                const nextInv = `${cfg.invoice_prefix || entity.code}${String((parseInt(cfg.invoice_counter) || 0) + 1).padStart(pad, '0')}`
                 const isSaving = saving[`entity_${entity.id}`]
                 const isSaved = savedOk[`entity_${entity.id}`]
                 const saveError = errors[`entity_${entity.id}`]
@@ -298,6 +282,11 @@ export default function SettingsPage() {
                     <td style={{ padding: '8px 10px' }}>
                       <input className="form-input" type="number" min={0} value={cfg.quote_counter ?? 0} onChange={e => updateEntityConfig(entity.id, 'quote_counter', parseInt(e.target.value) || 0)}
                         style={{ width: 90, padding: '4px 8px', fontSize: 13 }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input className="form-input" type="number" min={0} max={10} value={cfg.invoice_number_padding ?? 5} onChange={e => updateEntityConfig(entity.id, 'invoice_number_padding', parseInt(e.target.value) || 0)}
+                        title="Minimum digits. 0 = no leading zeros (BTP739); 5 = padded (OBHI03667)."
+                        style={{ width: 60, padding: '4px 8px', fontSize: 13 }} />
                     </td>
                     <td style={{ padding: '8px 10px' }}>
                       <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{nextInv}</span>
@@ -354,42 +343,6 @@ export default function SettingsPage() {
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             The orange warning icon on the Fleet page will show licences expiring within this window.
             Currently: <strong>{licenceWarnDays} days</strong>
-          </div>
-        </div>
-      </Section>
-
-      {/* ── Profit Sheet ────────────────────────────────────────────── */}
-      <Section title="Profit Sheet" subtitle="Default monthly expense amounts for Safetec. They pull through to every truck's profit sheet for any line not yet entered there — whatever you type on a truck's sheet always wins. Wages are entered per truck. Leave a field blank for no default.">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '12px 18px' }}>
-            {PROFIT_SHEET_DEFAULT_FIELDS.map(field => (
-              <div key={field}>
-                <label className="form-label" style={{ fontSize: 12 }}>{field}</label>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 4 }}>
-                  <span style={{ position: 'absolute', left: 10, color: 'var(--text-muted)', fontSize: 13 }}>R</span>
-                  <input
-                    className="form-input"
-                    type="number" min="0" step="0.01"
-                    value={profitDefaults[field] ?? ''}
-                    placeholder="—"
-                    onChange={e => setProfitDefaults(p => ({ ...p, [field]: e.target.value }))}
-                    style={{ width: '100%', paddingLeft: 22 }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <SaveButton
-              saving={saving[PROFIT_SHEET_DEFAULTS_KEY]}
-              saved={savedOk[PROFIT_SHEET_DEFAULTS_KEY]}
-              onClick={handleProfitDefaultsSave}
-            />
-          </div>
-          {errors[PROFIT_SHEET_DEFAULTS_KEY] && <div style={errorStyle}>{errors[PROFIT_SHEET_DEFAULTS_KEY]}</div>}
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            These defaults fill any expense line a truck's profit sheet doesn't already have a value for.
-            Anything entered on the profit sheet <strong>always wins</strong> and is never overwritten by a default.
           </div>
         </div>
       </Section>

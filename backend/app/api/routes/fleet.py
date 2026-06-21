@@ -1,3 +1,4 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
@@ -733,10 +734,37 @@ def get_monthly_expenses(
         TruckMonthlyExpenses.year  == year,
         TruckMonthlyExpenses.month == month,
     ).first()
+    if record:
+        return record
 
-    if not record:
-        return TruckMonthlyExpensesOut(truck_id=truck_id, year=year, month=month)
-    return record
+    # No sheet captured for this month yet — carry the expense lines forward from
+    # the most recent earlier month, so each month opens as a copy of the previous
+    # one and the user only edits what changed. Returned as an unsaved template
+    # (it persists when she saves); income is intentionally left blank so a stale
+    # figure can't carry over — it auto-fills from this month's loads instead.
+    prior = (
+        db.query(TruckMonthlyExpenses)
+        .filter(
+            TruckMonthlyExpenses.truck_id == truck_id,
+            or_(
+                TruckMonthlyExpenses.year < year,
+                and_(TruckMonthlyExpenses.year == year, TruckMonthlyExpenses.month < month),
+            ),
+        )
+        .order_by(TruckMonthlyExpenses.year.desc(), TruckMonthlyExpenses.month.desc())
+        .first()
+    )
+    carried = None
+    if prior and prior.custom_lines:
+        carried = [
+            {
+                "id": (l.get("id") or uuid.uuid4().hex),
+                "description": l.get("description"),
+                "amount": l.get("amount"),
+            }
+            for l in prior.custom_lines
+        ]
+    return TruckMonthlyExpensesOut(truck_id=truck_id, year=year, month=month, custom_lines=carried)
 
 
 @router.put("/trucks/{truck_id}/monthly-expenses", response_model=TruckMonthlyExpensesOut)
