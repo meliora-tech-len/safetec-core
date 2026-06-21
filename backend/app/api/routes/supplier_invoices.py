@@ -1784,6 +1784,7 @@ def cleanup_diesel_placeholders(
                 archived.append({
                     "placeholder_invoice_id": ph.id,
                     "placeholder_number": ph.invoice_number,
+                    "match": "slip",
                     "slip": slip,
                     "absorbed_into_invoice_id": inv.id,
                     "statement_number": inv.invoice_number,
@@ -1800,6 +1801,71 @@ def cleanup_diesel_placeholders(
                             f"absorbed into statement #{inv.id}"
                         ),
                     )
+
+    # ── Second pass: blank-number orphan shells ──────────────────────────────
+    # Older placeholders were auto-created with NO invoice number (the fill-up had
+    # neither a slip nor an invoice number yet) and have since had their fill-up
+    # moved onto the statement. With a blank number AND no fill-up, neither the slip
+    # match above nor a fill-up link can reach them — but auto-creation stamped them
+    # with the truck's vehicle_reg + amount, so match those to a statement line and
+    # retire the shell. Diesel suppliers only; never touches a paid/finalised invoice.
+    for inv in multiline_invs:
+        if not (inv.supplier and inv.supplier.is_diesel_supplier):
+            continue
+        # (normalised reg, rounded excl amount) for every line on the statement
+        line_keys = {
+            (_norm_slip(li.unit), round(float(li.amount_excl_vat), 2))
+            for li in inv.line_items
+            if li.unit and li.amount_excl_vat is not None
+        }
+        if not line_keys:
+            continue
+        blanks = db.query(SupplierInvoice).filter(
+            SupplierInvoice.entity_id == inv.entity_id,
+            SupplierInvoice.supplier_id == inv.supplier_id,
+            SupplierInvoice.id != inv.id,
+            SupplierInvoice.is_archived != True,
+            SupplierInvoice.is_multi_line != True,
+            (SupplierInvoice.invoice_number == None) | (func.trim(SupplierInvoice.invoice_number) == ''),
+        ).all()
+        for ph in blanks:
+            if ph.id in seen_placeholders or ph.line_items:
+                continue
+            if ph.is_paid or ph.verified3_by or not ph.vehicle_reg or ph.amount is None:
+                continue
+            # A shell has no fill-up of its own — the real diesel cost lives on the
+            # statement line. If something still points here, it's real data: skip.
+            if db.query(DieselFillUp).filter(
+                DieselFillUp.supplier_invoice_id == ph.id,
+                DieselFillUp.is_archived != True,
+            ).count() > 0:
+                continue
+            if (_norm_slip(ph.vehicle_reg), round(float(ph.amount), 2)) not in line_keys:
+                continue
+            ph.is_archived = True
+            seen_placeholders.add(ph.id)
+            archived.append({
+                "placeholder_invoice_id": ph.id,
+                "placeholder_number": ph.invoice_number,
+                "match": "reg+amount",
+                "vehicle_reg": ph.vehicle_reg,
+                "amount": float(ph.amount),
+                "absorbed_into_invoice_id": inv.id,
+                "statement_number": inv.invoice_number,
+                "entity_id": inv.entity_id,
+                "supplier_id": inv.supplier_id,
+                "relinked_fillup_ids": [],
+            })
+            if commit:
+                log_action(
+                    db, "supplier_invoice.placeholder_merged", user_id=current_user.id,
+                    entity_id=ph.entity_id, resource_type="supplier_invoice", resource_id=ph.id,
+                    description=(
+                        f"Cleanup: archived blank-number placeholder invoice #{ph.id} "
+                        f"(reg {ph.vehicle_reg}, R{ph.amount}) — duplicate of a line on "
+                        f"statement #{inv.id}"
+                    ),
+                )
 
     if commit:
         db.commit()
