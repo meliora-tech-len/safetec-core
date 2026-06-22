@@ -1569,11 +1569,20 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                   <V field="total_expenses">{fmtC(totalExp)}</V>
                 </div>
               </div>
+              {/* Original calculated payout — always shown, read-only */}
+              <div style={{ flex: 1, padding: '10px 16px', borderRight: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)', marginBottom: 2 }}>To Be Paid Out</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: parseFloat(net_payable_calculated) >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
+                  {fmtC(net_payable_calculated)}
+                </div>
+              </div>
+              {/* New (manual) payout — separate editable total; defaults to the
+                  calculated figure until she enters her own. */}
               <div style={{ flex: 1, padding: '10px 16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)' }}>To Be Paid Out</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)' }}>New To Be Paid Out</span>
                   {isNetOverridden && (
-                    <span title={`Manually edited — calculated value ${fmtC(net_payable_calculated)}`} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(217,119,6,0.14)', color: '#b45309', borderRadius: 10, padding: '1px 6px' }}>
+                    <span title="Manually entered" style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(217,119,6,0.14)', color: '#b45309', borderRadius: 10, padding: '1px 6px' }}>
                       EDITED
                     </span>
                   )}
@@ -1594,24 +1603,19 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                   </div>
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 16, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
+                    <span style={{ fontWeight: 700, fontSize: 16, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)', opacity: isNetOverridden ? 1 : 0.65 }}>
                       <V field="net_payable">{fmtC(net_payable)}</V>
                     </span>
                     {onSaveNetOverride && (
-                      <button className="btn-icon btn-ghost" title="Edit amount" onClick={startNetEdit} style={{ padding: 2 }}>
+                      <button className="btn-icon btn-ghost" title="Enter a new amount" onClick={startNetEdit} style={{ padding: 2 }}>
                         <Pencil size={13} />
                       </button>
                     )}
                     {isNetOverridden && onSaveNetOverride && (
-                      <button className="btn-icon btn-ghost" title={`Revert to calculated (${fmtC(net_payable_calculated)})`} onClick={revertNet} disabled={netSaving} style={{ padding: 2 }}>
+                      <button className="btn-icon btn-ghost" title={`Clear — revert to the calculated ${fmtC(net_payable_calculated)}`} onClick={revertNet} disabled={netSaving} style={{ padding: 2 }}>
                         <RotateCcw size={13} color="var(--text-muted)" />
                       </button>
                     )}
-                  </div>
-                )}
-                {isNetOverridden && !netEditing && (
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                    Calculated: {fmtC(net_payable_calculated)}
                   </div>
                 )}
               </div>
@@ -1762,6 +1766,9 @@ function SummaryCard({ summary, trucks = [], isVatRegistered = true,
   )
 
   const truckRows = trucks.filter(td => parseFloat(isVatRegistered ? td.income_incl_vat : td.income_excl_vat) !== 0 || parseFloat(td.total_expenses_excl_vat) !== 0 || parseFloat(td.total_expenses_incl_vat) !== 0)
+  // Original "To Be Paid Out" total = sum of the calculated figures (summary.net_payable
+  // already reflects the manual edits, i.e. the "New To Be Paid Out" total).
+  const origNetTotal = trucks.reduce((s, t) => s + (parseFloat(t.net_payable_calculated) || 0), 0)
 
   return (
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 10, marginTop: 8, marginBottom: 24, overflow: 'hidden' }}>
@@ -1789,6 +1796,7 @@ function SummaryCard({ summary, trucks = [], isVatRegistered = true,
                 {th('Diesel', true)}
                 {th('Admin', true)}
                 {th('To Be Paid Out', true)}
+                {th('New To Be Paid Out', true)}
               </tr>
             </thead>
             <tbody>
@@ -1798,9 +1806,14 @@ function SummaryCard({ summary, trucks = [], isVatRegistered = true,
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(isVatRegistered ? td.income_incl_vat : td.income_excl_vat)}</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.total_expenses_excl_vat)}</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(td.total_expenses_incl_vat)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: parseFloat(td.net_payable) >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
+                  {/* Original (calculated) */}
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: parseFloat(td.net_payable_calculated) >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
+                    {fmtC(td.net_payable_calculated)}
+                  </td>
+                  {/* New (manual edit if any, else the calculated figure) */}
+                  <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: parseFloat(td.net_payable) >= 0 ? 'var(--accent)' : 'var(--danger)', opacity: td.net_payable_override != null ? 1 : 0.6 }}>
                     {td.net_payable_override != null && (
-                      <span title="Manually edited" style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(217,119,6,0.14)', color: '#b45309', borderRadius: 10, padding: '1px 5px', marginRight: 6 }}>
+                      <span title="Manually entered" style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(217,119,6,0.14)', color: '#b45309', borderRadius: 10, padding: '1px 5px', marginRight: 6 }}>
                         EDITED
                       </span>
                     )}
@@ -1821,7 +1834,12 @@ function SummaryCard({ summary, trucks = [], isVatRegistered = true,
                 <td style={{ ...tdStyle, textAlign: 'right' }}>
                   <SV field="total_expenses_incl">{fmtC(summary.total_expenses_incl_vat)}</SV>
                 </td>
-                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)', fontSize: 15 }}>
+                {/* Original total */}
+                <td style={{ ...tdStyle, textAlign: 'right', color: origNetTotal >= 0 ? 'var(--accent)' : 'var(--danger)', fontSize: 15 }}>
+                  {fmtC(origNetTotal)}
+                </td>
+                {/* New total (reflects manual edits) */}
+                <td style={{ ...tdStyle, textAlign: 'right', color: parseFloat(summary.net_payable) >= 0 ? 'var(--accent)' : 'var(--danger)', fontSize: 15 }}>
                   <SV field="net_payable">{fmtC(summary.net_payable)}</SV>
                 </td>
               </tr>
