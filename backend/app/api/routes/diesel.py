@@ -437,6 +437,26 @@ def update_diesel_rate(
 
 # ── Diesel Fill-Ups ───────────────────────────────────────────────────────────
 
+def _apply_period_filter(q, month: Optional[int], year: Optional[int]):
+    """Filter fill-ups by their STATEMENT period rather than the slip date.
+
+    A fill-up belongs to the period of its linked supplier invoice (the
+    statement it was captured under); only when there's no linked invoice do we
+    fall back to the fill-up's own date. This lets a mis-dated slip (e.g. a June
+    statement line typed as 15/03) still fall under the month it was billed in.
+    """
+    if not (month or year):
+        return q
+    q = q.outerjoin(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
+    eff_month = func.coalesce(SupplierInvoice.statement_month, func.extract("month", DieselFillUp.fillup_date))
+    eff_year = func.coalesce(SupplierInvoice.statement_year, func.extract("year", DieselFillUp.fillup_date))
+    if year:
+        q = q.filter(eff_year == year)
+    if month:
+        q = q.filter(eff_month == month)
+    return q
+
+
 @router.get("/fillups/summary", response_model=DieselFillUpSummary)
 def get_fillup_summary(
     entity_id: Optional[int] = Query(None),
@@ -459,10 +479,7 @@ def get_fillup_summary(
         q = q.filter(DieselFillUp.truck_id == truck_id)
     if supplier_id:
         q = q.filter(DieselFillUp.supplier_id == supplier_id)
-    if year:
-        q = q.filter(func.extract("year", DieselFillUp.fillup_date) == year)
-    if month:
-        q = q.filter(func.extract("month", DieselFillUp.fillup_date) == month)
+    q = _apply_period_filter(q, month, year)
     if verified is not None:
         q = q.filter(DieselFillUp.verified == verified)
     q = q.filter(DieselFillUp.is_archived != True)
@@ -510,10 +527,7 @@ def list_fillups(
         q = q.filter(DieselFillUp.truck_id == truck_id)
     if supplier_id:
         q = q.filter(DieselFillUp.supplier_id == supplier_id)
-    if year:
-        q = q.filter(func.extract("year", DieselFillUp.fillup_date) == year)
-    if month:
-        q = q.filter(func.extract("month", DieselFillUp.fillup_date) == month)
+    q = _apply_period_filter(q, month, year)
     if verified is not None:
         q = q.filter(DieselFillUp.verified == verified)
     q = q.filter(DieselFillUp.is_archived != True)
