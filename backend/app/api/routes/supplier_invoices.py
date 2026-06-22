@@ -1450,6 +1450,48 @@ def _archive_orphaned_placeholder(db: Session, old_inv_id, new_inv_id: int, user
     return True
 
 
+def _archive_filler_invoices_by_slip(db: Session, statement: SupplierInvoice, slip: str, user_id: int) -> int:
+    """Archive invoice-ONLY "filler" placeholders whose invoice_number IS this slip,
+    now that the slip is a real line on `statement`.
+
+    `_archive_orphaned_placeholder` only fires off a fill-up re-link, so a filler
+    captured as a single-line invoice with an amount but NO litres (hence no fill-up)
+    is never reached — the import just builds a fresh fill-up and leaves the filler
+    behind as a duplicate. This mops up exactly that case: same supplier+entity,
+    single-line, no line items of its own, number == the slip, unpaid/unfinalised,
+    and crucially NO fill-up (a fill-up-backed placeholder is left to the re-link
+    path so we never double-handle or spuriously raise a conflict). Returns count.
+    """
+    norm = _norm_slip(slip)
+    if not norm:
+        return 0
+    candidates = db.query(SupplierInvoice).filter(
+        SupplierInvoice.entity_id == statement.entity_id,
+        SupplierInvoice.supplier_id == statement.supplier_id,
+        SupplierInvoice.id != statement.id,
+        SupplierInvoice.is_archived != True,
+        SupplierInvoice.is_multi_line != True,
+        func.upper(func.replace(SupplierInvoice.invoice_number, ' ', '')) == norm,
+    ).all()
+    archived = 0
+    for ph in candidates:
+        if ph.line_items or ph.is_paid or ph.verified3_by:
+            continue
+        if db.query(DieselFillUp).filter(
+            DieselFillUp.supplier_invoice_id == ph.id,
+            DieselFillUp.is_archived != True,
+        ).count() > 0:
+            continue   # fill-up-backed → the re-link path handles it
+        ph.is_archived = True
+        archived += 1
+        log_action(
+            db, "supplier_invoice.placeholder_merged", user_id=user_id,
+            entity_id=ph.entity_id, resource_type="supplier_invoice", resource_id=ph.id,
+            description=f"Archived filler invoice #{ph.id} ({ph.invoice_number}) — slip absorbed into statement #{statement.id}",
+        )
+    return archived
+
+
 # ── Bulk import ───────────────────────────────────────────────────────────────
 
 @router.post("/bulk-import", response_model=BulkImportResult)
@@ -1528,6 +1570,11 @@ def bulk_import_invoices(
 
             # ── Diesel fill-up sync ──────────────────────────────────────────
             slip = (li.item_code or '').strip()
+            # Mop up an invoice-only "filler" numbered with this slip (captured
+            # before the statement, with no fill-up) — the fill-up-driven absorption
+            # below can't reach it. Runs regardless of the truck/litres guards.
+            if slip:
+                diesel_linked += _archive_filler_invoices_by_slip(db, inv, slip, current_user.id)
             if not slip or not li.unit or not li.quantity or li.quantity <= 0:
                 continue
             if not li.amount_excl_vat or li.amount_excl_vat <= 0:
