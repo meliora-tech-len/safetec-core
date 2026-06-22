@@ -575,28 +575,31 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             inv_contribs.append((inv, c_excl + c_incl))
 
         # Diesel fill-ups for this truck — bucketed by the supplier's payment term,
-        # mirroring the non-diesel invoice rule above. Diesel has no statement period
-        # (not captured on the standalone module or the Diesel tab), so the fill-up
-        # DATE stands in for it:
-        #   30-day  → fill-ups dated in the costing month (same period)
-        #   current → fill-ups dated in the NEXT month (they belong to the previous
-        #             costing period, e.g. a June cash fill-up costs in May)
+        # mirroring the non-diesel invoice rule above. The fill-up's STATEMENT
+        # period (its linked supplier invoice's month/year, falling back to the
+        # slip date only when unlinked) is the anchor, so a mis-dated slip still
+        # costs in the month it was billed:
+        #   30-day  → statement period == costing month (same period)
+        #   current → statement period == NEXT month (a June cash fill-up costs in May)
+        diesel_month = func.coalesce(SupplierInvoice.statement_month, extract("month", DieselFillUp.fillup_date))
+        diesel_year  = func.coalesce(SupplierInvoice.statement_year,  extract("year",  DieselFillUp.fillup_date))
         fillups = (
             db.query(DieselFillUp)
             .join(Supplier, Supplier.id == DieselFillUp.supplier_id)
+            .outerjoin(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
             .filter(
                 DieselFillUp.truck_id == truck.id,
                 DieselFillUp.is_archived == False,
                 or_(
                     and_(
                         Supplier.payment_term == PaymentTermType.days_30,
-                        extract("month", DieselFillUp.fillup_date) == month,
-                        extract("year",  DieselFillUp.fillup_date) == year,
+                        diesel_month == month,
+                        diesel_year  == year,
                     ),
                     and_(
                         Supplier.payment_term == PaymentTermType.current,
-                        extract("month", DieselFillUp.fillup_date) == cash_stmt_month,
-                        extract("year",  DieselFillUp.fillup_date) == cash_stmt_year,
+                        diesel_month == cash_stmt_month,
+                        diesel_year  == cash_stmt_year,
                     ),
                 ),
             )
