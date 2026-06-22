@@ -365,5 +365,8 @@ export const addBudgetLine = (sectionId, data) => api.post(`/budgets/sections/${
 export const updateBudgetLine = (lineId, data) => api.patch(`/budgets/lines/${lineId}`, data)
 export const deleteBudgetLine = (lineId) => api.delete(`/budgets/lines/${lineId}`)
 export const upsertBudgetLineValue = (lineId, data) => api.put(`/budgets/lines/${lineId}/values`, data)
+// Pull existing system data (suppliers, income, subcontractors, wages) into the
+// budget's auto lines. Manual lines and hand-edited cells are preserved.
+export const refreshBudgetFromSystem = (id) => api.post(`/budgets/${id}/refresh-from-system`)
 
 export default api

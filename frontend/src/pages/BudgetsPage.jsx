@@ -5,9 +5,9 @@ import { useSessionState } from '../hooks/useSessionState'
 import {
   getBudgets, getBudget, createBudget, deleteBudget,
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
-  addBudgetLine, deleteBudgetLine, upsertBudgetLineValue,
+  addBudgetLine, deleteBudgetLine, upsertBudgetLineValue, refreshBudgetFromSystem,
 } from '../services/api'
-import { Wallet, Plus, Trash2, Lock, X } from 'lucide-react'
+import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { errorMessage, formatCurrency } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
@@ -46,6 +46,8 @@ export default function BudgetsPage() {
   const [cellEdits, setCellEdits] = useState({})   // `${lineId}:${m}:${y}:${field}` -> string
   const [newLine, setNewLine] = useState({})       // sectionId -> name
   const [newSection, setNewSection] = useState(null) // null | { name, section_type }
+  const [refreshing, setRefreshing] = useState(false)
+  const [quickAdd, setQuickAdd] = useState(null)   // null | { kind: 'income'|'expense', sectionId, name }
 
   // Entities this user can see budgets for (admin: all)
   const budgetEntities = useMemo(() => {
@@ -94,6 +96,45 @@ export default function BudgetsPage() {
       toast.error(errorMessage(e, 'Failed to create budget'))
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleRefresh = async () => {
+    if (!budget) return
+    setRefreshing(true)
+    try {
+      const res = await refreshBudgetFromSystem(budget.id)
+      setBudget(res.data)
+      setCellEdits({})
+      toast.success('Pulled latest figures from the system')
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to pull from system'))
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  // Quick "Add Income" / "Add Expense": pick a matching section + name the line.
+  const openQuickAdd = (kind) => {
+    const sec = budget?.sections?.find(s => s.section_type === kind)
+    setQuickAdd({ kind, sectionId: sec ? sec.id : '', name: '' })
+  }
+
+  const submitQuickAdd = async () => {
+    if (!quickAdd?.name.trim() || !quickAdd.sectionId) return
+    const section = budget.sections.find(s => s.id === Number(quickAdd.sectionId))
+    if (!section) return
+    try {
+      const res = await addBudgetLine(section.id, { name: quickAdd.name.trim() })
+      setBudget(b => ({
+        ...b,
+        sections: b.sections.map(s =>
+          s.id === section.id ? { ...s, lines: [...s.lines, { ...res.data, values: [] }] } : s
+        ),
+      }))
+      setQuickAdd(null)
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to add line'))
     }
   }
 
@@ -282,6 +323,9 @@ export default function BudgetsPage() {
           <div className="empty-state">
             <Wallet size={32} />
             <p>No budget for {selectedEntity?.code} — {MONTHS[Number(month) - 1]} {year}</p>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: -6 }}>
+              Creating it pulls suppliers, income, sub-contractors and wages from the system — then you edit and add the rest.
+            </p>
             <button className="btn-primary" onClick={handleCreate} disabled={creating}>
               <Plus size={15} /> {creating ? 'Creating…' : 'Create Budget'}
             </button>
@@ -306,6 +350,43 @@ export default function BudgetsPage() {
               </div>
             ))}
           </div>
+
+          {/* Toolbar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+            <button className="btn-primary btn-sm" onClick={handleRefresh} disabled={refreshing} title="Re-pull suppliers, income, sub-contractors and wages from the system. Your manual lines and edits are kept.">
+              <RefreshCw size={14} className={refreshing ? 'spin' : undefined} /> {refreshing ? 'Pulling…' : 'Pull from system'}
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => openQuickAdd('income')}>
+              <TrendingUp size={14} /> Add Income
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => openQuickAdd('expense')}>
+              <TrendingDown size={14} /> Add Expense
+            </button>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
+              Lines marked <span className="badge badge-sent" style={{ fontSize: 10 }}>auto</span> come from the system — edit any cell to pin it.
+            </span>
+          </div>
+
+          {/* Quick add income/expense */}
+          {quickAdd && (
+            <div className="card" style={{ padding: 12, marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 13 }}>{quickAdd.kind === 'income' ? 'Add income line' : 'Add expense line'}</strong>
+              <select className="form-input" style={{ width: 'auto', fontSize: 12 }} value={quickAdd.sectionId}
+                onChange={e => setQuickAdd(p => ({ ...p, sectionId: e.target.value }))}>
+                <option value="">Section…</option>
+                {budget.sections.filter(s => s.section_type === quickAdd.kind).map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <input className="form-input" autoFocus style={{ width: 260, fontSize: 12 }}
+                placeholder={quickAdd.kind === 'income' ? 'Income source name' : 'Expense / supplier name'}
+                value={quickAdd.name}
+                onChange={e => setQuickAdd(p => ({ ...p, name: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter') submitQuickAdd() }} />
+              <button className="btn-primary btn-sm" onClick={submitQuickAdd} disabled={!quickAdd.name.trim() || !quickAdd.sectionId}>Add</button>
+              <button className="btn-ghost btn-sm" onClick={() => setQuickAdd(null)}>Cancel</button>
+            </div>
+          )}
 
           {/* Sections */}
           {budget.sections.map(section => {
@@ -344,10 +425,17 @@ export default function BudgetsPage() {
                     <tbody>
                       {section.lines.map(line => (
                         <tr key={line.id}>
-                          <td style={{ fontWeight: 500, minWidth: 180, whiteSpace: 'nowrap' }}>{line.name}</td>
+                          <td style={{ fontWeight: 500, minWidth: 180, whiteSpace: 'nowrap' }}>
+                            {line.name}
+                            {line.source === 'auto' && (
+                              <span className="badge badge-sent" style={{ fontSize: 9, marginLeft: 6, verticalAlign: 'middle' }}>auto</span>
+                            )}
+                          </td>
                           {months.map(({ month: m, year: y }) => {
                             const fields = isIncome ? ['amount_due'] : ['amount_due', 'amount_paid']
-                            return fields.map(field => (
+                            return fields.map(field => {
+                              const overridden = !!valueFor(line, m, y)?.is_overridden
+                              return (
                               <td key={`${m}-${y}-${field}`} style={{ textAlign: 'right', width: 110, padding: '3px 8px' }}>
                                 <input
                                   type="number" step="0.01"
@@ -356,10 +444,12 @@ export default function BudgetsPage() {
                                   onBlur={() => commitCell(line, m, y, field)}
                                   onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
                                   placeholder="—"
-                                  style={cellInputStyle}
+                                  title={overridden ? 'Manually edited — a system refresh will not change this' : undefined}
+                                  style={overridden ? cellInputOverridden : cellInputStyle}
                                 />
                               </td>
-                            ))
+                              )
+                            })
                           })}
                           <td style={{ textAlign: 'center' }}>
                             <button className="btn-icon" onClick={() => handleDeleteLine(section, line)} title="Delete line"
@@ -460,4 +550,12 @@ const cellInputStyle = {
   width: 100, textAlign: 'right', fontSize: 12.5,
   background: 'transparent', border: '1px solid transparent', borderRadius: 5,
   padding: '4px 6px', color: 'var(--text-primary)', outline: 'none',
+}
+
+// A pinned (manually edited) auto cell — subtle accent border so the user can see
+// which figures they've overridden and that a refresh won't touch them.
+const cellInputOverridden = {
+  ...cellInputStyle,
+  border: '1px solid var(--accent)',
+  fontWeight: 600,
 }

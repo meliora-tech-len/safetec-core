@@ -14,6 +14,10 @@ else:
         max_overflow=5,
         pool_timeout=30,
         pool_recycle=1800,
+        # Validate a pooled connection before use — the Supabase pooler drops idle
+        # connections, which otherwise surfaces as "server closed the connection
+        # unexpectedly" mid-request. pre_ping transparently reconnects instead.
+        pool_pre_ping=True,
     )
 
 # Enable WAL mode for SQLite (better concurrent reads)

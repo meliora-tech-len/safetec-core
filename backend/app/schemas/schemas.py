@@ -2262,6 +2262,7 @@ class BudgetLineValueOut(BaseModel):
     year: int
     amount_due: Optional[Decimal] = None
     amount_paid: Optional[Decimal] = None
+    is_overridden: bool = False
 
     class Config:
         from_attributes = True
@@ -2284,6 +2285,8 @@ class BudgetLineOut(BaseModel):
     name: str
     notes: Optional[str] = None
     sort_order: int = 0
+    source: str = "manual"
+    source_key: Optional[str] = None
     values: List[BudgetLineValueOut] = []
 
     class Config:
