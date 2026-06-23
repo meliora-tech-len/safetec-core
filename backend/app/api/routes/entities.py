@@ -158,6 +158,43 @@ def update_entity(
     return entity
 
 
+# ── Invoice numbering (open to any logged-in user) ─────────────────────────────
+# Numbering config lives on the entity but isn't admin-sensitive like banking/VAT
+# /logos, so it gets its own endpoint scoped to just the counter/prefix fields
+# rather than relaxing require_admin on the whole update_entity route.
+_NUMBERING_FIELDS = {
+    "invoice_prefix", "invoice_counter",
+    "quote_prefix", "quote_counter",
+    "invoice_number_padding",
+}
+
+
+@router.put("/{entity_id}/invoice-config", response_model=EntityOut)
+def update_entity_invoice_config(
+    entity_id: int,
+    payload: EntityUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    changes = {
+        field: value
+        for field, value in payload.model_dump(exclude_none=True).items()
+        if field in _NUMBERING_FIELDS
+    }
+    for field, value in changes.items():
+        setattr(entity, field, value)
+
+    log_action(db, "entity.invoice_config_updated", user_id=current_user.id, resource_type="entity",
+               resource_id=entity_id, description=f"Updated invoice numbering for {entity.name}")
+    db.commit()
+    db.refresh(entity)
+    return entity
+
+
 # ── Logo upload ───────────────────────────────────────────────────────────────
 
 @router.post("/{entity_id}/logo", response_model=EntityOut)

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Settings, Save, Plus, Trash2, RefreshCw } from 'lucide-react'
-import { getSettings, updateSetting, getEntities, updateEntity, getRoles, createRole, deleteRole } from '../services/api'
+import { getSettings, updateSetting, getEntities, updateEntity, updateEntityInvoiceConfig, getRoles, createRole, deleteRole } from '../services/api'
 import DeleteModal from '../components/DeleteModal'
 import { errorMessage } from '../utils/helpers'
 
@@ -92,7 +92,7 @@ export default function SettingsPage() {
     setSaving(p => ({ ...p, [`entity_${entity.id}`]: true }))
     setErrors(p => ({ ...p, [`entity_${entity.id}`]: null }))
     try {
-      const { data: saved } = await updateEntity(entity.id, {
+      const { data: saved } = await updateEntityInvoiceConfig(entity.id, {
         invoice_prefix: entity.invoice_prefix,
         invoice_counter: entity.invoice_counter,
         quote_prefix: entity.quote_prefix,

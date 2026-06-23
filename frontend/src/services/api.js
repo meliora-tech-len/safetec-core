@@ -46,6 +46,7 @@ export const getEntities = (params = {}) => api.get('/entities/', { params })
 export const getEntity = (id) => api.get(`/entities/${id}`)
 export const createEntity = (data) => api.post('/entities/', data)
 export const updateEntity = (id, data) => api.put(`/entities/${id}`, data)
+export const updateEntityInvoiceConfig = (id, data) => api.put(`/entities/${id}/invoice-config`, data)
 
 // ── Suppliers ─────────────────────────────────────────────────────────────────
 export const getSuppliers = (params = {}) => api.get('/suppliers/', { params })
