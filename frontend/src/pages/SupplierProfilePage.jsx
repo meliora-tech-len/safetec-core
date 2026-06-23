@@ -1370,7 +1370,7 @@ export default function SupplierProfilePage() {
       <input
         ref={attachInputRef}
         type="file"
-        accept="application/pdf,image/png,image/jpeg,image/webp"
+        accept="application/pdf,image/png,image/jpeg,image/webp,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
         style={{ display: 'none' }}
         onChange={handleAttachFile}
       />

@@ -52,8 +52,36 @@ ALLOWED_ATTACH_TYPES = {
     "image/jpeg": "jpg",
     "image/jpg": "jpg",
     "image/webp": "webp",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-excel": "xls",
+}
+# Fallback by file extension, used when the browser/OS reports an unhelpful
+# content_type (e.g. application/octet-stream, application/x-pdf) — which happens
+# for some PDFs and for most .xlsx/.xls files. Keeps a stray MIME type from
+# blocking an otherwise-valid upload.
+ALLOWED_ATTACH_EXTS = {
+    "pdf": ("pdf", "application/pdf"),
+    "png": ("png", "image/png"),
+    "jpg": ("jpg", "image/jpeg"),
+    "jpeg": ("jpg", "image/jpeg"),
+    "webp": ("webp", "image/webp"),
+    "xlsx": ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    "xls": ("xls", "application/vnd.ms-excel"),
 }
 MAX_ATTACH_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _resolve_attach_type(content_type: str | None, filename: str | None):
+    """Determine (ext, content_type) for an upload, preferring the reported MIME
+    type but falling back to the filename extension when the MIME type is missing
+    or unrecognised. Returns (None, None) if neither is acceptable."""
+    ext = ALLOWED_ATTACH_TYPES.get((content_type or "").lower())
+    if ext:
+        return ext, content_type
+    suffix = Path(filename or "").suffix.lower().lstrip(".")
+    if suffix in ALLOWED_ATTACH_EXTS:
+        return ALLOWED_ATTACH_EXTS[suffix]
+    return None, None
 
 
 def _attach_save(invoice_id: int, file_bytes: bytes, ext: str, content_type: str) -> str:
@@ -1304,19 +1332,19 @@ async def upload_attachment(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(inv.entity_id, current_user)
 
-    ext = ALLOWED_ATTACH_TYPES.get(file.content_type)
+    ext, content_type = _resolve_attach_type(file.content_type, file.filename)
     if not ext:
-        raise HTTPException(status_code=400, detail="Only PDF, JPG, PNG or WebP files are allowed")
+        raise HTTPException(status_code=400, detail="Only PDF, Excel, JPG, PNG or WebP files are allowed")
 
     file_bytes = await file.read()
     if len(file_bytes) > MAX_ATTACH_BYTES:
         raise HTTPException(status_code=400, detail="Attachment must be under 10MB")
 
-    key = _attach_save(invoice_id, file_bytes, ext, file.content_type)
+    key = _attach_save(invoice_id, file_bytes, ext, content_type)
 
     inv.attachment_key = key
     inv.attachment_filename = file.filename or f"invoice.{ext}"
-    inv.attachment_content_type = file.content_type
+    inv.attachment_content_type = content_type
     inv.attachment_size = len(file_bytes)
     inv.attachment_uploaded_at = datetime.now(timezone.utc)
     inv.attachment_uploaded_by_id = current_user.id
