@@ -54,10 +54,16 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
     (!period || periodKey(inv) === period)
   ), [invoices, entity, period])
 
+  // Registered-supplier invoices open the supplier profile (deep-linked to the
+  // invoice); one-off expenses open the costing sheet they were captured on.
+  const targetFor = (inv) =>
+    inv.supplier_id ? `/suppliers/${inv.supplier_id}?invoice=${inv.id}` : (inv.source_url || null)
+
   const go = (inv) => {
-    if (!inv.supplier_id) return
+    const target = targetFor(inv)
+    if (!target) return
     onClose()
-    navigate(`/suppliers/${inv.supplier_id}?invoice=${inv.id}`)
+    navigate(target)
   }
 
   return (
@@ -109,6 +115,7 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
               <thead>
                 <tr>
                   <th>Supplier</th>
+                  <th>Type / Source</th>
                   <th>Invoice #</th>
                   <th>Period</th>
                   <th style={{ textAlign: 'right' }}>Amount</th>
@@ -119,16 +126,36 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
               <tbody>
                 {filtered.map(inv => {
                   const v = verifyState(inv)
+                  const target = targetFor(inv)
                   return (
                     <tr
                       key={inv.id}
                       onClick={() => go(inv)}
-                      style={{ cursor: inv.supplier_id ? 'pointer' : 'default' }}
-                      title={inv.supplier_id ? 'Open invoice to verify' : 'One-off expense (no supplier profile)'}
+                      style={{ cursor: target ? 'pointer' : 'default' }}
+                      title={
+                        inv.supplier_id ? 'Open invoice to verify'
+                        : inv.source_url ? `Open costing (${inv.source_module})`
+                        : 'One-off expense (no linked costing)'
+                      }
                     >
                       <td>
                         <span style={{ fontWeight: 600 }}>{inv.supplier_name}</span>
                         {inv.entity_code && <span style={chip}>{inv.entity_code}</span>}
+                      </td>
+                      <td style={{ fontSize: 12 }}>
+                        {inv.is_one_off ? (
+                          <>
+                            <span style={onceOffBadge}>Once-off</span>
+                            <div style={{ fontSize: 11, marginTop: 2, color: inv.source_url ? 'var(--accent)' : 'var(--text-muted)' }}>
+                              {inv.entity_code ? `${inv.entity_code} · ` : ''}
+                              <span style={inv.source_url ? { textDecoration: 'underline' } : undefined}>
+                                {inv.source_module || '—'}
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <span style={supplierBadge}>Supplier invoice</span>
+                        )}
                       </td>
                       <td style={{ fontSize: 12 }}>{inv.invoice_number || '—'}</td>
                       <td style={{ fontSize: 12 }}>
@@ -138,7 +165,7 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
                       <td>
                         <span title={v.note} style={{ fontSize: 11, fontWeight: 700, color: v.color }}>{v.label}</span>
                       </td>
-                      <td>{inv.supplier_id && <ChevronRight size={14} color="var(--text-muted)" />}</td>
+                      <td>{target && <ChevronRight size={14} color="var(--text-muted)" />}</td>
                     </tr>
                   )
                 })}
@@ -154,4 +181,14 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
 const chip = {
   marginLeft: 6, background: 'var(--accent-dim)', color: 'var(--accent)',
   fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4, letterSpacing: 0.5,
+}
+
+const supplierBadge = {
+  background: 'rgba(34,197,94,0.15)', color: '#16a34a',
+  fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, letterSpacing: 0.3,
+}
+
+const onceOffBadge = {
+  background: 'rgba(245,158,11,0.15)', color: '#d97706',
+  fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, letterSpacing: 0.3,
 }

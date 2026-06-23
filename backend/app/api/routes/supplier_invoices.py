@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta, date as date_type
 from decimal import Decimal
 from collections import defaultdict
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy import or_, func
@@ -786,7 +787,8 @@ def list_pending_verification(
 ):
     """Recently-created supplier invoices not yet final-locked (verified3_by is
     null). Defaults to a 7-day window (new arrivals). Scoped to the user's
-    accessible entities; newest first."""
+    accessible entities; newest first. Includes one-off expenses (captured
+    against a free-text name) flagged with their originating module."""
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
     q = db.query(SupplierInvoice).filter(
         SupplierInvoice.is_archived != True,
@@ -807,9 +809,17 @@ def list_pending_verification(
         ).all():
             ent_codes[eid] = code
 
+    # One-off expenses are captured on a subcontractor's costing sheet and
+    # attached via the truck's reg. Build a (entity, normalised-reg) →
+    # subcontractor map once so each row can deep-link back to that sheet.
+    reg_to_sub = _subcontractor_reg_map(
+        db, {i.entity_id for i in invoices if i.supplier_id is None and i.vehicle_reg}
+    )
+
     result = []
     for inv in invoices:
         disp = get_verification_display(db, inv, initials_cache)
+        is_one_off = inv.supplier_id is None
         name = inv.supplier.name if inv.supplier else (inv.supplier_name_text or "—")
         result.append(PendingVerificationInvoice(
             id=inv.id,
@@ -823,10 +833,61 @@ def list_pending_verification(
             statement_month=inv.statement_month,
             statement_year=inv.statement_year,
             created_at=inv.created_at,
+            is_one_off=is_one_off,
+            source_module=_one_off_source_module(inv) if is_one_off else None,
+            source_url=_one_off_source_url(inv, reg_to_sub) if is_one_off else None,
             verified_by_initials=disp.get("verified_by_initials"),
             verified2_by_initials=disp.get("verified2_by_initials"),
         ))
     return result
+
+
+def _one_off_source_module(inv: SupplierInvoice) -> str:
+    """Best-effort label for where a one-off (no registered supplier) expense was
+    captured, inferred from its distinguishing columns."""
+    if inv.subcontractor_id is not None:
+        return "Subcontractor"
+    if inv.is_fixed_expense:
+        return "Fixed expense"
+    if inv.litres is not None:
+        return "Diesel"
+    return "Costing"
+
+
+def _norm_reg_key(reg: Optional[str]) -> str:
+    return (reg or "").replace(" ", "").strip().upper()
+
+
+def _subcontractor_reg_map(db: Session, entity_ids: set) -> dict:
+    """{(entity_id, normalised_reg): subcontractor_id} for every subcontractor
+    truck in the given entities — both real and temp plates."""
+    if not entity_ids:
+        return {}
+    mapping: dict = {}
+    trucks = db.query(Truck).filter(
+        Truck.subcontractor_id.isnot(None),
+        Truck.entity_id.in_(entity_ids),
+    ).all()
+    for t in trucks:
+        for reg in (t.registration, t.temp_registration):
+            k = _norm_reg_key(reg)
+            if k:
+                mapping.setdefault((t.entity_id, k), t.subcontractor_id)
+    return mapping
+
+
+def _one_off_source_url(inv: SupplierInvoice, reg_to_sub: dict) -> Optional[str]:
+    """Deep-link a one-off expense back to the subcontractor costing sheet it was
+    captured on (resolved by the truck reg). None if it can't be resolved."""
+    if not inv.vehicle_reg:
+        return None
+    sub_id = reg_to_sub.get((inv.entity_id, _norm_reg_key(inv.vehicle_reg)))
+    if not sub_id:
+        return None
+    params = f"reg={quote(inv.vehicle_reg)}"
+    if inv.statement_month and inv.statement_year:
+        params += f"&month={inv.statement_month}&year={inv.statement_year}"
+    return f"/subcontractors/{sub_id}?{params}"
 
 
 # ── Single invoice ────────────────────────────────────────────────────────────

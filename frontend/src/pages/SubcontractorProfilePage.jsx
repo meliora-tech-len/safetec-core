@@ -223,6 +223,22 @@ export default function SubcontractorProfilePage() {
   useEffect(() => { if (activeTab === 'invoices') loadInvoices() }, [activeTab, loadInvoices])
   useEffect(() => { if (activeTab === 'costing')  { loadCosting(); loadVerif() } }, [activeTab, loadCosting, loadVerif])
 
+  // Deep-link from the dashboard's one-off list (?month=&year=): land on that
+  // statement period. Runs once on mount, before costing loads, then strips the
+  // params so later month changes stick. The ?reg= param is handled below.
+  useEffect(() => {
+    const m = parseInt(searchParams.get('month'), 10)
+    const y = parseInt(searchParams.get('year'), 10)
+    if (!Number.isNaN(m) && m >= 1 && m <= 12) setMonth(m)
+    if (!Number.isNaN(y)) setYear(y)
+    if (searchParams.has('month') || searchParams.has('year')) {
+      setSearchParams(prev => {
+        const p = new URLSearchParams(prev); p.delete('month'); p.delete('year'); return p
+      }, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Once the costing data is in, find the truck matching the searched reg, scroll
   // to it and flash a highlight. The ?reg= param is consumed (removed) so the
   // highlight doesn't re-fire when the user later changes month.
