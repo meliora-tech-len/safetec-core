@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
@@ -6,11 +6,13 @@ import {
   getBudgets, getBudget, createBudget, deleteBudget,
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
   addBudgetLine, deleteBudgetLine, upsertBudgetLineValue, refreshBudgetFromSystem,
+  getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
-import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, TrendingDown } from 'lucide-react'
+import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { errorMessage, formatCurrency } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
+import VerifiableAmount from '../components/VerifiableAmount'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -48,6 +50,8 @@ export default function BudgetsPage() {
   const [newSection, setNewSection] = useState(null) // null | { name, section_type }
   const [refreshing, setRefreshing] = useState(false)
   const [quickAdd, setQuickAdd] = useState(null)   // null | { kind: 'income'|'expense', sectionId, name }
+  const [verif, setVerif] = useState({})           // target -> ValueVerification
+  const [sortByCol, setSortByCol] = useState({})   // sectionId -> { key, dir }
 
   // Entities this user can see budgets for (admin: all)
   const budgetEntities = useMemo(() => {
@@ -85,6 +89,32 @@ export default function BudgetsPage() {
   }, [entityId, month, year])
 
   useEffect(() => { loadBudget() }, [loadBudget])
+
+  // ── Per-value verification overlay (reuses the generic /api/verifications) ────
+  const verifReqId = useRef(0)
+  const loadVerif = useCallback((budgetId) => {
+    if (!budgetId) { setVerif({}); return }
+    const reqId = ++verifReqId.current
+    getVerifications(`budget:${budgetId}:`)
+      .then(r => {
+        if (reqId !== verifReqId.current) return
+        const map = {}
+        for (const v of r.data) map[v.target] = v
+        setVerif(map)
+      })
+      .catch(() => { if (reqId === verifReqId.current) setVerif({}) })
+  }, [])
+
+  useEffect(() => { loadVerif(budget?.id) }, [budget?.id, loadVerif])
+
+  const handleVerifyValue = async (target, intent) => {
+    try { const { data } = await verifyValue(target, budget?.entity_id, intent); setVerif(prev => ({ ...prev, [data.target]: data })) }
+    catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
+  }
+  const handleFinalizeValue = async (target, intent) => {
+    try { const { data } = await finalizeValue(target, budget?.entity_id, intent); setVerif(prev => ({ ...prev, [data.target]: data })) }
+    catch (e) { toast.error(errorMessage(e, 'Lock failed')) }
+  }
 
   const handleCreate = async () => {
     setCreating(true)
@@ -203,6 +233,40 @@ export default function BudgetsPage() {
   const valueFor = (line, m, y) => (line.values || []).find(v => v.month === m && v.year === y)
 
   const cellKey = (lineId, m, y, field) => `${lineId}:${m}:${y}:${field}`
+
+  // Stable per-value target for the verification overlay (unique per budget/line/month/field)
+  const cellTarget = (lineId, m, y, field) => `budget:${budget.id}:${lineId}:${m}:${y}:${field}`
+
+  // ── Column sorting (view-only; defaults to alphabetical by Item name) ─────────
+  const colKey = (m, y, field) => `${m}:${y}:${field}`
+  const getSort = (sectionId) => sortByCol[sectionId] || { key: 'name', dir: 'asc' }
+  const toggleSort = (sectionId, key) => setSortByCol(p => {
+    const cur = p[sectionId] || { key: 'name', dir: 'asc' }
+    if (cur.key === key) return { ...p, [sectionId]: { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' } }
+    return { ...p, [sectionId]: { key, dir: 'asc' } }
+  })
+  const sortArrow = (sectionId, key) => {
+    const s = getSort(sectionId)
+    if (s.key !== key) return <ChevronsUpDown size={12} style={{ opacity: 0.35, flexShrink: 0 }} />
+    return s.dir === 'asc'
+      ? <ChevronUp size={12} style={{ flexShrink: 0 }} />
+      : <ChevronDown size={12} style={{ flexShrink: 0 }} />
+  }
+  const sortedLines = (section) => {
+    const s = getSort(section.id)
+    const lines = [...section.lines]
+    lines.sort((a, b) => {
+      let cmp
+      if (s.key === 'name') {
+        cmp = (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+      } else {
+        const [m, y, field] = s.key.split(':')
+        cmp = num(valueFor(a, Number(m), Number(y))?.[field]) - num(valueFor(b, Number(m), Number(y))?.[field])
+      }
+      return s.dir === 'asc' ? cmp : -cmp
+    })
+    return lines
+  }
 
   const cellValue = (line, m, y, field) => {
     const key = cellKey(line.id, m, y, field)
@@ -410,22 +474,30 @@ export default function BudgetsPage() {
                   <table className="compact-table">
                     <thead>
                       <tr>
-                        <th>Item</th>
+                        <th onClick={() => toggleSort(section.id, 'name')} style={thSortLeft} title="Sort by name">
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>Item {sortArrow(section.id, 'name')}</span>
+                        </th>
                         {months.map(({ month: m, year: y }) => (
                           isIncome
-                            ? <th key={`${m}-${y}`} style={{ textAlign: 'right' }}>{MONTHS[m - 1]} {y}</th>
+                            ? <th key={`${m}-${y}`} onClick={() => toggleSort(section.id, colKey(m, y, 'amount_due'))} style={thSortRight} title="Sort by amount">
+                                <span style={thSortLabel}>{MONTHS[m - 1]} {y} {sortArrow(section.id, colKey(m, y, 'amount_due'))}</span>
+                              </th>
                             : [
-                                <th key={`${m}-${y}-due`} style={{ textAlign: 'right' }}>{MONTHS[m - 1]} To Pay</th>,
-                                <th key={`${m}-${y}-paid`} style={{ textAlign: 'right' }}>{MONTHS[m - 1]} Paid</th>,
+                                <th key={`${m}-${y}-due`} onClick={() => toggleSort(section.id, colKey(m, y, 'amount_due'))} style={thSortRight} title="Sort by amount">
+                                  <span style={thSortLabel}>{MONTHS[m - 1]} To Pay {sortArrow(section.id, colKey(m, y, 'amount_due'))}</span>
+                                </th>,
+                                <th key={`${m}-${y}-paid`} onClick={() => toggleSort(section.id, colKey(m, y, 'amount_paid'))} style={thSortRight} title="Sort by amount">
+                                  <span style={thSortLabel}>{MONTHS[m - 1]} Paid {sortArrow(section.id, colKey(m, y, 'amount_paid'))}</span>
+                                </th>,
                               ]
                         ))}
                         <th style={{ width: 36 }}></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {section.lines.map(line => (
+                      {sortedLines(section).map(line => (
                         <tr key={line.id}>
-                          <td style={{ fontWeight: 500, minWidth: 180, whiteSpace: 'nowrap' }}>
+                          <td style={{ fontWeight: 500, minWidth: 180, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                             {line.name}
                             {line.source === 'auto' && (
                               <span className="badge badge-sent" style={{ fontSize: 9, marginLeft: 6, verticalAlign: 'middle' }}>auto</span>
@@ -435,18 +507,29 @@ export default function BudgetsPage() {
                             const fields = isIncome ? ['amount_due'] : ['amount_due', 'amount_paid']
                             return fields.map(field => {
                               const overridden = !!valueFor(line, m, y)?.is_overridden
+                              const target = cellTarget(line.id, m, y, field)
+                              const vstate = verif[target]
+                              const locked = !!vstate?.verified3_by
                               return (
-                              <td key={`${m}-${y}-${field}`} style={{ textAlign: 'right', width: 110, padding: '3px 8px' }}>
-                                <input
-                                  type="number" step="0.01"
-                                  value={cellValue(line, m, y, field)}
-                                  onChange={e => setCellEdits(p => ({ ...p, [cellKey(line.id, m, y, field)]: e.target.value }))}
-                                  onBlur={() => commitCell(line, m, y, field)}
-                                  onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
-                                  placeholder="—"
-                                  title={overridden ? 'Manually edited — a system refresh will not change this' : undefined}
-                                  style={overridden ? cellInputOverridden : cellInputStyle}
-                                />
+                              <td key={`${m}-${y}-${field}`} style={{ textAlign: 'right', minWidth: 118, padding: '3px 8px', verticalAlign: 'top' }}>
+                                <VerifiableAmount
+                                  target={target} state={vstate}
+                                  onVerify={handleVerifyValue} onFinalize={handleFinalizeValue}
+                                  currentUserId={user?.id} isAdmin={isAdmin}
+                                >
+                                  <input
+                                    type="number" step="0.01"
+                                    value={cellValue(line, m, y, field)}
+                                    onChange={e => setCellEdits(p => ({ ...p, [cellKey(line.id, m, y, field)]: e.target.value }))}
+                                    onBlur={() => commitCell(line, m, y, field)}
+                                    onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+                                    readOnly={locked}
+                                    placeholder="—"
+                                    title={locked ? 'Locked by final verification — remove the lock to edit'
+                                      : overridden ? 'Manually edited — a system refresh will not change this' : undefined}
+                                    style={locked ? cellInputLocked : overridden ? cellInputOverridden : cellInputStyle}
+                                  />
+                                </VerifiableAmount>
                               </td>
                               )
                             })
@@ -559,3 +642,15 @@ const cellInputOverridden = {
   border: '1px solid var(--accent)',
   fontWeight: 600,
 }
+
+// A value locked by final verification — not editable until the lock is removed.
+const cellInputLocked = {
+  ...cellInputStyle,
+  cursor: 'not-allowed',
+  color: 'var(--text-secondary)',
+}
+
+// Clickable sort headers.
+const thSortLeft = { cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }
+const thSortRight = { ...thSortLeft, textAlign: 'right' }
+const thSortLabel = { display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }
