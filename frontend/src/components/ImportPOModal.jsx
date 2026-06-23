@@ -49,17 +49,29 @@ function formatPoNumber(poNum) {
 // (e.g. "Project Code\n2605-4586" or "Order number...\nPOH... 2026/05/31 SFT003").
 function extractMetaFromRows(rows, centerIdx) {
   let po_date = '', supplier_code = '', project_code = ''
-  for (let ri = Math.max(0, centerIdx - 1); ri < Math.min(rows.length, centerIdx + 3); ri++) {
+  // Scan the PO header row (centerIdx) and the rows just after it FIRST, then the
+  // preceding row — so the PO's own Date wins over any load dates in the data rows.
+  const scanOrder = []
+  for (let ri = centerIdx; ri < Math.min(rows.length, centerIdx + 3); ri++) scanOrder.push(ri)
+  if (centerIdx - 1 >= 0) scanOrder.push(centerIdx - 1)
+  for (const ri of scanOrder) {
     const row = rows[ri]
     for (let ci = 0; ci < row.length; ci++) {
-      const s = String(row[ci] || '').trim()
+      const raw = row[ci]
+      const s = String(raw ?? '').trim()
       if (!s) continue
-      // Date: match anywhere inside the cell (handles "...POH... 2026/05/31 ...")
+      // Date: a text date anywhere in the cell ("...POH... 2026/05/31 ..."), or — when
+      // the Date column holds a real Excel date — the raw serial number on the PO header
+      // row itself. Restricting the serial path to centerIdx + a ~2009–2064 range keeps
+      // quantities, WB-ticket numbers and net-value amounts from being read as dates.
       if (!po_date) {
         const dm = s.match(/(\d{4}[\/\-]\d{2}[\/\-]\d{2})/)
         if (dm) {
           const d = toDateStr(dm[1])
           if (d && d >= '2000-01-01') po_date = d
+        } else if (ri === centerIdx && typeof raw === 'number' && raw >= 40000 && raw <= 60000) {
+          const d = toDateStr(raw)
+          if (d && d >= '2015-01-01' && d <= '2035-12-31') po_date = d
         }
       }
       // Supplier code: word-boundary match handles "...SFT003..." in multi-line cells
@@ -96,14 +108,33 @@ function buildColMap(headerRow) {
 }
 
 function parseDataRow(row, colMap) {
-  const horse_reg   = String(row[colMap.horse_reg   ?? 2] || '').trim()
-  const description = String(row[colMap.description ?? 1] || '').trim()
+  let horse_reg     = String(row[colMap.horse_reg   ?? 2] || '').trim()
+  let description   = String(row[colMap.description ?? 1] || '').trim()
   const quantity    = cleanNum(row[colMap.quantity   ?? 7])
   const price       = cleanNum(row[colMap.price      ?? 8])
   const net_value   = cleanNum(row[colMap.net_value  ?? 9])
   const load_wb     = String(row[colMap.load_wb      ?? 4] || '').trim()
   const wb_ticket   = String(row[colMap.wb_ticket    ?? 6] || '').trim()
+
+  // PDF→Excel sometimes merges the "Load Date" into the "Horse Reg" cell
+  // ("MW33SNGP   2026/04/14") — strip a trailing date so the reg stays clean.
+  horse_reg = horse_reg.replace(/\s+\d{4}[\/\-]\d{2}[\/\-]\d{2}\s*$/, '').trim()
+
+  // …and sometimes merges "Product"+"Description" into one cell (or shifts the
+  // Description column), leaving the mapped Description empty — which made the
+  // header fall back to the truck reg instead of the mine. Recover the route
+  // ("<mine> to PE") by scanning every cell for an "X to Y" pattern.
+  if (!description) {
+    for (const c of row) {
+      const rm = String(c ?? '').match(/([A-Za-z][A-Za-z/]*\s+to\s+[A-Za-z][A-Za-z/]*)/i)
+      if (rm) { description = rm[1].trim(); break }
+    }
+  }
+
   if (!horse_reg && !quantity) return null
+  // Drop the repeated PO-header/footer row ("…Order number…Project Code…Reference"):
+  // a real load line always carries a quantity or a net value.
+  if (!quantity && !net_value) return null
   return {
     description: horse_reg && description ? `${horse_reg} - ${description}` : horse_reg || description,
     loading_number: load_wb,

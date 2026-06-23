@@ -13,13 +13,19 @@ import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
-// True when an invoice came from a Tradekor PO import (Obhi/Safetec). The
-// importer stamps the notes with "PO Ref: POH…" and a header line item with the
-// POH reference — either marks it apart from a manually-keyed Tradekor invoice.
-function isPoImport(inv) {
-  if (/PO\s*Ref/i.test(inv?.notes || '')) return true
+// Pull the Tradekor PO number ("POH…") out of an invoice — the importer stamps it
+// in the notes ("PO Ref: POH…") and in the header line item ("MINE POH … - TDK/…").
+function extractPOH(inv) {
+  const fromNotes = (inv?.notes || '').match(/POH\s*\d+/i)
+  if (fromNotes) return fromNotes[0].replace(/\s+/g, '').toUpperCase()
   const header = (inv?.line_items || []).find(li => li.line_type === 'header')
-  return /POH\s*\d+/i.test(header?.description || '')
+  const m = (header?.description || '').match(/POH\s*\d+/i)
+  return m ? m[0].replace(/\s+/g, '').toUpperCase() : ''
+}
+
+// True when an invoice came from a Tradekor PO import (Obhi/Safetec/Bokamosho).
+function isPoImport(inv) {
+  return !!extractPOH(inv)
 }
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -94,6 +100,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
     return applySort(filtered, sort, (item, col) => {
       if (col === 'recipient') return item.supplier?.name || item.customer?.name || ''
       if (col === 'entity_code') return item.entity?.code || ''
+      if (col === 'poh') return extractPOH(item)
       return item[col]
     })
   }, [allInvoices, showCancelled, filterStatus, sort])
@@ -174,6 +181,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
             data={displayedInvoices}
             columns={[
               { header: 'Number',      key: 'invoice_number' },
+              ...(isInvoice ? [{ header: 'POH', value: r => extractPOH(r) }] : []),
               { header: 'Bill To',     value: r => r.supplier?.name || r.customer?.name || '' },
               { header: 'Entity',      value: r => r.entity?.code || '' },
               { header: 'Status',      key: 'status' },
@@ -280,6 +288,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
               <SortableHeader label="Supplier / Customer" col="recipient" sort={sort} onSort={onSort} />
               <SortableHeader label="Entity" col="entity_code" sort={sort} onSort={onSort} />
               {isInvoice && <th>Type</th>}
+              {isInvoice && <SortableHeader label="POH" col="poh" sort={sort} onSort={onSort} />}
               <SortableHeader label="Issue Date" col="issue_date" sort={sort} onSort={onSort} />
               <SortableHeader label="Due Date" col="due_date" sort={sort} onSort={onSort} />
               <SortableHeader label="Status" col="status" sort={sort} onSort={onSort} />
@@ -289,9 +298,9 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={(isInvoice ? 9 : 8) + (allowBulkPaid ? 1 : 0)} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
+              <tr><td colSpan={(isInvoice ? 10 : 8) + (allowBulkPaid ? 1 : 0)} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
             ) : displayedInvoices.length === 0 ? (
-              <tr><td colSpan={(isInvoice ? 9 : 8) + (allowBulkPaid ? 1 : 0)}>
+              <tr><td colSpan={(isInvoice ? 10 : 8) + (allowBulkPaid ? 1 : 0)}>
                 <div className="empty-state"><FileText size={32} /><p>No {title.toLowerCase()} found</p></div>
               </td></tr>
             ) : displayedInvoices.map(inv => (
@@ -320,6 +329,11 @@ export default function InvoicesPage({ docType = 'invoice' }) {
                     {isPoImport(inv)
                       ? <span style={{ display: 'inline-block', padding: '1px 7px', borderRadius: 4, fontSize: 11, fontWeight: 600, color: '#92400e', background: 'rgba(245,158,11,0.18)' }}>PO</span>
                       : <span className="text-muted">—</span>}
+                  </td>
+                )}
+                {isInvoice && (
+                  <td className="font-mono" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                    {extractPOH(inv) || <span className="text-muted">—</span>}
                   </td>
                 )}
                 <td className="text-muted" style={{ fontSize: 12 }}>{formatDate(inv.issue_date)}</td>
