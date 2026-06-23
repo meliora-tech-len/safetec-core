@@ -12,6 +12,7 @@ services:
       - safetec
     volumes:
       - logo_storage:/app/static/logos
+      - invoice_uploads:/app/uploads
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -42,3 +43,4 @@ networks:
 
 volumes:
   logo_storage:
+  invoice_uploads:
