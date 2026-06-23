@@ -1745,6 +1745,13 @@ class PendingVerificationInvoice(BaseModel):
     statement_month: Optional[int] = None
     statement_year: Optional[int] = None
     created_at: datetime
+    # A one-off expense is captured against a free-text name (no registered
+    # supplier); source_module says where it was captured (Subcontractor /
+    # Diesel / Fixed expense / Costing). Null for true supplier invoices.
+    # source_url deep-links to that costing sheet (null if unresolvable).
+    is_one_off: bool = False
+    source_module: Optional[str] = None
+    source_url: Optional[str] = None
     verified_by_initials: Optional[str] = None
     verified2_by_initials: Optional[str] = None
 
@@ -2162,6 +2169,7 @@ class StatementLineBase(BaseModel):
     description:    Optional[str]  = None
     invoice_number: Optional[str]  = None
     amount:         Decimal        = Decimal("0")
+    kind:           str            = "invoice"  # invoice | payment | deduction
     sort_order:     int            = 0
 
 class StatementLineCreate(StatementLineBase):

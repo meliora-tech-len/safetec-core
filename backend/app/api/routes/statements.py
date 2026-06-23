@@ -87,6 +87,7 @@ def create_statement(
             description    = line.description,
             invoice_number = line.invoice_number,
             amount         = line.amount,
+            kind           = line.kind,
             sort_order     = i,
         ))
     db.commit()
@@ -168,6 +169,7 @@ def update_statement(
                 description    = line.description,
                 invoice_number = line.invoice_number,
                 amount         = line.amount,
+                kind           = line.kind,
                 sort_order     = i,
             ))
 

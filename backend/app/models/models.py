@@ -1307,6 +1307,8 @@ class StatementLine(Base):
     description    = Column(Text, nullable=True)
     invoice_number = Column(String(100), nullable=True)
     amount         = Column(Numeric(15, 2), nullable=False, default=0)
+    # 'invoice' (outstanding) | 'payment' (received) | 'deduction' (credit)
+    kind           = Column(String(20), nullable=False, default="invoice")
     sort_order     = Column(Integer, default=0)
 
     statement = relationship("Statement", back_populates="lines")

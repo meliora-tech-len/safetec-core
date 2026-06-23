@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Plus, Trash2, Save, ChevronDown, ChevronUp, FileSpreadsheet, FileText, ArrowLeft, ListChecks, X, CreditCard, CalendarRange, AlertTriangle } from 'lucide-react'
+import { Plus, Trash2, Save, ChevronDown, ChevronUp, FileSpreadsheet, FileText, ArrowLeft, ListChecks, X, CreditCard, MinusCircle, CalendarRange, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { parseISO, isValid, format, isWithinInterval } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
@@ -80,8 +80,25 @@ function invoiceRow(inv, withPoh) {
   return row
 }
 
-function blankRow()        { return { _id: uid(), kind: 'invoice', line_date: today(), description: '', invoice_number: '', amount: '' } }
-function blankPaymentRow() { return { _id: uid(), kind: 'payment', line_date: today(), description: 'PAYMENT RECEIVED', invoice_number: '', amount: '' } }
+function blankRow()          { return { _id: uid(), kind: 'invoice',   line_date: today(), description: '', invoice_number: '', amount: '' } }
+function blankPaymentRow()   { return { _id: uid(), kind: 'payment',   line_date: today(), description: 'PAYMENT RECEIVED', invoice_number: '', amount: '' } }
+function blankDeductionRow() { return { _id: uid(), kind: 'deduction', line_date: today(), description: '', invoice_number: '', amount: '' } }
+
+// How a row is bucketed for totals/rendering. Explicit kind wins; a legacy row
+// with no real kind but a negative amount is treated as a payment.
+function rowBucket(r) {
+  if (r.kind === 'deduction') return 'deduction'
+  if (r.kind === 'payment')   return 'payment'
+  return (parseFloat(r.amount) || 0) < 0 ? 'payment' : 'invoice'
+}
+
+// Cycle order for the per-row type toggle button.
+const KIND_CYCLE = { invoice: 'payment', payment: 'deduction', deduction: 'invoice' }
+const KIND_META = {
+  invoice:   { label: 'INV',  color: 'var(--accent)',  bg: 'rgba(37,99,235,0.10)', tint: undefined },
+  payment:   { label: 'PAID', color: 'var(--success)', bg: 'rgba(34,197,94,0.12)', tint: 'rgba(34,197,94,0.04)' },
+  deduction: { label: 'LESS', color: '#b45309',        bg: 'rgba(245,158,11,0.14)', tint: 'rgba(245,158,11,0.05)' },
+}
 
 
 export default function StatementEditorPage() {
@@ -129,7 +146,10 @@ export default function StatementEditorPage() {
         setTitle(s.title || '')
         setRows((s.lines || []).map(l => ({
           _id:            uid(),
-          kind:           (parseFloat(l.amount) || 0) < 0 ? 'payment' : 'invoice',
+          // Trust an explicit payment/deduction kind; infer legacy negatives as payments.
+          kind:           (l.kind === 'payment' || l.kind === 'deduction')
+                            ? l.kind
+                            : ((parseFloat(l.amount) || 0) < 0 ? 'payment' : 'invoice'),
           line_date:      l.line_date ? l.line_date.slice(0, 10) : '',
           description:    l.description || '',
           invoice_number: l.invoice_number || '',
@@ -151,10 +171,20 @@ export default function StatementEditorPage() {
 
   // ─── row helpers ──────────────────────────────────────────────────────────
   function setRow(id, field, value) {
-    setRows(prev => prev.map(r => r._id === id ? { ...r, [field]: value } : r))
+    setRows(prev => prev.map(r => {
+      if (r._id !== id) return r
+      const next = { ...r, [field]: value }
+      // Typing a negative amount on a plain invoice row makes it a deduction,
+      // so it nets off the total without being reported as "Paid".
+      if (field === 'amount' && (parseFloat(value) || 0) < 0 && next.kind === 'invoice') {
+        next.kind = 'deduction'
+      }
+      return next
+    }))
   }
   function addRow()       { setRows(prev => [...prev, blankRow()]) }
   function addPayment()   { setRows(prev => [...prev, blankPaymentRow()]) }
+  function addDeduction() { setRows(prev => [...prev, blankDeductionRow()]) }
   function removeRow(_id) { setRows(prev => prev.length > 1 ? prev.filter(r => r._id !== _id) : prev) }
   function moveRow(_id, dir) {
     setRows(prev => {
@@ -249,10 +279,11 @@ export default function StatementEditorPage() {
     }
   }
 
-  // Force the sign by row kind (payment = negative outstanding/paid).
+  // Payments and deductions always reduce the total (forced negative); invoice
+  // lines keep the sign the user typed.
   function signedAmount(r) {
     const n = parseFloat(r.amount) || 0
-    return r.kind === 'payment' ? -Math.abs(n) : Math.abs(n)
+    return (r.kind === 'payment' || r.kind === 'deduction') ? -Math.abs(n) : n
   }
 
   // ─── cancel / discard ───────────────────────────────────────────────────────
@@ -279,6 +310,7 @@ export default function StatementEditorPage() {
         description:    r.description || null,
         invoice_number: r.invoice_number || null,
         amount:         signedAmount(r),
+        kind:           rowBucket(r),
         sort_order:     i,
       })),
     }
@@ -311,6 +343,7 @@ export default function StatementEditorPage() {
         description:    r.description || null,
         invoice_number: r.invoice_number || null,
         amount:         signedAmount(r),
+        kind:           rowBucket(r),
         sort_order:     i,
       })),
     }
@@ -340,9 +373,10 @@ export default function StatementEditorPage() {
   // ─── computed ─────────────────────────────────────────────────────────────
   const selectedCustomer = customers.find(c => String(c.id) === String(customerId)) || null
   const isTradekor       = (selectedCustomer?.name || '').toLowerCase().includes('tradekor')
-  const total            = rows.reduce((s, r) => s + signedAmount(r), 0)
-  const outstandingTotal = rows.reduce((s, r) => { const n = signedAmount(r); return s + (n > 0 ? n : 0) }, 0)
-  const paidTotal        = rows.reduce((s, r) => { const n = signedAmount(r); return s + (n < 0 ? n : 0) }, 0)
+  const outstandingTotal = rows.reduce((s, r) => rowBucket(r) === 'invoice'   ? s + signedAmount(r) : s, 0)
+  const paidTotal        = rows.reduce((s, r) => rowBucket(r) === 'payment'   ? s + signedAmount(r) : s, 0)
+  const deductionTotal   = rows.reduce((s, r) => rowBucket(r) === 'deduction' ? s + signedAmount(r) : s, 0)
+  const total            = outstandingTotal + paidTotal + deductionTotal
 
   if (loading) return (
     <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
@@ -445,8 +479,11 @@ export default function StatementEditorPage() {
           <button className="btn-ghost btn-sm" onClick={addPayment}>
             <CreditCard size={14} style={{ color: 'var(--success)' }} /> Add Payment Line
           </button>
+          <button className="btn-ghost btn-sm" onClick={addDeduction}>
+            <MinusCircle size={14} style={{ color: '#b45309' }} /> Add Deduction
+          </button>
           <span style={{ fontSize: 11, color: 'var(--text-muted)', flex: 1 }}>
-            Pick the customer's invoices, then add any payments received. Use the ⇅ arrows to order rows.
+            Pick the customer's invoices, then add any payments or deductions. A deduction reduces the amount due but is not shown as "Paid". Use the ⇅ arrows to order rows.
           </span>
         </div>
 
@@ -486,6 +523,9 @@ export default function StatementEditorPage() {
               <button className="btn-ghost btn-sm" onClick={addPayment}>
                 <CreditCard size={13} style={{ color: 'var(--success)' }} /> Add Payment
               </button>
+              <button className="btn-ghost btn-sm" onClick={addDeduction}>
+                <MinusCircle size={13} style={{ color: '#b45309' }} /> Add Deduction
+              </button>
               <button className="btn-ghost btn-sm" onClick={addRow}>
                 <Plus size={13} /> Add Invoice Row
               </button>
@@ -506,25 +546,27 @@ export default function StatementEditorPage() {
               </thead>
               <tbody>
                 {rows.map((row, idx) => {
-                  const isPayment = row.kind === 'payment'
+                  const bucket    = rowBucket(row)
+                  const isPayment = bucket === 'payment'
+                  const meta      = KIND_META[bucket] || KIND_META.invoice
                   return (
                     <tr
                       key={row._id}
-                      style={{ background: isPayment ? 'rgba(34,197,94,0.04)' : undefined }}
+                      style={{ background: meta.tint }}
                     >
                       <td style={{ ...tdStyle, padding: '4px 6px', whiteSpace: 'nowrap' }}>
                         <button
                           type="button"
-                          title={isPayment ? 'Payment line — click to make an invoice line' : 'Invoice line — click to make a payment line'}
-                          onClick={() => setRow(row._id, 'kind', isPayment ? 'invoice' : 'payment')}
+                          title="Click to switch line type: Invoice → Payment → Deduction"
+                          onClick={() => setRow(row._id, 'kind', KIND_CYCLE[bucket] || 'payment')}
                           style={{
                             border: 'none', borderRadius: 4, cursor: 'pointer', padding: '2px 6px',
-                            fontSize: 10, fontWeight: 700, letterSpacing: '0.03em',
-                            color: isPayment ? 'var(--success)' : 'var(--accent)',
-                            background: isPayment ? 'rgba(34,197,94,0.12)' : 'rgba(37,99,235,0.10)',
+                            fontSize: 10, fontWeight: 700, letterSpacing: '0.03em', minWidth: 34,
+                            color: meta.color,
+                            background: meta.bg,
                           }}
                         >
-                          {isPayment ? 'PAID' : 'INV'}
+                          {meta.label}
                         </button>
                         <span style={{ display: 'inline-flex', flexDirection: 'column', marginLeft: 4, verticalAlign: 'middle' }}>
                           <button className="btn-icon" onClick={() => moveRow(row._id, -1)} disabled={idx === 0}
@@ -577,7 +619,7 @@ export default function StatementEditorPage() {
                           placeholder="0.00"
                           style={{
                             ...inputStyle, width: 130, textAlign: 'right',
-                            color: isPayment ? 'var(--success)' : undefined,
+                            color: bucket === 'invoice' ? undefined : meta.color,
                           }}
                         />
                       </td>
@@ -611,6 +653,12 @@ export default function StatementEditorPage() {
               Paid:
               <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--success)' }}>R&nbsp;{fmtAmt(paidTotal)}</strong>
             </span>
+            {deductionTotal !== 0 && (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                Deductions:
+                <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: '#b45309' }}>R&nbsp;{fmtAmt(deductionTotal)}</strong>
+              </span>
+            )}
             <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>
               Amount Due:
               <strong style={{ marginLeft: 6, fontFamily: 'monospace', color: 'var(--text-primary)' }}>R&nbsp;{fmtAmt(total)}</strong>

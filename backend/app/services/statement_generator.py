@@ -37,16 +37,32 @@ def _sorted_lines(stmt):
     return sorted(stmt.lines, key=lambda l: getattr(l, "sort_order", 0) or 0)
 
 
+def _classify(line):
+    """Bucket a line as 'outstanding' | 'payment' | 'deduction' and return the
+    amount. Explicit kind wins; a legacy line with no/`invoice` kind but a
+    negative amount is treated as a payment (old behaviour)."""
+    kind = (getattr(line, "kind", None) or "invoice").lower()
+    amt = Decimal(str(line.amount or 0))
+    if kind == "deduction":
+        return "deduction", amt
+    if kind == "payment":
+        return "payment", amt
+    return ("payment", amt) if amt < 0 else ("outstanding", amt)
+
+
 def _totals(lines):
     outstanding = Decimal("0")
     paid = Decimal("0")
+    deductions = Decimal("0")
     for l in lines:
-        amt = Decimal(str(l.amount or 0))
-        if amt < 0:
+        bucket, amt = _classify(l)
+        if bucket == "payment":
             paid += amt
+        elif bucket == "deduction":
+            deductions += amt
         else:
             outstanding += amt
-    return outstanding, paid, outstanding + paid
+    return outstanding, paid, deductions, outstanding + paid + deductions
 
 
 def _invoice_desc(line):
@@ -175,7 +191,7 @@ def generate_statement_pdf(stmt, entity, customer) -> bytes:
         story.append(Spacer(1, 4*mm))
 
     lines = _sorted_lines(stmt)
-    outstanding, paid, amount_due = _totals(lines)
+    outstanding, paid, deductions, amount_due = _totals(lines)
 
     # ── Statement-to block + meta (date / amount due) ─────────────────────────
     bill_lines = [Paragraph("STATEMENT TO", s_section_label),
@@ -223,15 +239,25 @@ def generate_statement_pdf(stmt, entity, customer) -> bytes:
     ]]
     item_row_idxs = []
     for line in lines:
-        amt = Decimal(str(line.amount or 0))
+        bucket, amt = _classify(line)
         idx = len(table_rows)
-        if amt < 0:
+        if bucket == "payment":
             table_rows.append([
                 Paragraph(line.description or "", s_line_desc),
                 Paragraph(line.invoice_number or "", s_line_ctr),
                 Paragraph(format_date(line.line_date) if line.line_date else "", s_line_ctr),
                 Paragraph(format_currency(amt), s_pay_num),
                 Paragraph("", s_line_num),
+            ])
+        elif bucket == "deduction":
+            # A credit/deduction: negative in the OUTSTANDING column (so it nets
+            # off the amount due inline) but NOT styled as a payment.
+            table_rows.append([
+                Paragraph(_desc_text(line), s_line_desc),
+                Paragraph(line.invoice_number or "", s_line_ctr),
+                Paragraph("", s_line_ctr),
+                Paragraph("", s_line_num),
+                Paragraph(format_currency(amt), s_line_num),
             ])
         else:
             table_rows.append([
@@ -278,12 +304,19 @@ def generate_statement_pdf(stmt, entity, customer) -> bytes:
             bank_content.append(Paragraph(f"Reference:  {entity.bank_reference}", s_bank_detail))
 
     totals_data = [
-        [Paragraph("Paid",       s_total_label), Paragraph(format_currency(paid), s_total_value)],
-        [Paragraph("Amount Due", s_grand_label), Paragraph(format_currency(amount_due), s_grand_value)],
+        [Paragraph("Paid", s_total_label), Paragraph(format_currency(paid), s_total_value)],
     ]
+    if deductions != 0:
+        totals_data.append(
+            [Paragraph("Deductions", s_total_label), Paragraph(format_currency(deductions), s_total_value)]
+        )
+    totals_data.append(
+        [Paragraph("Amount Due", s_grand_label), Paragraph(format_currency(amount_due), s_grand_value)]
+    )
+    grand_idx = len(totals_data) - 1
     totals_right = Table(totals_data, colWidths=[30*mm, 36*mm])
     totals_right.setStyle(TableStyle([
-        ("BACKGROUND",    (0, 1), (-1, 1), col_hdr_bg),
+        ("BACKGROUND",    (0, grand_idx), (-1, grand_idx), col_hdr_bg),
         ("TOPPADDING",    (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("LEFTPADDING",   (0, 0), (-1, -1), 4), ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
         ("LINEABOVE",     (0, 0), (-1, 0), 0.5, divider),
@@ -330,7 +363,7 @@ def generate_statement_excel(stmt, entity, customer) -> bytes:
     money_fmt  = '#,##0.00'
 
     lines = _sorted_lines(stmt)
-    outstanding, paid, amount_due = _totals(lines)
+    outstanding, paid, deductions, amount_due = _totals(lines)
 
     wb = Workbook()
     ws = wb.active
@@ -400,14 +433,16 @@ def generate_statement_excel(stmt, entity, customer) -> bytes:
     row += 1
 
     for line in lines:
-        amt = float(line.amount or 0)
-        if amt < 0:
+        bucket, amt_dec = _classify(line)
+        amt = float(amt_dec)
+        if bucket == "payment":
             put(row, 1, line.description or "", bordered=True)
             put(row, 2, line.invoice_number or "", align=Alignment(horizontal="center"), bordered=True)
             put(row, 3, format_date(line.line_date) if line.line_date else "", align=Alignment(horizontal="center"), bordered=True)
             put(row, 4, amt, fmt=money_fmt, align=Alignment(horizontal="right"), bordered=True)
             put(row, 5, None, bordered=True)
         else:
+            # outstanding (positive) or deduction (negative) — both in OUTSTANDING
             put(row, 1, _desc_text(line), bordered=True)
             put(row, 2, line.invoice_number or "", align=Alignment(horizontal="center"), bordered=True)
             put(row, 3, None, bordered=True)
@@ -419,6 +454,10 @@ def generate_statement_excel(stmt, entity, customer) -> bytes:
     put(row, 3, "PAID", font=Font(bold=True), align=Alignment(horizontal="right"))
     put(row, 4, float(paid), fmt=money_fmt, font=Font(bold=True), align=Alignment(horizontal="right"))
     row += 1
+    if deductions != 0:
+        put(row, 3, "DEDUCTIONS", font=Font(bold=True), align=Alignment(horizontal="right"))
+        put(row, 4, float(deductions), fmt=money_fmt, font=Font(bold=True), align=Alignment(horizontal="right"))
+        row += 1
     put(row, 3, "AMOUNT DUE", font=white_bold, fill=grand_fill, align=Alignment(horizontal="right"))
     put(row, 4, float(amount_due), fmt=money_fmt, font=white_bold, fill=grand_fill, align=Alignment(horizontal="right"))
     row += 2
