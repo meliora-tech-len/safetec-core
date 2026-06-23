@@ -105,6 +105,20 @@ export default function InvoicesPage({ docType = 'invoice' }) {
     })
   }, [allInvoices, showCancelled, filterStatus, sort])
 
+  // Totals strip under the table — reflects the current filters/sort. Paid+Sent
+  // are the "settled or issued" invoices; Outstanding is everything else still
+  // owing (overdue/ready/draft); Overall is every non-cancelled invoice.
+  const totals = useMemo(() => {
+    let paidSent = 0, overall = 0
+    for (const inv of displayedInvoices) {
+      if (inv.status === 'cancelled') continue
+      const total = parseFloat(inv.total) || 0
+      overall += total
+      if (inv.status === 'paid' || inv.status === 'sent') paidSent += total
+    }
+    return { paidSent, outstanding: overall - paidSent, overall }
+  }, [displayedInvoices])
+
   const handlePdf = async (e, inv) => {
     e.stopPropagation()
     try {
@@ -384,6 +398,32 @@ export default function InvoicesPage({ docType = 'invoice' }) {
               </tr>
             ))}
           </tbody>
+          {!loading && displayedInvoices.length > 0 && (
+            <tfoot>
+              {[
+                { label: 'Paid + Sent', value: totals.paidSent, color: 'var(--success)' },
+                { label: 'Outstanding', value: totals.outstanding, color: 'var(--danger)' },
+                { label: 'Overall Total', value: totals.overall, color: 'var(--text)', strong: true },
+              ].map((row, i) => (
+                <tr key={i} style={row.strong ? { borderTop: '2px solid var(--border)' } : {}}>
+                  <td
+                    colSpan={(allowBulkPaid ? 1 : 0) + 6 + (isInvoice ? 2 : 0)}
+                    className="text-right text-muted"
+                    style={{ fontWeight: row.strong ? 700 : 600, fontSize: 12, paddingTop: row.strong ? 10 : 4, paddingBottom: 4 }}
+                  >
+                    {row.label}
+                  </td>
+                  <td
+                    className="text-right"
+                    style={{ fontWeight: row.strong ? 800 : 700, fontSize: row.strong ? 14 : 13, color: row.color, paddingTop: row.strong ? 10 : 4, paddingBottom: 4 }}
+                  >
+                    {formatCurrency(row.value)}
+                  </td>
+                  <td></td>
+                </tr>
+              ))}
+            </tfoot>
+          )}
         </table>
       </div>
 
