@@ -1148,6 +1148,14 @@ function NewInvoiceRow({ form, setForm, saving, onSave, onCancel, firstInputRef,
   )
 }
 
+// Uppercased "<SUPPLIER> DIESEL" label — only appends "DIESEL" when the supplier
+// name doesn't already end in it (e.g. "Intsimbi Diesel" → "INTSIMBI DIESEL",
+// "Oukop" → "OUKOP DIESEL"), so the word is never doubled up.
+const dieselLabel = (name) => {
+  const u = (name || '').toUpperCase().trim()
+  return u.endsWith('DIESEL') ? u : `${u} DIESEL`
+}
+
 // ── Diesel Group Table ─────────────────────────────────────────────────────────
 
 function DieselGroupTable({ group, truckReg, V }) {
@@ -1463,7 +1471,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                   <tr>
                     <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        {key} DIESEL
+                        {dieselLabel(supplierName)}
                         {/* Diesel spot-check "i" icon — hidden from users for now, keep in code.
                         {hasDiesel && (
                           <button
@@ -1488,7 +1496,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
                     <td style={tdStyle}></td>
                   </tr>
                   <tr>
-                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>{key} DIESEL ADMIN FEE</td>
+                    <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>{dieselLabel(supplierName)} ADMIN FEE</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
@@ -1744,7 +1752,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
             <div className="modal-header">
               <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
                 <Info size={16} style={{ color: 'var(--accent)' }} />
-                {dieselModal.supplier_name} Diesel — {truck.registration}
+                {dieselLabel(dieselModal.supplier_name)} — {truck.registration}
               </h2>
               <button className="btn-icon btn-ghost" onClick={() => setDieselModal(null)}><X size={16} /></button>
             </div>

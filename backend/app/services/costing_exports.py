@@ -15,6 +15,14 @@ MONTH_NAMES = [
 D0 = Decimal("0")
 
 
+def _diesel_label(name) -> str:
+    """"<Supplier> Diesel" label — only appends "Diesel" when the supplier name
+    doesn't already end in it (e.g. "Intsimbi Diesel" stays as-is, "Oukop" →
+    "Oukop Diesel"), so the word is never doubled up."""
+    n = (name or "").strip()
+    return n if n.upper().endswith("DIESEL") else f"{n} Diesel"
+
+
 def _fmt(v) -> str:
     try:
         return f"R {float(v):,.2f}"
@@ -197,8 +205,8 @@ def generate_costing_pdf(costing, entity) -> bytes:
 
         # Diesel groups
         for dg in (td.diesel_groups or []):
-            rows.append([P(f"{dg.supplier_name} Diesel", s_lbl), dash, dash, dash, P(_fmt(dg.tot_excl_admin_fee), s_val)])
-            rows.append([P(f"{dg.supplier_name} Diesel Admin Fee", s_lbl), dash, dash, P(_fmt(dg.tot_admin_fee_incl), s_val), dash])
+            rows.append([P(_diesel_label(dg.supplier_name), s_lbl), dash, dash, dash, P(_fmt(dg.tot_excl_admin_fee), s_val)])
+            rows.append([P(f"{_diesel_label(dg.supplier_name)} Admin Fee", s_lbl), dash, dash, P(_fmt(dg.tot_admin_fee_incl), s_val), dash])
 
         # Supplier invoices
         if td.supplier_invoices:
@@ -502,9 +510,9 @@ def generate_costing_excel(costing, entity) -> bytes:
 
         # Diesel groups
         for dg in (td.diesel_groups or []):
-            write_row([f"{dg.supplier_name} Diesel", None, None, None, fmt_val(dg.tot_excl_admin_fee)], fnt=LBL_FONT, row_h=15)
+            write_row([_diesel_label(dg.supplier_name), None, None, None, fmt_val(dg.tot_excl_admin_fee)], fnt=LBL_FONT, row_h=15)
             exp_excl_cells.append(f"{EXP_E_L}{row - 1}")
-            write_row([f"{dg.supplier_name} Diesel Admin Fee", None, None, fmt_val(dg.tot_admin_fee_incl), None], fnt=LBL_FONT, row_h=15)
+            write_row([f"{_diesel_label(dg.supplier_name)} Admin Fee", None, None, fmt_val(dg.tot_admin_fee_incl), None], fnt=LBL_FONT, row_h=15)
             exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
 
         # Supplier invoices
