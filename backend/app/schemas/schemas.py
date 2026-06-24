@@ -1567,6 +1567,11 @@ class InvoiceLineItemImport(BaseModel):
     sort_order: int = 0
     slip_date: Optional[str] = None
     rate_per_litre: Optional[Decimal] = None
+    # Per-line diesel admin fee taken straight from the sheet (Intsimbi). When set,
+    # VAT is added to this fee only (diesel is zero-rated): the line's incl-VAT
+    # amount and the fill-up's admin fee/VAT are derived from it instead of the
+    # entity's admin-fee %.
+    admin_fee: Optional[Decimal] = None
 
 
 class InvoiceImportItem(BaseModel):

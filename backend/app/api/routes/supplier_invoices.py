@@ -3,7 +3,7 @@ import os
 import httpx
 from pathlib import Path
 from datetime import datetime, timezone, timedelta, date as date_type
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from collections import defaultdict
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
@@ -1609,6 +1609,8 @@ def bulk_import_invoices(
     diesel_settings = DieselCalculationService.get_diesel_settings(db, payload.entity_id)
     admin_fee_pct = Decimal(str(diesel_settings.admin_fee_pct)) if diesel_settings else Decimal("0")
     apply_admin_fee = diesel_settings.apply_admin_fee if diesel_settings else False
+    entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
+    vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
 
     for item in payload.invoices:
         num = (item.invoice_number or '').strip()
@@ -1645,6 +1647,17 @@ def bulk_import_invoices(
                 except (ValueError, TypeError):
                     pass
 
+            # Intsimbi carries a per-line admin fee; VAT applies to that fee only
+            # (diesel is zero-rated). Fold fee + its VAT into the stored incl-VAT
+            # amount so the invoice total (Σ incl) reflects what the supplier bills.
+            line_admin_fee = Decimal(str(li.admin_fee)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if li.admin_fee is not None else None
+            line_excl = Decimal(str(li.amount_excl_vat or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if line_admin_fee is not None:
+                line_fee_vat = (line_admin_fee * vat_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                stored_incl = line_excl + line_admin_fee + line_fee_vat
+            else:
+                stored_incl = li.amount_incl_vat
+
             db.add(SupplierInvoiceLineItem(
                 invoice_id=inv.id,
                 item_code=li.item_code,
@@ -1652,7 +1665,7 @@ def bulk_import_invoices(
                 unit=li.unit,
                 quantity=li.quantity,
                 amount_excl_vat=li.amount_excl_vat,
-                amount_incl_vat=li.amount_incl_vat,
+                amount_incl_vat=stored_incl,
                 sort_order=li.sort_order,
                 line_date=slip_date_obj,
             ))
@@ -1743,12 +1756,25 @@ def bulk_import_invoices(
                     _archive_orphaned_placeholder(db, old_inv_id, inv.id, current_user.id, slip=slip)
                 continue
 
-            amounts = DieselCalculationService.calculate_fillup_amounts(
-                litres=litres_d,
-                rate_per_litre=rate_d,
-                admin_fee_pct=admin_fee_pct,
-                apply_admin_fee=apply_admin_fee,
-            )
+            if line_admin_fee is not None:
+                # Intsimbi: admin fee comes from the sheet, VAT on the fee only.
+                amount_2dp = line_excl
+                fee_vat = (line_admin_fee * vat_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                amounts = {
+                    "amount": amount_2dp,
+                    "admin_fee_amount": line_admin_fee,
+                    "admin_fee_vat": fee_vat,
+                    "total_amount": amount_2dp + line_admin_fee + fee_vat,
+                }
+                fill_admin_pct = (line_admin_fee / amount_2dp).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if amount_2dp > 0 else Decimal("0")
+            else:
+                amounts = DieselCalculationService.calculate_fillup_amounts(
+                    litres=litres_d,
+                    rate_per_litre=rate_d,
+                    admin_fee_pct=admin_fee_pct,
+                    apply_admin_fee=apply_admin_fee,
+                )
+                fill_admin_pct = admin_fee_pct
             db.add(DieselFillUp(
                 entity_id=payload.entity_id,
                 truck_id=truck.id,
@@ -1759,7 +1785,7 @@ def bulk_import_invoices(
                 invoice_number=num or None,
                 slip_number=slip,
                 supplier_invoice_id=inv.id,
-                admin_fee_pct=admin_fee_pct,
+                admin_fee_pct=fill_admin_pct,
                 diesel_type=diesel_type_for_supplier(supplier),
                 created_by=current_user.id,
                 **amounts,

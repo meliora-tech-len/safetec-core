@@ -150,6 +150,76 @@ function parseWBGSheet(ws) {
   return invoices
 }
 
+// True when the sheet is an Intsimbi "Diesel Transaction Report" (vs a WBG sheet).
+function isIntsimbiSheet(ws) {
+  const grid = XLSX.utils.sheet_to_json(ws, { header: 1 })
+  return grid.some(r => (r || []).some(c => String(c ?? '').trim().toUpperCase() === 'LDISPENSED'))
+}
+
+// Parse the Intsimbi sheet into the same {invoice → line_items} shape the importer
+// expects. One row = one fill-up; rows are grouped by the INV (supplier invoice
+// number). Columns: Date | … | TransID | Driver | Slip | RegNo | … |
+// LDispensed(litres) | … | Price(rate) | Km's | Price(amount excl) | Amin Fee | INV.
+// The unique per-fill reference is TransID (the printed "Slip" repeats), so we use
+// it as item_code. Diesel is zero-rated; VAT applies only to the admin fee, so the
+// line's incl-VAT = diesel + admin fee + VAT(admin fee).
+function parseIntsimbiSheet(ws) {
+  const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100
+  const r4 = (n) => Math.round((Number(n) + Number.EPSILON) * 10000) / 10000
+  const grid = XLSX.utils.sheet_to_json(ws, { header: 1, cellDates: true })
+
+  const hdr = grid.findIndex(r => (r || []).some(c => String(c ?? '').trim().toUpperCase() === 'LDISPENSED'))
+  if (hdr < 0) throw new Error('Could not find the header row (LDispensed).')
+  const H = (grid[hdr] || []).map(c => String(c ?? '').trim().toUpperCase())
+  const find = (t) => H.indexOf(t)
+  const cDate = find('DATE'), cDriver = find('DRIVER'), cTrans = find('TRANSID')
+  const cReg = find('REGNO'), cLit = find('LDISPENSED'), cInv = find('INV'), cSlip = find('SLIP')
+  const cFee = H.findIndex(h => h === 'AMIN FEE' || h === 'ADMIN FEE')
+  const cAmt = cFee > 0 ? cFee - 1 : -1     // the Price column immediately before Amin Fee
+  if (cReg < 0 || cLit < 0 || cFee < 0 || cAmt < 0) {
+    throw new Error('Missing required columns (RegNo / LDispensed / Amin Fee).')
+  }
+
+  const byInv = new Map()
+  for (const row of grid.slice(hdr + 1)) {
+    const lit = row[cLit]
+    if (lit == null || lit === '') continue
+    const reg = String(row[cReg] ?? '').trim()
+    if (!reg) continue
+
+    const litres = parseZAR(lit)
+    const diesel = r2(parseZAR(row[cAmt]))
+    const fee = row[cFee] == null || row[cFee] === '' ? 0 : r2(parseZAR(row[cFee]))
+    const feeVat = r2(fee * 0.15)
+    const dateISO = row[cDate] instanceof Date ? fmtISODate(row[cDate]) : parseSlipDate(row[cDate])
+    const invNo = String(row[cInv] ?? '').trim() || '(no invoice)'
+    const driver = cDriver >= 0 ? String(row[cDriver] ?? '').trim() : ''
+    const slip = cSlip >= 0 ? String(row[cSlip] ?? '').trim() : ''
+
+    if (!byInv.has(invNo)) byInv.set(invNo, { invoice_number: invNo, invoice_date: dateISO, line_items: [] })
+    const inv = byInv.get(invNo)
+    if (!inv.invoice_date && dateISO) inv.invoice_date = dateISO
+    inv.line_items.push({
+      // TransID is the unique per-fill reference; keep the printed slip in the
+      // description for reconciliation against the physical slips.
+      item_code:        cTrans >= 0 ? String(row[cTrans] ?? '').trim() : '',
+      item_description: [driver, slip && `slip ${slip}`].filter(Boolean).join(' · '),
+      unit:             reg.toUpperCase(),
+      quantity:         litres,
+      amount_excl_vat:  diesel,
+      amount_incl_vat:  r2(diesel + fee + feeVat),
+      rate_per_litre:   litres > 0 ? r4(diesel / litres) : null,
+      admin_fee:        fee,
+      sort_order:       inv.line_items.length,
+      slip_date:        dateISO,
+    })
+  }
+  return [...byInv.values()].map(inv => ({
+    ...inv,
+    amount: r2(inv.line_items.reduce((s, li) => s + li.amount_incl_vat, 0)),
+  }))
+}
+
 function invLineStatus(li, trucks, entityId) {
   if (!li.unit || !(li.quantity > 0)) return 'missing'
   const reg = li.unit.toLowerCase()
@@ -290,11 +360,15 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
   function handlePreview() {
     if (!workbook || !sheetName) return
     const ws = workbook.Sheets[sheetName]
-    const parsed = parseWBGSheet(ws)
-    setInvoices(parsed)
-    setSelectedNums(new Set(parsed.map(inv => inv.invoice_number)))
-    setExpanded({})
-    setStep('preview')
+    try {
+      const parsed = isIntsimbiSheet(ws) ? parseIntsimbiSheet(ws) : parseWBGSheet(ws)
+      setInvoices(parsed)
+      setSelectedNums(new Set(parsed.map(inv => inv.invoice_number)))
+      setExpanded({})
+      setStep('preview')
+    } catch (err) {
+      toast.error(err.message || 'Could not parse the sheet')
+    }
   }
 
   async function handleImport() {
@@ -333,7 +407,7 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
     <div style={wbgModalOverlay} onClick={onClose}>
       <div style={wbgModalBox} onClick={e => e.stopPropagation()}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
-          <h3 style={{ margin:0, fontSize:16 }}>Import WBG Excel</h3>
+          <h3 style={{ margin:0, fontSize:16 }}>Import {supplier?.name || 'Diesel'} Excel</h3>
           <button className="btn-ghost" onClick={onClose} style={{ padding:'2px 6px' }}><X size={14}/></button>
         </div>
 
@@ -1090,6 +1164,9 @@ export default function SupplierProfilePage() {
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
   const isWBGDiesel = isDiesel && supplier?.name?.toLowerCase().includes('wbg')
+  // Diesel suppliers with an Excel statement importer (WBG pivot or Intsimbi
+  // transaction report). Both feed the same WBGImportModal → bulk import.
+  const supportsExcelImport = isDiesel && /wbg|intsimbi/.test(supplier?.name?.toLowerCase() || '')
   const supplierEntityCode = entities.find(e => e.id === supplier?.entity_id)?.code
   // Incl-only sub-line capture (previously OBHI suppliers + Cradock Truck Stop)
   // has been retired: all non-diesel multi-line invoices now capture each
@@ -1213,7 +1290,7 @@ export default function SupplierProfilePage() {
               { header: 'Notes',           key: 'notes' },
             ]}
           />
-          {isDiesel && supplier?.name?.toLowerCase().includes('wbg') && (
+          {supportsExcelImport && (
             <button className="btn-ghost" onClick={() => setShowImport(true)}
               style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
               <Upload size={15} /> Import Excel
