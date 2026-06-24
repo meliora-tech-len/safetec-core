@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getInvoices, getEntities, downloadInvoicePdf, updateInvoice, deleteInvoice } from '../services/api'
+import { getInvoices, getEntities, downloadInvoicePdf, downloadInvoicesBulk, updateInvoice, deleteInvoice } from '../services/api'
 import { formatCurrency, formatDate, statusBadgeClass, statusLabel, errorMessage } from '../utils/helpers'
-import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2, Upload } from 'lucide-react'
+import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2, Upload, ChevronDown, FileArchive, Files } from 'lucide-react'
 import ImportPOModal from '../components/ImportPOModal'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
@@ -28,6 +28,20 @@ function isPoImport(inv) {
   return !!extractPOH(inv)
 }
 
+// A short, human-readable line describing what an invoice is for — so the list
+// is scannable without opening each one. Prefer the header line (section title /
+// PO reference), then the first real item line, then any line with text.
+function invoiceDescription(inv) {
+  const items = inv?.line_items || []
+  const text = (li) => (li?.description || '').trim()
+  const header = items.find(li => li.line_type === 'header' && text(li))
+  if (header) return text(header)
+  const firstItem = items.find(li => li.line_type === 'item' && text(li))
+  if (firstItem) return text(firstItem)
+  const anyLine = items.find(li => text(li))
+  return anyLine ? text(anyLine) : ''
+}
+
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const now = new Date()
 const YEARS = []
@@ -48,8 +62,9 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const [showCancelled, setShowCancelled] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [showImportPO, setShowImportPO] = useState(false)
-  const [selectedIds, setSelectedIds] = useState(new Set())  // rows ticked for bulk mark-paid
+  const [selectedIds, setSelectedIds] = useState(new Set())  // rows ticked for bulk actions (mark-paid / PDF download)
   const [payingBulk, setPayingBulk] = useState(false)
+  const [downloadingBulk, setDownloadingBulk] = useState(false)
   const navigate = useNavigate()
   const { theme } = useTheme()
 
@@ -100,7 +115,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
     return applySort(filtered, sort, (item, col) => {
       if (col === 'recipient') return item.supplier?.name || item.customer?.name || ''
       if (col === 'entity_code') return item.entity?.code || ''
-      if (col === 'poh') return extractPOH(item)
+      if (col === 'description') return invoiceDescription(item)
       return item[col]
     })
   }, [allInvoices, showCancelled, filterStatus, sort])
@@ -143,6 +158,9 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const title     = isInvoice ? 'Invoices' : isPO ? 'Purchase Orders' : 'Quotes'
   const docPath   = isInvoice ? 'invoices' : isPO ? 'purchase-orders' : 'quotes'
 
+  // The checkbox column drives both bulk mark-paid and bulk PDF download, so it's
+  // always shown and every row is selectable.
+  const allowBulkSelect = true
   // Bulk mark-paid (for one received payment covering many invoices). Not for
   // quotes — "paid" isn't part of their lifecycle.
   const allowBulkPaid = docType !== 'quote'
@@ -153,15 +171,31 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   })
   const clearSelection = () => setSelectedIds(new Set())
 
-  const payableSelectable = displayedInvoices.filter(canMarkPaid)
-  const allSelected = payableSelectable.length > 0 && payableSelectable.every(i => selectedIds.has(i.id))
+  const allSelected = displayedInvoices.length > 0 && displayedInvoices.every(i => selectedIds.has(i.id))
   const toggleSelectAll = () => setSelectedIds(s => {
     const n = new Set(s)
-    if (allSelected) payableSelectable.forEach(i => n.delete(i.id))
-    else payableSelectable.forEach(i => n.add(i.id))
+    if (allSelected) displayedInvoices.forEach(i => n.delete(i.id))
+    else displayedInvoices.forEach(i => n.add(i.id))
     return n
   })
-  const selectedPayable = displayedInvoices.filter(i => selectedIds.has(i.id) && canMarkPaid(i))
+  const selected = displayedInvoices.filter(i => selectedIds.has(i.id))
+  const selectedPayable = selected.filter(canMarkPaid)
+
+  // Bulk PDF download — merge=false → ZIP of separate PDFs, merge=true → one merged PDF.
+  const handleBulkDownload = async (ids, merge) => {
+    const idSet = ids instanceof Set ? ids : new Set(ids)
+    if (!idSet.size) return
+    setDownloadingBulk(true)
+    try {
+      await downloadInvoicesBulk(idSet, { merge, theme })
+      // Generating a draft's PDF advances it draft → ready on the backend; refresh.
+      if (displayedInvoices.some(i => idSet.has(i.id) && i.status === 'draft')) load()
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to download PDFs'))
+    } finally {
+      setDownloadingBulk(false)
+    }
+  }
 
   const handleMarkPaidSelected = async () => {
     if (!selectedPayable.length) return
@@ -205,6 +239,12 @@ export default function InvoicesPage({ docType = 'invoice' }) {
               { header: 'VAT',         value: r => parseFloat(r.vat_amount || 0).toFixed(2) },
               { header: 'Total',       value: r => parseFloat(r.total || 0).toFixed(2) },
             ]}
+          />
+          <DownloadAllMenu
+            count={displayedInvoices.length}
+            busy={downloadingBulk}
+            onPick={(merge) => handleBulkDownload(displayedInvoices.map(i => i.id), merge)}
+            label={title}
           />
           {isInvoice && (
             <button className="btn-ghost btn-sm" onClick={() => setShowImportPO(true)} title="Generate invoice from a PO Excel file">
@@ -285,9 +325,9 @@ export default function InvoicesPage({ docType = 'invoice' }) {
         <table>
           <thead>
             <tr>
-              {allowBulkPaid && (
+              {allowBulkSelect && (
                 <th style={{ width: 28, textAlign: 'center' }}>
-                  {payableSelectable.length > 0 && (
+                  {displayedInvoices.length > 0 && (
                     <input
                       type="checkbox"
                       checked={allSelected}
@@ -302,7 +342,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
               <SortableHeader label="Supplier / Customer" col="recipient" sort={sort} onSort={onSort} />
               <SortableHeader label="Entity" col="entity_code" sort={sort} onSort={onSort} />
               {isInvoice && <th>Type</th>}
-              {isInvoice && <SortableHeader label="POH" col="poh" sort={sort} onSort={onSort} />}
+              {isInvoice && <SortableHeader label="Description" col="description" sort={sort} onSort={onSort} />}
               <SortableHeader label="Issue Date" col="issue_date" sort={sort} onSort={onSort} />
               <SortableHeader label="Due Date" col="due_date" sort={sort} onSort={onSort} />
               <SortableHeader label="Status" col="status" sort={sort} onSort={onSort} />
@@ -312,24 +352,22 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={(isInvoice ? 10 : 8) + (allowBulkPaid ? 1 : 0)} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
+              <tr><td colSpan={(isInvoice ? 10 : 8) + (allowBulkSelect ? 1 : 0)} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
             ) : displayedInvoices.length === 0 ? (
-              <tr><td colSpan={(isInvoice ? 10 : 8) + (allowBulkPaid ? 1 : 0)}>
+              <tr><td colSpan={(isInvoice ? 10 : 8) + (allowBulkSelect ? 1 : 0)}>
                 <div className="empty-state"><FileText size={32} /><p>No {title.toLowerCase()} found</p></div>
               </td></tr>
             ) : displayedInvoices.map(inv => (
               <tr key={inv.id} onClick={() => navigate(`/${docPath}/${inv.id}`)} style={{ cursor: 'pointer' }}>
-                {allowBulkPaid && (
+                {allowBulkSelect && (
                   <td style={{ textAlign: 'center', width: 28 }} onClick={e => e.stopPropagation()}>
-                    {canMarkPaid(inv) && (
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(inv.id)}
-                        onChange={() => toggleSelect(inv.id)}
-                        title="Select"
-                        style={{ cursor: 'pointer' }}
-                      />
-                    )}
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(inv.id)}
+                      onChange={() => toggleSelect(inv.id)}
+                      title="Select"
+                      style={{ cursor: 'pointer' }}
+                    />
                   </td>
                 )}
                 <td className="font-mono text-accent" style={{ fontSize: 12 }}>{inv.invoice_number}</td>
@@ -346,8 +384,8 @@ export default function InvoicesPage({ docType = 'invoice' }) {
                   </td>
                 )}
                 {isInvoice && (
-                  <td className="font-mono" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                    {extractPOH(inv) || <span className="text-muted">—</span>}
+                  <td style={{ fontSize: 12, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={invoiceDescription(inv)}>
+                    {invoiceDescription(inv) || <span className="text-muted">—</span>}
                   </td>
                 )}
                 <td className="text-muted" style={{ fontSize: 12 }}>{formatDate(inv.issue_date)}</td>
@@ -407,7 +445,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
               ].map((row, i) => (
                 <tr key={i} style={row.strong ? { borderTop: '2px solid var(--border)' } : {}}>
                   <td
-                    colSpan={(allowBulkPaid ? 1 : 0) + 6 + (isInvoice ? 2 : 0)}
+                    colSpan={(allowBulkSelect ? 1 : 0) + 6 + (isInvoice ? 2 : 0)}
                     className="text-right text-muted"
                     style={{ fontWeight: row.strong ? 700 : 600, fontSize: 12, paddingTop: row.strong ? 10 : 4, paddingBottom: 4 }}
                   >
@@ -427,31 +465,59 @@ export default function InvoicesPage({ docType = 'invoice' }) {
         </table>
       </div>
 
-      {/* Bulk mark-paid action bar — floats while rows are selected */}
-      {allowBulkPaid && selectedPayable.length > 0 && (
+      {/* Bulk action bar — floats while rows are selected */}
+      {selected.length > 0 && (
         <div style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-          display: 'flex', alignItems: 'center', gap: 14, zIndex: 900,
+          display: 'flex', alignItems: 'center', gap: 12, zIndex: 900,
           background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 10, padding: '10px 16px',
           boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
         }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{selectedPayable.length} selected</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.length} selected</span>
           <button
-            onClick={handleMarkPaidSelected}
-            disabled={payingBulk}
+            onClick={() => handleBulkDownload(selectedIds, false)}
+            disabled={downloadingBulk}
+            title="Download selected as a ZIP of separate PDFs"
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
-              padding: '7px 16px', borderRadius: 7, border: 'none',
-              background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
-              cursor: payingBulk ? 'default' : 'pointer', opacity: payingBulk ? 0.6 : 1,
+              padding: '7px 14px', borderRadius: 7, border: '1px solid var(--border)',
+              background: 'var(--bg-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: 13,
+              cursor: downloadingBulk ? 'default' : 'pointer', opacity: downloadingBulk ? 0.6 : 1,
             }}>
-            <CheckCircle size={15} />
-            {payingBulk ? 'Marking…' : `Mark paid (${selectedPayable.length})`}
+            <FileArchive size={15} />
+            ZIP
           </button>
           <button
+            onClick={() => handleBulkDownload(selectedIds, true)}
+            disabled={downloadingBulk}
+            title="Download selected as one merged PDF"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 14px', borderRadius: 7, border: '1px solid var(--border)',
+              background: 'var(--bg-card)', color: 'var(--text-primary)', fontWeight: 600, fontSize: 13,
+              cursor: downloadingBulk ? 'default' : 'pointer', opacity: downloadingBulk ? 0.6 : 1,
+            }}>
+            <Files size={15} />
+            Merged PDF
+          </button>
+          {allowBulkPaid && selectedPayable.length > 0 && (
+            <button
+              onClick={handleMarkPaidSelected}
+              disabled={payingBulk}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 7, border: 'none',
+                background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
+                cursor: payingBulk ? 'default' : 'pointer', opacity: payingBulk ? 0.6 : 1,
+              }}>
+              <CheckCircle size={15} />
+              {payingBulk ? 'Marking…' : `Mark paid (${selectedPayable.length})`}
+            </button>
+          )}
+          <button
             onClick={clearSelection}
-            disabled={payingBulk}
+            disabled={payingBulk || downloadingBulk}
             className="btn-ghost"
             style={{ fontSize: 13, padding: '6px 10px' }}>
             Clear
@@ -481,6 +547,61 @@ export default function InvoicesPage({ docType = 'invoice' }) {
       />
     </div>
   )
+}
+
+// Header dropdown: download every currently-displayed document, either as a ZIP
+// of separate PDFs or as one merged PDF.
+function DownloadAllMenu({ count, busy, onPick, label }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const noData = count === 0
+  const pick = (merge) => { setOpen(false); onPick(merge) }
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        className="btn-ghost btn-sm"
+        onClick={() => setOpen(o => !o)}
+        disabled={busy || noData}
+        title={noData ? `No ${label?.toLowerCase() || 'documents'} to download` : (busy ? 'Preparing download…' : 'Download all as PDF')}
+        style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+      >
+        <Download size={14} />
+        {busy ? 'Downloading…' : 'Download All'}
+        <ChevronDown size={11} style={{ opacity: 0.6, marginLeft: 1 }} />
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 100,
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 8, boxShadow: 'var(--shadow)', overflow: 'hidden', minWidth: 210,
+        }}>
+          <button onClick={() => pick(false)} style={menuItemStyle}>
+            <FileArchive size={14} style={{ color: 'var(--accent)' }} />
+            All as ZIP ({count})
+          </button>
+          <button onClick={() => pick(true)} style={menuItemStyle}>
+            <Files size={14} style={{ color: '#dc2626' }} />
+            All as merged PDF ({count})
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const menuItemStyle = {
+  display: 'flex', alignItems: 'center', gap: 9,
+  width: '100%', padding: '9px 14px',
+  background: 'none', border: 'none', cursor: 'pointer',
+  fontSize: 13, color: 'var(--text-primary)', textAlign: 'left',
 }
 
 function StatPill({ label, count, amount, color, bg, highlight, onClick }) {

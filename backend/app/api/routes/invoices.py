@@ -1,6 +1,10 @@
 import asyncio
+import re
+import zipfile
+from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, extract
 from sqlalchemy.exc import SQLAlchemyError
@@ -600,6 +604,103 @@ async def download_invoice_pdf(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+class BulkPdfRequest(BaseModel):
+    invoice_ids: List[int] = Field(..., min_length=1, max_length=500)
+    merge: bool = False  # True → single combined PDF; False → ZIP of separate PDFs
+
+
+def _safe_filename(name: str) -> str:
+    """Strip characters that are unsafe in a download filename (slashes etc.)."""
+    return re.sub(r'[^A-Za-z0-9._-]', '_', (name or 'invoice').strip()) or 'invoice'
+
+
+@router.post("/bulk-pdf")
+async def download_invoices_bulk_pdf(
+    payload: BulkPdfRequest,
+    theme: str = Query("dark", pattern="^(dark|light)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Download many invoices at once — either a ZIP of individual PDFs
+    (merge=False) or a single merged PDF (merge=True)."""
+    # Preserve the order the client requested, de-duplicating ids.
+    ordered_ids = list(dict.fromkeys(payload.invoice_ids))
+
+    invoices = db.query(Invoice).options(
+        joinedload(Invoice.line_items),
+        joinedload(Invoice.supplier),
+        joinedload(Invoice.customer),
+        joinedload(Invoice.entity),
+    ).filter(Invoice.id.in_(ordered_ids)).all()
+
+    by_id = {inv.id: inv for inv in invoices}
+    selected = []
+    for inv_id in ordered_ids:
+        inv = by_id.get(inv_id)
+        if not inv:
+            raise HTTPException(status_code=404, detail=f"Invoice {inv_id} not found")
+        _check_entity_access(inv.entity_id, current_user)
+        selected.append(inv)
+
+    def _build():
+        rendered = []  # (invoice, pdf_bytes)
+        for inv in selected:
+            pdf_bytes = generate_invoice_pdf(
+                inv, inv.entity, inv.supplier, customer=inv.customer, theme=theme
+            )
+            rendered.append((inv, pdf_bytes))
+
+        if payload.merge:
+            from pypdf import PdfReader, PdfWriter
+            writer = PdfWriter()
+            for _inv, pdf_bytes in rendered:
+                reader = PdfReader(BytesIO(pdf_bytes))
+                for page in reader.pages:
+                    writer.add_page(page)
+            out = BytesIO()
+            writer.write(out)
+            return out.getvalue()
+
+        # ZIP of separate PDFs — disambiguate duplicate invoice numbers.
+        buf = BytesIO()
+        used = {}
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for inv, pdf_bytes in rendered:
+                base = _safe_filename(inv.invoice_number)
+                used[base] = used.get(base, 0) + 1
+                name = base if used[base] == 1 else f"{base}_{used[base]}"
+                zf.writestr(f"{name}.pdf", pdf_bytes)
+        return buf.getvalue()
+
+    content = await asyncio.to_thread(_build)
+
+    # Advance any drafts → ready, mirroring the single-PDF endpoint.
+    drafted = False
+    for inv in selected:
+        if inv.status == "draft":
+            inv.status = "ready"
+            log_action(db, "invoice.ready", user_id=current_user.id,
+                       entity_id=inv.entity_id, resource_type="invoice",
+                       resource_id=inv.id,
+                       description=f"{inv.invoice_number} marked as ready (PDF generated)")
+            drafted = True
+    if drafted:
+        db.commit()
+
+    stamp = datetime.now().strftime("%Y%m%d")
+    if payload.merge:
+        return Response(
+            content=content,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="invoices-merged-{stamp}.pdf"'},
+        )
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="invoices-{stamp}.zip"'},
     )
 
 

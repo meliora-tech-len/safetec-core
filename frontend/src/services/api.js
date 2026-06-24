@@ -85,6 +85,29 @@ export const downloadInvoicePdf = async (id, invoiceNumber, theme = 'dark') => {
   window.URL.revokeObjectURL(url)
 }
 
+// Bulk download: merge=false → ZIP of separate PDFs, merge=true → one merged PDF.
+export const downloadInvoicesBulk = async (invoiceIds, { merge = false, theme = 'dark' } = {}) => {
+  const res = await api.post('/invoices/bulk-pdf', {
+    invoice_ids: Array.from(invoiceIds),
+    merge,
+  }, {
+    params: { theme },
+    responseType: 'blob',
+  })
+  const stamp = new Date().toISOString().slice(0, 10)
+  const isMerged = merge
+  const type = isMerged ? 'application/pdf' : 'application/zip'
+  const filename = isMerged ? `invoices-merged-${stamp}.pdf` : `invoices-${stamp}.zip`
+  const url = window.URL.createObjectURL(new Blob([res.data], { type }))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', filename)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
+
 // ── Users ─────────────────────────────────────────────────────────────────────
 export const getUsers = () => api.get('/users/')
 export const createUser = (data) => api.post('/users/', data)
