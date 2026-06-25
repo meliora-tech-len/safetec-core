@@ -230,11 +230,28 @@ def update_truck(
         # so an explicit null clears a value — e.g. unchecking "is subcontractor"
         # must be able to clear subcontractor_id. With exclude_none a cleared link
         # silently kept its old value.
+        old_reg  = (truck.registration or "").strip()
+        was_temp = bool(truck.is_temp_registration)
+
         update_fields = payload.model_dump(exclude={"trailers"}, exclude_unset=True)
         if "registration" in update_fields and update_fields["registration"]:
             update_fields["registration"] = update_fields["registration"].strip().replace(" ", "")
         for field, value in update_fields.items():
             setattr(truck, field, value)
+
+        # Real reg replacing a temp placeholder: preserve the old plate as
+        # temp_registration so everything captured under it (diesel, loads,
+        # invoices — all matched on either reg) stays on this one truck. Skip
+        # if the caller set temp_registration itself, or the reg didn't change.
+        new_reg = (truck.registration or "").strip()
+        if (
+            was_temp
+            and old_reg
+            and new_reg.upper() != old_reg.upper()
+            and "temp_registration" not in update_fields
+            and not (truck.temp_registration or "").strip()
+        ):
+            truck.temp_registration = old_reg
 
         # Full replace on trailers if provided
         if payload.trailers is not None:
@@ -298,12 +315,15 @@ def list_truck_additional_loads(
         raise HTTPException(status_code=404, detail="Truck not found")
     _check_entity_access(truck.entity_id, current_user)
 
+    # Match both the current plate and the old/temp plate, so loads captured
+    # before a registration change still show under this one truck.
+    regs = [r for r in (truck.registration, truck.temp_registration) if r]
     rows = (
         db.query(DriverAdditionalLoad, Driver)
         .join(DriverPayCycle, DriverAdditionalLoad.pay_cycle_id == DriverPayCycle.id)
         .join(Driver, DriverPayCycle.driver_id == Driver.id)
         .filter(
-            DriverAdditionalLoad.truck_registration == truck.registration,
+            DriverAdditionalLoad.truck_registration.in_(regs),
             DriverPayCycle.pay_year  == year,
             DriverPayCycle.pay_month == month,
             DriverAdditionalLoad.is_archived != True,

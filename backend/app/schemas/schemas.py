@@ -736,6 +736,7 @@ class TruckUpdate(BaseModel):
     is_subcontractor:   Optional[bool] = None
     subcontractor_name: Optional[str]  = None
     subcontractor_id:   Optional[int]  = None
+    is_temp_registration: Optional[bool] = None
     status: Optional[TruckStatus] = None
     notes: Optional[str] = None
     operator: Optional[str] = None
