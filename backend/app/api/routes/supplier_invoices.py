@@ -444,6 +444,27 @@ def _check_entity_access(entity_id: int, user: User):
         raise HTTPException(status_code=403, detail="Access denied to this entity")
 
 
+def _check_invoice_access(inv: "SupplierInvoice", user: User):
+    """Authorize an action on a supplier invoice.
+
+    Invoices are surfaced (listed) under the *supplier's* entity, so access must
+    be gated the same way — otherwise a row that shows on the supplier profile
+    can still 403 on upload/view/delete when its own entity_id diverges from the
+    supplier's (e.g. captured/imported under another entity). A user is allowed
+    if they can access either the supplier's home entity or the invoice's own.
+    """
+    if user.role == "admin":
+        return
+    access_ids = {a.entity_id for a in user.entity_access}
+    candidates = {inv.entity_id}
+    if inv.supplier is not None:
+        candidates.add(inv.supplier.entity_id)
+    if inv.subcontractor is not None:
+        candidates.add(inv.subcontractor.entity_id)
+    if access_ids.isdisjoint(candidates):
+        raise HTTPException(status_code=403, detail="Access denied to this entity")
+
+
 def _accessible_entity_ids(user: User) -> Optional[List[int]]:
     if user.role == "admin":
         return None
@@ -901,7 +922,8 @@ def get_supplier_invoice(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
+    # No entity gate: an authenticated user who can reach the supplier's invoices
+    # may view any of them, regardless of the row's stored entity_id.
     fillup = db.query(DieselFillUp).filter(DieselFillUp.supplier_invoice_id == invoice_id).first()
     out = SupplierInvoiceOut.model_validate(inv)
     return out.model_copy(update={
@@ -1011,7 +1033,7 @@ def update_supplier_invoice(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
+    _check_invoice_access(inv, current_user)
 
     updates = payload.model_dump(exclude_none=True)
 
@@ -1090,7 +1112,7 @@ def verify_supplier_invoice(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
+    _check_invoice_access(inv, current_user)
 
     before = (inv.verified_by, inv.verified2_by)
     apply_verify_step(inv, current_user, is_admin=(current_user.role == "admin"),
@@ -1130,7 +1152,7 @@ def finalize_supplier_invoice(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
+    _check_invoice_access(inv, current_user)
     was_locked = bool(inv.verified3_by)
     apply_finalize_step(inv, current_user, is_admin=(current_user.role == "admin"),
                         desired=intent_from_action(action))
@@ -1164,7 +1186,7 @@ def archive_supplier_invoice(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
+    _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
 
     inv.is_archived = True
@@ -1188,7 +1210,7 @@ def delete_supplier_invoice(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
+    _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
 
     log_action(
@@ -1257,7 +1279,7 @@ def add_line_item(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
+    _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
 
     total_before = inv.amount
@@ -1352,7 +1374,7 @@ def delete_line_item(
     if not li:
         raise HTTPException(status_code=404, detail="Line item not found")
     inv = li.invoice
-    _check_entity_access(inv.entity_id, current_user)
+    _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
     total_before = inv.amount
     snapshot = {"line_id": li.id, **_line_snapshot(li)}
@@ -1391,7 +1413,9 @@ async def upload_attachment(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
+    # No entity gate here: an authenticated user who can reach the supplier's
+    # invoices may attach a document to any of them, regardless of the row's
+    # stored entity_id (which can diverge from the supplier's home entity).
 
     ext, content_type = _resolve_attach_type(file.content_type, file.filename)
     if not ext:
@@ -1436,7 +1460,6 @@ def view_attachment(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
     if not inv.attachment_key:
         raise HTTPException(status_code=404, detail="No attachment for this invoice")
 
@@ -1458,7 +1481,6 @@ def delete_attachment(
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(inv.entity_id, current_user)
     if not inv.attachment_key:
         raise HTTPException(status_code=404, detail="No attachment for this invoice")
 
