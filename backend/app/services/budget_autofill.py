@@ -47,7 +47,12 @@ def _d(v) -> Decimal:
     return Decimal(str(v)) if v is not None else Decimal("0")
 
 
-def compute_autofill(entity_id: int, months: List[Tuple[int, int]], current_user=None) -> List[dict]:
+def _prev_month(month: int, year: int) -> Tuple[int, int]:
+    return (12, year - 1) if month == 1 else (month - 1, year)
+
+
+def compute_autofill(entity_id: int, months: List[Tuple[int, int]], current_user=None,
+                     shift_30day: bool = False) -> List[dict]:
     """Return a list of auto-line specs:
         { section_name, section_type, source_key, line_name,
           values: { (month, year): {"due": Decimal|None, "paid": Decimal|None} } }
@@ -57,13 +62,32 @@ def compute_autofill(entity_id: int, months: List[Tuple[int, int]], current_user
     best-effort: a failure is rolled back (on this read session only) and skipped.
     All queries are lean column selects, so the whole pass is a handful of fast
     round-trips.
+
+    shift_30day (statement-period entities, e.g. OBHI): `months` is
+    [statement-1, statement]. Every source is pulled for the single STATEMENT
+    period (the last month) only; 30-day supplier invoices are then placed in the
+    previous month, everything else stays in the statement month.
     """
     db = SessionLocal()
     specs: List[dict] = []
     try:
-        for fn in (_income, _suppliers, _subcontractors, _wages):
+        if shift_30day:
+            statement = [months[-1]]   # query only the statement period
+            sources = (
+                (_income, statement),
+                (_suppliers, statement),
+                (_subcontractors, statement),
+                (_wages, statement),
+            )
+        else:
+            sources = (
+                (_income, months), (_suppliers, months),
+                (_subcontractors, months), (_wages, months),
+            )
+        for fn, mths in sources:
             try:
-                specs += fn(db, entity_id, months)
+                specs += fn(db, entity_id, mths, shift_30day=shift_30day) if fn is _suppliers \
+                    else fn(db, entity_id, mths)
             except Exception:
                 db.rollback()
                 log.exception("budget autofill: source %s failed", fn.__name__)
@@ -99,7 +123,7 @@ def _income(db, entity_id, months) -> List[dict]:
 
 
 # ── Suppliers (grouped by supplier, due vs paid, sectioned by term) ───────────
-def _suppliers(db, entity_id, months) -> List[dict]:
+def _suppliers(db, entity_id, months, shift_30day: bool = False) -> List[dict]:
     period_filter = or_(*[
         and_(SupplierInvoice.statement_year == y, SupplierInvoice.statement_month == m)
         for (m, y) in months
@@ -143,7 +167,10 @@ def _suppliers(db, entity_id, months) -> List[dict]:
                 "source_key": key, "line_name": name, "values": {},
             }
             grouped[key] = spec
-        cell = spec["values"].setdefault((m, y), {"due": Decimal("0"), "paid": Decimal("0")})
+        # Statement-period entities: 30-day invoices are budgeted in the month
+        # BEFORE their statement month; cash/diesel stay in the statement month.
+        tm, ty = (_prev_month(m, y) if shift_30day and section is SEC_30DAY else (m, y))
+        cell = spec["values"].setdefault((tm, ty), {"due": Decimal("0"), "paid": Decimal("0")})
         if is_paid:
             cell["paid"] += _d(amount)
         else:

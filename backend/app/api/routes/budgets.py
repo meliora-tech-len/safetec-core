@@ -24,6 +24,12 @@ BUDGET_MODULE = "budgets"
 # How many months a budget rolls across (base month + the next two).
 ROLLING_MONTHS = 3
 
+# Entities whose budget is built around a single STATEMENT PERIOD rather than a
+# forward-rolling window. For these, the selected month IS the statement period and
+# the grid shows [statement-1, statement]: 30-day supplier invoices land in the
+# previous month, cash (and everything else) in the statement month. (OBHI.)
+STATEMENT_PERIOD_ENTITIES = {"OBHI"}
+
 # Default section template applied to every new budget — mirrors the structure
 # shared by all the entity budget spreadsheets. Per-entity customisation
 # happens by editing sections/lines after creation (or custom templates later).
@@ -38,6 +44,20 @@ DEFAULT_SECTIONS = [
     ("WAGES",                   "expense"),
     ("OTHER",                   "expense"),
 ]
+
+# Some sections don't apply to certain entities (keyed by entity code). OBHI has
+# no payroll, so it should never get a WAGES section.
+ENTITY_SECTION_EXCLUSIONS = {
+    # OBHI has no payroll, so it should never get a WAGES section. The OTHER
+    # section stays — the user fills it in manually (nothing auto-pulls into it).
+    "OBHI": {"WAGES"},
+}
+
+
+def _sections_for_entity(entity) -> list:
+    """DEFAULT_SECTIONS minus any sections that don't apply to this entity."""
+    excluded = ENTITY_SECTION_EXCLUSIONS.get((entity.code or "").upper(), set())
+    return [(name, st) for (name, st) in DEFAULT_SECTIONS if name not in excluded]
 
 
 # ── Permission helpers ────────────────────────────────────────────────────────
@@ -104,20 +124,46 @@ def _rolling_months(month: int, year: int, n: int = ROLLING_MONTHS):
     return out
 
 
+def _prev_month(month: int, year: int):
+    return (12, year - 1) if month == 1 else (month - 1, year)
+
+
+def _statement_window(month: int, year: int):
+    """[(prev), (statement)] — statement-period budgets show the statement month
+    plus the one before it (30-day invoices land in the previous month)."""
+    return [_prev_month(month, year), (month, year)]
+
+
+def _budget_window(entity_code: str, month: int, year: int):
+    """The (month, year) columns a budget spans, per entity style."""
+    if (entity_code or "").upper() in STATEMENT_PERIOD_ENTITIES:
+        return _statement_window(month, year)
+    return _rolling_months(month, year)
+
+
 def _apply_autofill(budget: Budget, db: Session, current_user: User) -> int:
     """Pull system data into this budget's AUTO lines. Manual lines are never
     touched, and a hand-edited (overridden) value on an auto line is preserved.
     Reads sections/lines/values fresh so it works during create (pre-commit) too."""
-    months = _rolling_months(budget.period_month, budget.period_year)
+    code = (budget.entity.code or "").upper()
+    shift_30day = code in STATEMENT_PERIOD_ENTITIES
+    months = _budget_window(code, budget.period_month, budget.period_year)
     # compute_autofill reads in its own isolated sessions — never this write txn —
     # so a heavy/dropped subcontractor read can't corrupt the budget being saved.
-    specs = compute_autofill(budget.entity_id, months, current_user)
+    specs = compute_autofill(budget.entity_id, months, current_user, shift_30day=shift_30day)
+
+    # Drop any specs for sections that don't apply to this entity (e.g. OBHI has
+    # no WAGES), so a stray source can't recreate the excluded section.
+    excluded = ENTITY_SECTION_EXCLUSIONS.get(code, set())
+    if excluded:
+        specs = [s for s in specs if s["section_name"] not in excluded]
 
     sections = {s.name: s for s in db.query(BudgetSection).filter(BudgetSection.budget_id == budget.id).all()}
     next_section_order = max([s.sort_order or 0 for s in sections.values()], default=-1) + 1
 
     auto_lines: dict = {}          # source_key -> BudgetLine
     line_order: dict = {}          # section_id -> next sort_order
+    provided: dict = {}            # source_key -> set of (month, year) this pull supplied
     for s in sections.values():
         lines = db.query(BudgetLine).filter(BudgetLine.section_id == s.id).all()
         line_order[s.id] = max([l.sort_order or 0 for l in lines], default=-1) + 1
@@ -145,6 +191,7 @@ def _apply_autofill(budget: Budget, db: Session, current_user: User) -> int:
         else:
             line.name = spec["line_name"]   # keep fresh (e.g. supplier renamed)
 
+        provided[spec["source_key"]] = set(spec["values"].keys())
         existing = {(v.month, v.year): v for v in db.query(BudgetLineValue).filter(BudgetLineValue.line_id == line.id).all()}
         for (m, y), amts in spec["values"].items():
             val = existing.get((m, y))
@@ -156,6 +203,16 @@ def _apply_autofill(budget: Budget, db: Session, current_user: User) -> int:
                 continue            # user hand-edited this cell — leave it
             val.amount_due = amts.get("due")
             val.amount_paid = amts.get("paid")
+
+    # Prune stale auto values: within the budget's window, drop any auto-line value
+    # the latest pull no longer supplies (e.g. a 30-day amount that moved to the
+    # previous month, or an invoice that was archived). User-pinned cells are kept.
+    window_set = set(months)
+    for src_key, line in auto_lines.items():
+        keep = provided.get(src_key, set())
+        for v in db.query(BudgetLineValue).filter(BudgetLineValue.line_id == line.id).all():
+            if (v.month, v.year) in window_set and (v.month, v.year) not in keep and not v.is_overridden:
+                db.delete(v)
 
     db.commit()
     return len(specs)
@@ -219,7 +276,7 @@ def create_budget(
     db.add(budget)
     db.flush()
 
-    for i, (name, section_type) in enumerate(DEFAULT_SECTIONS):
+    for i, (name, section_type) in enumerate(_sections_for_entity(entity)):
         db.add(BudgetSection(budget_id=budget.id, name=name, section_type=section_type, sort_order=i))
     db.flush()
 
