@@ -6,13 +6,14 @@ import {
   getBudgets, getBudget, createBudget, deleteBudget,
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
   addBudgetLine, deleteBudgetLine, upsertBudgetLineValue, refreshBudgetFromSystem,
-  getVerifications, verifyValue, finalizeValue,
+  getVerifications, verifyValue, finalizeValue, getSuppliers,
 } from '../services/api'
 import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { errorMessage, formatCurrency } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
 import VerifiableAmount from '../components/VerifiableAmount'
+import SearchableSelect from '../components/SearchableSelect'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -52,6 +53,7 @@ export default function BudgetsPage() {
   const [quickAdd, setQuickAdd] = useState(null)   // null | { kind: 'income'|'expense', sectionId, name }
   const [verif, setVerif] = useState({})           // target -> ValueVerification
   const [sortByCol, setSortByCol] = useState({})   // sectionId -> { key, dir }
+  const [suppliers, setSuppliers] = useState([])   // suppliers for the selected entity (Add Expense picker)
 
   // Entities this user can see budgets for (admin: all)
   const budgetEntities = useMemo(() => {
@@ -89,6 +91,14 @@ export default function BudgetsPage() {
   }, [entityId, month, year])
 
   useEffect(() => { loadBudget() }, [loadBudget])
+
+  // Suppliers for the selected entity — feeds the "Supplier" picker in Add Expense.
+  useEffect(() => {
+    if (!entityId) { setSuppliers([]); return }
+    getSuppliers({ entity_id: entityId })
+      .then(r => setSuppliers(r.data || []))
+      .catch(() => setSuppliers([]))
+  }, [entityId])
 
   // ── Per-value verification overlay (reuses the generic /api/verifications) ────
   const verifReqId = useRef(0)
@@ -145,9 +155,11 @@ export default function BudgetsPage() {
   }
 
   // Quick "Add Income" / "Add Expense": pick a matching section + name the line.
+  // Expenses mirror the costing "Add Expense": choose a once-off (free-typed) name
+  // or pick a Supplier from a searchable list. Either way it's just the line name.
   const openQuickAdd = (kind) => {
     const sec = budget?.sections?.find(s => s.section_type === kind)
-    setQuickAdd({ kind, sectionId: sec ? sec.id : '', name: '' })
+    setQuickAdd({ kind, sectionId: sec ? sec.id : '', name: '', mode: 'once_off' })
   }
 
   const submitQuickAdd = async () => {
@@ -442,11 +454,42 @@ export default function BudgetsPage() {
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
-              <input className="form-input" autoFocus style={{ width: 260, fontSize: 12 }}
-                placeholder={quickAdd.kind === 'income' ? 'Income source name' : 'Expense / supplier name'}
-                value={quickAdd.name}
-                onChange={e => setQuickAdd(p => ({ ...p, name: e.target.value }))}
-                onKeyDown={e => { if (e.key === 'Enter') submitQuickAdd() }} />
+
+              {/* Expense: once-off vs supplier (mirrors the costing Add Expense) */}
+              {quickAdd.kind === 'expense' && (
+                <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                  {[['once_off', 'Once-off'], ['supplier', 'Supplier']].map(([m, label]) => (
+                    <button key={m} type="button"
+                      onClick={() => setQuickAdd(p => ({ ...p, mode: m, name: '' }))}
+                      style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer',
+                        background: quickAdd.mode === m ? 'var(--accent)' : 'var(--bg-surface)',
+                        color: quickAdd.mode === m ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {quickAdd.kind === 'expense' && quickAdd.mode === 'supplier' ? (
+                <div style={{ width: 260 }}>
+                  <SearchableSelect
+                    value={quickAdd.name}
+                    onChange={v => setQuickAdd(p => ({ ...p, name: v }))}
+                    options={suppliers}
+                    getValue={s => s.name}
+                    getLabel={s => s.name}
+                    placeholder="Search supplier…"
+                    creatable
+                  />
+                </div>
+              ) : (
+                <input className="form-input" autoFocus style={{ width: 260, fontSize: 12 }}
+                  placeholder={quickAdd.kind === 'income' ? 'Income source name' : 'Expense name'}
+                  value={quickAdd.name}
+                  onChange={e => setQuickAdd(p => ({ ...p, name: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') submitQuickAdd() }} />
+              )}
+
               <button className="btn-primary btn-sm" onClick={submitQuickAdd} disabled={!quickAdd.name.trim() || !quickAdd.sectionId}>Add</button>
               <button className="btn-ghost btn-sm" onClick={() => setQuickAdd(null)}>Cancel</button>
             </div>
