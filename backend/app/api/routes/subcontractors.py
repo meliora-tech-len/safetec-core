@@ -8,7 +8,7 @@ from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, SupplierInvoiceLineItem, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType, TruckCostingNote
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, SupplierInvoiceLineItem, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType, TruckCostingNote, TruckCostingIncome
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
@@ -17,6 +17,7 @@ from app.schemas.schemas import (
     SupplierStatementGroup, SubcontractorInvoiceCreate,
     DieselFillUpCostingRow, DieselSupplierGroup, SubcontractorCostingNoteUpdate,
     SubcontractorCostingNetOverrideUpdate,
+    TruckCostingIncomeOut, TruckCostingIncomeCreate,
 )
 from app.services.audit import log_action
 from app.services.verification import get_verification_display
@@ -363,6 +364,17 @@ def _truck_invoice_contribution(inv: SupplierInvoice, truck_regs: set):
     return False, D0, D0
 
 
+def _income_split(amount, vat_applicable):
+    """Resolve a manual costing-income amount into (excl, incl) figures, mirroring
+    the general-expense VAT rule: a VAT-applicable amount IS the inclusive value
+    (excl = amount / 1.15); otherwise excl == incl == amount (no VAT)."""
+    amt = Decimal(str(amount or 0))
+    if vat_applicable:
+        excl = (amt / Decimal("1.15")).quantize(Decimal("0.01"))
+        return excl, amt
+    return amt, amt
+
+
 def _period_add(year: int, month: int, delta: int):
     """Shift a (year, month) pair by `delta` whole months."""
     idx = year * 12 + (month - 1) + delta
@@ -558,6 +570,34 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             (Decimal(str(l.subcontractor_amount_incl_vat)) for l in loads if l.subcontractor_amount_incl_vat is not None),
             D0,
         )
+
+        # Manual costing-only income lines for this truck/period — added straight
+        # into the income columns (and so into the net payable below), but never
+        # surfaced outside the costing module.
+        manual_income_rows = (
+            db.query(TruckCostingIncome)
+            .filter(
+                TruckCostingIncome.truck_id == truck.id,
+                TruckCostingIncome.month == month,
+                TruckCostingIncome.year == year,
+            )
+            .order_by(TruckCostingIncome.created_at, TruckCostingIncome.id)
+            .all()
+        )
+        manual_income_out = []
+        for mi in manual_income_rows:
+            m_excl, m_incl = _income_split(mi.amount, mi.vat_applicable)
+            income_excl += m_excl
+            income_incl += m_incl
+            manual_income_out.append(TruckCostingIncomeOut(
+                id=mi.id,
+                description=mi.description,
+                amount=Decimal(str(mi.amount)),
+                vat_applicable=mi.vat_applicable,
+                amount_excl_vat=m_excl,
+                amount_incl_vat=m_incl,
+            ))
+
         admin_fee = fixed_admin_fee
 
         # Match each candidate invoice to this truck — single-line by main-line
@@ -667,6 +707,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                 _enrich_invoice(db, i).model_copy(update={"amount": amt})
                 for (i, amt) in inv_contribs
             ],
+            manual_incomes=manual_income_out,
             total_expenses_excl_vat=exp_excl,
             total_expenses_incl_vat=exp_incl,
             net_payable=net_payable,
@@ -838,6 +879,92 @@ def upsert_truck_costing_net_override(
         db.add(note_row)
     db.commit()
     return {"net_payable_override": str(value)}
+
+
+@router.post("/{subcontractor_id}/costing/income", response_model=TruckCostingIncomeOut)
+def create_truck_costing_income(
+    subcontractor_id: int,
+    payload: TruckCostingIncomeCreate,
+    truck_id: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a manual income line to a truck's costing for this period. It adds to
+    the income column only — it never appears in the Income vs Expenses report
+    or the Supplier Invoice Profile."""
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    truck = db.query(Truck).filter(
+        Truck.id == truck_id,
+        Truck.subcontractor_id == subcontractor_id,
+    ).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found for this subcontractor")
+
+    desc = (payload.description or "").strip()
+    if not desc:
+        raise HTTPException(status_code=400, detail="Description is required")
+    amount = Decimal(str(payload.amount or 0))
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Enter a valid amount")
+
+    row = TruckCostingIncome(
+        truck_id=truck_id,
+        month=month,
+        year=year,
+        description=desc,
+        amount=amount,
+        vat_applicable=payload.vat_applicable,
+        created_by_id=current_user.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    excl, incl = _income_split(row.amount, row.vat_applicable)
+    return TruckCostingIncomeOut(
+        id=row.id,
+        description=row.description,
+        amount=Decimal(str(row.amount)),
+        vat_applicable=row.vat_applicable,
+        amount_excl_vat=excl,
+        amount_incl_vat=incl,
+    )
+
+
+@router.delete("/{subcontractor_id}/costing/income/{income_id}")
+def delete_truck_costing_income(
+    subcontractor_id: int,
+    income_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove a manual costing income line."""
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    row = (
+        db.query(TruckCostingIncome)
+        .join(Truck, Truck.id == TruckCostingIncome.truck_id)
+        .filter(
+            TruckCostingIncome.id == income_id,
+            Truck.subcontractor_id == subcontractor_id,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Income line not found")
+
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/{subcontractor_id}/costing/export/pdf")

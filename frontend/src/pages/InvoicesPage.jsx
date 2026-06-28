@@ -120,18 +120,18 @@ export default function InvoicesPage({ docType = 'invoice' }) {
     })
   }, [allInvoices, showCancelled, filterStatus, sort])
 
-  // Totals strip under the table — reflects the current filters/sort. Paid+Sent
-  // are the "settled or issued" invoices; Outstanding is everything else still
-  // owing (overdue/ready/draft); Overall is every non-cancelled invoice.
+  // Totals strip under the table — reflects the current filters/sort. Paid is
+  // only settled invoices; Outstanding is everything else still owing (sent/
+  // overdue/ready/draft); Overall is every non-cancelled invoice.
   const totals = useMemo(() => {
-    let paidSent = 0, overall = 0
+    let paid = 0, overall = 0
     for (const inv of displayedInvoices) {
       if (inv.status === 'cancelled') continue
       const total = parseFloat(inv.total) || 0
       overall += total
-      if (inv.status === 'paid' || inv.status === 'sent') paidSent += total
+      if (inv.status === 'paid') paid += total
     }
-    return { paidSent, outstanding: overall - paidSent, overall }
+    return { paid, outstanding: overall - paid, overall }
   }, [displayedInvoices])
 
   const handlePdf = async (e, inv) => {
@@ -439,7 +439,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           {!loading && displayedInvoices.length > 0 && (
             <tfoot>
               {[
-                { label: 'Paid + Sent', value: totals.paidSent, color: 'var(--success)' },
+                { label: 'Paid', value: totals.paid, color: 'var(--success)' },
                 { label: 'Outstanding', value: totals.outstanding, color: 'var(--danger)' },
                 { label: 'Overall Total', value: totals.overall, color: 'var(--text)', strong: true },
               ].map((row, i) => (

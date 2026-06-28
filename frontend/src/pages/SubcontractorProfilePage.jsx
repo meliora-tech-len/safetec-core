@@ -8,6 +8,7 @@ import {
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice,
   getSubcontractorInvoices, getSubcontractorCosting, saveSubcontractorCostingNote,
   saveSubcontractorCostingNetOverride,
+  createTruckCostingIncome, deleteTruckCostingIncome,
   downloadSubcontractorCostingPdf, downloadSubcontractorCostingExcel,
   getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
@@ -103,6 +104,13 @@ export default function SubcontractorProfilePage() {
   const [expenseForm, setExpenseForm]     = useState(blankExpenseForm())
   const [expenseSaving, setExpenseSaving] = useState(false)
   const [expenseDeleteTarget, setExpenseDeleteTarget] = useState(null)
+
+  // Manual income modal (costing tab) — mirrors the general expense, on the
+  // income side. Holds the truck the card was opened from.
+  const [incomeModal, setIncomeModal]     = useState(null)   // { truckId, truckReg } | null
+  const [incomeForm, setIncomeForm]       = useState({ description: '', amount: '', vat_applicable: true })
+  const [incomeSaving, setIncomeSaving]   = useState(false)
+  const [incomeDeleteTarget, setIncomeDeleteTarget] = useState(null)
 
   const [suppliers, setSuppliers] = useState([])
   const [trucks, setTrucks]       = useState([])
@@ -485,6 +493,38 @@ export default function SubcontractorProfilePage() {
     }
   }
 
+  // ── Manual income modal handlers (costing tab) ───────────────────────────────
+
+  const openIncomeModal = (truckId, truckReg) => {
+    setIncomeForm({ description: '', amount: '', vat_applicable: true })
+    setIncomeModal({ truckId, truckReg })
+  }
+  const setIF = (k, v) => setIncomeForm(f => ({ ...f, [k]: v }))
+
+  const saveIncome = async (e) => {
+    e.preventDefault()
+    const desc = incomeForm.description.trim()
+    if (!desc) { toast.error('Description is required'); return }
+    const amt = parseFloat(incomeForm.amount) || 0
+    if (amt <= 0) { toast.error('Enter a valid amount'); return }
+
+    setIncomeSaving(true)
+    try {
+      await createTruckCostingIncome(
+        id,
+        { truck_id: incomeModal.truckId, month, year },
+        { description: desc, amount: amt, vat_applicable: incomeForm.vat_applicable },
+      )
+      toast.success('Income added')
+      setIncomeModal(null)
+      loadCosting()
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setIncomeSaving(false)
+    }
+  }
+
   if (!subcontractor) {
     return <div style={{ padding: 48, display: 'flex', justifyContent: 'center' }}><div className="spinner" /></div>
   }
@@ -851,6 +891,8 @@ export default function SubcontractorProfilePage() {
                   autoExpand={highlightTruckId === td.truck.id}
                   templateSuppliers={costing.diesel_suppliers || []}
                   onAddExpense={() => openExpenseModal(td.truck.registration)}
+                  onAddIncome={() => openIncomeModal(td.truck.id, td.truck.registration)}
+                  onDeleteIncome={setIncomeDeleteTarget}
                   onDeleteInvoice={setExpenseDeleteTarget}
                   onSaveNote={saveTruckNote}
                   onSaveNetOverride={saveTruckNetOverride}
@@ -1067,6 +1109,74 @@ export default function SubcontractorProfilePage() {
           } catch (e) { toast.error(errorMessage(e)) }
         }}
       />
+
+      {/* ── Add Income Modal (costing tab) ── */}
+      {incomeModal && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setIncomeModal(null)}>
+          <div className="modal">
+            <div className="modal-header">
+              <h2>Add Income{incomeModal.truckReg ? ` — ${incomeModal.truckReg}` : ''}</h2>
+              <button className="btn-icon btn-ghost" onClick={() => setIncomeModal(null)}><X size={16} /></button>
+            </div>
+            <form onSubmit={saveIncome}>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label>Description *</label>
+                  <input value={incomeForm.description} onChange={e => setIF('description', e.target.value)} required placeholder="e.g. Standing time" />
+                </div>
+                <div className="form-group">
+                  <label>Amount *</label>
+                  <input type="number" step="0.01" min="0" value={incomeForm.amount} onChange={e => setIF('amount', e.target.value)} placeholder="0.00" />
+                </div>
+                <div className="form-group">
+                  <label>VAT</label>
+                  <div style={{ display: 'flex', gap: 0, borderRadius: 7, overflow: 'hidden', border: '1px solid var(--border)', width: 'fit-content' }}>
+                    <button
+                      type="button"
+                      onClick={() => setIF('vat_applicable', false)}
+                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', background: !incomeForm.vat_applicable ? 'var(--accent)' : 'var(--bg-surface)', color: !incomeForm.vat_applicable ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                    >
+                      Excl VAT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIF('vat_applicable', true)}
+                      style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', background: incomeForm.vat_applicable ? 'var(--accent)' : 'var(--bg-surface)', color: incomeForm.vat_applicable ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                    >
+                      Incl VAT
+                    </button>
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                    {incomeForm.vat_applicable ? 'Amount is VAT-inclusive → goes to Income Incl VAT' : 'Amount is VAT-exclusive → no VAT'}
+                  </span>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn-ghost" onClick={() => setIncomeModal(null)}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={incomeSaving}>
+                  {incomeSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : 'Add Income'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Income DeleteModal (costing tab) ── */}
+      <DeleteModal
+        isOpen={!!incomeDeleteTarget}
+        onClose={() => setIncomeDeleteTarget(null)}
+        title="Delete Income"
+        description={incomeDeleteTarget ? `${incomeDeleteTarget.description}${incomeDeleteTarget.amount ? ` — ${fmtC(incomeDeleteTarget.amount)}` : ''}` : ''}
+        onDelete={async () => {
+          try {
+            await deleteTruckCostingIncome(id, incomeDeleteTarget.id)
+            toast.success('Income deleted')
+            setIncomeDeleteTarget(null)
+            loadCosting()
+          } catch (e) { toast.error(errorMessage(e)) }
+        }}
+      />
     </div>
   )
 }
@@ -1261,7 +1371,7 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onDeleteInvoice, onSaveNote, onSaveNetOverride, isVatRegistered = true,
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onAddIncome, onDeleteIncome, onDeleteInvoice, onSaveNote, onSaveNetOverride, isVatRegistered = true,
   verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false, highlight = false, autoExpand = false }) {
   const [expanded, setExpanded] = useState(false)
   // Open the card automatically when it's the target of a reg search
@@ -1290,6 +1400,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
     truck, loads,
     income_excl_vat, income_incl_vat,
     admin_fee, supplier_invoices,
+    manual_incomes = [],
     total_expenses_excl_vat, total_expenses_incl_vat,
     net_payable, net_payable_calculated, net_payable_override,
     diesel_groups = [],
@@ -1446,6 +1557,37 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={tdStyle}></td>
             </tr>
+
+            {/* Manual income lines — added in the costing module only, with delete */}
+            {manual_incomes.map(mi => {
+              const mExcl = parseFloat(mi.amount_excl_vat) || 0
+              const mIncl = parseFloat(mi.amount_incl_vat) || 0
+              const mVat  = mIncl - mExcl
+              return (
+                <tr key={`income-${mi.id}`}>
+                  <td style={{ ...tdStyle, fontSize: 12 }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      {mi.description}
+                      <span title="Manual income — costing only" style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(16,185,129,0.14)', color: '#059669', borderRadius: 10, padding: '1px 6px' }}>
+                        INCOME
+                      </span>
+                    </span>
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{fmtC(mExcl)}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{isVatRegistered ? fmtC(mVat) : dash}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}>{isVatRegistered ? fmtC(mIncl) : dash}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
+                  <td style={tdStyle}>
+                    {onDeleteIncome && (
+                      <button className="btn-icon btn-ghost" onClick={() => onDeleteIncome(mi)}>
+                        <Trash2 size={12} color="var(--danger)" />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
 
             {/* Admin Fee — standard template (greyed) */}
             <tr>
@@ -1684,14 +1826,25 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onD
           )}
         </div>
 
-        {/* Add Expense */}
-        <button
-          className="btn-ghost"
-          style={{ fontSize: 12, marginTop: 12, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
-          onClick={onAddExpense}
-        >
-          <Plus size={13} /> Add Expense
-        </button>
+        {/* Add Expense / Add Income */}
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button
+            className="btn-ghost"
+            style={{ fontSize: 12, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+            onClick={onAddExpense}
+          >
+            <Plus size={13} /> Add Expense
+          </button>
+          {onAddIncome && (
+            <button
+              className="btn-ghost"
+              style={{ fontSize: 12, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+              onClick={onAddIncome}
+            >
+              <Plus size={13} /> Add Income
+            </button>
+          )}
+        </div>
 
         {/* Collapsible loads detail */}
         {showLoadDetail && (

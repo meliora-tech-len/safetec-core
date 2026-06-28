@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import { X, AlertCircle, ChevronRight } from 'lucide-react'
-import { formatCurrency } from '../utils/helpers'
+import { formatCurrency, errorMessage } from '../utils/helpers'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -22,10 +23,23 @@ const periodKey = (inv) => (inv.statement_month ? `${inv.statement_year}-${inv.s
  * Clicking a row (with a registered supplier) opens that supplier's profile,
  * deep-linked to the invoice so it scrolls into view and highlights.
  */
-export default function PendingInvoicesModal({ invoices, loading, onClose }) {
+export default function PendingInvoicesModal({ invoices, loading, onClose, onSkip }) {
   const navigate = useNavigate()
   const [entity, setEntity] = useState('')   // entity_id as string, '' = all
   const [period, setPeriod] = useState('')   // 'year-month', '' = all
+  const [skipping, setSkipping] = useState(() => new Set())  // ids being dismissed
+
+  // Dismiss an invoice from the list without final-locking it.
+  const skip = (e, inv) => {
+    e.stopPropagation()  // don't trigger the row's navigate
+    if (!onSkip || skipping.has(inv.id)) return
+    setSkipping(prev => new Set(prev).add(inv.id))
+    Promise.resolve(onSkip(inv.id))
+      .catch(err => {
+        toast.error(errorMessage(err, 'Could not skip this invoice'))
+        setSkipping(prev => { const n = new Set(prev); n.delete(inv.id); return n })
+      })
+  }
 
   // Distinct entities and periods present in the current result set.
   const entityOpts = useMemo(() => {
@@ -120,6 +134,7 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
                   <th>Period</th>
                   <th style={{ textAlign: 'right' }}>Amount</th>
                   <th>Verified</th>
+                  {onSkip && <th style={{ width: 60 }}></th>}
                   <th style={{ width: 24 }}></th>
                 </tr>
               </thead>
@@ -165,6 +180,19 @@ export default function PendingInvoicesModal({ invoices, loading, onClose }) {
                       <td>
                         <span title={v.note} style={{ fontSize: 11, fontWeight: 700, color: v.color }}>{v.label}</span>
                       </td>
+                      {onSkip && (
+                        <td>
+                          <button
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: '3px 8px', color: 'var(--text-muted)' }}
+                            disabled={skipping.has(inv.id)}
+                            onClick={e => skip(e, inv)}
+                            title="Remove this invoice from the verify list (it won't be deleted)"
+                          >
+                            {skipping.has(inv.id) ? '…' : 'Skip'}
+                          </button>
+                        </td>
+                      )}
                       <td>{target && <ChevronRight size={14} color="var(--text-muted)" />}</td>
                     </tr>
                   )

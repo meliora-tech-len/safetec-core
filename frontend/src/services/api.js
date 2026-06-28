@@ -182,6 +182,8 @@ export const createSubcontractorInvoice = (id, data)        => api.post(`/subcon
 export const getSubcontractorCosting        = (id, params = {}) => api.get(`/subcontractors/${id}/costing`, { params })
 export const saveSubcontractorCostingNote   = (id, params = {}, data = {}) => api.put(`/subcontractors/${id}/costing/note`, data, { params })
 export const saveSubcontractorCostingNetOverride = (id, params = {}, data = {}) => api.put(`/subcontractors/${id}/costing/net-override`, data, { params })
+export const createTruckCostingIncome       = (id, params = {}, data = {}) => api.post(`/subcontractors/${id}/costing/income`, data, { params })
+export const deleteTruckCostingIncome       = (id, incomeId) => api.delete(`/subcontractors/${id}/costing/income/${incomeId}`)
 export const downloadSubcontractorCostingPdf   = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/pdf`,   { params, responseType: 'blob' })
 export const downloadSubcontractorCostingExcel = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/excel`, { params, responseType: 'blob' })
 
@@ -277,6 +279,7 @@ export const bulkImportSupplierInvoices = (data) => api.post('/supplier-invoices
 export const resolveSupplierDieselConflicts = (resolutions) => api.post('/supplier-invoices/resolve-diesel-conflicts', resolutions)
 export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)
 export const getPendingSupplierInvoices = (params = {}) => api.get('/supplier-invoices/pending-verification', { params })
+export const skipPendingVerification  = (id) => api.post(`/supplier-invoices/${id}/skip-verification`)
 export const verifySupplierInvoice    = (id, action) => api.patch(`/supplier-invoices/${id}/verify`, null, { params: action ? { action } : {} })
 export const finalizeSupplierInvoice  = (id, action) => api.patch(`/supplier-invoices/${id}/finalize`, null, { params: action ? { action } : {} })
 export const verifyAdditionalLoad     = (driverId, year, month, loadId, action) =>

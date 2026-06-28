@@ -814,6 +814,7 @@ def list_pending_verification(
     q = db.query(SupplierInvoice).filter(
         SupplierInvoice.is_archived != True,
         SupplierInvoice.verified3_by.is_(None),
+        SupplierInvoice.verify_skipped != True,
         SupplierInvoice.created_at >= cutoff,
     )
     accessible = _accessible_entity_ids(current_user)
@@ -861,6 +862,34 @@ def list_pending_verification(
             verified2_by_initials=disp.get("verified2_by_initials"),
         ))
     return result
+
+
+@router.post("/{invoice_id}/skip-verification")
+def skip_pending_verification(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Dismiss an invoice from the admin 'to verify' list without final-locking
+    it. The invoice is otherwise untouched and can still be verified normally.
+    Idempotent — already-skipped invoices return cleanly."""
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_invoice_access(inv, current_user)
+
+    if not inv.verify_skipped:
+        inv.verify_skipped = True
+        inv.verify_skipped_by = current_user.id
+        inv.verify_skipped_at = datetime.now(tz=timezone.utc)
+        log_action(
+            db, "supplier_invoice.verify_skipped", user_id=current_user.id,
+            entity_id=inv.entity_id, resource_type="supplier_invoice",
+            resource_id=invoice_id,
+            description=f"Skipped invoice {inv.invoice_number or '(no number)'} from the verify list",
+        )
+        db.commit()
+    return {"detail": "Invoice skipped"}
 
 
 def _one_off_source_module(inv: SupplierInvoice) -> str:

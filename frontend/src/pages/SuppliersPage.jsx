@@ -213,6 +213,7 @@ export default function SuppliersPage() {
         <PendingInvoicesModal
           invoices={pending.invoices}
           loading={pending.loading}
+          onSkip={pending.skip}
           onClose={() => setShowPending(false)}
         />
       )}

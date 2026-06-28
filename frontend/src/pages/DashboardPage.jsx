@@ -452,6 +452,7 @@ export default function DashboardPage() {
         <PendingInvoicesModal
           invoices={pending.invoices}
           loading={pending.loading}
+          onSkip={pending.skip}
           onClose={() => setShowPending(false)}
         />
       )}

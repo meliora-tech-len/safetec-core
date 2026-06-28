@@ -2137,6 +2137,25 @@ class DieselSupplierGroup(BaseModel):
     tot_grand_total: Decimal
 
 
+class TruckCostingIncomeOut(BaseModel):
+    id: int
+    description: str
+    amount: Decimal
+    vat_applicable: bool
+    # Resolved split for display in the income columns.
+    amount_excl_vat: Decimal
+    amount_incl_vat: Decimal
+
+    class Config:
+        from_attributes = True
+
+
+class TruckCostingIncomeCreate(BaseModel):
+    description: str
+    amount: Decimal
+    vat_applicable: bool = True
+
+
 class SubcontractorTruckCostingOut(BaseModel):
     truck: TruckOut
     loads: List[TruckLoadOut]
@@ -2144,6 +2163,9 @@ class SubcontractorTruckCostingOut(BaseModel):
     income_incl_vat: Decimal
     admin_fee: Decimal
     supplier_invoices: List[SupplierInvoiceOut]
+    # Manual income lines added directly in the costing module (costing-only;
+    # never in the Income vs Expenses report or the Supplier Invoice Profile).
+    manual_incomes: List[TruckCostingIncomeOut] = []
     total_expenses_excl_vat: Decimal
     total_expenses_incl_vat: Decimal
     # Effective net payable: the manual override when set, else the calculated value.

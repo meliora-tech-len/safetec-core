@@ -399,6 +399,11 @@ class SupplierInvoice(Base):
     verified2_at = Column(DateTime(timezone=True))
     verified3_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     verified3_at = Column(DateTime(timezone=True))
+    # Dismissed from the admin "to verify" list/badge without final-locking. The
+    # invoice still exists and can be verified normally — it just stops nagging.
+    verify_skipped = Column(Boolean, nullable=False, default=False, server_default='false')
+    verify_skipped_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verify_skipped_at = Column(DateTime(timezone=True))
     payment_due_date = Column(DateTime(timezone=True))
     is_paid = Column(Boolean, default=False)
     paid_date = Column(DateTime(timezone=True))
@@ -850,6 +855,29 @@ class TruckCostingNote(Base):
     __table_args__ = (
         UniqueConstraint("truck_id", "month", "year", name="uq_truck_costing_note_period"),
     )
+
+
+class TruckCostingIncome(Base):
+    """Manual income line added directly in the costing module for a truck +
+    costing period. Mirrors the "general expense" but on the income side: a
+    description + amount that simply adds to the truck's income column.
+
+    Deliberately isolated to the costing view — it is NOT a TruckLoad and NOT a
+    SupplierInvoice, so it never flows into the Income vs Expenses report or the
+    Supplier Invoice Profile. It exists only in the costing tab."""
+    __tablename__ = "truck_costing_incomes"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    truck_id      = Column(Integer, ForeignKey("trucks.id", ondelete="CASCADE"), nullable=False)
+    month         = Column(Integer, nullable=False)
+    year          = Column(Integer, nullable=False)
+    description   = Column(Text, nullable=False)
+    # The entered figure. vat_applicable decides whether it is read as the
+    # VAT-inclusive value (Income Incl VAT) or the VAT-exclusive value.
+    amount         = Column(Numeric(12, 2), nullable=False)
+    vat_applicable = Column(Boolean, nullable=False, default=True)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
 class TruckWash(Base):
