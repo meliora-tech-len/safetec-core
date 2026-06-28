@@ -85,6 +85,26 @@ export const downloadInvoicePdf = async (id, invoiceNumber, theme = 'dark') => {
   window.URL.revokeObjectURL(url)
 }
 
+// Split a combined PO PDF into one PDF per order; downloads a ZIP. Returns the PO count.
+export const splitPoPdf = async (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await api.post('/invoices/split-pos', form, {
+    responseType: 'blob',
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  const stamp = new Date().toISOString().slice(0, 10)
+  const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/zip' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', `split-pos-${stamp}.zip`)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+  return parseInt(res.headers['x-po-count'] || '0', 10)
+}
+
 // Bulk download: merge=false → ZIP of separate PDFs, merge=true → one merged PDF.
 export const downloadInvoicesBulk = async (invoiceIds, { merge = false, theme = 'dark' } = {}) => {
   const res = await api.post('/invoices/bulk-pdf', {

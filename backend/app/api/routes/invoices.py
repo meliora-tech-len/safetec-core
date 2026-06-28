@@ -2,7 +2,7 @@ import asyncio
 import re
 import zipfile
 from io import BytesIO
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
@@ -701,6 +701,88 @@ async def download_invoices_bulk_pdf(
         content=content,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="invoices-{stamp}.zip"'},
+    )
+
+
+@router.post("/split-pos")
+async def split_po_pdf(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Split a combined Tradekor PO PDF into one PDF per purchase order.
+
+    Each page carries its own order number (POH...). Consecutive pages sharing
+    the same number belong to the same PO; a page with no detectable number is
+    treated as a continuation of the current PO. Returns a ZIP of the split
+    PDFs named by PO number. Nothing is stored — pure split-and-download.
+    """
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Please upload a PDF file.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    def _build():
+        from pypdf import PdfReader, PdfWriter
+        try:
+            reader = PdfReader(BytesIO(content))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Could not read the PDF. Make sure it is a valid PO file.")
+
+        # Group consecutive pages by their order number.
+        groups = []  # [{"po_number": str, "pages": [int]}]
+        current = None
+        for i, page in enumerate(reader.pages):
+            try:
+                text = page.extract_text() or ""
+            except Exception:
+                text = ""
+            m = re.search(r"POH\s*\d{6,}", text)
+            po = m.group(0).replace(" ", "").upper() if m else None
+            if po:
+                if current is None or current["po_number"] != po:
+                    current = {"po_number": po, "pages": []}
+                    groups.append(current)
+                current["pages"].append(i)
+            else:
+                # Continuation page with no number — keep it with the current PO.
+                if current is None:
+                    current = {"po_number": f"PO_{i + 1}", "pages": []}
+                    groups.append(current)
+                current["pages"].append(i)
+
+        if not groups:
+            raise HTTPException(
+                status_code=422,
+                detail="No purchase orders found. The PDF has no readable POH order numbers.",
+            )
+
+        buf = BytesIO()
+        used = {}
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for g in groups:
+                writer = PdfWriter()
+                for idx in g["pages"]:
+                    writer.add_page(reader.pages[idx])
+                out = BytesIO()
+                writer.write(out)
+                base = _safe_filename(g["po_number"])
+                used[base] = used.get(base, 0) + 1
+                name = base if used[base] == 1 else f"{base}_{used[base]}"
+                zf.writestr(f"{name}.pdf", out.getvalue())
+        return buf.getvalue(), len(groups)
+
+    payload, count = await asyncio.to_thread(_build)
+
+    stamp = datetime.now().strftime("%Y%m%d")
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="split-pos-{stamp}.zip"',
+            "X-PO-Count": str(count),
+        },
     )
 
 

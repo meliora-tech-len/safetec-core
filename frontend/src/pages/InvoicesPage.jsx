@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getInvoices, getEntities, downloadInvoicePdf, downloadInvoicesBulk, updateInvoice, deleteInvoice } from '../services/api'
 import { formatCurrency, formatDate, statusBadgeClass, statusLabel, errorMessage } from '../utils/helpers'
-import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2, Upload, ChevronDown, FileArchive, Files } from 'lucide-react'
+import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2, Upload, ChevronDown, FileArchive, Files, Scissors } from 'lucide-react'
 import ImportPOModal from '../components/ImportPOModal'
+import SplitPOModal from '../components/SplitPOModal'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
 import { useTheme } from '../hooks/useTheme'
@@ -62,6 +63,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const [showCancelled, setShowCancelled] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [showImportPO, setShowImportPO] = useState(false)
+  const [showSplitPO, setShowSplitPO] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())  // rows ticked for bulk actions (mark-paid / PDF download)
   const [payingBulk, setPayingBulk] = useState(false)
   const [downloadingBulk, setDownloadingBulk] = useState(false)
@@ -249,6 +251,11 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           {isInvoice && (
             <button className="btn-ghost btn-sm" onClick={() => setShowImportPO(true)} title="Generate invoice from a PO Excel file">
               <Upload size={14} /> Import PO
+            </button>
+          )}
+          {isInvoice && (
+            <button className="btn-ghost btn-sm" onClick={() => setShowSplitPO(true)} title="Split a combined PO PDF into one PDF per order">
+              <Scissors size={14} /> Split PO
             </button>
           )}
           <button className="btn-primary" onClick={() => navigate(`/${docPath}/new`)}>
@@ -526,6 +533,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
       )}
 
       {showImportPO && <ImportPOModal onClose={() => setShowImportPO(false)} entities={entities} onImported={load} />}
+      {showSplitPO && <SplitPOModal onClose={() => setShowSplitPO(false)} />}
 
       <DeleteModal
         isOpen={!!deleteTarget}
