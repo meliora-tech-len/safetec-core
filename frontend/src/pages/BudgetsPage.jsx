@@ -21,7 +21,18 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 // (rolling "TO PAY / PAID" column pairs), so the grid shows three months.
 const VISIBLE_MONTHS = 3
 
-function periodMonths(month, year) {
+// Entities whose budget is a single STATEMENT PERIOD: the selected month is the
+// statement period and the grid shows [statement-1, statement]. 30-day invoices
+// land in the previous month, cash in the statement month. (Mirror the backend
+// STATEMENT_PERIOD_ENTITIES.)
+const STATEMENT_PERIOD_ENTITIES = ['OBHI']
+
+function periodMonths(month, year, statementMode = false) {
+  if (statementMode) {
+    const prevM = month === 1 ? 12 : month - 1
+    const prevY = month === 1 ? year - 1 : year
+    return [{ month: prevM, year: prevY }, { month, year }]
+  }
   const out = []
   for (let i = 0; i < VISIBLE_MONTHS; i++) {
     const m = ((month - 1 + i) % 12) + 1
@@ -65,7 +76,12 @@ export default function BudgetsPage() {
     )
   }, [entities, isAdmin, user])
 
-  const months = periodMonths(Number(month), Number(year))
+  const selectedEntityCode = (entities || []).find(e => String(e.id) === String(entityId))?.code
+  const statementMode = STATEMENT_PERIOD_ENTITIES.includes((selectedEntityCode || '').toUpperCase())
+  const months = useMemo(
+    () => periodMonths(Number(month), Number(year), statementMode),
+    [month, year, statementMode],
+  )
 
   const loadBudget = useCallback(async () => {
     if (!entityId) { setBudget(null); return }
@@ -324,17 +340,21 @@ export default function BudgetsPage() {
 
   const totals = useMemo(() => {
     if (!budget) return null
+    // Only count cells inside the visible window so a different window (e.g. an
+    // OBHI statement period vs an old rolling one) never carries stale figures in.
+    const monthSet = new Set(months.map(({ month: m, year: y }) => `${m}:${y}`))
     let income = 0, expensesDue = 0, expensesPaid = 0
     for (const s of budget.sections) {
       for (const l of s.lines) {
         for (const v of l.values || []) {
+          if (!monthSet.has(`${v.month}:${v.year}`)) continue
           if (s.section_type === 'income') income += num(v.amount_due)
           else { expensesDue += num(v.amount_due); expensesPaid += num(v.amount_paid) }
         }
       }
     }
     return { income, expensesDue, expensesPaid, leftOver: income - expensesDue - expensesPaid }
-  }, [budget])
+  }, [budget, months])
 
   const selectedEntity = budgetEntities.find(e => String(e.id) === String(entityId))
 
@@ -347,7 +367,11 @@ export default function BudgetsPage() {
             <Wallet size={22} style={{ color: 'var(--accent)' }} />
             Budgets
           </div>
-          <div className="page-subtitle">Entity cash-flow budget — income vs supplier payments per month</div>
+          <div className="page-subtitle">
+            {statementMode
+              ? `Statement period budget — pick the statement month; 30-day invoices show in ${MONTHS[(Number(month) === 1 ? 12 : Number(month) - 1) - 1]}, cash in ${MONTHS[Number(month) - 1]}`
+              : 'Entity cash-flow budget — income vs supplier payments per month'}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <select className="form-input" style={{ width: 'auto' }} value={entityId} onChange={e => setEntityId(e.target.value)}>
