@@ -1,28 +1,30 @@
-"""Migration 101 — drop WAGES / OTHER sections from existing OBHI budgets.
+"""Migration 101 — drop the WAGES section from existing OBHI budgets.
 
-OBHI has no payroll, and its other expenses are already deducted elsewhere, so
-neither the WAGES nor the OTHER section belongs on its budgets. New budgets now
-skip these sections via ENTITY_SECTION_EXCLUSIONS in the budgets route; this
-back-fills the same rule onto budgets that were created before that change.
+OBHI has no payroll, so the WAGES section doesn't belong on its budgets. New
+budgets now skip it via ENTITY_SECTION_EXCLUSIONS in the budgets route; this
+back-fills the same rule onto budgets created before that change.
 
-Safety: only EMPTY sections are removed — a section is dropped only when none of
-its lines carry a non-zero TO PAY / PAID value. So a hand-entered figure (if one
-ever existed) is preserved, leaving that section in place for review. The empty
-template sections (the actual situation) are cleared. budget_sections cascades to
-budget_lines and budget_line_values, so removing the section removes its rows.
+NOTE: the OTHER section is intentionally LEFT IN PLACE — OBHI keeps OTHER for
+manually-entered expenses. (An earlier revision of this migration also dropped
+OTHER; that was reversed.)
+
+Safety: only an EMPTY WAGES section is removed — one whose lines carry no
+non-zero TO PAY / PAID value — so any hand-entered figure is preserved for
+review. budget_sections cascades to budget_lines and budget_line_values, so
+removing the section removes its rows.
 """
 from sqlalchemy import text, bindparam
 
 
 def upgrade(conn):
-    # Sections on OBHI budgets named WAGES / OTHER that hold no real data.
+    # WAGES sections on OBHI budgets that hold no real data.
     select_empty = text("""
         SELECT s.id
         FROM budget_sections s
         JOIN budgets b ON b.id = s.budget_id
         JOIN business_entities e ON e.id = b.entity_id
         WHERE UPPER(e.code) = 'OBHI'
-          AND s.name IN ('WAGES', 'OTHER')
+          AND s.name = 'WAGES'
           AND NOT EXISTS (
               SELECT 1
               FROM budget_lines l
