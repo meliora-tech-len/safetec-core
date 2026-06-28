@@ -463,7 +463,7 @@ export default function BudgetsPage() {
               <TrendingDown size={14} /> Add Expense
             </button>
             <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
-              Lines marked <span className="badge badge-sent" style={{ fontSize: 10 }}>auto</span> come from the system — edit any cell to pin it.
+              Tip: click any amount cell to type a figure. Lines marked <span className="badge badge-sent" style={{ fontSize: 10 }}>auto</span> come from the system — editing a cell pins it.
             </span>
           </div>
 
@@ -591,7 +591,7 @@ export default function BudgetsPage() {
                                     onBlur={() => commitCell(line, m, y, field)}
                                     onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
                                     readOnly={locked}
-                                    placeholder="—"
+                                    placeholder="0.00"
                                     title={locked ? 'Locked by final verification — remove the lock to edit'
                                       : overridden ? 'Manually edited — a system refresh will not change this' : undefined}
                                     style={locked ? cellInputLocked : overridden ? cellInputOverridden : cellInputStyle}
@@ -696,10 +696,13 @@ export default function BudgetsPage() {
   )
 }
 
+// Amount cells are editable — give them a visible input look (border + surface fill)
+// so it's obvious they can be typed into, not just static figures.
 const cellInputStyle = {
   width: 100, textAlign: 'right', fontSize: 12.5,
-  background: 'transparent', border: '1px solid transparent', borderRadius: 5,
+  background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 5,
   padding: '4px 6px', color: 'var(--text-primary)', outline: 'none',
+  cursor: 'text',
 }
 
 // A pinned (manually edited) auto cell — subtle accent border so the user can see
@@ -715,6 +718,8 @@ const cellInputLocked = {
   ...cellInputStyle,
   cursor: 'not-allowed',
   color: 'var(--text-secondary)',
+  background: 'var(--bg-surface)',
+  borderColor: 'transparent',
 }
 
 // Clickable sort headers.
