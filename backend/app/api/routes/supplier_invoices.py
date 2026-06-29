@@ -69,7 +69,7 @@ ALLOWED_ATTACH_EXTS = {
     "xlsx": ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
     "xls": ("xls", "application/vnd.ms-excel"),
 }
-MAX_ATTACH_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_ATTACH_BYTES = 25 * 1024 * 1024  # 25 MB
 
 
 def _resolve_attach_type(content_type: str | None, filename: str | None):
@@ -1452,7 +1452,7 @@ async def upload_attachment(
 
     file_bytes = await file.read()
     if len(file_bytes) > MAX_ATTACH_BYTES:
-        raise HTTPException(status_code=400, detail="Attachment must be under 10MB")
+        raise HTTPException(status_code=400, detail="Attachment must be under 25MB")
 
     key = _attach_save(invoice_id, file_bytes, ext, content_type)
 
