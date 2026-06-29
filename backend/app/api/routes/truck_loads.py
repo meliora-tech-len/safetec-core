@@ -3,7 +3,7 @@ import logging
 
 logger = logging.getLogger("safetec.truck_loads")
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, case
+from sqlalchemy import func, and_, or_, case, extract
 from typing import List, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -345,20 +345,30 @@ def _remove_trip_log(load_id: int, db: Session):
     ).delete(synchronize_session=False)
 
 
-def _sync_split_driver(driver_id: int, load_date: datetime, db: Session):
+def _load_effective_period(load: TruckLoad) -> tuple:
+    """The (year, month) a load is paid in. Subcontractor loads carry a statement
+    period distinct from load_date (the load is done one month, paid/statemented in
+    another); the driver's split credit must follow that statement period so it lands
+    in the same cycle the load shows under on the Truck Loads page. Falls back to the
+    load_date month when no statement period is set (normal loads)."""
+    if load.statement_month and load.statement_year:
+        return load.statement_year, load.statement_month
+    return load.load_date.year, load.load_date.month
+
+
+def _sync_split_driver(driver_id: int, year: int, month: int, db: Session):
     """Re-sync split-load credit for a driver from their truck_load_driver_splits lines.
 
     Each line is 0.5 of a load. We store the line COUNT in the pay cycle (an integer
     number of half-loads); calculate_pay_cycle applies the ×0.5 — so one line → 0.5 load,
-    two lines in the month → 1.0 load. Casual lines bucket by their own mine's casual_group."""
+    two lines in the month → 1.0 load. Casual lines bucket by their own mine's casual_group.
+
+    Loads are bucketed by their STATEMENT period (coalesced with load_date), matching the
+    Truck Loads view and subcontractor costing — so an OBHI subcontractor split done in June
+    but statemented to July counts on the driver's July cycle, not June."""
     driver = db.query(Driver).filter(Driver.id == driver_id).first()
     if not driver:
         return
-
-    year, month = load_date.year, load_date.month
-    month_start = datetime(year, month, 1, tzinfo=timezone.utc)
-    month_end = (datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-                 if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc))
 
     split_loads = (
         db.query(TruckLoadDriverSplit)
@@ -367,8 +377,8 @@ def _sync_split_driver(driver_id: int, load_date: datetime, db: Session):
             TruckLoadDriverSplit.driver_id == driver_id,
             TruckLoad.entity_id == driver.entity_id,
             TruckLoad.is_archived != True,
-            TruckLoad.load_date >= month_start,
-            TruckLoad.load_date < month_end,
+            func.coalesce(TruckLoad.statement_month, extract("month", TruckLoad.load_date)) == month,
+            func.coalesce(TruckLoad.statement_year,  extract("year",  TruckLoad.load_date)) == year,
         )
         .all()
     )
@@ -418,13 +428,14 @@ def _sync_split_driver(driver_id: int, load_date: datetime, db: Session):
 
 def _add_split_trip_logs(load: TruckLoad, db: Session):
     """Create one DriverTripLog per driver line on a split load (pay cycles must exist)."""
+    eff_year, eff_month = _load_effective_period(load)
     for s in load.driver_splits:
         if not s.driver_id:
             continue
         cycle = db.query(DriverPayCycle).filter(
             DriverPayCycle.driver_id == s.driver_id,
-            DriverPayCycle.pay_month == load.load_date.month,
-            DriverPayCycle.pay_year  == load.load_date.year,
+            DriverPayCycle.pay_month == eff_month,
+            DriverPayCycle.pay_year  == eff_year,
         ).first()
         if not cycle:
             continue
@@ -815,10 +826,13 @@ def create_split_load(
     if rate is None:
         rate = _resolve_rate(db, item.mine_id, item.entity_id)
         if rate is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No active mine rate for mine {item.mine_id}/entity {item.entity_id}. Provide rate_per_ton.",
-            )
+            if item.is_projection:
+                rate = Decimal("0")  # projections are placeholders — tonnes/rate unknown
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No active mine rate for mine {item.mine_id}/entity {item.entity_id}. Provide rate_per_ton.",
+                )
     ent = db.query(BusinessEntity).filter(BusinessEntity.id == item.entity_id).first()
 
     load = TruckLoad(**item.model_dump(exclude={"rate_per_ton"}), rate_per_ton=rate)
@@ -841,9 +855,11 @@ def create_split_load(
     db.flush()
     db.refresh(load)
 
-    # Credit each distinct driver's payroll (0.5 per line)
+    # Credit each distinct driver's payroll (0.5 per line), on the load's effective
+    # (statement) period so subcontractor splits land in the right cycle.
+    eff_year, eff_month = _load_effective_period(load)
     for did in {sp.driver_id for sp in payload.splits if sp.driver_id}:
-        _sync_split_driver(did, load.load_date, db)
+        _sync_split_driver(did, eff_year, eff_month, db)
     db.flush()
 
     _add_split_trip_logs(load, db)
@@ -877,6 +893,7 @@ def update_truck_load(
     old_load_date  = load.load_date
     old_is_split   = load.is_split_load
     old_driver_id  = load.driver_id
+    old_split_period = _load_effective_period(load)
 
     updated_fields = payload.model_dump(exclude_none=True)
     for field, value in updated_fields.items():
@@ -924,10 +941,12 @@ def update_truck_load(
     # Sync pay cycles for affected drivers/trucks
     dates_to_sync = {old_load_date, new_load_date}
     if new_is_split:
-        # Split load: re-sync every driver line for both old and new dates
+        # Split load: re-sync every driver line for both old and new effective
+        # (statement) periods, in case the date or statement period moved.
+        split_periods = {old_split_period, _load_effective_period(load)}
         for did in {s.driver_id for s in load.driver_splits if s.driver_id}:
-            for ld in dates_to_sync:
-                _sync_split_driver(did, ld, db)
+            for (yr, mo) in split_periods:
+                _sync_split_driver(did, yr, mo, db)
     else:
         # Regular load: sync by truck (permanent driver) ...
         for truck_id in {old_truck_id, new_truck_id}:
@@ -1007,6 +1026,7 @@ def delete_truck_load(
     is_split   = load.is_split_load
     driver_id  = load.driver_id
     split_driver_ids = [s.driver_id for s in load.driver_splits if s.driver_id] if is_split else []
+    split_period = _load_effective_period(load) if is_split else None
 
     _remove_trip_log(load_id, db)
 
@@ -1020,7 +1040,7 @@ def delete_truck_load(
 
     if is_split:
         for did in set(split_driver_ids):
-            _sync_split_driver(did, load_date, db)
+            _sync_split_driver(did, split_period[0], split_period[1], db)
     else:
         _sync_driver_pay_cycle(truck_id, load_date, db)
         if driver_id:

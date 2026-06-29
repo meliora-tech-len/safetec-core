@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, func, extract
 from typing import List, Optional
 from decimal import Decimal
 from datetime import date
@@ -216,6 +216,13 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
 
     # Split-load lines attributed to this driver (each line = 0.5 of a load).
     # calculate_pay_cycle applies the ×0.5; we store the integer line count here.
+    # Splits are bucketed by their STATEMENT period (coalesced with load_date) — not the
+    # plain load_date window above — so an OBHI subcontractor split done in June but
+    # statemented to July counts on the July cycle, matching the Truck Loads view.
+    split_period_clause = and_(
+        func.coalesce(TruckLoad.statement_month, extract("month", TruckLoad.load_date)) == month,
+        func.coalesce(TruckLoad.statement_year,  extract("year",  TruckLoad.load_date)) == year,
+    )
     split_rows = (
         db.query(TruckLoadDriverSplit)
         .join(TruckLoad, TruckLoadDriverSplit.truck_load_id == TruckLoad.id)
@@ -223,7 +230,7 @@ def _prefill_from_truckloads(driver: Driver, year: int, month: int, db: Session)
             TruckLoadDriverSplit.driver_id == driver.id,
             TruckLoad.entity_id == driver.entity_id,
             TruckLoad.is_archived != True,
-            pay_period_clause,
+            split_period_clause,
         )
         .all()
     )

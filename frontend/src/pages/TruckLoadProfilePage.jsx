@@ -2359,7 +2359,7 @@ export default function TruckLoadProfilePage() {
   const handleSaveSplit = async () => {
     if (!splitForm.mine_id) return toast.error('Select a mine for the load')
     if (!splitForm.load_date) return toast.error('Load date required')
-    if (!splitForm.tonnes || isNaN(splitForm.tonnes)) return toast.error('Valid tonnes required')
+    if (!splitForm.is_projection && (!splitForm.tonnes || isNaN(splitForm.tonnes))) return toast.error('Valid tonnes required')
     if (splitDrivers.some(d => !d.driver_id)) return toast.error('Select a driver for both lines')
     setSplitSaving(true)
     try {
@@ -2370,7 +2370,7 @@ export default function TruckLoadProfilePage() {
           mine_id: parseInt(d.mine_id || splitForm.mine_id),
         })),
       })
-      toast.success('Split load saved')
+      toast.success(splitForm.is_projection ? 'Split projection saved' : 'Split load saved')
       setSplitModalOpen(false)
       fetchLoads()
     } catch (e) {
@@ -2876,9 +2876,14 @@ export default function TruckLoadProfilePage() {
                 const splits = l.driver_splits || []
                 const isOpen = openSplitGroups.has(l.id)
                 return [
-                  <tr key={`split-${l.id}`} style={{ background: 'var(--bg-surface)', cursor: 'pointer', opacity: l.is_paid ? 0.7 : 1 }}
+                  <tr key={`split-${l.id}`} style={{ background: l.is_projection ? 'rgba(245,158,11,0.05)' : 'var(--bg-surface)', cursor: 'pointer', opacity: l.is_paid ? 0.7 : 1, fontStyle: l.is_projection ? 'italic' : undefined }}
                     onClick={() => toggleSplitGroup(l.id)} className="hoverable-row">
-                    <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(l.load_date)}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {l.is_projection && <span style={{ background: '#f59e0b', color: '#fff', fontSize: 9, padding: '1px 6px', borderRadius: 3, fontWeight: 800, fontStyle: 'normal' }}>PROJ</span>}
+                        {fmtDate(l.load_date)}
+                      </span>
+                    </td>
                     <td style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                       {l.statement_month ? `${MONTHS[l.statement_month - 1]?.slice(0, 3)} ${l.statement_year}` : '—'}
                     </td>
@@ -2898,10 +2903,10 @@ export default function TruckLoadProfilePage() {
                       <span className="badge badge-quote" style={{ fontSize: 9, padding: '1px 5px' }}>½ split</span>
                     </td>}
                     <td style={{ fontSize: 13 }}>{l.mine_name || '—'}</td>
-                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(l.tonnes)}</td>
-                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(l.rate_per_ton)}</td>
-                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(l.amount_excl_vat)}</td>
-                    {vatRegistered && <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmt(l.amount_incl_vat)}</td>}
+                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: l.is_projection ? 'var(--text-muted)' : undefined }}>{l.is_projection ? '—' : fmtNum(l.tonnes)}</td>
+                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{l.is_projection ? '—' : fmt(l.rate_per_ton)}</td>
+                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: 'var(--text-muted)' }}>{l.is_projection ? '—' : fmt(l.amount_excl_vat)}</td>
+                    {vatRegistered && <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{l.is_projection ? '—' : fmt(l.amount_incl_vat)}</td>}
                     {showSub && <>
                       <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_rate)}</td>
                       <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--accent)' }}>{fmt(l.subcontractor_amount_excl_vat)}</td>
@@ -3009,10 +3014,23 @@ export default function TruckLoadProfilePage() {
           }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>Add Split Load</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Each driver receives 0.5 load credit</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>{splitForm.is_projection ? 'Add Split Projection' : 'Add Split Load'}</div>
+                  {splitForm.is_projection && <span style={{ background: '#f59e0b', color: '#fff', fontSize: 10, padding: '2px 7px', borderRadius: 3, fontWeight: 800 }}>PROJECTION</span>}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                  {splitForm.is_projection ? 'Placeholder — tonnes unknown. Each driver still gets 0.5 load credit.' : 'Each driver receives 0.5 load credit'}
+                </div>
               </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setSplitModalOpen(false)}><X size={15} /></button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, color: '#f59e0b', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!splitForm.is_projection}
+                    onChange={e => setSplitForm(p => ({ ...p, is_projection: e.target.checked }))}
+                    style={{ accentColor: '#f59e0b', width: 13, height: 13 }} />
+                  Projection
+                </label>
+                <button className="btn btn-ghost btn-sm" onClick={() => setSplitModalOpen(false)}><X size={15} /></button>
+              </div>
             </div>
             {/* Main load — the billing record. Counts as ONE load with full tonnes. */}
             <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: 14 }}>
@@ -3037,20 +3055,26 @@ export default function TruckLoadProfilePage() {
               </div>
               <div>
                 <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Tonnes</label>
-                <input type="number" step="0.001" min="0" value={splitForm.tonnes}
+                <input type="number" step="0.001" min="0"
+                  value={splitForm.is_projection ? '' : splitForm.tonnes}
+                  disabled={splitForm.is_projection}
                   onChange={e => setSplitForm(p => ({ ...p, tonnes: e.target.value }))}
-                  placeholder="0.000" style={{ ...S.input, width: '100%', textAlign: 'right' }} />
+                  placeholder={splitForm.is_projection ? 'TBC' : '0.000'}
+                  style={{ ...S.input, width: '100%', textAlign: 'right', ...(splitForm.is_projection ? { background: 'var(--bg-surface)', color: 'var(--text-muted)' } : {}) }} />
               </div>
               <div>
                 <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
                   Rate/t
-                  {splitForm.mine_id && splitForm.rate_per_ton && mines.find(m => String(m.id) === String(splitForm.mine_id))?.rates?.find(r => r.entity_id === truck.entity_id && !r.effective_to && String(r.rate_per_ton) === String(splitForm.rate_per_ton)) && (
+                  {!splitForm.is_projection && splitForm.mine_id && splitForm.rate_per_ton && mines.find(m => String(m.id) === String(splitForm.mine_id))?.rates?.find(r => r.entity_id === truck.entity_id && !r.effective_to && String(r.rate_per_ton) === String(splitForm.rate_per_ton)) && (
                     <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: 'var(--accent)' }}>auto</span>
                   )}
                 </label>
-                <input type="number" step="0.01" min="0" value={splitForm.rate_per_ton}
+                <input type="number" step="0.01" min="0"
+                  value={splitForm.is_projection ? '' : splitForm.rate_per_ton}
+                  disabled={splitForm.is_projection}
                   onChange={e => setSplitForm(p => ({ ...p, rate_per_ton: e.target.value }))}
-                  placeholder="0.00" style={{ ...S.input, width: '100%', textAlign: 'right' }} />
+                  placeholder={splitForm.is_projection ? 'TBC' : '0.00'}
+                  style={{ ...S.input, width: '100%', textAlign: 'right', ...(splitForm.is_projection ? { background: 'var(--bg-surface)', color: 'var(--text-muted)' } : {}) }} />
               </div>
               <div>
                 <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Slip #</label>
