@@ -122,7 +122,8 @@ def _cycle_with_calc(
 ) -> DriverPayCycleOut:
     settings = _get_payroll_settings(db)
     driver_type = driver.driver_type.value if driver.driver_type else "permanent"
-    calc = calculate_pay_cycle(cycle, settings, driver_type=driver_type)
+    calc = calculate_pay_cycle(cycle, settings, driver_type=driver_type,
+                               exclude_mine_bonus=bool(getattr(driver, "exclude_mine_bonus", False)))
     calc_serialisable = {k: float(v) if isinstance(v, Decimal) else v for k, v in calc.items()}
     out = DriverPayCycleOut.model_validate(cycle)
     out.calc = calc_serialisable
@@ -733,6 +734,15 @@ def update_cycle(
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(cycle, field, value)
 
+    # Manual earnings overrides are nullable: an explicit null clears the override
+    # back to the computed value. exclude_none above drops nulls, so apply these
+    # from the explicitly-set fields (exclude_unset) where they can be set to None.
+    explicit = payload.model_dump(exclude_unset=True)
+    for field in ("basic_salary_override", "subsistence_override",
+                  "load_incentive_override", "mine_bonus_override"):
+        if field in explicit:
+            setattr(cycle, field, explicit[field])
+
     log_action(db, "pay_cycle.updated", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="pay_cycle",
                resource_id=cycle.id,
@@ -1143,7 +1153,8 @@ def download_payslip_pdf(
     cycle = _get_or_create_cycle(driver_id, year, month, db)
     settings = _get_payroll_settings(db)
     driver_type = driver.driver_type.value if driver.driver_type else "permanent"
-    calc = calculate_pay_cycle(cycle, settings, driver_type=driver_type)
+    calc = calculate_pay_cycle(cycle, settings, driver_type=driver_type,
+                               exclude_mine_bonus=bool(getattr(driver, "exclude_mine_bonus", False)))
     calc_f = {k: float(v) if isinstance(v, Decimal) else v for k, v in calc.items()}
 
     # ── Casual: load breakdown for individual lines on the payslip ──────────────

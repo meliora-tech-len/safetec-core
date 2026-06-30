@@ -660,6 +660,10 @@ class Driver(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     notes = Column(Text)
 
+    # When True the per-load Mine (Assmang) bonus is never paid to this driver,
+    # regardless of how many qualifying-mine loads they have.
+    exclude_mine_bonus = Column(Boolean, default=False, nullable=False)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -756,6 +760,14 @@ class DriverPayCycle(Base):
     # from truck loads). Effective count = assmang_loads + 0.5 × assmang_split_loads.
     assmang_loads        = Column(Integer, default=0, nullable=False)
     assmang_split_loads  = Column(Integer, default=0, nullable=False)
+
+    # Manual overrides for the auto-calculated earnings lines. Null = use the
+    # value computed from loads/settings; a number replaces it (and flows through
+    # to gross, statutory deductions and net payable).
+    basic_salary_override   = Column(Numeric(12, 2), nullable=True)
+    subsistence_override    = Column(Numeric(12, 2), nullable=True)
+    load_incentive_override = Column(Numeric(12, 2), nullable=True)
+    mine_bonus_override     = Column(Numeric(12, 2), nullable=True)
 
     subsistence_advance_paid     = Column(Numeric(12, 2), default=0)
     subsistence_advance_verified = Column(Boolean, default=False)

@@ -937,6 +937,7 @@ class DriverBase(BaseModel):
     address: Optional[str] = None
     branch_code: Optional[str] = None
     job_title: Optional[str] = None
+    exclude_mine_bonus: bool = False
     notes: Optional[str] = None
 
 
@@ -960,6 +961,7 @@ class DriverUpdate(BaseModel):
     branch_code: Optional[str] = None
     job_title: Optional[str] = None
     is_active: Optional[bool] = None
+    exclude_mine_bonus: Optional[bool] = None
     notes: Optional[str] = None
 
 
@@ -1255,6 +1257,10 @@ class DriverPayCycleUpdate(BaseModel):
     lohatla_extra_loads: Optional[int] = None
     casual_group_a_loads: Optional[int] = None
     casual_group_b_loads: Optional[int] = None
+    basic_salary_override: Optional[Decimal] = None
+    subsistence_override: Optional[Decimal] = None
+    load_incentive_override: Optional[Decimal] = None
+    mine_bonus_override: Optional[Decimal] = None
     subsistence_advance_paid: Optional[Decimal] = None
     subsistence_advance_verified: Optional[bool] = None
     staff_loan_balance: Optional[Decimal] = None
@@ -1279,6 +1285,10 @@ class DriverPayCycleOut(BaseModel):
     casual_split_group_b_loads: int = 0
     assmang_loads: int = 0
     assmang_split_loads: int = 0
+    basic_salary_override: Optional[Decimal] = None
+    subsistence_override: Optional[Decimal] = None
+    load_incentive_override: Optional[Decimal] = None
+    mine_bonus_override: Optional[Decimal] = None
     subsistence_advance_paid: Decimal
     subsistence_advance_verified: bool
     staff_loan_balance: Decimal

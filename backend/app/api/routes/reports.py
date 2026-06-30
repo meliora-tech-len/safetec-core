@@ -260,7 +260,8 @@ def income_expenses_report(
             continue
         driver_type = driver.driver_type.value if driver.driver_type else 'permanent'
         try:
-            calc = calculate_pay_cycle(cycle, effective, driver_type)
+            calc = calculate_pay_cycle(cycle, effective, driver_type,
+                                       exclude_mine_bonus=bool(getattr(driver, 'exclude_mine_bonus', False)))
             payroll_from_cycles[m] = payroll_from_cycles.get(m, 0.0) + float(calc['gross'])
         except Exception:
             pass

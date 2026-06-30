@@ -6,6 +6,7 @@ def calculate_pay_cycle(
     cycle: DriverPayCycle,
     settings: PayrollSettings,
     driver_type: str = "permanent",
+    exclude_mine_bonus: bool = False,
 ) -> dict:
     """
     Returns a dict of all calculated values for a pay cycle.
@@ -15,12 +16,21 @@ def calculate_pay_cycle(
     incentive per extra load, subsistence per load, statutory deductions.
 
     Casual drivers: pure per-load rate (Lohatla only), no basic salary, no BC deductions.
+
+    `exclude_mine_bonus` (a per-driver flag) forces the Mine/Assmang bonus to zero.
+    The cycle's *_override columns replace individual computed earnings lines when set
+    (null = use the computed value); they flow through to gross, statutory and net.
     """
     def d(v):
         return Decimal(str(v)) if v is not None else Decimal(0)
 
     def r(v):
         return v.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    def ov(field):
+        """Return a manual override (as Decimal) for `field`, or None if unset."""
+        v = getattr(cycle, field, None)
+        return d(v) if v is not None else None
 
     lohatla_full  = (cycle.lohatla_base_loads or 0) + (cycle.lohatla_extra_loads or 0)
     lohatla_total = lohatla_full  # kept for permanent path below
@@ -52,7 +62,13 @@ def calculate_pay_cycle(
         # Per-load bonus — loads delivered to the bonus mines (Assmang/Mokala/Tawana/Sebilo)
         assmang_effective = (Decimal(cycle.assmang_loads or 0)
                              + Decimal(getattr(cycle, 'assmang_split_loads', 0) or 0) * Decimal("0.5"))
-        assmang_bonus = d(settings.assmang_bonus_per_load) * assmang_effective
+        mine_ov = ov('mine_bonus_override')
+        if exclude_mine_bonus:
+            assmang_bonus = Decimal(0)
+        elif mine_ov is not None:
+            assmang_bonus = mine_ov
+        else:
+            assmang_bonus = d(settings.assmang_bonus_per_load) * assmang_effective
         gross = load_earnings + assmang_bonus + additional_total
 
         total_deductions = loan_deduction + cash_deduction + food_deduction
@@ -98,21 +114,32 @@ def calculate_pay_cycle(
     lohatla_effective = Decimal(lohatla_total) + Decimal(split_count) * Decimal("0.5")
     grand_total      = lohatla_effective
 
-    # Basic salary — floor for 7 effective loads
-    basic_salary = d(settings.lohatla_base_salary) if lohatla_effective > 0 else Decimal(0)
+    # Basic salary — floor for 7 effective loads (manual override wins when set)
+    basic_ov = ov('basic_salary_override')
+    basic_salary = basic_ov if basic_ov is not None else (
+        d(settings.lohatla_base_salary) if lohatla_effective > 0 else Decimal(0))
 
-    # Subsistence — all effective loads × rate
-    subs_lohatla = d(settings.lohatla_subs_per_load) * lohatla_effective
+    # Subsistence — all effective loads × rate (manual override wins when set)
+    subs_ov = ov('subsistence_override')
+    subs_lohatla = subs_ov if subs_ov is not None else (d(settings.lohatla_subs_per_load) * lohatla_effective)
     total_subs   = subs_lohatla
 
-    # Load incentive — effective loads above 7
-    inc_lohatla = d(settings.lohatla_incentive_per_load) * max(Decimal(0), lohatla_effective - Decimal(7))
+    # Load incentive — effective loads above 7 (manual override wins when set)
+    inc_ov = ov('load_incentive_override')
+    inc_lohatla = inc_ov if inc_ov is not None else (
+        d(settings.lohatla_incentive_per_load) * max(Decimal(0), lohatla_effective - Decimal(7)))
     total_inc   = inc_lohatla
 
     # Assmang bonus — only loads delivered to the ASSMANG mine
     assmang_effective = (Decimal(cycle.assmang_loads or 0)
                          + Decimal(getattr(cycle, 'assmang_split_loads', 0) or 0) * Decimal("0.5"))
-    assmang_bonus = d(settings.assmang_bonus_per_load) * assmang_effective
+    mine_ov = ov('mine_bonus_override')
+    if exclude_mine_bonus:
+        assmang_bonus = Decimal(0)
+    elif mine_ov is not None:
+        assmang_bonus = mine_ov
+    else:
+        assmang_bonus = d(settings.assmang_bonus_per_load) * assmang_effective
 
     gross = basic_salary + total_subs + total_inc + assmang_bonus + additional_total
 

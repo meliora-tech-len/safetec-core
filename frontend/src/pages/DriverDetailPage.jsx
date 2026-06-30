@@ -37,8 +37,13 @@ const fmtDate = (d) => {
   return new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// Read a manual override: blank/null → null (use computed), else the number.
+const ovNum = (v) => (v === '' || v === null || v === undefined) ? null : Number(v)
+
 // ── Live calculator (mirrors payroll_calculator.py) ───────────────────────────
-function calcLive(inputs, settings, additionalLoads, driverType) {
+// `excludeMineBonus` (per-driver) forces the mine bonus to 0. `overrides` holds
+// the four manual earnings overrides; a set value replaces the computed line.
+function calcLive(inputs, settings, additionalLoads, driverType, excludeMineBonus = false, overrides = {}) {
   if (!settings) return null
   const s = settings
   const lBase  = Number(inputs.lohatla_base_loads  || 0)
@@ -47,6 +52,7 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
   const additionalTotal = (additionalLoads || []).reduce((sum, al) => sum + parseFloat(al.amount || 0), 0)
   // Assmang bonus applies only to loads delivered to the ASSMANG mine
   const assmangEff = Number(inputs.assmang_loads || 0) + Number(inputs.assmang_split_loads || 0) * 0.5
+  const mineOv = ovNum(overrides.mine_bonus_override)
 
   if (driverType === 'casual') {
     const rateA      = parseFloat(s.casual_rate_group_a || 0)
@@ -59,14 +65,15 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
     const earningsB  = rateB * loadsB + (rateB / 2) * splitB
     const loadEarnings = earningsA + earningsB
     const effectiveTotal = loadsA + loadsB + (splitA + splitB) * 0.5
-    const assmang    = parseFloat(s.assmang_bonus_per_load || 0) * assmangEff
+    const assmangComputed = parseFloat(s.assmang_bonus_per_load || 0) * assmangEff
+    const assmang    = excludeMineBonus ? 0 : (mineOv != null ? mineOv : assmangComputed)
     const gross        = loadEarnings + assmang + additionalTotal
     return {
       grand: effectiveTotal, loadsA, loadsB, splitA, splitB, rateA, rateB,
-      earningsA, earningsB, loadEarnings, assmang, assmangEff, additionalTotal, gross,
+      earningsA, earningsB, loadEarnings, assmang, assmangComputed, assmangEff, additionalTotal, gross,
       isCasual: true,
-      basicSalary: 0, subsL: 0, totalSubs: 0,
-      incL: 0, totalInc: 0,
+      basicSalary: 0, basicComputed: 0, subsL: 0, totalSubs: 0, subsComputed: 0,
+      incL: 0, totalInc: 0, incComputed: 0,
     }
   }
 
@@ -74,20 +81,29 @@ function calcLive(inputs, settings, additionalLoads, driverType) {
   const lEffective   = lTotal + splitCount * 0.5
   const grand        = lEffective
 
-  const basicSalary = lEffective > 0 ? parseFloat(s.lohatla_base_salary) : 0
+  const basicComputed = lEffective > 0 ? parseFloat(s.lohatla_base_salary) : 0
+  const ovBasic = ovNum(overrides.basic_salary_override)
+  const basicSalary = ovBasic != null ? ovBasic : basicComputed
 
-  const subsL = parseFloat(s.lohatla_subs_per_load) * lEffective
+  const subsComputed = parseFloat(s.lohatla_subs_per_load) * lEffective
+  const ovSubs = ovNum(overrides.subsistence_override)
+  const subsL = ovSubs != null ? ovSubs : subsComputed
   const totalSubs = subsL
 
-  const incL = parseFloat(s.lohatla_incentive_per_load) * Math.max(0, lEffective - 7)
+  const incComputed = parseFloat(s.lohatla_incentive_per_load) * Math.max(0, lEffective - 7)
+  const ovInc = ovNum(overrides.load_incentive_override)
+  const incL = ovInc != null ? ovInc : incComputed
   const totalInc = incL
 
-  const assmang = parseFloat(s.assmang_bonus_per_load) * assmangEff
+  const assmangComputed = parseFloat(s.assmang_bonus_per_load) * assmangEff
+  const assmang = excludeMineBonus ? 0 : (mineOv != null ? mineOv : assmangComputed)
   const gross = basicSalary + totalSubs + totalInc + assmang + additionalTotal
 
   return {
-    grand, lTotal, lEffective, splitCount, basicSalary, subsL, totalSubs,
-    incL, totalInc, assmang, assmangEff, additionalTotal, gross, isCasual: false,
+    grand, lTotal, lEffective, splitCount,
+    basicSalary, basicComputed, subsL, totalSubs, subsComputed,
+    incL, totalInc, incComputed, assmang, assmangComputed, assmangEff,
+    additionalTotal, gross, isCasual: false,
   }
 }
 
@@ -109,6 +125,45 @@ function calcStatutory(basicSalary, settings) {
   const paye       = parseFloat(s.paye_fixed)
   const total      = nbcrfli + provident + wellness + sickFund + holidayFund + leavePay + paye
   return { nbcrfli, provident, wellness, sickFund, holidayFund, leavePay, paye, total }
+}
+
+// ── Auto-calc summary rows ────────────────────────────────────────────────────
+function SummaryRow({ label, val }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid var(--border)' }}>
+      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <span style={{ fontWeight: 500 }}>{val}</span>
+    </div>
+  )
+}
+
+// Editable earnings line — blank input uses the computed value (shown as the
+// placeholder); typing a number overrides it. The reset button clears the override.
+function OverrideRow({ label, hint, field, overrides, setOverrides, computed, disabled, disabledNote }) {
+  const val = overrides[field]
+  const has = val !== '' && val !== null && val !== undefined
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', borderBottom: '1px solid var(--border)', gap: 8 }}>
+      <span style={{ color: 'var(--text-secondary)' }}>
+        {label}{hint && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}> {hint}</span>}
+      </span>
+      {disabled ? (
+        <span style={{ fontWeight: 500, color: 'var(--text-muted)' }}>{disabledNote}</span>
+      ) : (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <input className="form-input" type="number" step="0.01"
+            value={has ? val : ''}
+            placeholder={parseFloat(computed || 0).toFixed(2)}
+            onChange={e => setOverrides(o => ({ ...o, [field]: e.target.value }))}
+            style={{ width: 110, textAlign: 'right', padding: '2px 8px', height: 28, fontWeight: has ? 700 : 500, color: has ? 'var(--accent)' : 'inherit' }}
+            title={has ? 'Manual override — clear to use the computed value' : `Computed: ${fmt(computed)}`} />
+          <button type="button" className="btn-icon" title="Reset to computed"
+            onClick={() => setOverrides(o => ({ ...o, [field]: '' }))}
+            style={{ padding: 2, visibility: has ? 'visible' : 'hidden' }}><X size={12} /></button>
+        </span>
+      )}
+    </div>
+  )
 }
 
 // ── Modal components ──────────────────────────────────────────────────────────
@@ -294,6 +349,10 @@ export default function DriverDetailPage() {
   const [cashBal, setCashBal]   = useState(0)
   const [cashDed, setCashDed]   = useState(0)
   const [comments, setComments] = useState('')
+  // Manual earnings overrides ('' = use computed value)
+  const [overrides, setOverrides] = useState({
+    basic_salary_override: '', subsistence_override: '', load_incentive_override: '', mine_bonus_override: '',
+  })
   const [savingLoads, setSavingLoads] = useState(false)
 
   // Load driver + settings once
@@ -342,6 +401,13 @@ export default function DriverDetailPage() {
         setCashBal(parseFloat(c.cash_advance_balance) || 0)
         setCashDed(parseFloat(c.cash_advance_deduction) || 0)
         setComments(c.comments || '')
+        const ovStr = (v) => (v === null || v === undefined) ? '' : String(v)
+        setOverrides({
+          basic_salary_override:   ovStr(c.basic_salary_override),
+          subsistence_override:    ovStr(c.subsistence_override),
+          load_incentive_override: ovStr(c.load_incentive_override),
+          mine_bonus_override:     ovStr(c.mine_bonus_override),
+        })
       })
       .catch(() => toast.error('Failed to load pay cycle'))
       .finally(() => setLoading(false))
@@ -399,7 +465,7 @@ export default function DriverDetailPage() {
   } : null
 
   // Live calc
-  const liveCalc = calcLive(loads, effectiveSettings, cycle?.additional_loads, driver?.driver_type)
+  const liveCalc = calcLive(loads, effectiveSettings, cycle?.additional_loads, driver?.driver_type, driver?.exclude_mine_bonus, overrides)
   const stat = liveCalc && driver?.driver_type === 'permanent'
     ? calcStatutory(liveCalc.basicSalary, effectiveSettings)
     : null
@@ -436,8 +502,13 @@ export default function DriverDetailPage() {
   const saveLoads = async () => {
     setSavingLoads(true)
     try {
+      const ovOut = (v) => (v === '' || v === null || v === undefined) ? null : parseFloat(v)
       const updated = await api.put(`/api/drivers/${driverId}/cycles/${year}/${month}`, {
         ...loads,
+        basic_salary_override:   ovOut(overrides.basic_salary_override),
+        subsistence_override:    ovOut(overrides.subsistence_override),
+        load_incentive_override: ovOut(overrides.load_incentive_override),
+        mine_bonus_override:     ovOut(overrides.mine_bonus_override),
         subsistence_advance_paid:     subsAdvanceParsed,
         subsistence_advance_verified: subsVerified,
         staff_loan_balance:  parseFloat(loanBal || 0),
@@ -627,33 +698,40 @@ export default function DriverDetailPage() {
                 </div>
               )}
 
-              {/* Auto-calc summary */}
+              {/* Auto-calc summary — earnings lines are editable; a blank field uses
+                  the computed value, a typed number overrides it (and flows to gross). */}
               {liveCalc && (
                 <div style={{ background: 'var(--bg-page)', borderRadius: 8, padding: '12px 14px', marginBottom: 16, fontSize: 13 }}>
-                  {(liveCalc.isCasual ? [
-                    ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.loadsA * liveCalc.rateA)]] : []),
-                    ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.loadsB * liveCalc.rateB)]] : []),
-                    ...(liveCalc.splitA > 0 ? [[`Group A split (${(liveCalc.splitA * 0.5).toFixed(1)} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.splitA * liveCalc.rateA / 2)]] : []),
-                    ...(liveCalc.splitB > 0 ? [[`Group B split (${(liveCalc.splitB * 0.5).toFixed(1)} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.splitB * liveCalc.rateB / 2)]] : []),
-                    ...(liveCalc.assmang > 0 ? [[`Mine bonus (${liveCalc.assmangEff.toFixed(1)} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)]] : []),
-                    ['Additional loads', fmt(liveCalc.additionalTotal)],
-                  ] : [
-                    ['Basic salary',    fmt(liveCalc.basicSalary)],
-                    ...(stat ? [
-                      ['Sick Fund',     fmt(stat.sickFund)],
-                      ['Holiday Fund',  fmt(stat.holidayFund)],
-                      ['Leave Pay',     fmt(stat.leavePay)],
-                    ] : []),
-                    ['Subsistence',     fmt(liveCalc.totalSubs)],
-                    ['Load incentive',  fmt(liveCalc.totalInc)],
-                    [`Mine bonus (${liveCalc.assmangEff} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`, fmt(liveCalc.assmang)],
-                    ['Additional loads', fmt(liveCalc.additionalTotal)],
-                  ]).map(([label, val]) => (
-                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid var(--border)' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
-                      <span style={{ fontWeight: 500 }}>{val}</span>
-                    </div>
-                  ))}
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Override any line — blank uses the calculated value
+                  </div>
+                  {liveCalc.isCasual ? (
+                    <>
+                      {liveCalc.loadsA > 0 && <SummaryRow label={`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`} val={fmt(liveCalc.loadsA * liveCalc.rateA)} />}
+                      {liveCalc.loadsB > 0 && <SummaryRow label={`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`} val={fmt(liveCalc.loadsB * liveCalc.rateB)} />}
+                      {liveCalc.splitA > 0 && <SummaryRow label={`Group A split (${(liveCalc.splitA * 0.5).toFixed(1)} × ${fmt(liveCalc.rateA)})`} val={fmt(liveCalc.splitA * liveCalc.rateA / 2)} />}
+                      {liveCalc.splitB > 0 && <SummaryRow label={`Group B split (${(liveCalc.splitB * 0.5).toFixed(1)} × ${fmt(liveCalc.rateB)})`} val={fmt(liveCalc.splitB * liveCalc.rateB / 2)} />}
+                      <OverrideRow label="Mine bonus" hint={`(${liveCalc.assmangEff} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`}
+                        field="mine_bonus_override" overrides={overrides} setOverrides={setOverrides}
+                        computed={liveCalc.assmangComputed} disabled={driver.exclude_mine_bonus} disabledNote="Excluded" />
+                      <SummaryRow label="Additional loads" val={fmt(liveCalc.additionalTotal)} />
+                    </>
+                  ) : (
+                    <>
+                      <OverrideRow label="Basic salary" field="basic_salary_override" overrides={overrides} setOverrides={setOverrides} computed={liveCalc.basicComputed} />
+                      {stat && <>
+                        <SummaryRow label="Sick Fund" val={fmt(stat.sickFund)} />
+                        <SummaryRow label="Holiday Fund" val={fmt(stat.holidayFund)} />
+                        <SummaryRow label="Leave Pay" val={fmt(stat.leavePay)} />
+                      </>}
+                      <OverrideRow label="Subsistence" field="subsistence_override" overrides={overrides} setOverrides={setOverrides} computed={liveCalc.subsComputed} />
+                      <OverrideRow label="Load incentive" field="load_incentive_override" overrides={overrides} setOverrides={setOverrides} computed={liveCalc.incComputed} />
+                      <OverrideRow label="Mine bonus" hint={`(${liveCalc.assmangEff} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`}
+                        field="mine_bonus_override" overrides={overrides} setOverrides={setOverrides}
+                        computed={liveCalc.assmangComputed} disabled={driver.exclude_mine_bonus} disabledNote="Excluded" />
+                      <SummaryRow label="Additional loads" val={fmt(liveCalc.additionalTotal)} />
+                    </>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', fontWeight: 700, color: 'var(--accent)', fontSize: 14 }}>
                     <span>Gross income</span><span>{fmt(grossEarnings)}</span>
                   </div>
@@ -1119,6 +1197,7 @@ function EditDriverModal({ driver, entities, onSave, onClose }) {
     date_engaged:        driver.date_engaged ? driver.date_engaged.slice(0, 10) : '',
     address:             driver.address || '',
     is_active:           driver.is_active,
+    exclude_mine_bonus:  driver.exclude_mine_bonus || false,
     notes:               driver.notes || '',
   })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -1186,6 +1265,10 @@ function EditDriverModal({ driver, entities, onSave, onClose }) {
         <div style={{ gridColumn: '1/-1', display: 'flex', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" id="edit-active" checked={form.is_active} onChange={e => set('is_active', e.target.checked)} />
           <label htmlFor="edit-active" className="form-label" style={{ margin: 0 }}>Active</label>
+        </div>
+        <div style={{ gridColumn: '1/-1', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" id="edit-exclude-bonus" checked={form.exclude_mine_bonus} onChange={e => set('exclude_mine_bonus', e.target.checked)} />
+          <label htmlFor="edit-exclude-bonus" className="form-label" style={{ margin: 0 }}>Exclude Mine (Assmang) bonus — never pay the per-load bonus to this driver</label>
         </div>
       </div>
       <label className="form-label" style={{ marginTop: 12 }}>Notes</label>
