@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader, Fuel, UtensilsCrossed, BarChart3,
-  Banknote, CalendarClock, Search, Check, Flag, Upload,
+  Banknote, CalendarClock, Search, Check, Flag, Upload, Pencil,
 } from 'lucide-react'
 import ImportDieselModal from '../components/ImportDieselModal'
 import { useAuth } from '../hooks/useAuth'
@@ -167,7 +167,7 @@ const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: '', notes: '' }
 
 // ── Shared load form (card-style flex-wrap, used for both new and inline edit) ──
 function LoadForm({ editForm, setEditForm, mines, drivers, vatRate, rateSource, setRateSource,
-  saving, onSave, onCancel, firstInputRef, showPo, isSubcontractorEntity, fmt, MONTHS }) {
+  saving, onSave, onCancel, firstInputRef, showPo, isSubcontractorEntity, fmt, MONTHS, isSplit }) {
   const lbl = { fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 3 }
   const inp = { padding: '5px 8px', fontSize: 12, borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', outline: 'none' }
   const isProj = !!editForm.is_projection
@@ -217,7 +217,7 @@ function LoadForm({ editForm, setEditForm, mines, drivers, vatRate, rateSource, 
           <div style={lbl}>PO #</div>
           <input value={editForm.po_number || ''} placeholder="PO #" onChange={e => set('po_number', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80 }} />
         </div>}
-        {!isSubcontractorEntity && <div>
+        {!isSubcontractorEntity && !isSplit && <div>
           <div style={lbl}>Driver</div>
           <SearchableSelect
             value={editForm.driver_id != null ? String(editForm.driver_id) : ''}
@@ -2850,6 +2850,16 @@ export default function TruckLoadProfilePage() {
                 const l = row.load
                 const splits = l.driver_splits || []
                 const isOpen = openSplitGroups.has(l.id)
+                if (editingId === l.id) return (
+                  <tr key={l.id}>
+                    <td colSpan={COLS} style={{ padding: '12px 16px', background: 'var(--accent-subtle)', borderTop: '2px solid var(--accent)', borderBottom: '2px solid var(--accent)' }}>
+                      <LoadForm editForm={editForm} setEditForm={setEditForm} mines={mines} drivers={driverOptions}
+                        vatRate={vatRate} rateSource={rateSource} setRateSource={setRateSource}
+                        saving={saving} onSave={handleSave} onCancel={cancelEdit} firstInputRef={firstInputRef}
+                        showPo={showPo} isSubcontractorEntity={isSubcontractorEntity} fmt={fmt} MONTHS={MONTHS} isSplit />
+                    </td>
+                  </tr>
+                )
                 return [
                   <tr key={`split-${l.id}`} style={{ background: l.is_projection ? 'rgba(245,158,11,0.05)' : 'var(--bg-surface)', cursor: 'pointer', opacity: l.is_paid ? 0.7 : 1, fontStyle: l.is_projection ? 'italic' : undefined }}
                     onClick={() => toggleSplitGroup(l.id)} className="hoverable-row">
@@ -2890,9 +2900,18 @@ export default function TruckLoadProfilePage() {
                     <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {l.notes || '—'}
                     </td>
-                    <td onClick={e => e.stopPropagation()}>
+                    <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-ghost btn-sm" title="Edit split load"
+                        style={{ color: 'var(--text-muted)', marginRight: 2 }}
+                        onClick={e => { e.stopPropagation(); startEdit(l) }}><Pencil size={13} /></button>
                       <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
                         onClick={e => handleDelete(l, e)}><Trash2 size={13} /></button>
+                      <div style={{ marginTop: 4 }}>
+                        <VerifyBadge item={loadVerif[loadVerifTarget(l.id)] || {}}
+                          onVerify={(_i, intent) => handleVerifyLoad(loadVerifTarget(l.id), intent)}
+                          onFinalize={(_i, intent) => handleFinalizeLoad(loadVerifTarget(l.id), intent)}
+                          currentUserId={user?.id} isAdmin={isAdmin} />
+                      </div>
                     </td>
                   </tr>,
                   ...(isOpen ? splits.map(sp => (
