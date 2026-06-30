@@ -1684,6 +1684,11 @@ class SupplierInvoiceOut(BaseModel):
     litres: Optional[Decimal] = None
     vat_applicable: bool
     vehicle_reg: Optional[str] = None
+    # Owning subcontractor for vehicle_reg, resolved server-side against the
+    # invoice's OWN entity (reg → fleet truck → subcontractor/operator). Computed
+    # in the list endpoint so the "Subcontractor" column never depends on a
+    # client-side trucks fetch or the global entity selector.
+    subcontractor_display_name: Optional[str] = None
     description: Optional[str] = None
     statement_month: Optional[int] = None
     statement_year: Optional[int] = None

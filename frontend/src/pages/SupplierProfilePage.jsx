@@ -1144,22 +1144,30 @@ export default function SupplierProfilePage() {
   const selectedUnpaid     = allInvoices.filter(i => selectedIds.has(i.id) && !i.is_paid)
   const multiEntity = entities.length > 1
 
-  // Map a vehicle registration to its owning subcontractor (purely for display).
-  // Temp/old plates are indexed too; real registrations take precedence.
+  // Map a vehicle registration to its owning subcontractor (display fallback).
+  // Temp/old plates are indexed too; real registrations take precedence. Regs are
+  // normalised (strip spaces + uppercase) to match the backend's _norm_reg_key,
+  // so a reg captured as "KSC 007 EC" still resolves against truck "KSC007EC".
+  const normReg = (reg) => (reg || '').replace(/\s+/g, '').toUpperCase()
   const truckByReg = {}
   for (const t of trucks || []) {
-    if (t.temp_registration) truckByReg[t.temp_registration.toUpperCase()] = t
+    if (t.temp_registration) truckByReg[normReg(t.temp_registration)] = t
   }
   for (const t of trucks || []) {
-    if (t.registration) truckByReg[t.registration.toUpperCase()] = t
+    if (t.registration) truckByReg[normReg(t.registration)] = t
   }
   const ownerForReg = (reg) => {
     if (!reg) return null
-    const t = truckByReg[reg.toUpperCase()]
+    const t = truckByReg[normReg(reg)]
     // subcontractor_display_name is the backend-computed owner (FK-linked
     // subcontractor → free-text name → operator); older fields kept as fallback
     return t ? (t.subcontractor_display_name || t.subcontractor_name || t.operator || null) : null
   }
+  // Authoritative source for the column: the per-invoice value resolved by the
+  // backend against the invoice's OWN entity. Falls back to the client-side
+  // trucks map (active-entity scoped) only for rows from an older payload that
+  // predate the server field.
+  const subForInvoice = (inv) => inv.subcontractor_display_name || ownerForReg(inv.vehicle_reg)
   // Suppliers with requires_registration=false (e.g. Axxess) don't use vehicle regs on invoices
   const showVehicleReg = supplier?.requires_registration !== false
   const isDiesel = supplier?.is_diesel_supplier === true
@@ -1209,7 +1217,7 @@ export default function SupplierProfilePage() {
         case 'invoice_date':   av = a.invoice_date || '';   bv = b.invoice_date || '';   break
         case 'invoice_number': av = a.invoice_number || ''; bv = b.invoice_number || ''; break
         case 'vehicle_reg':    av = (a.vehicle_reg || '').toUpperCase(); bv = (b.vehicle_reg || '').toUpperCase(); break
-        case 'subcontractor':  av = (ownerForReg(a.vehicle_reg) || '').toLowerCase(); bv = (ownerForReg(b.vehicle_reg) || '').toLowerCase(); break
+        case 'subcontractor':  av = (subForInvoice(a) || '').toLowerCase(); bv = (subForInvoice(b) || '').toLowerCase(); break
         case 'slip_number':    av = (a.slip_number || '').toLowerCase(); bv = (b.slip_number || '').toLowerCase(); break
         case 'amount':         av = parseFloat(a.amount) || 0; bv = parseFloat(b.amount) || 0; break
         case 'litres':         av = parseFloat(a.litres) || 0; bv = parseFloat(b.litres) || 0; break
@@ -1748,7 +1756,7 @@ export default function SupplierProfilePage() {
                             {showVehicleReg && !isWBGDiesel && (
                               <td style={styles.td}>
                                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                                  {ownerForReg(inv.vehicle_reg) || '—'}
+                                  {subForInvoice(inv) || '—'}
                                 </span>
                               </td>
                             )}

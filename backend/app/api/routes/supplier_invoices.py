@@ -760,12 +760,20 @@ def list_supplier_invoices(
     # One query for all verifier initials, reused across every invoice (avoids N+1).
     initials_cache = build_initials_cache(db)
 
+    # Resolve the owning subcontractor per invoice from its OWN entity's fleet, so
+    # the column is correct regardless of which entity is active in the UI. Built
+    # once for every entity present in this supplier's invoices (a supplier's rows
+    # are usually one entity, but multi-entity captures are possible).
+    owner_by_reg = _truck_owner_reg_map(db, {i.entity_id for i in invoices if i.vehicle_reg})
+
     def _to_out(inv) -> SupplierInvoiceOut:
         out = SupplierInvoiceOut.model_validate(inv)
         fillup_data = fillup_data_by_inv.get(inv.id, {})
+        owner = owner_by_reg.get((inv.entity_id, _norm_reg_key(inv.vehicle_reg))) if inv.vehicle_reg else None
         return out.model_copy(update={
             "diesel_fillup_id": fillup_data.get("fillup_id"),
             "slip_number": fillup_data.get("slip_number"),
+            "subcontractor_display_name": owner,
             "is_multi_line": inv.is_multi_line,
             "line_items": [SupplierInvoiceLineItemOut.model_validate(li) for li in inv.line_items],
             **get_verification_display(db, inv, initials_cache),
@@ -923,6 +931,32 @@ def _subcontractor_reg_map(db: Session, entity_ids: set) -> dict:
             k = _norm_reg_key(reg)
             if k:
                 mapping.setdefault((t.entity_id, k), t.subcontractor_id)
+    return mapping
+
+
+def _truck_owner_reg_map(db: Session, entity_ids: set) -> dict:
+    """{(entity_id, normalised_reg): owner_display_name} for every truck in the
+    given entities — real and temp plates. owner = FK subcontractor name →
+    free-text subcontractor_name → operator (mirrors the fleet _enrich_truck
+    chain and the frontend's ownerForReg). Real registrations take precedence
+    over temp plates (setdefault, registration scanned first)."""
+    if not entity_ids:
+        return {}
+    mapping: dict = {}
+    trucks = (
+        db.query(Truck)
+        .options(joinedload(Truck.subcontractor))
+        .filter(Truck.entity_id.in_(entity_ids))
+        .all()
+    )
+    for t in trucks:
+        owner = (t.subcontractor.name if t.subcontractor else None) or t.subcontractor_name or t.operator
+        if not owner:
+            continue
+        for reg in (t.registration, t.temp_registration):
+            k = _norm_reg_key(reg)
+            if k:
+                mapping.setdefault((t.entity_id, k), owner)
     return mapping
 
 
