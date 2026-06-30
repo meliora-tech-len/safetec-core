@@ -562,16 +562,24 @@ export default function DriverDetailPage() {
                     </div>
                     <div>
                       <label className="form-label">Extra loads (&gt;7)</label>
-                      <input className="form-input" type="number" min="0" value={loads.lohatla_extra_loads}
-                        onChange={e => setLoads(l => ({ ...l, lohatla_extra_loads: parseInt(e.target.value) || 0 }))} />
+                      {/* When auto-tracked split loads exist, the Extra field shows the
+                          effective count (extra + split×0.5, e.g. 3.5) and locks — the
+                          0.5 comes from the split lines and can't be hand-edited here. */}
+                      {loads.permanent_split_loads > 0 ? (
+                        <input className="form-input" type="number" readOnly disabled
+                          value={loads.lohatla_extra_loads + loads.permanent_split_loads * 0.5} />
+                      ) : (
+                        <input className="form-input" type="number" min="0" value={loads.lohatla_extra_loads}
+                          onChange={e => setLoads(l => ({ ...l, lohatla_extra_loads: parseInt(e.target.value) || 0 }))} />
+                      )}
                       {effectiveSettings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                        Subs: {fmt(parseFloat(effectiveSettings.lohatla_subs_per_load) * loads.lohatla_extra_loads)} · Inc: {fmt(parseFloat(effectiveSettings.lohatla_incentive_per_load) * loads.lohatla_extra_loads)}
+                        Subs: {fmt(parseFloat(effectiveSettings.lohatla_subs_per_load) * (loads.lohatla_extra_loads + loads.permanent_split_loads * 0.5))} · Inc: {fmt(parseFloat(effectiveSettings.lohatla_incentive_per_load) * (loads.lohatla_extra_loads + loads.permanent_split_loads * 0.5))}
                       </div>}
                     </div>
                   </div>
                   {loads.permanent_split_loads > 0 && (
                     <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>
-                      + {loads.permanent_split_loads} split load{loads.permanent_split_loads > 1 ? 's' : ''} = +{(loads.permanent_split_loads * 0.5).toFixed(1)} effective loads (auto)
+                      Incl. {loads.permanent_split_loads} split load{loads.permanent_split_loads > 1 ? 's' : ''} (+{(loads.permanent_split_loads * 0.5).toFixed(1)} effective, auto) — folded into Extra loads above
                     </div>
                   )}
                 </div>
@@ -580,26 +588,36 @@ export default function DriverDetailPage() {
                   <div style={{ background: 'rgba(22,163,74,0.06)', borderRadius: 8, padding: '12px 16px' }}>
                     <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--success)', marginBottom: 2 }}>Group A</div>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8 }}>Mokala · Assmang · Sebilo · Tawana</div>
-                    <input className="form-input" type="number" min="0" value={loads.casual_group_a_loads}
-                      onChange={e => setLoads(l => ({ ...l, casual_group_a_loads: parseInt(e.target.value) || 0 }))} />
+                    {loads.casual_split_group_a_loads > 0 ? (
+                      <input className="form-input" type="number" readOnly disabled
+                        value={loads.casual_group_a_loads + loads.casual_split_group_a_loads * 0.5} />
+                    ) : (
+                      <input className="form-input" type="number" min="0" value={loads.casual_group_a_loads}
+                        onChange={e => setLoads(l => ({ ...l, casual_group_a_loads: parseInt(e.target.value) || 0 }))} />
+                    )}
                     {effectiveSettings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      {fmt(effectiveSettings.casual_rate_group_a)} per load · Earnings: {fmt((parseFloat(effectiveSettings.casual_rate_group_a) || 0) * loads.casual_group_a_loads)}
+                      {fmt(effectiveSettings.casual_rate_group_a)} per load · Earnings: {fmt((parseFloat(effectiveSettings.casual_rate_group_a) || 0) * (loads.casual_group_a_loads + loads.casual_split_group_a_loads * 0.5))}
                     </div>}
                   </div>
                   <div style={{ background: 'rgba(59,130,246,0.06)', borderRadius: 8, padding: '12px 16px' }}>
                     <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--accent)', marginBottom: 2 }}>Group B</div>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8 }}>Glosam · Driehoek · Future · Afrimat · Boskop</div>
-                    <input className="form-input" type="number" min="0" value={loads.casual_group_b_loads}
-                      onChange={e => setLoads(l => ({ ...l, casual_group_b_loads: parseInt(e.target.value) || 0 }))} />
+                    {loads.casual_split_group_b_loads > 0 ? (
+                      <input className="form-input" type="number" readOnly disabled
+                        value={loads.casual_group_b_loads + loads.casual_split_group_b_loads * 0.5} />
+                    ) : (
+                      <input className="form-input" type="number" min="0" value={loads.casual_group_b_loads}
+                        onChange={e => setLoads(l => ({ ...l, casual_group_b_loads: parseInt(e.target.value) || 0 }))} />
+                    )}
                     {effectiveSettings && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      {fmt(effectiveSettings.casual_rate_group_b)} per load · Earnings: {fmt((parseFloat(effectiveSettings.casual_rate_group_b) || 0) * loads.casual_group_b_loads)}
+                      {fmt(effectiveSettings.casual_rate_group_b)} per load · Earnings: {fmt((parseFloat(effectiveSettings.casual_rate_group_b) || 0) * (loads.casual_group_b_loads + loads.casual_split_group_b_loads * 0.5))}
                     </div>}
                   </div>
                   {(loads.casual_split_group_a_loads > 0 || loads.casual_split_group_b_loads > 0) && effectiveSettings && (
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 10px',
                       background: 'var(--bg-surface)', borderRadius: 6 }}>
-                      Auto-split loads — Group A: {loads.casual_split_group_a_loads} · Group B: {loads.casual_split_group_b_loads}
-                      &nbsp;({((loads.casual_split_group_a_loads + loads.casual_split_group_b_loads) * 0.5).toFixed(1)} eff. loads ·&nbsp;
+                      Incl. split loads — Group A: {loads.casual_split_group_a_loads} · Group B: {loads.casual_split_group_b_loads}
+                      &nbsp;(+{((loads.casual_split_group_a_loads + loads.casual_split_group_b_loads) * 0.5).toFixed(1)} eff., folded into fields above ·&nbsp;
                       {fmt(
                         (loads.casual_split_group_a_loads * parseFloat(effectiveSettings.casual_rate_group_a || 0)) / 2 +
                         (loads.casual_split_group_b_loads * parseFloat(effectiveSettings.casual_rate_group_b || 0)) / 2
