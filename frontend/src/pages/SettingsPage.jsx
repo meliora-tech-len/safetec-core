@@ -89,12 +89,27 @@ export default function SettingsPage() {
     }
   }
 
+  // Diesel placeholder cleanup is intentionally limited to Safetec + OBHI — the
+  // only entities whose diesel statements leave these placeholders behind.
+  const CLEANUP_ENTITY_CODES = ['SFT', 'OBHI']
+
   const runCleanup = async (commit) => {
     setCleanupBusy(true)
     setCleanupError(null)
     try {
-      const { data } = await cleanupDieselPlaceholders({ commit })
-      setCleanupResult(data)
+      const targets = entities.filter(e => CLEANUP_ENTITY_CODES.includes(e.code))
+      if (targets.length === 0) {
+        setCleanupError('Could not find the Safetec or OBHI entities to scope the cleanup.')
+        return
+      }
+      const results = await Promise.all(
+        targets.map(e => cleanupDieselPlaceholders({ commit, entity_id: e.id }).then(r => r.data))
+      )
+      setCleanupResult({
+        committed: commit,
+        archived_count: results.reduce((n, r) => n + (r.archived_count || 0), 0),
+        archived: results.flatMap(r => r.archived || []),
+      })
     } catch (e) {
       setCleanupError(errorMessage(e, 'Cleanup failed'))
     } finally {
@@ -365,7 +380,7 @@ export default function SettingsPage() {
       </Section>
 
       {/* ── Diesel Maintenance ──────────────────────────────────────── */}
-      <Section title="Diesel Maintenance" subtitle="Clear duplicate 'Pending' placeholder invoices left behind when a diesel statement import didn't absorb a pre-logged slip">
+      <Section title="Diesel Maintenance" subtitle="Clear duplicate 'Pending' placeholder invoices left behind when a diesel statement import didn't absorb a pre-logged slip (Safetec & OBHI only)">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
             For every slip that now appears on a real statement, this re-links its fill-up onto that
