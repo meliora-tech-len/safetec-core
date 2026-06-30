@@ -1287,6 +1287,89 @@ def delete_supplier_invoice(
     return {"detail": "Invoice deleted"}
 
 
+# ── Remove a recurring (fixed) general expense ────────────────────────────────
+
+@router.delete("/{invoice_id}/fixed-expense")
+def remove_fixed_expense(
+    invoice_id: int,
+    scope: str = Query("forward", regex="^(forward|all)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove a recurring (fixed) general expense.
+
+    A plain delete on one month's row does not stick: the carry-forward
+    (`_materialize_fixed_expenses`) re-creates it from the prior month's active
+    occurrence the next time costing loads. This endpoint removes the whole
+    chain instead:
+
+    - scope="forward": stop the expense from this occurrence's month onward.
+      The target month is archived (a tombstone that breaks the carry-forward
+      chain) and any later months in the same group are deleted; earlier months
+      are left untouched.
+    - scope="all": permanently delete every occurrence across all months.
+    """
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_invoice_access(inv, current_user)
+    if not inv.is_fixed_expense:
+        raise HTTPException(status_code=400, detail="Not a recurring (fixed) expense")
+
+    gid = inv.fixed_expense_group_id or inv.id
+    group = (
+        db.query(SupplierInvoice)
+        .filter(
+            SupplierInvoice.is_fixed_expense == True,
+            SupplierInvoice.supplier_id.is_(None),
+            or_(SupplierInvoice.fixed_expense_group_id == gid, SupplierInvoice.id == gid),
+        )
+        .all()
+    )
+
+    def _period(r):
+        if r.statement_year is None or r.statement_month is None:
+            return None
+        return (r.statement_year, r.statement_month)
+
+    target = _period(inv)
+
+    if scope == "all":
+        for r in group:
+            ensure_not_locked(r)
+        for r in group:
+            log_action(
+                db, "supplier_invoice.deleted", user_id=current_user.id,
+                entity_id=r.entity_id, resource_type="supplier_invoice",
+                resource_id=r.id, description=f"Removed recurring expense (all months): {r.supplier_name_text or ''}".strip(),
+            )
+            db.delete(r)
+        db.commit()
+        return {"detail": "Recurring expense removed from all months"}
+
+    # scope == "forward": archive the target month, delete later months, keep earlier.
+    affected = [r for r in group if (p := _period(r)) is not None and target is not None and p >= target]
+    for r in affected:
+        ensure_not_locked(r)
+    for r in affected:
+        if _period(r) == target:
+            r.is_archived = True
+            log_action(
+                db, "supplier_invoice.archived", user_id=current_user.id,
+                entity_id=r.entity_id, resource_type="supplier_invoice",
+                resource_id=r.id, description=f"Stopped recurring expense from {target[1]}/{target[0]}: {r.supplier_name_text or ''}".strip(),
+            )
+        else:
+            log_action(
+                db, "supplier_invoice.deleted", user_id=current_user.id,
+                entity_id=r.entity_id, resource_type="supplier_invoice",
+                resource_id=r.id, description=f"Removed later recurring occurrence: {r.supplier_name_text or ''}".strip(),
+            )
+            db.delete(r)
+    db.commit()
+    return {"detail": "Recurring expense stopped from this month onward"}
+
+
 # ── Mark statement group as paid ──────────────────────────────────────────────
 
 @router.post("/statements/{supplier_id}/{year}/{month}/mark-paid")

@@ -1656,6 +1656,9 @@ class SubcontractorInvoiceCreate(BaseModel):
 class SupplierInvoiceUpdate(BaseModel):
     invoice_date: Optional[datetime] = None
     invoice_number: Optional[str] = None
+    # Free-text label for a custom (no supplier) expense — editing it renames the
+    # row, since the costing display reads supplier_name from supplier_name_text.
+    supplier_name_text: Optional[str] = None
     amount: Optional[Decimal] = None
     litres: Optional[Decimal] = None
     vat_applicable: Optional[bool] = None

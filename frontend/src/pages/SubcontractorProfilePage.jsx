@@ -5,7 +5,7 @@ import { useSessionState } from '../hooks/useSessionState'
 import {
   getSubcontractor, getSuppliers, getFleetTrucks,
   createSubcontractorInvoice, createSupplierInvoice,
-  updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice,
+  updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, removeFixedExpense,
   getSubcontractorInvoices, getSubcontractorCosting, saveSubcontractorCostingNote,
   saveSubcontractorCostingNetOverride,
   createTruckCostingIncome, deleteTruckCostingIncome,
@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import SearchableSelect from '../components/SearchableSelect'
 import DeleteModal from '../components/DeleteModal'
+import FixedExpenseRemoveModal from '../components/FixedExpenseRemoveModal'
 import DateInput from '../components/DateInput'
 
 const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -104,6 +105,8 @@ export default function SubcontractorProfilePage() {
   const [expenseForm, setExpenseForm]     = useState(blankExpenseForm())
   const [expenseSaving, setExpenseSaving] = useState(false)
   const [expenseDeleteTarget, setExpenseDeleteTarget] = useState(null)
+  // null = creating a new expense; an id = editing that existing expense row
+  const [editingExpenseId, setEditingExpenseId] = useState(null)
 
   // Manual income modal (costing tab) — mirrors the general expense, on the
   // income side. Holds the truck the card was opened from.
@@ -393,8 +396,38 @@ export default function SubcontractorProfilePage() {
   // ── Expense modal handlers (costing tab) ─────────────────────────────────────
 
   const openExpenseModal = (truckReg = '') => {
+    setEditingExpenseId(null)
     setExpenseForm(blankExpenseForm(truckReg))
     setShowExpenseModal(true)
+  }
+
+  // Open the same modal pre-filled to edit an existing expense row (general or
+  // invoiced). General expenses show their label via supplier_name_text, so the
+  // Description field maps to that.
+  const openEditExpenseModal = (inv) => {
+    const isGeneral = !inv.supplier_id
+    const d = inv.invoice_date ? new Date(inv.invoice_date) : new Date()
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    setExpenseForm({
+      expense_type:   isGeneral ? 'general' : 'invoiced',
+      is_fixed:       !!inv.is_fixed_expense,
+      invoice_date:   dateStr,
+      invoice_number: inv.invoice_number || '',
+      supplier_input: inv.supplier_id ? String(inv.supplier_id) : (inv.supplier_name_text || ''),
+      amount:         inv.amount != null ? String(inv.amount) : '',
+      vat_applicable: !!inv.vat_applicable,
+      vehicle_reg:    inv.vehicle_reg || '',
+      description:    isGeneral ? (inv.supplier_name_text || inv.description || '') : (inv.description || ''),
+      litres:         inv.litres != null ? String(inv.litres) : '',
+      rate_per_litre: '',
+    })
+    setEditingExpenseId(inv.id)
+    setShowExpenseModal(true)
+  }
+
+  const closeExpenseModal = () => {
+    setShowExpenseModal(false)
+    setEditingExpenseId(null)
   }
 
   const setEF = (k, v) => setExpenseForm(f => ({ ...f, [k]: v }))
@@ -421,6 +454,26 @@ export default function SubcontractorProfilePage() {
       if (!desc) { toast.error('Description is required'); return }
       const genAmount = parseFloat(expenseForm.amount) || 0
       if (genAmount <= 0) { toast.error('Enter a valid amount'); return }
+
+      if (editingExpenseId) {
+        setExpenseSaving(true)
+        try {
+          await updateSupplierInvoice(editingExpenseId, {
+            description:        desc,
+            supplier_name_text: desc,
+            amount:             genAmount,
+            vat_applicable:     expenseForm.vat_applicable,
+          })
+          toast.success('Expense updated')
+          closeExpenseModal()
+          loadCosting()
+        } catch (err) {
+          toast.error(errorMessage(err))
+        } finally {
+          setExpenseSaving(false)
+        }
+        return
+      }
 
       setExpenseSaving(true)
       try {
@@ -456,6 +509,32 @@ export default function SubcontractorProfilePage() {
     const supplierText = expenseForm.supplier_input.trim()
     if (!supplierText) { toast.error('Select or enter a supplier'); return }
     if (!expenseForm.invoice_number.trim()) { toast.error('Invoice number is required'); return }
+
+    // Editing an invoiced expense: update the editable fields only (supplier is
+    // not changed here — same as the supplier-invoice list edit).
+    if (editingExpenseId) {
+      const editAmount = parseFloat(expenseForm.amount) || 0
+      if (editAmount <= 0) { toast.error('Enter a valid amount'); return }
+      setExpenseSaving(true)
+      try {
+        await updateSupplierInvoice(editingExpenseId, {
+          invoice_date:   new Date(expenseForm.invoice_date + 'T12:00:00').toISOString(),
+          invoice_number: expenseForm.invoice_number.trim(),
+          amount:         editAmount,
+          vat_applicable: expenseForm.vat_applicable,
+          vehicle_reg:    expenseForm.vehicle_reg || null,
+          description:    expenseForm.description.trim() || null,
+        })
+        toast.success('Expense updated')
+        closeExpenseModal()
+        loadCosting()
+      } catch (err) {
+        toast.error(errorMessage(err))
+      } finally {
+        setExpenseSaving(false)
+      }
+      return
+    }
 
     const litresVal = parseFloat(expenseForm.litres) || 0
     const rateVal   = parseFloat(expenseForm.rate_per_litre) || 0
@@ -894,6 +973,7 @@ export default function SubcontractorProfilePage() {
                   onAddIncome={() => openIncomeModal(td.truck.id, td.truck.registration)}
                   onDeleteIncome={setIncomeDeleteTarget}
                   onDeleteInvoice={setExpenseDeleteTarget}
+                  onEditInvoice={openEditExpenseModal}
                   onSaveNote={saveTruckNote}
                   onSaveNetOverride={saveTruckNetOverride}
                   isVatRegistered={costing.is_vat_registered !== false}
@@ -940,15 +1020,17 @@ export default function SubcontractorProfilePage() {
 
       {/* ── Expense Modal (costing tab) ── */}
       {showExpenseModal && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowExpenseModal(false)}>
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && closeExpenseModal()}>
           <div className="modal">
             <div className="modal-header">
-              <h2>Add Expense</h2>
-              <button className="btn-icon btn-ghost" onClick={() => setShowExpenseModal(false)}><X size={16} /></button>
+              <h2>{editingExpenseId ? 'Edit Expense' : 'Add Expense'}</h2>
+              <button className="btn-icon btn-ghost" onClick={closeExpenseModal}><X size={16} /></button>
             </div>
             <form onSubmit={saveExpense}>
               <div className="modal-body">
-                {/* Expense type toggle — invoiced (full capture) vs general (description + amount) */}
+                {/* Expense type toggle — invoiced (full capture) vs general (description + amount).
+                    Hidden when editing: the type of an existing row is fixed. */}
+                {!editingExpenseId && (
                 <div className="form-group">
                   <label>Expense Type</label>
                   <div style={{ display: 'flex', gap: 0, borderRadius: 7, overflow: 'hidden', border: '1px solid var(--border)', width: 'fit-content' }}>
@@ -968,6 +1050,7 @@ export default function SubcontractorProfilePage() {
                     </button>
                   </div>
                 </div>
+                )}
 
                 {expenseForm.expense_type === 'general' ? (
                   <>
@@ -980,12 +1063,14 @@ export default function SubcontractorProfilePage() {
                       <input type="number" step="0.01" min="0" value={expenseForm.amount} onChange={e => setEF('amount', e.target.value)} placeholder="0.00" />
                     </div>
                     <div className="form-group">
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={expenseForm.is_fixed} onChange={e => setEF('is_fixed', e.target.checked)} style={{ width: 16, height: 16 }} />
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: editingExpenseId ? 'default' : 'pointer' }}>
+                        <input type="checkbox" checked={expenseForm.is_fixed} disabled={!!editingExpenseId} onChange={e => setEF('is_fixed', e.target.checked)} style={{ width: 16, height: 16 }} />
                         Fixed expense
                       </label>
                       <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
-                        Carried over automatically into each following month's costing (still editable per month). To stop it, archive its most recent month.
+                        {editingExpenseId
+                          ? "Whether this is a recurring expense can't be changed here — remove it and re-add to change this."
+                          : "Carried over automatically into each following month's costing (still editable per month). To stop it, archive its most recent month."}
                       </span>
                     </div>
                   </>
@@ -1003,19 +1088,34 @@ export default function SubcontractorProfilePage() {
                 </div>
                 <div className="form-group">
                   <label>Supplier *</label>
-                  <SearchableSelect
-                    value={expenseForm.supplier_input}
-                    onChange={v => setEF('supplier_input', v)}
-                    options={suppliers}
-                    getValue={s => String(s.id)}
-                    getLabel={s => s.name}
-                    placeholder="Select a supplier or type a custom name"
-                    formInput
-                    creatable
-                  />
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
-                    Pick from the list, or type any name — whatever you enter is saved.
-                  </span>
+                  {editingExpenseId ? (
+                    <>
+                      <input
+                        className="form-input"
+                        value={(suppliers.find(s => String(s.id) === String(expenseForm.supplier_input))?.name) || expenseForm.supplier_input}
+                        disabled
+                      />
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                        The supplier can't be changed here — remove this expense and re-add it to change the supplier.
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <SearchableSelect
+                        value={expenseForm.supplier_input}
+                        onChange={v => setEF('supplier_input', v)}
+                        options={suppliers}
+                        getValue={s => String(s.id)}
+                        getLabel={s => s.name}
+                        placeholder="Select a supplier or type a custom name"
+                        formInput
+                        creatable
+                      />
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                        Pick from the list, or type any name — whatever you enter is saved.
+                      </span>
+                    </>
+                  )}
                 </div>
                 <div className="form-row">
                   <div className="form-group">
@@ -1034,7 +1134,7 @@ export default function SubcontractorProfilePage() {
                     </select>
                   </div>
                 </div>
-                {isDieselExpenseSupplier && (
+                {isDieselExpenseSupplier && !editingExpenseId && (
                   <div className="form-row">
                     <div className="form-group">
                       <label>Litres *</label>
@@ -1076,9 +1176,9 @@ export default function SubcontractorProfilePage() {
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn-ghost" onClick={() => setShowExpenseModal(false)}>Cancel</button>
+                <button type="button" className="btn-ghost" onClick={closeExpenseModal}>Cancel</button>
                 <button type="submit" className="btn-primary" disabled={expenseSaving}>
-                  {expenseSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : 'Add Expense'}
+                  {expenseSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : (editingExpenseId ? 'Save Changes' : 'Add Expense')}
                 </button>
               </div>
             </form>
@@ -1086,29 +1186,57 @@ export default function SubcontractorProfilePage() {
         </div>
       )}
 
-      {/* ── Expense DeleteModal (costing tab) ── */}
-      <DeleteModal
-        isOpen={!!expenseDeleteTarget}
-        onClose={() => setExpenseDeleteTarget(null)}
-        title="Delete Expense"
-        description={expenseDeleteTarget ? `${expenseDeleteTarget.invoice_number}${expenseDeleteTarget.amount ? ` — ${fmtC(expenseDeleteTarget.amount)}` : ''}` : ''}
-        onArchive={async () => {
-          try {
-            await archiveSupplierInvoice(expenseDeleteTarget.id)
-            toast.success('Expense archived')
-            setExpenseDeleteTarget(null)
-            loadCosting()
-          } catch (e) { toast.error(errorMessage(e)) }
-        }}
-        onDelete={async () => {
-          try {
-            await deleteSupplierInvoice(expenseDeleteTarget.id)
-            toast.success('Expense deleted')
-            setExpenseDeleteTarget(null)
-            loadCosting()
-          } catch (e) { toast.error(errorMessage(e)) }
-        }}
-      />
+      {/* ── Expense delete (costing tab) ── */}
+      {/* Recurring (fixed) expenses can't be removed with a plain delete — the
+          carry-forward re-creates them. Show the recurring-specific modal so the
+          user can stop the chain or wipe all months. */}
+      {expenseDeleteTarget?.is_fixed_expense ? (
+        <FixedExpenseRemoveModal
+          isOpen={!!expenseDeleteTarget}
+          onClose={() => setExpenseDeleteTarget(null)}
+          title="Remove Recurring Expense"
+          description={expenseDeleteTarget ? `${expenseDeleteTarget.supplier_name || expenseDeleteTarget.invoice_number || 'Expense'}${expenseDeleteTarget.amount ? ` — ${fmtC(expenseDeleteTarget.amount)}` : ''}` : ''}
+          onForward={async () => {
+            try {
+              await removeFixedExpense(expenseDeleteTarget.id, 'forward')
+              toast.success('Recurring expense stopped from this month')
+              setExpenseDeleteTarget(null)
+              loadCosting()
+            } catch (e) { toast.error(errorMessage(e)) }
+          }}
+          onAll={async () => {
+            try {
+              await removeFixedExpense(expenseDeleteTarget.id, 'all')
+              toast.success('Recurring expense removed from all months')
+              setExpenseDeleteTarget(null)
+              loadCosting()
+            } catch (e) { toast.error(errorMessage(e)) }
+          }}
+        />
+      ) : (
+        <DeleteModal
+          isOpen={!!expenseDeleteTarget}
+          onClose={() => setExpenseDeleteTarget(null)}
+          title="Delete Expense"
+          description={expenseDeleteTarget ? `${expenseDeleteTarget.invoice_number}${expenseDeleteTarget.amount ? ` — ${fmtC(expenseDeleteTarget.amount)}` : ''}` : ''}
+          onArchive={async () => {
+            try {
+              await archiveSupplierInvoice(expenseDeleteTarget.id)
+              toast.success('Expense archived')
+              setExpenseDeleteTarget(null)
+              loadCosting()
+            } catch (e) { toast.error(errorMessage(e)) }
+          }}
+          onDelete={async () => {
+            try {
+              await deleteSupplierInvoice(expenseDeleteTarget.id)
+              toast.success('Expense deleted')
+              setExpenseDeleteTarget(null)
+              loadCosting()
+            } catch (e) { toast.error(errorMessage(e)) }
+          }}
+        />
+      )}
 
       {/* ── Add Income Modal (costing tab) ── */}
       {incomeModal && (
@@ -1371,7 +1499,7 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onAddIncome, onDeleteIncome, onDeleteInvoice, onSaveNote, onSaveNetOverride, isVatRegistered = true,
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onAddIncome, onDeleteIncome, onDeleteInvoice, onEditInvoice, onSaveNote, onSaveNetOverride, isVatRegistered = true,
   verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false, highlight = false, autoExpand = false }) {
   const [expanded, setExpanded] = useState(false)
   // Open the card automatically when it's the target of a reg search
@@ -1694,9 +1822,16 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                       {inv.vat_applicable ? dash : <V field={`invoice:${inv.id}:amount`}>{fmtC(inv.amount)}</V>}
                     </td>
                     <td style={tdStyle}>
-                      <button className="btn-icon btn-ghost" onClick={() => onDeleteInvoice(inv)}>
-                        <Trash2 size={12} color="var(--danger)" />
-                      </button>
+                      <div style={{ display: 'flex', gap: 2 }}>
+                        {onEditInvoice && (
+                          <button className="btn-icon btn-ghost" title="Edit expense" onClick={() => onEditInvoice(inv)}>
+                            <Pencil size={12} />
+                          </button>
+                        )}
+                        <button className="btn-icon btn-ghost" title="Remove expense" onClick={() => onDeleteInvoice(inv)}>
+                          <Trash2 size={12} color="var(--danger)" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
