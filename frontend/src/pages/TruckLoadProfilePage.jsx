@@ -1237,7 +1237,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
 
 // ── Washes section (basic capture: description + registration + amount) ───────
 function WashesSection({ truck, year, month }) {
-  const EMPTY_WASH = { description: '', vehicle_registration: truck.registration || '', amount: '', notes: '' }
+  const EMPTY_WASH = { description: '', vehicle_registration: truck.registration || '', notes: '' }
   const [entries, setEntries]     = useState([])
   const [loading, setLoading]     = useState(true)
   const [addingNew, setAddingNew] = useState(false)
@@ -1264,14 +1264,11 @@ function WashesSection({ truck, year, month }) {
 
   const handleAdd = async () => {
     if (!form.description) return toast.error('Enter a description')
-    const amount = parseFloat(form.amount) || 0
-    if (amount <= 0)       return toast.error('Enter an amount')
     setSaving(true)
     try {
       await addTruckWash(truck.id, {
         description:          form.description,
         vehicle_registration: form.vehicle_registration || truck.registration || null,
-        amount,
         period_month:         month,
         period_year:          year,
         notes:                form.notes || null,
@@ -1290,7 +1287,6 @@ function WashesSection({ truck, year, month }) {
     setEditForm({
       description:          e.description || '',
       vehicle_registration: e.vehicle_registration || '',
-      amount:              e.amount != null ? String(e.amount) : '',
       notes:               e.notes || '',
     })
     setEditingId(e.id)
@@ -1302,7 +1298,6 @@ function WashesSection({ truck, year, month }) {
       await updateTruckWash(truck.id, editingId, {
         description:          editForm.description,
         vehicle_registration: editForm.vehicle_registration || null,
-        amount:              parseFloat(editForm.amount) || 0,
         notes:               editForm.notes || null,
       })
       toast.success('Wash updated')
@@ -1313,8 +1308,6 @@ function WashesSection({ truck, year, month }) {
     } finally { setEditSaving(false) }
   }
 
-  const total = entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
-
   return (
     <div style={{ marginTop: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -1322,7 +1315,7 @@ function WashesSection({ truck, year, month }) {
           <span style={{ fontWeight: 700, fontSize: 14 }}>Washes</span>
           {entries.length > 0 && (
             <span style={{ marginLeft: 10, fontSize: 12, color: 'var(--text-muted)' }}>
-              {entries.length} entries · {fmt(total)}
+              {entries.length} entries
             </span>
           )}
         </div>
@@ -1343,10 +1336,6 @@ function WashesSection({ truck, year, month }) {
             <div>
               <label className="form-label">Registration</label>
               <input className="form-input" value={form.vehicle_registration} onChange={e => set('vehicle_registration', e.target.value)} placeholder="Reg" />
-            </div>
-            <div>
-              <label className="form-label">Amount (R) *</label>
-              <input className="form-input" type="number" step="0.01" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
             </div>
             <div>
               <label className="form-label">Note</label>
@@ -1371,7 +1360,6 @@ function WashesSection({ truck, year, month }) {
               <tr>
                 <th>Description</th>
                 <th>Registration</th>
-                <th style={{ textAlign: 'right' }}>Amount</th>
                 <th>Note</th>
                 <th></th>
               </tr>
@@ -1392,11 +1380,6 @@ function WashesSection({ truck, year, month }) {
                         style={{ width: 110 }} />
                     </td>
                     <td style={{ padding: '4px 6px' }}>
-                      <input className="form-input" type="number" step="0.01" value={editForm.amount}
-                        onChange={ev => setEF('amount', ev.target.value)} placeholder="0.00"
-                        style={{ width: 90, textAlign: 'right' }} />
-                    </td>
-                    <td style={{ padding: '4px 6px' }}>
                       <input className="form-input" value={editForm.notes}
                         onChange={ev => setEF('notes', ev.target.value)} placeholder="Note"
                         style={{ minWidth: 80 }} />
@@ -1415,7 +1398,6 @@ function WashesSection({ truck, year, month }) {
                   <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => startEdit(e)}>
                     <td style={{ fontSize: 13 }}>{e.description}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{e.vehicle_registration || '—'}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(e.amount)}</td>
                     <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
                     <td onClick={ev => ev.stopPropagation()}>
                       <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(e)}>
@@ -1426,13 +1408,6 @@ function WashesSection({ truck, year, month }) {
                 )
               ))}
             </tbody>
-            <tfoot>
-              <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                <td colSpan={2} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
-                <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(total)}</td>
-                <td colSpan={2} />
-              </tr>
-            </tfoot>
           </table>
         </div>
       )}
@@ -1441,7 +1416,7 @@ function WashesSection({ truck, year, month }) {
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         title="Delete Wash"
-        description={deleteTarget ? `${deleteTarget.description} — ${fmt(deleteTarget.amount)}` : ''}
+        description={deleteTarget ? deleteTarget.description : ''}
         onDelete={async () => {
           try { await deleteTruckWash(truck.id, deleteTarget.id); toast.success('Wash deleted'); fetchEntries() }
           catch { toast.error('Failed to delete') }

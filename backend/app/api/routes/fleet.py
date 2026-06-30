@@ -384,7 +384,7 @@ def create_truck_wash(
         entity_id=truck.entity_id,
         description=payload.description,
         vehicle_registration=payload.vehicle_registration or truck.registration,
-        amount=payload.amount,
+        amount=payload.amount or 0,
         period_month=payload.period_month,
         period_year=payload.period_year,
         notes=payload.notes,

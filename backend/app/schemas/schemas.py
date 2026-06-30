@@ -1194,7 +1194,7 @@ class AdditionalLoadRateOut(AdditionalLoadRateCreate):
 class TruckWashCreate(BaseModel):
     description: str
     vehicle_registration: Optional[str] = None
-    amount: Decimal
+    amount: Optional[Decimal] = Decimal(0)
     period_month: int
     period_year: int
     notes: Optional[str] = None
