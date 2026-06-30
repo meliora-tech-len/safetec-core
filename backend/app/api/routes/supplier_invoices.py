@@ -1884,12 +1884,17 @@ def bulk_import_invoices(
 
             if existing_fillup:
                 litres_mismatch = abs(float(existing_fillup.litres or 0) - float(litres_d)) > 0.01
-                # Even when litres agree, a different rate/amount is a real discrepancy
-                # (one side has the wrong price) — surface it for review rather than
-                # silently keeping the originally-logged figure. Compare the diesel
-                # cost (litres × rate), which is what both the fill-up amount and the
-                # import's amount_excl_vat represent.
-                amount_mismatch = abs(float(existing_fillup.amount or 0) - float(excl_d)) > 0.01
+                # Even when litres agree, a genuinely different rate/amount is a real
+                # discrepancy (one side has the wrong price) — surface it for review.
+                # But tolerate sub-rand rounding drift: a logged fill-up's amount is
+                # recomputed as round(litres × rate, 2dp) off a back-computed 4dp rate
+                # (rate = amount ÷ litres), so it can differ from the statement's raw
+                # amount by ~litres × 0.00005. A flat 0.01 band turned that benign
+                # arithmetic drift into a conflict, which left the placeholder stranded
+                # (only conflict *resolution* archives it). Scale the band to litres so
+                # only rand-level price errors — not penny rounding — flag as conflicts.
+                amount_tol = max(0.05, float(litres_d) * 0.0002)
+                amount_mismatch = abs(float(existing_fillup.amount or 0) - float(excl_d)) > amount_tol
                 if litres_mismatch or amount_mismatch:
                     # Same truck + slip but different litres or amount — flag as conflict.
                     conflicts.append(DieselConflict(

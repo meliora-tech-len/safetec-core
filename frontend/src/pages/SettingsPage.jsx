@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Settings, Save, Plus, Trash2, RefreshCw } from 'lucide-react'
-import { getSettings, updateSetting, getEntities, updateEntity, updateEntityInvoiceConfig, getRoles, createRole, deleteRole } from '../services/api'
+import { Settings, Save, Plus, Trash2, RefreshCw, Eraser } from 'lucide-react'
+import { getSettings, updateSetting, getEntities, updateEntity, updateEntityInvoiceConfig, getRoles, createRole, deleteRole, cleanupDieselPlaceholders } from '../services/api'
 import DeleteModal from '../components/DeleteModal'
 import { errorMessage } from '../utils/helpers'
 
@@ -17,6 +17,10 @@ export default function SettingsPage() {
   const [roles, setRoles] = useState([])
   const [newRoleKey, setNewRoleKey] = useState('')
   const [newRoleDisplay, setNewRoleDisplay] = useState('')
+  // Diesel placeholder cleanup
+  const [cleanupResult, setCleanupResult] = useState(null)
+  const [cleanupBusy, setCleanupBusy] = useState(false)
+  const [cleanupError, setCleanupError] = useState(null)
 
   const load = async () => {
     setLoading(true)
@@ -82,6 +86,19 @@ export default function SettingsPage() {
       setErrors(p => ({ ...p, roles: errorMessage(e, 'Failed to create role') }))
     } finally {
       setSaving(p => ({ ...p, roles: false }))
+    }
+  }
+
+  const runCleanup = async (commit) => {
+    setCleanupBusy(true)
+    setCleanupError(null)
+    try {
+      const { data } = await cleanupDieselPlaceholders({ commit })
+      setCleanupResult(data)
+    } catch (e) {
+      setCleanupError(errorMessage(e, 'Cleanup failed'))
+    } finally {
+      setCleanupBusy(false)
     }
   }
 
@@ -344,6 +361,71 @@ export default function SettingsPage() {
             The orange warning icon on the Fleet page will show licences expiring within this window.
             Currently: <strong>{licenceWarnDays} days</strong>
           </div>
+        </div>
+      </Section>
+
+      {/* ── Diesel Maintenance ──────────────────────────────────────── */}
+      <Section title="Diesel Maintenance" subtitle="Clear duplicate 'Pending' placeholder invoices left behind when a diesel statement import didn't absorb a pre-logged slip">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            For every slip that now appears on a real statement, this re-links its fill-up onto that
+            statement and archives the leftover single-line placeholder. Always preview first — the dry
+            run saves nothing.
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn-ghost btn-sm" onClick={() => runCleanup(false)} disabled={cleanupBusy}>
+              {cleanupBusy ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Eraser size={13} />}
+              {cleanupBusy ? 'Working…' : 'Preview cleanup (dry run)'}
+            </button>
+            {cleanupResult && !cleanupResult.committed && cleanupResult.archived_count > 0 && (
+              <button className="btn-primary btn-sm" onClick={() => runCleanup(true)} disabled={cleanupBusy}>
+                Archive {cleanupResult.archived_count} placeholder{cleanupResult.archived_count === 1 ? '' : 's'}
+              </button>
+            )}
+          </div>
+
+          {cleanupError && <div style={errorStyle}>{cleanupError}</div>}
+
+          {cleanupResult && (
+            <div style={{ fontSize: 13 }}>
+              {cleanupResult.committed ? (
+                <div style={{ color: 'var(--success)', fontWeight: 600 }}>
+                  ✓ Archived {cleanupResult.archived_count} placeholder{cleanupResult.archived_count === 1 ? '' : 's'}.
+                </div>
+              ) : cleanupResult.archived_count === 0 ? (
+                <div style={{ color: 'var(--text-muted)' }}>Nothing to clean up — no stranded placeholders found.</div>
+              ) : (
+                <div style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>
+                  <strong>{cleanupResult.archived_count}</strong> placeholder{cleanupResult.archived_count === 1 ? '' : 's'} would be archived. Review below, then Archive to apply.
+                </div>
+              )}
+
+              {cleanupResult.archived_count > 0 && (
+                <div style={{ overflowX: 'auto', marginTop: 8 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-secondary)' }}>
+                        {['Placeholder #', 'Match', 'Slip / Reg', 'Absorbed into', ''].map(h => (
+                          <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cleanupResult.archived.map(a => (
+                        <tr key={a.placeholder_invoice_id} style={{ borderTop: '1px solid var(--border)' }}>
+                          <td style={{ padding: '6px 10px', fontFamily: 'monospace' }}>{a.placeholder_number || `#${a.placeholder_invoice_id}`}</td>
+                          <td style={{ padding: '6px 10px', color: 'var(--text-muted)' }}>{a.match}</td>
+                          <td style={{ padding: '6px 10px', fontFamily: 'monospace' }}>{a.slip || a.vehicle_reg || '—'}</td>
+                          <td style={{ padding: '6px 10px', fontFamily: 'monospace' }}>{a.statement_number || `#${a.absorbed_into_invoice_id}`}</td>
+                          <td style={{ padding: '6px 10px', color: 'var(--text-muted)' }}>#{a.placeholder_invoice_id}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </Section>
 
