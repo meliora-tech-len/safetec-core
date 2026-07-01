@@ -2070,6 +2070,30 @@ def cleanup_diesel_placeholders(
         q = q.filter(SupplierInvoice.supplier_id == supplier_id)
     multiline_invs = q.all()
 
+    # Preload every candidate placeholder ONCE and index it in memory. The original
+    # matched placeholders with a per-statement-line query that ran a function on
+    # invoice_number (func.upper(func.replace(...)), non-indexable) — line×invoice
+    # full-table scans that timed out the gateway (504) on prod's diesel-statement
+    # volume. A single bulk load + dict lookup is equivalent but bounded to a couple
+    # of queries. Keyed by (entity, supplier) so a placeholder only matches a
+    # statement for the same supplier, exactly as the scoped query did.
+    entity_ids = {inv.entity_id for inv in multiline_invs}
+    supplier_ids = {inv.supplier_id for inv in multiline_invs}
+    ph_by_slip: dict = {}   # (entity_id, supplier_id, norm_number) -> [placeholder]
+    ph_blank: dict = {}     # (entity_id, supplier_id) -> [blank-number placeholder]
+    if multiline_invs:
+        for ph in db.query(SupplierInvoice).filter(
+            SupplierInvoice.entity_id.in_(entity_ids),
+            SupplierInvoice.supplier_id.in_(supplier_ids),
+            SupplierInvoice.is_archived != True,
+            SupplierInvoice.is_multi_line != True,
+        ).all():
+            num = (ph.invoice_number or '').strip()
+            if num:
+                ph_by_slip.setdefault((ph.entity_id, ph.supplier_id, _norm_slip(num)), []).append(ph)
+            else:
+                ph_blank.setdefault((ph.entity_id, ph.supplier_id), []).append(ph)
+
     archived: List[dict] = []
     seen_placeholders: set = set()
 
@@ -2078,20 +2102,12 @@ def cleanup_diesel_placeholders(
             slip = (li.item_code or "").strip()
             if not slip:
                 continue
-            # Candidate placeholders: same supplier+entity, single-line, not the
-            # statement itself, whose number is this slip standing in as the number
-            # (the diesel auto-create placeholder pattern). Normalised the same way
-            # the slip match is, so case/spacing can't hide one.
-            placeholders = db.query(SupplierInvoice).filter(
-                SupplierInvoice.entity_id == inv.entity_id,
-                SupplierInvoice.supplier_id == inv.supplier_id,
-                SupplierInvoice.id != inv.id,
-                SupplierInvoice.is_archived != True,
-                SupplierInvoice.is_multi_line != True,
-                func.upper(func.replace(SupplierInvoice.invoice_number, ' ', '')) == _norm_slip(slip),
-            ).all()
+            # Candidate placeholders: same supplier+entity, single-line, whose number
+            # is this slip standing in as the number (the diesel auto-create pattern).
+            # Looked up from the in-memory index built above.
+            placeholders = ph_by_slip.get((inv.entity_id, inv.supplier_id, _norm_slip(slip)), [])
             for ph in placeholders:
-                if ph.id in seen_placeholders or ph.line_items:
+                if ph.id == inv.id or ph.id in seen_placeholders or ph.line_items:
                     continue
                 # Re-link this slip's fill-ups off the placeholder onto the statement
                 # (Scenario B). When the manual flow already re-linked them, there are
@@ -2155,16 +2171,9 @@ def cleanup_diesel_placeholders(
         }
         if not line_keys:
             continue
-        blanks = db.query(SupplierInvoice).filter(
-            SupplierInvoice.entity_id == inv.entity_id,
-            SupplierInvoice.supplier_id == inv.supplier_id,
-            SupplierInvoice.id != inv.id,
-            SupplierInvoice.is_archived != True,
-            SupplierInvoice.is_multi_line != True,
-            (SupplierInvoice.invoice_number == None) | (func.trim(SupplierInvoice.invoice_number) == ''),
-        ).all()
+        blanks = ph_blank.get((inv.entity_id, inv.supplier_id), [])
         for ph in blanks:
-            if ph.id in seen_placeholders or ph.line_items:
+            if ph.id == inv.id or ph.id in seen_placeholders or ph.line_items:
                 continue
             if ph.is_paid or ph.verified3_by or not ph.vehicle_reg or ph.amount is None:
                 continue
