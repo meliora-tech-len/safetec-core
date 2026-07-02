@@ -36,6 +36,10 @@ const fmtDate = (d) => {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
 }
+// A trip log row from a split load is 0.5 of a load (notes tagged "split load"); everything else is 1.
+const isSplitTrip = (t) => !!(t.notes && t.notes.includes('split load'))
+const tripCountValue = (t) => (isSplitTrip(t) ? 0.5 : 1)
+const fmtTripCount = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
 
 // Read a manual override: blank/null → null (use computed), else the number.
 const ovNum = (v) => (v === '' || v === null || v === undefined) ? null : Number(v)
@@ -538,6 +542,7 @@ export default function DriverDetailPage() {
   if (!driver) return <div style={{ padding: 40 }}><div className="spinner" /></div>
 
   const isPermanent = driver.driver_type === 'permanent'
+  const tripLogEffectiveCount = (cycle?.trip_log || []).reduce((sum, t) => sum + tripCountValue(t), 0)
 
   return (
     <div style={{ padding: 'var(--page-pad)', flex: 1, maxWidth: 1400 }}>
@@ -1004,7 +1009,7 @@ export default function DriverDetailPage() {
             {/* Trip log */}
             <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Trip Log <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>{cycle?.trip_log?.length || 0} trips</span></h3>
+                <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Trip Log <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>{fmtTripCount(tripLogEffectiveCount)} trips</span></h3>
                 <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setTripModal(true)}><Plus size={13} /> Add trip</button>
               </div>
               <p style={{ margin: '0 0 10px', fontSize: 11, color: 'var(--text-muted)' }}>Auto-populated from Truck Loads. Manual entries can also be added.</p>
@@ -1021,6 +1026,9 @@ export default function DriverDetailPage() {
                             {t.mine_name}
                             {t.truck_load_id && (
                               <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', padding: '1px 5px', borderRadius: 4 }}>auto</span>
+                            )}
+                            {isSplitTrip(t) && (
+                              <span title="Split load — counts as 0.5 of a trip" style={{ marginLeft: 5, fontSize: 10, fontWeight: 700, color: '#7c3aed', background: '#ede9fe', padding: '1px 5px', borderRadius: 4 }}>½</span>
                             )}
                             {t.already_paid && (
                               <span title="Paid in a prior period — not paid again here" style={{ marginLeft: 5, fontSize: 10, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '1px 5px', borderRadius: 4 }}>PAID</span>
