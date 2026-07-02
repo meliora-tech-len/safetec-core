@@ -48,8 +48,8 @@ def update_settings(
         "casual_rate_group_a",
         "casual_rate_group_b",
         "assmang_bonus_per_load",
-        "nbcrfli_rate", "provident_rate", "wellness_rate", "sick_fund_rate",
-        "holiday_fund_rate", "leave_pay_rate", "paye_fixed",
+        "nbcrfli_amount", "provident_amount", "wellness_amount", "sick_fund_amount",
+        "holiday_fund_amount", "leave_pay_amount", "paye_fixed",
         "weekly_to_monthly_factor",
     ]
     new_vals = {}

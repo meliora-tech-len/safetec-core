@@ -143,21 +143,18 @@ def calculate_pay_cycle(
 
     gross = basic_salary + total_subs + total_inc + assmang_bonus + additional_total
 
-    # Statutory deductions.
-    # basic_salary is the monthly figure (it also drives gross pay above);
-    # weekly_wage = monthly ÷ weekly-to-monthly factor.
-    #   • NBCRFLI / Provident / Wellness — flat % of the monthly salary
-    #   • Sick / Holiday / Leave         — % of one week's wage (weekly accrual)
+    # Statutory deductions — fixed rand amounts per pay cycle, captured directly
+    # in Payroll Rates (no longer % of salary, migration 104). Skipped when no
+    # basic salary was earned this cycle, matching the old %-of-zero behaviour.
     # paye_fixed holds the capped UIF amount (R177.12); real PAYE income tax is
     # handled externally and is intentionally not computed here.
-    factor        = d(settings.weekly_to_monthly_factor)
-    weekly_wage   = basic_salary / factor if factor else Decimal(0)
-    nbcrfli       = basic_salary * d(settings.nbcrfli_rate)
-    provident     = basic_salary * d(settings.provident_rate)
-    wellness      = basic_salary * d(settings.wellness_rate)
-    sick_fund     = weekly_wage * d(settings.sick_fund_rate)
-    holiday_fund  = weekly_wage * d(settings.holiday_fund_rate)
-    leave_pay     = weekly_wage * d(settings.leave_pay_rate)
+    has_salary    = basic_salary > 0
+    nbcrfli       = d(settings.nbcrfli_amount) if has_salary else Decimal(0)
+    provident     = d(settings.provident_amount) if has_salary else Decimal(0)
+    wellness      = d(settings.wellness_amount) if has_salary else Decimal(0)
+    sick_fund     = d(settings.sick_fund_amount) if has_salary else Decimal(0)
+    holiday_fund  = d(settings.holiday_fund_amount) if has_salary else Decimal(0)
+    leave_pay     = d(settings.leave_pay_amount) if has_salary else Decimal(0)
     paye          = d(settings.paye_fixed)
     uif           = Decimal(0)
 

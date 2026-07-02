@@ -115,17 +115,13 @@ function calcLive(inputs, settings, additionalLoads, driverType, excludeMineBonu
 function calcStatutory(basicSalary, settings) {
   if (!settings || !basicSalary) return null
   const s = settings
-  // basicSalary is monthly; weeklyWage = monthly ÷ weekly-to-monthly factor.
-  //   NBCRFLI / Provident / Wellness — % of monthly salary
-  //   Sick / Holiday / Leave         — % of one week's wage
-  const factor      = parseFloat(s.weekly_to_monthly_factor)
-  const weeklyWage  = factor ? basicSalary / factor : 0
-  const nbcrfli    = basicSalary * parseFloat(s.nbcrfli_rate)
-  const provident  = basicSalary * parseFloat(s.provident_rate)
-  const wellness   = basicSalary * parseFloat(s.wellness_rate)
-  const sickFund   = weeklyWage * parseFloat(s.sick_fund_rate)
-  const holidayFund = weeklyWage * parseFloat(s.holiday_fund_rate)
-  const leavePay   = weeklyWage * parseFloat(s.leave_pay_rate)
+  // Fixed rand amounts per pay cycle from Payroll Rates (mirrors payroll_calculator).
+  const nbcrfli    = parseFloat(s.nbcrfli_amount)
+  const provident  = parseFloat(s.provident_amount)
+  const wellness   = parseFloat(s.wellness_amount)
+  const sickFund   = parseFloat(s.sick_fund_amount)
+  const holidayFund = parseFloat(s.holiday_fund_amount)
+  const leavePay   = parseFloat(s.leave_pay_amount)
   const paye       = parseFloat(s.paye_fixed)
   const total      = nbcrfli + provident + wellness + sickFund + holidayFund + leavePay + paye
   return { nbcrfli, provident, wellness, sickFund, holidayFund, leavePay, paye, total }

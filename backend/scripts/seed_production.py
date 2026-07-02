@@ -656,6 +656,12 @@ def seed_payroll_settings(db: Session):
             sick_fund_rate=0.20,
             holiday_fund_rate=0.3608,
             leave_pay_rate=0.25,
+            nbcrfli_amount=65.93,
+            provident_amount=1648.16,
+            wellness_amount=164.82,
+            sick_fund_amount=760.69,
+            holiday_fund_amount=1372.29,
+            leave_pay_amount=950.87,
             paye_fixed=177.12,
             weekly_to_monthly_factor=4.3333,
         ))

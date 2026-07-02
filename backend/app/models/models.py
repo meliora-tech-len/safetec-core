@@ -719,13 +719,23 @@ class PayrollSettings(Base):
     # Assmang bonus (per load delivered to the ASSMANG mine only)
     assmang_bonus_per_load    = Column(Numeric(12, 2), nullable=False, default=150.00)
 
-    # Statutory deduction rates
+    # Legacy statutory deduction rates (fractions of salary) — superseded by the
+    # fixed rand `*_amount` columns below (migration 104); kept for history only
     nbcrfli_rate              = Column(Numeric(6, 4), nullable=False, default=0.004)
     provident_rate            = Column(Numeric(6, 4), nullable=False, default=0.10)
     wellness_rate             = Column(Numeric(6, 4), nullable=False, default=0.01)
     sick_fund_rate            = Column(Numeric(6, 4), nullable=False, default=0.20)
     holiday_fund_rate         = Column(Numeric(6, 4), nullable=False, default=0.3608)
     leave_pay_rate            = Column(Numeric(6, 4), nullable=False, default=0.25)
+
+    # Statutory deductions — fixed rand amount per pay cycle (defaults = legacy
+    # rate × default base salary of 16481.55, weekly factor 4.3333)
+    nbcrfli_amount            = Column(Numeric(12, 2), nullable=False, default=65.93)
+    provident_amount          = Column(Numeric(12, 2), nullable=False, default=1648.16)
+    wellness_amount           = Column(Numeric(12, 2), nullable=False, default=164.82)
+    sick_fund_amount          = Column(Numeric(12, 2), nullable=False, default=760.69)
+    holiday_fund_amount       = Column(Numeric(12, 2), nullable=False, default=1372.29)
+    leave_pay_amount          = Column(Numeric(12, 2), nullable=False, default=950.87)
     paye_fixed                = Column(Numeric(12, 2), nullable=False, default=177.12)
     weekly_to_monthly_factor  = Column(Numeric(6, 4), nullable=False, default=4.3333)
 

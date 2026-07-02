@@ -1063,12 +1063,12 @@ class PayrollSettingsOut(BaseModel):
     casual_rate_group_a: Decimal
     casual_rate_group_b: Decimal
     assmang_bonus_per_load: Decimal
-    nbcrfli_rate: Decimal
-    provident_rate: Decimal
-    wellness_rate: Decimal
-    sick_fund_rate: Decimal
-    holiday_fund_rate: Decimal
-    leave_pay_rate: Decimal
+    nbcrfli_amount: Decimal
+    provident_amount: Decimal
+    wellness_amount: Decimal
+    sick_fund_amount: Decimal
+    holiday_fund_amount: Decimal
+    leave_pay_amount: Decimal
     paye_fixed: Decimal
     weekly_to_monthly_factor: Decimal
     updated_by: Optional[int] = None
@@ -1087,12 +1087,12 @@ class PayrollSettingsUpdate(BaseModel):
     casual_rate_group_a: Optional[Decimal] = None
     casual_rate_group_b: Optional[Decimal] = None
     assmang_bonus_per_load: Optional[Decimal] = None
-    nbcrfli_rate: Optional[Decimal] = None
-    provident_rate: Optional[Decimal] = None
-    wellness_rate: Optional[Decimal] = None
-    sick_fund_rate: Optional[Decimal] = None
-    holiday_fund_rate: Optional[Decimal] = None
-    leave_pay_rate: Optional[Decimal] = None
+    nbcrfli_amount: Optional[Decimal] = None
+    provident_amount: Optional[Decimal] = None
+    wellness_amount: Optional[Decimal] = None
+    sick_fund_amount: Optional[Decimal] = None
+    holiday_fund_amount: Optional[Decimal] = None
+    leave_pay_amount: Optional[Decimal] = None
     paye_fixed: Optional[Decimal] = None
     weekly_to_monthly_factor: Optional[Decimal] = None
 

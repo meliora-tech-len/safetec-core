@@ -15,17 +15,15 @@ function useApi() {
 }
 
 const fmt = (n) => `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-const pct = (n) => `${(parseFloat(n || 0) * 100).toFixed(4)}%`
-
-// Statutory deduction fields — unchanged
+// Statutory deductions — fixed rand amount deducted per pay cycle
 const DEDUCTION_FIELDS = [
-  { key: 'nbcrfli_rate',              label: 'NBCRFLI rate',           type: 'rate' },
-  { key: 'provident_rate',            label: 'Provident rate',         type: 'rate' },
-  { key: 'wellness_rate',             label: 'Wellness rate',          type: 'rate' },
-  { key: 'sick_fund_rate',            label: 'Sick fund rate',         type: 'rate' },
-  { key: 'holiday_fund_rate',         label: 'Holiday fund rate',      type: 'rate' },
-  { key: 'leave_pay_rate',            label: 'Leave pay rate',         type: 'rate' },
-  { key: 'paye_fixed',                label: 'PAYE (fixed amount)',    type: 'currency' },
+  { key: 'nbcrfli_amount',      label: 'NBCRFLI' },
+  { key: 'provident_amount',    label: 'Provident fund' },
+  { key: 'wellness_amount',     label: 'Wellness' },
+  { key: 'sick_fund_amount',    label: 'Sick fund' },
+  { key: 'holiday_fund_amount', label: 'Holiday fund' },
+  { key: 'leave_pay_amount',    label: 'Leave pay' },
+  { key: 'paye_fixed',          label: 'PAYE (fixed amount)' },
 ]
 
 // ── Mine group form (add / edit) ──────────────────────────────────────────────
@@ -440,17 +438,22 @@ export default function PayrollSettingsPage() {
         <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           Statutory Deduction Rates
         </h3>
+        <p style={{ margin: '-8px 0 12px', fontSize: 11, color: 'var(--text-muted)' }}>
+          Rand amount deducted per pay cycle.
+        </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: '4px 32px' }}>
           {DEDUCTION_FIELDS.map(f => (
             <div key={f.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
               <label className="form-label" style={{ margin: 0 }}>{f.label}</label>
-              <input
-                className="form-input" type="number"
-                step={f.type === 'rate' ? '0.0001' : '0.01'}
-                value={form[f.key] ?? ''}
-                onChange={e => set(f.key, e.target.value)}
-                style={{ width: 140, textAlign: 'right' }}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>R</span>
+                <input
+                  className="form-input" type="number" step="0.01"
+                  value={form[f.key] ?? ''}
+                  onChange={e => set(f.key, e.target.value)}
+                  style={{ width: 140, textAlign: 'right' }}
+                />
+              </div>
             </div>
           ))}
         </div>
