@@ -1509,20 +1509,38 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
   // Diesel spot-check modal: holds the supplier group whose invoices to list
   const [dieselModal, setDieselModal] = useState(null)
 
-  // Per-truck carry-over note (awareness only — never part of any total)
-  const [noteText, setNoteText]     = useState(truckData.note || '')
-  const [noteEditing, setNoteEditing] = useState(false)
+  // Per-truck carry-over notes (awareness only — never part of any total).
+  // Stored as a single newline-separated string so the user can keep adding
+  // more; each line is one note with its own edit/remove.
+  const notes = (truckData.note || '').split('\n').map(s => s.trim()).filter(Boolean)
   const [noteSaving, setNoteSaving] = useState(false)
-  useEffect(() => { setNoteText(truckData.note || ''); setNoteEditing(false) }, [truckData.note])
+  const [adding, setAdding]         = useState(false)   // typing a brand-new note
+  const [newNote, setNewNote]       = useState('')
+  const [editIdx, setEditIdx]       = useState(-1)      // index of the note being edited
+  const [editText, setEditText]     = useState('')
+  useEffect(() => { setAdding(false); setNewNote(''); setEditIdx(-1); setEditText('') }, [truckData.note])
 
-  const cancelNoteEdit = (e) => { e?.stopPropagation(); setNoteText(truckData.note || ''); setNoteEditing(false) }
-  const submitNote = async (e) => {
-    e?.stopPropagation()
+  const persistNotes = async (arr) => {
     if (!onSaveNote) return
     setNoteSaving(true)
-    try { await onSaveNote(truckData.truck.id, noteText.trim()); setNoteEditing(false) }
-    catch (err) { toast.error(errorMessage(err, 'Failed to save note')) }
+    try { await onSaveNote(truckData.truck.id, arr.filter(Boolean).join('\n')) }
+    catch (err) { toast.error(errorMessage(err, 'Failed to save note')); throw err }
     finally { setNoteSaving(false) }
+  }
+  const addNote = async (e) => {
+    e?.stopPropagation()
+    const t = newNote.trim()
+    if (!t) { setAdding(false); setNewNote(''); return }
+    try { await persistNotes([...notes, t]); setNewNote(''); setAdding(false) } catch { /* kept for retry */ }
+  }
+  const startEdit = (idx) => { setEditIdx(idx); setEditText(notes[idx]) }
+  const saveEdit = async (e) => {
+    e?.stopPropagation()
+    try { await persistNotes(notes.map((n, i) => i === editIdx ? editText.trim() : n)); setEditIdx(-1); setEditText('') } catch { /* keep editing */ }
+  }
+  const removeNote = async (e, idx) => {
+    e?.stopPropagation()
+    try { await persistNotes(notes.filter((_, i) => i !== idx)) } catch { /* no-op */ }
   }
   const {
     truck, loads,
@@ -1634,12 +1652,12 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
             Net: {fmtC(net_payable)}
           </span>
         )}
-        {/* Collapsed cue that a carry-over note exists (full note lives under the totals) */}
-        {!expanded && truckData.note && (
+        {/* Collapsed cue that carry-over note(s) exist (full notes live under the totals) */}
+        {!expanded && notes.length > 0 && (
           <span style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
             <AlertTriangle size={13} style={{ color: '#d97706', flexShrink: 0 }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: '#b45309', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {truckData.note}
+              {notes[0]}{notes.length > 1 ? ` (+${notes.length - 1} more)` : ''}
             </span>
           </span>
         )}
@@ -1924,40 +1942,78 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
           )
         })()}
 
-        {/* Per-truck carry-over note — under the totals so it's clearly visible (awareness only, never totalled) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, padding: '8px 12px', borderRadius: 8, border: '1px solid #f5d0a9', background: 'rgba(217,119,6,0.06)', minWidth: 0 }}>
-          <AlertTriangle size={14} style={{ color: '#d97706', flexShrink: 0 }} />
-          {noteEditing ? (
-            <>
+        {/* Per-truck carry-over notes — under the totals so they're clearly visible
+            (awareness only, never totalled). Multiple notes supported: each line is
+            its own note with edit/remove, and Add note stays available. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12, padding: '8px 12px', borderRadius: 8, border: '1px solid #f5d0a9', background: 'rgba(217,119,6,0.06)', minWidth: 0 }}>
+          {notes.map((n, idx) => (
+            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <AlertTriangle size={14} style={{ color: '#d97706', flexShrink: 0 }} />
+              {editIdx === idx ? (
+                <>
+                  <input
+                    autoFocus
+                    value={editText}
+                    onChange={e => setEditText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') saveEdit(e); if (e.key === 'Escape') { e.stopPropagation(); setEditIdx(-1) } }}
+                    style={{ flex: 1, maxWidth: 480, fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)' }}
+                  />
+                  <button className="btn btn-sm" onClick={saveEdit} disabled={noteSaving} style={{ fontSize: 12 }}>
+                    {noteSaving ? '…' : 'Save'}
+                  </button>
+                  <button className="btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditIdx(-1) }} style={{ fontSize: 12 }}>Cancel</button>
+                </>
+              ) : (
+                <>
+                  <span
+                    onClick={() => startEdit(idx)}
+                    title="Click to edit"
+                    style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#b45309', cursor: 'pointer', minWidth: 0 }}
+                  >
+                    {n}
+                  </span>
+                  <button
+                    onClick={e => removeNote(e, idx)}
+                    disabled={noteSaving}
+                    title="Remove this note"
+                    className="btn-ghost btn-sm"
+                    style={{ fontSize: 12, color: 'var(--text-muted)', padding: '2px 6px', flexShrink: 0 }}
+                  >
+                    ✕
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+
+          {/* Always-available add row */}
+          {adding ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <AlertTriangle size={14} style={{ color: '#d97706', flexShrink: 0 }} />
               <input
                 autoFocus
-                value={noteText}
-                onChange={e => setNoteText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') submitNote(e); if (e.key === 'Escape') cancelNoteEdit(e) }}
+                value={newNote}
+                onChange={e => setNewNote(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addNote(e); if (e.key === 'Escape') { e.stopPropagation(); setAdding(false); setNewNote('') } }}
                 placeholder="Note for this month (e.g. previous month loss)…"
                 style={{ flex: 1, maxWidth: 480, fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text)' }}
               />
-              <button className="btn btn-sm" onClick={submitNote} disabled={noteSaving} style={{ fontSize: 12 }}>
+              <button className="btn btn-sm" onClick={addNote} disabled={noteSaving} style={{ fontSize: 12 }}>
                 {noteSaving ? '…' : 'Save'}
               </button>
-              <button className="btn-ghost btn-sm" onClick={cancelNoteEdit} style={{ fontSize: 12 }}>Cancel</button>
-            </>
-          ) : truckData.note ? (
-            <span
-              onClick={() => setNoteEditing(true)}
-              title="Click to edit"
-              style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#b45309', cursor: 'pointer' }}
-            >
-              {truckData.note}
-            </span>
+              <button className="btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setAdding(false); setNewNote('') }} style={{ fontSize: 12 }}>Cancel</button>
+            </div>
           ) : (
-            <button
-              onClick={() => setNoteEditing(true)}
-              className="btn-ghost btn-sm"
-              style={{ fontSize: 12, color: 'var(--text-muted)', padding: '2px 6px' }}
-            >
-              ＋ Add note
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {notes.length === 0 && <AlertTriangle size={14} style={{ color: '#d97706', flexShrink: 0 }} />}
+              <button
+                onClick={() => setAdding(true)}
+                className="btn-ghost btn-sm"
+                style={{ fontSize: 12, color: 'var(--text-muted)', padding: '2px 6px' }}
+              >
+                ＋ Add note
+              </button>
+            </div>
           )}
         </div>
 
