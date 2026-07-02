@@ -82,7 +82,7 @@ export default function PendingInvoicesModal({ invoices, loading, onClose, onSki
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 760 }}>
+      <div className="modal" style={{ maxWidth: 860 }}>
         <div className="modal-header">
           <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <AlertCircle size={18} color="var(--warning)" />
@@ -125,6 +125,7 @@ export default function PendingInvoicesModal({ invoices, loading, onClose, onSki
           ) : filtered.length === 0 ? (
             <div className="empty-state" style={{ padding: 30 }}><p>No invoices match these filters.</p></div>
           ) : (
+            <div style={{ overflowX: 'auto' }}>
             <table>
               <thead>
                 <tr>
@@ -199,6 +200,7 @@ export default function PendingInvoicesModal({ invoices, loading, onClose, onSki
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       </div>
