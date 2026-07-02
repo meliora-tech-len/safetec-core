@@ -204,6 +204,7 @@ export const saveSubcontractorCostingNote   = (id, params = {}, data = {}) => ap
 export const saveSubcontractorCostingNetOverride = (id, params = {}, data = {}) => api.put(`/subcontractors/${id}/costing/net-override`, data, { params })
 export const createTruckCostingIncome       = (id, params = {}, data = {}) => api.post(`/subcontractors/${id}/costing/income`, data, { params })
 export const deleteTruckCostingIncome       = (id, incomeId) => api.delete(`/subcontractors/${id}/costing/income/${incomeId}`)
+export const setSubcontractorCostingSent    = (id, params = {}, data = {}) => api.put(`/subcontractors/${id}/costing/sent`, data, { params })
 export const downloadSubcontractorCostingPdf   = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/pdf`,   { params, responseType: 'blob' })
 export const downloadSubcontractorCostingExcel = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/excel`, { params, responseType: 'blob' })
 

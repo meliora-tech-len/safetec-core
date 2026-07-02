@@ -2198,6 +2198,10 @@ class SubcontractorTruckCostingOut(BaseModel):
     # Free-text awareness note for this truck this period (e.g. a loss carried
     # over from the previous month). Never included in any total.
     note: Optional[str] = None
+    # Set when this truck's costing for the period was marked Sent to the
+    # subcontractor. A sent costing is locked: no values added or removed.
+    sent_at: Optional[datetime] = None
+    sent_by_name: Optional[str] = None
 
 
 class SubcontractorCostingSummary(BaseModel):
@@ -2276,6 +2280,17 @@ class SubcontractorCostingNetOverrideUpdate(BaseModel):
     # The manual "To Be Paid Out" value; null clears the override (revert to
     # the system-calculated figure).
     net_payable: Optional[Decimal] = None
+
+
+class SubcontractorCostingSentUpdate(BaseModel):
+    # True = mark this truck's costing for the period as sent (locks it);
+    # False = un-send (admin only).
+    sent: bool
+    # The date the costing was actually sent (defaults to now). Backdatable so
+    # a month that was emailed before this feature existed can be marked with
+    # its real send date — expenses captured after that date roll forward into
+    # the next month's costing.
+    sent_date: Optional[date] = None
 
 
 # ── Per-value verification overlay ────────────────────────────────────────────

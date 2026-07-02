@@ -24,6 +24,7 @@ from app.schemas.schemas import (
     DieselConflict, DieselConflictSide, DieselConflictResolution,
 )
 from app.services.audit import log_action
+from app.services.costing_sent import ensure_not_on_sent_costing
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
     build_initials_cache, intent_from_action,
@@ -1103,6 +1104,10 @@ def update_supplier_invoice(
     # Final-verification lock: only payment-status fields and a free-text note
     # may still change (a note-only edit sends just `notes`).
     ensure_not_locked(inv, updates, {"is_paid", "paid_date", "payment_reference", "notes"})
+    # Sent-costing lock: the invoice sits on a costing already sent to a
+    # subcontractor — its values may not change. Workflow-status fields and the
+    # invoice number (Pending → confirmed) stay editable.
+    ensure_not_on_sent_costing(db, inv, updates, {"is_paid", "paid_date", "payment_reference", "notes", "invoice_number"})
 
     # Auto-set verified_at when marking verified
     if updates.get("is_verified") is True and not inv.is_verified:
@@ -1251,6 +1256,7 @@ def archive_supplier_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
+    ensure_not_on_sent_costing(db, inv)
 
     inv.is_archived = True
     log_action(
@@ -1275,6 +1281,7 @@ def delete_supplier_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
+    ensure_not_on_sent_costing(db, inv)
 
     log_action(
         db, "supplier_invoice.deleted", user_id=current_user.id,
@@ -1427,6 +1434,7 @@ def add_line_item(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
+    ensure_not_on_sent_costing(db, inv, extra_reg=data.unit)
 
     total_before = inv.amount
     li = SupplierInvoiceLineItem(invoice_id=invoice_id, **data.model_dump())
@@ -1471,6 +1479,7 @@ def update_line_item(
         raise HTTPException(status_code=404, detail="Line item not found")
     _check_entity_access(li.invoice.entity_id, current_user)
     ensure_not_locked(li.invoice)
+    ensure_not_on_sent_costing(db, li.invoice, extra_reg=data.unit)
 
     updates = data.model_dump(exclude_unset=True)
     old_values, new_values = _changed_values(li, updates)
@@ -1522,6 +1531,7 @@ def delete_line_item(
     inv = li.invoice
     _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
+    ensure_not_on_sent_costing(db, inv)
     total_before = inv.amount
     snapshot = {"line_id": li.id, **_line_snapshot(li)}
     label = li.unit or li.item_description or f"#{li.id}"

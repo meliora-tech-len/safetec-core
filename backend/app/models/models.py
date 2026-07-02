@@ -869,6 +869,28 @@ class TruckCostingNote(Base):
     )
 
 
+class TruckCostingSent(Base):
+    """Per truck + costing period: the costing was SENT to the subcontractor.
+    A sent costing is locked — no values may be added or removed — and any
+    expense captured after `sent_at` rolls forward into the next month's
+    costing instead of retroactively changing the statement the subcontractor
+    already received."""
+    __tablename__ = "truck_costing_sent"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    truck_id   = Column(Integer, ForeignKey("trucks.id", ondelete="CASCADE"), nullable=False)
+    month      = Column(Integer, nullable=False)
+    year       = Column(Integer, nullable=False)
+    sent_at    = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    sent_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    sent_by = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("truck_id", "month", "year", name="uq_truck_costing_sent_period"),
+    )
+
+
 class TruckCostingIncome(Base):
     """Manual income line added directly in the costing module for a truck +
     costing period. Mirrors the "general expense" but on the income side: a

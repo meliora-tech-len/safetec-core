@@ -8,7 +8,7 @@ from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, SupplierInvoiceLineItem, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType, TruckCostingNote, TruckCostingIncome
+from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, SupplierInvoiceLineItem, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType, TruckCostingNote, TruckCostingIncome, TruckCostingSent
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
     SubcontractorUpdate, SubcontractorOut,
@@ -16,10 +16,11 @@ from app.schemas.schemas import (
     SubcontractorCostingOut, SubcontractorCostingSummary, SubcontractorTruckCostingOut,
     SupplierStatementGroup, SubcontractorInvoiceCreate,
     DieselFillUpCostingRow, DieselSupplierGroup, SubcontractorCostingNoteUpdate,
-    SubcontractorCostingNetOverrideUpdate,
+    SubcontractorCostingNetOverrideUpdate, SubcontractorCostingSentUpdate,
     TruckCostingIncomeOut, TruckCostingIncomeCreate,
 )
 from app.services.audit import log_action
+from app.services.costing_sent import build_sent_map, natural_invoice_period, period_add, roll_past_sent
 from app.services.verification import get_verification_display
 
 router = APIRouter(prefix="/api/subcontractors", tags=["subcontractors"])
@@ -471,6 +472,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     # Per-truck overlay rows for this period: carry-over note (awareness only,
     # never totalled) + optional manual net-payable override.
     note_rows_by_truck = {}
+    sent_rows_by_truck = {}
     if trucks:
         note_rows_by_truck = {
             n.truck_id: n
@@ -478,6 +480,16 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                 TruckCostingNote.truck_id.in_([t.id for t in trucks]),
                 TruckCostingNote.month == month,
                 TruckCostingNote.year == year,
+            ).all()
+        }
+        sent_rows_by_truck = {
+            s.truck_id: s
+            for s in db.query(TruckCostingSent)
+            .options(joinedload(TruckCostingSent.sent_by))
+            .filter(
+                TruckCostingSent.truck_id.in_([t.id for t in trucks]),
+                TruckCostingSent.month == month,
+                TruckCostingSent.year == year,
             ).all()
         }
 
@@ -490,62 +502,56 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     ds = db.query(DieselSettings).filter(DieselSettings.entity_id == sub.entity_id).first()
     fixed_admin_fee = Decimal(str(ds.subcontractor_monthly_admin_fee)) if ds else D0
 
-    # Cash/Current invoices belong to the PREVIOUS costing period, so to
-    # populate costing for `month` we fetch their invoices from month+1.
-    # 30-day invoices sit in the same month as their statement period.
-    cash_stmt_month = month + 1 if month < 12 else 1
-    cash_stmt_year  = year      if month < 12 else year + 1
+    # Sent flags for these trucks — a period marked SENT is locked, and any
+    # contribution captured after the send rolls forward into the next month.
+    sent_map = build_sent_map(db, [t.id for t in trucks])
 
-    # Safetec ignores the current/cash-vs-30-day timing rule: every non-diesel
-    # invoice captured in the statement month belongs to that same month's
-    # costing, regardless of payment term. Other entities keep the rule above.
+    # Cash/Current invoices belong to the PREVIOUS costing period (a June cash
+    # invoice costs in May); 30-day and custom (no-supplier) invoices sit in
+    # their own statement period. Safetec ignores the cash-vs-30-day timing
+    # rule entirely. That "natural" period is resolved per invoice in Python
+    # (natural_invoice_period), then shifted forward past SENT periods per
+    # truck (roll_past_sent) — so an invoice captured after a costing went out
+    # lands in the month it was captured instead of changing a sent statement.
     is_safetec = bool(entity and (entity.code or "").upper() == "SFT")
-    if is_safetec:
-        supplier_period_clause = and_(
-            SupplierInvoice.supplier_id.isnot(None),
-            SupplierInvoice.statement_month == month,
-            SupplierInvoice.statement_year == year,
-        )
-    else:
-        supplier_period_clause = or_(
-            and_(
-                Supplier.payment_term == PaymentTermType.days_30,
-                SupplierInvoice.statement_month == month,
-                SupplierInvoice.statement_year == year,
-            ),
-            and_(
-                Supplier.payment_term == PaymentTermType.current,
-                SupplierInvoice.statement_month == cash_stmt_month,
-                SupplierInvoice.statement_year == cash_stmt_year,
-            ),
-        )
 
-    # Custom (free-text) expenses have no supplier and therefore no payment term,
-    # so the cash-vs-30-day timing rule can't apply — they simply belong to the
-    # statement period they were captured in (the costing month/year).
-    custom_period_clause = and_(
-        SupplierInvoice.supplier_id.is_(None),
-        SupplierInvoice.statement_month == month,
-        SupplierInvoice.statement_year == year,
-    )
+    # Candidate window: statement periods from 3 months back (natural periods
+    # that may have rolled forward through consecutive sent months into this
+    # one) up to next month (cash invoices whose natural period is this month).
+    period_idx = year * 12 + (month - 1)
+    stmt_idx = SupplierInvoice.statement_year * 12 + (SupplierInvoice.statement_month - 1)
 
-    # All candidate non-diesel invoices for this entity/period, fetched once.
+    # All candidate non-diesel invoices for this entity, fetched once.
     # Per-truck matching (main-line reg vs. per-sub-line reg) happens in Python
     # via `_truck_invoice_contribution`, so a multi-line/split invoice can pull
     # through to several trucks with each picking up just its own sub-lines.
     # Outer join so custom expenses (null supplier) come through too.
-    period_invoices = (
+    candidate_invoices = (
         db.query(SupplierInvoice)
         .outerjoin(Supplier, Supplier.id == SupplierInvoice.supplier_id)
-        .options(joinedload(SupplierInvoice.line_items))
+        .options(joinedload(SupplierInvoice.line_items), joinedload(SupplierInvoice.supplier))
         .filter(
             SupplierInvoice.entity_id == sub.entity_id,
             SupplierInvoice.is_archived == False,
             or_(Supplier.is_diesel_supplier == False, SupplierInvoice.supplier_id.is_(None)),
-            or_(supplier_period_clause, custom_period_clause),
+            stmt_idx.between(period_idx - 3, period_idx + 1),
         )
         .all()
     )
+    natural_by_inv = {
+        inv.id: natural_invoice_period(inv, is_safetec) for inv in candidate_invoices
+    }
+
+    def _invoice_in_period(inv, truck_id: int) -> bool:
+        """Does this invoice belong to (year, month) for this truck, after the
+        sent roll-forward? Fixed general expenses are per-month clones pinned
+        to their own period and never roll."""
+        natural = natural_by_inv.get(inv.id)
+        if natural is None:
+            return False
+        if inv.is_fixed_expense:
+            return natural == (year, month)
+        return roll_past_sent(natural, truck_id, inv.created_at, sent_map) == (year, month)
 
     for truck in trucks:
         # Loads belong to their STATEMENT period when one is set (a month-end
@@ -606,7 +612,9 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         exp_excl = D0
         inv_contribs = []  # (invoice, amount_for_this_truck)
         truck_regs = _truck_regs(truck)
-        for inv in period_invoices:
+        for inv in candidate_invoices:
+            if not _invoice_in_period(inv, truck.id):
+                continue
             matched, c_excl, c_incl = _truck_invoice_contribution(inv, truck_regs)
             if not matched:
                 continue
@@ -621,31 +629,35 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         # costs in the month it was billed:
         #   30-day  → statement period == costing month (same period)
         #   current → statement period == NEXT month (a June cash fill-up costs in May)
-        diesel_month = func.coalesce(SupplierInvoice.statement_month, extract("month", DieselFillUp.fillup_date))
-        diesel_year  = func.coalesce(SupplierInvoice.statement_year,  extract("year",  DieselFillUp.fillup_date))
-        fillups = (
+        # As with invoices, the natural period then rolls forward past SENT
+        # costing periods when the fill-up was captured after the send.
+        diesel_stmt_idx = (
+            func.coalesce(SupplierInvoice.statement_year, extract("year", DieselFillUp.fillup_date)) * 12
+            + func.coalesce(SupplierInvoice.statement_month, extract("month", DieselFillUp.fillup_date)) - 1
+        )
+        candidate_fillups = (
             db.query(DieselFillUp)
             .join(Supplier, Supplier.id == DieselFillUp.supplier_id)
             .outerjoin(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
+            .options(joinedload(DieselFillUp.supplier), joinedload(DieselFillUp.supplier_invoice))
             .filter(
                 DieselFillUp.truck_id == truck.id,
                 DieselFillUp.is_archived == False,
-                or_(
-                    and_(
-                        Supplier.payment_term == PaymentTermType.days_30,
-                        diesel_month == month,
-                        diesel_year  == year,
-                    ),
-                    and_(
-                        Supplier.payment_term == PaymentTermType.current,
-                        diesel_month == cash_stmt_month,
-                        diesel_year  == cash_stmt_year,
-                    ),
-                ),
+                diesel_stmt_idx.between(period_idx - 3, period_idx + 1),
             )
             .order_by(DieselFillUp.fillup_date)
             .all()
         )
+        fillups = []
+        for f in candidate_fillups:
+            si = f.supplier_invoice
+            stmt_y = si.statement_year if (si and si.statement_year) else f.fillup_date.year
+            stmt_m = si.statement_month if (si and si.statement_month) else f.fillup_date.month
+            natural = (stmt_y, stmt_m)
+            if f.supplier and f.supplier.payment_term == PaymentTermType.current:
+                natural = period_add(stmt_y, stmt_m, -1)
+            if roll_past_sent(natural, truck.id, f.created_at, sent_map) == (year, month):
+                fillups.append(f)
         by_supplier: dict = {}
         for f in fillups:
             by_supplier.setdefault(f.supplier_id, []).append(f)
@@ -692,6 +704,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         # Apply a manual "To Be Paid Out" override when the user has set one for
         # this truck/period; otherwise the calculated figure stands.
         note_row = note_rows_by_truck.get(truck.id)
+        sent_row = sent_rows_by_truck.get(truck.id)
         override = note_row.net_payable_override if note_row else None
         override = Decimal(str(override)) if override is not None else None
         net_payable = override if override is not None else net_payable_calc
@@ -715,6 +728,8 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             net_payable_override=override,
             diesel_groups=diesel_groups,
             note=note_row.note if note_row else None,
+            sent_at=sent_row.sent_at if sent_row else None,
+            sent_by_name=sent_row.sent_by.full_name if sent_row and sent_row.sent_by else None,
         ))
 
     summary = SubcontractorCostingSummary(
@@ -756,6 +771,108 @@ def get_subcontractor_costing(
     current_user: User = Depends(get_current_user),
 ):
     return _build_subcontractor_costing(subcontractor_id, month, year, db, current_user)
+
+
+def _ensure_costing_not_sent(db: Session, truck_id: int, month: int, year: int):
+    """Reject value changes on a costing period that was sent to the
+    subcontractor (carry-over notes stay editable — they are awareness only
+    and never part of any total)."""
+    row = (
+        db.query(TruckCostingSent)
+        .filter(
+            TruckCostingSent.truck_id == truck_id,
+            TruckCostingSent.month == month,
+            TruckCostingSent.year == year,
+        )
+        .first()
+    )
+    if row:
+        raise HTTPException(
+            status_code=403,
+            detail="This costing has been sent to the subcontractor and is locked — "
+                   "no values can be added or removed. An admin must un-send it first.",
+        )
+
+
+@router.put("/{subcontractor_id}/costing/sent")
+def set_truck_costing_sent(
+    subcontractor_id: int,
+    payload: SubcontractorCostingSentUpdate,
+    truck_id: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark a truck's costing for this period as SENT to the subcontractor
+    (locks it), or un-send it (admin only). The optional sent_date backdates
+    the send: expenses captured after that date roll forward into the next
+    month's costing instead of changing the statement that already went out."""
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    truck = db.query(Truck).filter(
+        Truck.id == truck_id,
+        Truck.subcontractor_id == subcontractor_id,
+    ).first()
+    if not truck:
+        raise HTTPException(status_code=404, detail="Truck not found for this subcontractor")
+
+    row = (
+        db.query(TruckCostingSent)
+        .filter(
+            TruckCostingSent.truck_id == truck_id,
+            TruckCostingSent.month == month,
+            TruckCostingSent.year == year,
+        )
+        .first()
+    )
+
+    if not payload.sent:
+        if not row:
+            return {"sent_at": None}
+        if current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="Only an admin can un-send a costing")
+        db.delete(row)
+        log_action(
+            db, "subcontractor_costing.unsent", user_id=current_user.id,
+            entity_id=sub.entity_id, resource_type="truck_costing_sent",
+            resource_id=truck_id,
+            description=f"Un-sent costing {month:02d}/{year} for {truck.registration} ({sub.name}) — unlocked",
+        )
+        db.commit()
+        return {"sent_at": None}
+
+    if row:
+        return {"sent_at": row.sent_at.isoformat()}
+
+    now_utc = datetime.now(timezone.utc)
+    # Backdated send: cutoff at end of that day, so everything captured up to
+    # and including the sent date counts as part of the sent statement.
+    if payload.sent_date and payload.sent_date != now_utc.date():
+        sent_at = datetime(
+            payload.sent_date.year, payload.sent_date.month, payload.sent_date.day,
+            23, 59, 59, tzinfo=timezone.utc,
+        )
+    else:
+        sent_at = now_utc
+
+    row = TruckCostingSent(
+        truck_id=truck_id, month=month, year=year,
+        sent_at=sent_at, sent_by_id=current_user.id,
+    )
+    db.add(row)
+    log_action(
+        db, "subcontractor_costing.sent", user_id=current_user.id,
+        entity_id=sub.entity_id, resource_type="truck_costing_sent",
+        resource_id=truck_id,
+        description=f"Marked costing {month:02d}/{year} for {truck.registration} ({sub.name}) as sent — locked",
+        new_values={"sent_at": sent_at.isoformat()},
+    )
+    db.commit()
+    return {"sent_at": row.sent_at.isoformat()}
 
 
 @router.put("/{subcontractor_id}/costing/note")
@@ -842,6 +959,7 @@ def upsert_truck_costing_net_override(
     ).first()
     if not truck:
         raise HTTPException(status_code=404, detail="Truck not found for this subcontractor")
+    _ensure_costing_not_sent(db, truck_id, month, year)
 
     value = payload.net_payable
     note_row = (
@@ -905,6 +1023,7 @@ def create_truck_costing_income(
     ).first()
     if not truck:
         raise HTTPException(status_code=404, detail="Truck not found for this subcontractor")
+    _ensure_costing_not_sent(db, truck_id, month, year)
 
     desc = (payload.description or "").strip()
     if not desc:
@@ -961,6 +1080,7 @@ def delete_truck_costing_income(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Income line not found")
+    _ensure_costing_not_sent(db, row.truck_id, row.month, row.year)
 
     db.delete(row)
     db.commit()

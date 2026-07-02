@@ -7,7 +7,7 @@ import {
   createSubcontractorInvoice, createSupplierInvoice,
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, removeFixedExpense,
   getSubcontractorInvoices, getSubcontractorCosting, saveSubcontractorCostingNote,
-  saveSubcontractorCostingNetOverride,
+  saveSubcontractorCostingNetOverride, setSubcontractorCostingSent,
   createTruckCostingIncome, deleteTruckCostingIncome,
   downloadSubcontractorCostingPdf, downloadSubcontractorCostingExcel,
   getVerifications, verifyValue, finalizeValue,
@@ -18,7 +18,7 @@ import toast from 'react-hot-toast'
 import {
   ArrowLeft, Plus, Trash2, ChevronLeft, ChevronRight,
   Building2, X, Save, CheckCircle, ChevronDown, ChevronUp, FileSpreadsheet,
-  FileDown, Sheet, AlertTriangle, Pencil, RotateCcw, Info,
+  FileDown, Sheet, AlertTriangle, Pencil, RotateCcw, Info, Send, Lock,
 } from 'lucide-react'
 import SearchableSelect from '../components/SearchableSelect'
 import DeleteModal from '../components/DeleteModal'
@@ -107,6 +107,13 @@ export default function SubcontractorProfilePage() {
   const [expenseDeleteTarget, setExpenseDeleteTarget] = useState(null)
   // null = creating a new expense; an id = editing that existing expense row
   const [editingExpenseId, setEditingExpenseId] = useState(null)
+
+  // "Mark Sent" confirm modal (costing tab): locks a truck's costing for the
+  // period. The date is backdatable so an already-emailed month can carry its
+  // real send date (expenses captured after it roll into the next month).
+  const [sentModal, setSentModal]         = useState(null)   // { truckId, truckReg } | null
+  const [sentDate, setSentDate]           = useState(todayStr)
+  const [sentSaving, setSentSaving]       = useState(false)
 
   // Manual income modal (costing tab) — mirrors the general expense, on the
   // income side. Holds the truck the card was opened from.
@@ -572,6 +579,43 @@ export default function SubcontractorProfilePage() {
     }
   }
 
+  // ── Sent (lock) handlers (costing tab) ───────────────────────────────────────
+
+  const openSentModal = (truckId, truckReg) => {
+    setSentDate(todayStr)
+    setSentModal({ truckId, truckReg })
+  }
+
+  const confirmSent = async () => {
+    if (!sentDate) { toast.error('Pick the date the costing was sent'); return }
+    setSentSaving(true)
+    try {
+      await setSubcontractorCostingSent(
+        id,
+        { truck_id: sentModal.truckId, month, year },
+        { sent: true, sent_date: sentDate },
+      )
+      toast.success('Costing marked as sent — locked')
+      setSentModal(null)
+      loadCosting()
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setSentSaving(false)
+    }
+  }
+
+  const handleUnsend = async (truckId, truckReg) => {
+    if (!window.confirm(`Un-send the ${MONTHS[month]} ${year} costing for ${truckReg}? It will be unlocked and expenses captured since the send may move back into it.`)) return
+    try {
+      await setSubcontractorCostingSent(id, { truck_id: truckId, month, year }, { sent: false })
+      toast.success('Costing un-sent — unlocked')
+      loadCosting()
+    } catch (err) {
+      toast.error(errorMessage(err))
+    }
+  }
+
   // ── Manual income modal handlers (costing tab) ───────────────────────────────
 
   const openIncomeModal = (truckId, truckReg) => {
@@ -976,6 +1020,8 @@ export default function SubcontractorProfilePage() {
                   onEditInvoice={openEditExpenseModal}
                   onSaveNote={saveTruckNote}
                   onSaveNetOverride={saveTruckNetOverride}
+                  onMarkSent={() => openSentModal(td.truck.id, td.truck.registration)}
+                  onUnsend={() => handleUnsend(td.truck.id, td.truck.registration)}
                   isVatRegistered={costing.is_vat_registered !== false}
                   verifPrefix={costingPrefix}
                   verif={verif}
@@ -1236,6 +1282,41 @@ export default function SubcontractorProfilePage() {
             } catch (e) { toast.error(errorMessage(e)) }
           }}
         />
+      )}
+
+      {/* ── Mark Sent Modal (costing tab) ── */}
+      {sentModal && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setSentModal(null)}>
+          <div className="modal">
+            <div className="modal-header">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                <Send size={16} style={{ color: 'var(--accent)' }} />
+                Mark Costing as Sent — {sentModal.truckReg}
+              </h2>
+              <button className="btn-icon btn-ghost" onClick={() => setSentModal(null)}><X size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, marginTop: 0, lineHeight: 1.5 }}>
+                This locks the <strong>{MONTHS[month]} {year}</strong> costing for <strong>{sentModal.truckReg}</strong> —
+                no values can be added or removed once it has been sent to the subcontractor.
+              </p>
+              <div className="form-group">
+                <label>Sent on *</label>
+                <DateInput className="form-input" value={sentDate} onChange={e => setSentDate(e.target.value)} />
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                  If the costing was emailed earlier, pick that date. Any expense captured after this date
+                  automatically moves into the next month's costing instead of changing this one.
+                </span>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn-ghost" onClick={() => setSentModal(null)}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={confirmSent} disabled={sentSaving}>
+                {sentSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : <><Send size={14} /> Mark Sent</>}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Add Income Modal (costing tab) ── */}
@@ -1499,7 +1580,7 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onAddIncome, onDeleteIncome, onDeleteInvoice, onEditInvoice, onSaveNote, onSaveNetOverride, isVatRegistered = true,
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onAddIncome, onDeleteIncome, onDeleteInvoice, onEditInvoice, onSaveNote, onSaveNetOverride, onMarkSent, onUnsend, isVatRegistered = true,
   verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false, highlight = false, autoExpand = false }) {
   const [expanded, setExpanded] = useState(false)
   // Open the card automatically when it's the target of a reg search
@@ -1550,7 +1631,12 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
     total_expenses_excl_vat, total_expenses_incl_vat,
     net_payable, net_payable_calculated, net_payable_override,
     diesel_groups = [],
+    sent_at, sent_by_name,
   } = truckData
+
+  // Sent = the costing went to the subcontractor → fully locked: no values
+  // can be added or removed (notes stay editable — they're awareness only).
+  const isSent = !!sent_at
 
   // Manual "To Be Paid Out" override (inline-editable; revert restores the
   // system-calculated figure)
@@ -1647,6 +1733,40 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
         <span style={{ fontSize: 13 }}>{loadCount} load{loadCount !== 1 ? 's' : ''}</span>
         <span style={{ color: 'var(--border)', fontSize: 12 }}>|</span>
         <span style={{ fontSize: 13 }}>{totalTonnes.toFixed(3)} t</span>
+        {/* Sent (lock) control — per truck per month */}
+        <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          {isSent ? (
+            <>
+              <span
+                title={`Sent to the subcontractor${sent_by_name ? ` by ${sent_by_name}` : ''} — costing locked`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 9px', borderRadius: 12, fontSize: 11, fontWeight: 800, letterSpacing: 0.5, background: 'rgba(34,197,94,0.15)', color: '#16a34a' }}
+              >
+                <Lock size={11} /> SENT {formatDate(sent_at)}
+              </span>
+              {isAdmin && onUnsend && (
+                <button
+                  className="btn-icon btn-ghost"
+                  title="Un-send (unlock this costing) — admin only"
+                  onClick={onUnsend}
+                  style={{ padding: 2 }}
+                >
+                  <RotateCcw size={13} color="var(--text-muted)" />
+                </button>
+              )}
+            </>
+          ) : (
+            onMarkSent && (
+              <button
+                className="btn-ghost btn-sm"
+                title="Mark this month's costing as sent to the subcontractor — locks it"
+                onClick={onMarkSent}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 }}
+              >
+                <Send size={12} /> Sent
+              </button>
+            )
+          )}
+        </span>
         {!expanded && parseFloat(net_payable) !== 0 && (
           <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 13, color: parseFloat(net_payable) >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
             Net: {fmtC(net_payable)}
@@ -1725,7 +1845,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                   <td style={tdStyle}>
-                    {onDeleteIncome && (
+                    {onDeleteIncome && !isSent && (
                       <button className="btn-icon btn-ghost" onClick={() => onDeleteIncome(mi)}>
                         <Trash2 size={12} color="var(--danger)" />
                       </button>
@@ -1840,16 +1960,18 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                       {inv.vat_applicable ? dash : <V field={`invoice:${inv.id}:amount`}>{fmtC(inv.amount)}</V>}
                     </td>
                     <td style={tdStyle}>
-                      <div style={{ display: 'flex', gap: 2 }}>
-                        {onEditInvoice && (
-                          <button className="btn-icon btn-ghost" title="Edit expense" onClick={() => onEditInvoice(inv)}>
-                            <Pencil size={12} />
+                      {!isSent && (
+                        <div style={{ display: 'flex', gap: 2 }}>
+                          {onEditInvoice && (
+                            <button className="btn-icon btn-ghost" title="Edit expense" onClick={() => onEditInvoice(inv)}>
+                              <Pencil size={12} />
+                            </button>
+                          )}
+                          <button className="btn-icon btn-ghost" title="Remove expense" onClick={() => onDeleteInvoice(inv)}>
+                            <Trash2 size={12} color="var(--danger)" />
                           </button>
-                        )}
-                        <button className="btn-icon btn-ghost" title="Remove expense" onClick={() => onDeleteInvoice(inv)}>
-                          <Trash2 size={12} color="var(--danger)" />
-                        </button>
-                      </div>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 )
@@ -1925,12 +2047,12 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                     <span style={{ fontWeight: 700, fontSize: 16, color: netNum >= 0 ? 'var(--accent)' : 'var(--danger)', opacity: isNetOverridden ? 1 : 0.65 }}>
                       <V field="net_payable">{fmtC(net_payable)}</V>
                     </span>
-                    {onSaveNetOverride && (
+                    {onSaveNetOverride && !isSent && (
                       <button className="btn-icon btn-ghost" title="Enter a new amount" onClick={startNetEdit} style={{ padding: 2 }}>
                         <Pencil size={13} />
                       </button>
                     )}
-                    {isNetOverridden && onSaveNetOverride && (
+                    {isNetOverridden && onSaveNetOverride && !isSent && (
                       <button className="btn-icon btn-ghost" title={`Clear — revert to the calculated ${fmtC(net_payable_calculated)}`} onClick={revertNet} disabled={netSaving} style={{ padding: 2 }}>
                         <RotateCcw size={13} color="var(--text-muted)" />
                       </button>
@@ -2017,25 +2139,33 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
           )}
         </div>
 
-        {/* Add Expense / Add Income */}
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-          <button
-            className="btn-ghost"
-            style={{ fontSize: 12, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
-            onClick={onAddExpense}
-          >
-            <Plus size={13} /> Add Expense
-          </button>
-          {onAddIncome && (
+        {/* Add Expense / Add Income — hidden once the costing was sent (locked) */}
+        {isSent ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+            <Lock size={13} />
+            Sent to the subcontractor{sent_by_name ? ` by ${sent_by_name}` : ''} on {formatDate(sent_at)} — locked.
+            New expenses captured for this truck now go into the next month's costing.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <button
               className="btn-ghost"
               style={{ fontSize: 12, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
-              onClick={onAddIncome}
+              onClick={onAddExpense}
             >
-              <Plus size={13} /> Add Income
+              <Plus size={13} /> Add Expense
             </button>
-          )}
-        </div>
+            {onAddIncome && (
+              <button
+                className="btn-ghost"
+                style={{ fontSize: 12, padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                onClick={onAddIncome}
+              >
+                <Plus size={13} /> Add Income
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Collapsible loads detail */}
         {showLoadDetail && (
