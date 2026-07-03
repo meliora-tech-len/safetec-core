@@ -739,7 +739,10 @@ def update_cycle(
     # from the explicitly-set fields (exclude_unset) where they can be set to None.
     explicit = payload.model_dump(exclude_unset=True)
     for field in ("basic_salary_override", "subsistence_override",
-                  "load_incentive_override", "mine_bonus_override"):
+                  "load_incentive_override", "mine_bonus_override",
+                  "nbcrfli_override", "provident_override", "wellness_override",
+                  "sick_fund_override", "holiday_fund_override",
+                  "leave_pay_override", "paye_override", "ctc_override"):
         if field in explicit:
             setattr(cycle, field, explicit[field])
 

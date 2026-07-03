@@ -96,8 +96,10 @@ def calculate_pay_cycle(
             "holiday_fund":                Decimal("0.00"),
             "leave_pay":                   Decimal("0.00"),
             "paye":                        Decimal("0.00"),
+            "tax_sars":                    Decimal("0.00"),
             "uif":                         Decimal("0.00"),
             "total_statutory":             Decimal("0.00"),
+            "ctc":                         r(gross),
             "subsistence_advance_paid":    Decimal("0.00"),
             "subsistence_budgeted":        Decimal("0.00"),
             "subsistence_variance":        Decimal("0.00"),
@@ -146,19 +148,30 @@ def calculate_pay_cycle(
     # Statutory deductions — fixed rand amounts per pay cycle, captured directly
     # in Payroll Rates (no longer % of salary, migration 104). Skipped when no
     # basic salary was earned this cycle, matching the old %-of-zero behaviour.
-    # paye_fixed holds the capped UIF amount (R177.12); real PAYE income tax is
-    # handled externally and is intentionally not computed here.
-    has_salary    = basic_salary > 0
-    nbcrfli       = d(settings.nbcrfli_amount) if has_salary else Decimal(0)
-    provident     = d(settings.provident_amount) if has_salary else Decimal(0)
-    wellness      = d(settings.wellness_amount) if has_salary else Decimal(0)
-    sick_fund     = d(settings.sick_fund_amount) if has_salary else Decimal(0)
-    holiday_fund  = d(settings.holiday_fund_amount) if has_salary else Decimal(0)
-    leave_pay     = d(settings.leave_pay_amount) if has_salary else Decimal(0)
-    paye          = d(settings.paye_fixed)
+    # Each line takes a per-cycle manual override when set (migration 105).
+    # paye_fixed holds the capped UIF amount (R177.12); real SARS income tax is
+    # the manual tax_sars amount below.
+    has_salary = basic_salary > 0
+
+    def stat(field, amount):
+        ovr = ov(field)
+        if ovr is not None:
+            return ovr
+        return d(amount) if has_salary else Decimal(0)
+
+    nbcrfli       = stat('nbcrfli_override', settings.nbcrfli_amount)
+    provident     = stat('provident_override', settings.provident_amount)
+    wellness      = stat('wellness_override', settings.wellness_amount)
+    sick_fund     = stat('sick_fund_override', settings.sick_fund_amount)
+    holiday_fund  = stat('holiday_fund_override', settings.holiday_fund_amount)
+    leave_pay     = stat('leave_pay_override', settings.leave_pay_amount)
+    paye_ovr      = ov('paye_override')
+    paye          = paye_ovr if paye_ovr is not None else d(settings.paye_fixed)
+    tax_sars      = d(getattr(cycle, 'tax_sars', 0) or 0)
     uif           = Decimal(0)
 
-    total_statutory = nbcrfli + provident + wellness + sick_fund + holiday_fund + leave_pay + paye + uif
+    total_statutory = (nbcrfli + provident + wellness + sick_fund + holiday_fund
+                       + leave_pay + paye + tax_sars + uif)
 
     subs_advance  = d(cycle.subsistence_advance_paid)
     subs_variance = subs_advance - total_subs
@@ -170,6 +183,13 @@ def calculate_pay_cycle(
     accrual_offset   = sick_fund + holiday_fund + leave_pay
     total_deductions = total_statutory + subs_advance + loan_deduction + cash_deduction + food_deduction
     net_payable      = gross + accrual_offset - total_deductions
+
+    # Cost to Company — total earnings (incl. the accruals) + company
+    # contributions (provident + NBCRFLI + wellness, matching the payslip's
+    # "Co. Contributions"). Display line only; never part of net payable.
+    ctc_ovr = ov('ctc_override')
+    ctc = ctc_ovr if ctc_ovr is not None else (
+        gross + accrual_offset + provident + nbcrfli + wellness)
 
     return {
         "driver_type":               "permanent",
@@ -193,8 +213,10 @@ def calculate_pay_cycle(
         "holiday_fund":                r(holiday_fund),
         "leave_pay":                   r(leave_pay),
         "paye":                        r(paye),
+        "tax_sars":                    r(tax_sars),
         "uif":                         r(uif),
         "total_statutory":             r(total_statutory),
+        "ctc":                         r(ctc),
         "subsistence_advance_paid":    r(subs_advance),
         "subsistence_budgeted":        r(total_subs),
         "subsistence_variance":        r(subs_variance),

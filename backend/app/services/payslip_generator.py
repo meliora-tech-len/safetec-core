@@ -220,6 +220,7 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
     if addl     > 0: earn.append(("Additional Loads",  _fmt(addl)))
 
     paye      = float(calc.get("paye", 0))
+    tax_sars  = float(calc.get("tax_sars", 0))
     uif       = float(calc.get("uif", 0))
     provident = float(calc.get("provident", 0))
     wellness  = float(calc.get("wellness", 0))
@@ -229,11 +230,12 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
     cash_ded  = float(calc.get("cash_deduction", 0))
     food_ded  = float(calc.get("food_deduction", 0))
 
-    disp_ded = (paye + uif + provident + sick + holiday + leave +
+    disp_ded = (paye + tax_sars + uif + provident + sick + holiday + leave +
                 nbcrfli + wellness + subs_adv + loan_ded + cash_ded + food_ded)
 
     ded = []
     if paye     > 0: ded.append(("Tax",              _fmt(paye)))
+    if tax_sars > 0: ded.append(("Tax (SARS)",       _fmt(tax_sars)))
     if uif      > 0: ded.append(("UIF",              _fmt(uif)))
     if provident> 0: ded.append(("Provident Fund",   _fmt(provident)))
     if sick     > 0: ded.append(("Sick Fund",        _fmt(sick)))
@@ -364,10 +366,13 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
     total_perks   = float(provident)
     co_contrib    = float(provident + nbcrfli + wellness)
 
+    ctc = float(calc.get("ctc", 0)) or (disp_gross + co_contrib)
+
     cp_rows = [
         [P("CURRENT PERIOD", s_ysl), ""],
         [P("Total Perks",       s_lbl), P(_fmt(total_perks),  s_r)],
         [P("Co. Contributions", s_lbl), P(_fmt(co_contrib),   s_r)],
+        [P("Cost to Company (CTC)", s_lbl), P(_fmt(ctc), s_r)],
     ]
     cp_tbl = Table(cp_rows, colWidths=[130 * mm, 56 * mm])
     cp_tbl.setStyle(TableStyle([

@@ -779,6 +779,23 @@ class DriverPayCycle(Base):
     load_incentive_override = Column(Numeric(12, 2), nullable=True)
     mine_bonus_override     = Column(Numeric(12, 2), nullable=True)
 
+    # Per-cycle overrides for the statutory deduction lines (migration 105).
+    # Null = use the fixed rand amount from PayrollSettings for this cycle.
+    nbcrfli_override      = Column(Numeric(12, 2), nullable=True)
+    provident_override    = Column(Numeric(12, 2), nullable=True)
+    wellness_override     = Column(Numeric(12, 2), nullable=True)
+    sick_fund_override    = Column(Numeric(12, 2), nullable=True)
+    holiday_fund_override = Column(Numeric(12, 2), nullable=True)
+    leave_pay_override    = Column(Numeric(12, 2), nullable=True)
+    paye_override         = Column(Numeric(12, 2), nullable=True)
+
+    # Real SARS income tax for the cycle (PAYE above holds the capped UIF
+    # amount). Manual entry, deducted from net payable.
+    tax_sars              = Column(Numeric(12, 2), nullable=False, default=0)
+    # Cost to Company display line. Null = total earnings (incl. accruals) +
+    # company contributions (provident + NBCRFLI + wellness).
+    ctc_override          = Column(Numeric(12, 2), nullable=True)
+
     subsistence_advance_paid     = Column(Numeric(12, 2), default=0)
     subsistence_advance_verified = Column(Boolean, default=False)
 

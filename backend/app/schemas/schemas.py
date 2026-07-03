@@ -1261,6 +1261,15 @@ class DriverPayCycleUpdate(BaseModel):
     subsistence_override: Optional[Decimal] = None
     load_incentive_override: Optional[Decimal] = None
     mine_bonus_override: Optional[Decimal] = None
+    nbcrfli_override: Optional[Decimal] = None
+    provident_override: Optional[Decimal] = None
+    wellness_override: Optional[Decimal] = None
+    sick_fund_override: Optional[Decimal] = None
+    holiday_fund_override: Optional[Decimal] = None
+    leave_pay_override: Optional[Decimal] = None
+    paye_override: Optional[Decimal] = None
+    ctc_override: Optional[Decimal] = None
+    tax_sars: Optional[Decimal] = None
     subsistence_advance_paid: Optional[Decimal] = None
     subsistence_advance_verified: Optional[bool] = None
     staff_loan_balance: Optional[Decimal] = None
@@ -1289,6 +1298,15 @@ class DriverPayCycleOut(BaseModel):
     subsistence_override: Optional[Decimal] = None
     load_incentive_override: Optional[Decimal] = None
     mine_bonus_override: Optional[Decimal] = None
+    nbcrfli_override: Optional[Decimal] = None
+    provident_override: Optional[Decimal] = None
+    wellness_override: Optional[Decimal] = None
+    sick_fund_override: Optional[Decimal] = None
+    holiday_fund_override: Optional[Decimal] = None
+    leave_pay_override: Optional[Decimal] = None
+    paye_override: Optional[Decimal] = None
+    ctc_override: Optional[Decimal] = None
+    tax_sars: Decimal = Decimal("0")
     subsistence_advance_paid: Decimal
     subsistence_advance_verified: bool
     staff_loan_balance: Decimal

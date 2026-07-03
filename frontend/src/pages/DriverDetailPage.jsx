@@ -349,10 +349,14 @@ export default function DriverDetailPage() {
   const [cashBal, setCashBal]   = useState(0)
   const [cashDed, setCashDed]   = useState(0)
   const [comments, setComments] = useState('')
-  // Manual earnings overrides ('' = use computed value)
+  // Manual earnings + statutory overrides ('' = use computed value)
   const [overrides, setOverrides] = useState({
     basic_salary_override: '', subsistence_override: '', load_incentive_override: '', mine_bonus_override: '',
+    nbcrfli_override: '', provident_override: '', wellness_override: '', sick_fund_override: '',
+    holiday_fund_override: '', leave_pay_override: '', paye_override: '', ctc_override: '',
   })
+  // Real SARS income tax for the cycle (manual, default 0)
+  const [taxSars, setTaxSars] = useState(0)
   const [savingLoads, setSavingLoads] = useState(false)
 
   // Load driver + settings once
@@ -407,7 +411,16 @@ export default function DriverDetailPage() {
           subsistence_override:    ovStr(c.subsistence_override),
           load_incentive_override: ovStr(c.load_incentive_override),
           mine_bonus_override:     ovStr(c.mine_bonus_override),
+          nbcrfli_override:        ovStr(c.nbcrfli_override),
+          provident_override:      ovStr(c.provident_override),
+          wellness_override:       ovStr(c.wellness_override),
+          sick_fund_override:      ovStr(c.sick_fund_override),
+          holiday_fund_override:   ovStr(c.holiday_fund_override),
+          leave_pay_override:      ovStr(c.leave_pay_override),
+          paye_override:           ovStr(c.paye_override),
+          ctc_override:            ovStr(c.ctc_override),
         })
+        setTaxSars(parseFloat(c.tax_sars) || 0)
       })
       .catch(() => toast.error('Failed to load pay cycle'))
       .finally(() => setLoading(false))
@@ -466,20 +479,41 @@ export default function DriverDetailPage() {
 
   // Live calc
   const liveCalc = calcLive(loads, effectiveSettings, cycle?.additional_loads, driver?.driver_type, driver?.exclude_mine_bonus, overrides)
-  const stat = liveCalc && driver?.driver_type === 'permanent'
+  const statComputed = liveCalc && driver?.driver_type === 'permanent'
     ? calcStatutory(liveCalc.basicSalary, effectiveSettings)
     : null
+  // Effective statutory lines — a per-cycle override ('' = none) wins over the
+  // fixed rand amount from Payroll Rates.
+  const ovNum = (field, computed) => {
+    const v = overrides[field]
+    return (v === '' || v === null || v === undefined) ? computed : parseFloat(v)
+  }
+  const stat = statComputed ? (() => {
+    const nbcrfli     = ovNum('nbcrfli_override',      statComputed.nbcrfli)
+    const provident   = ovNum('provident_override',    statComputed.provident)
+    const wellness    = ovNum('wellness_override',     statComputed.wellness)
+    const sickFund    = ovNum('sick_fund_override',    statComputed.sickFund)
+    const holidayFund = ovNum('holiday_fund_override', statComputed.holidayFund)
+    const leavePay    = ovNum('leave_pay_override',    statComputed.leavePay)
+    const paye        = ovNum('paye_override',         statComputed.paye)
+    const total = nbcrfli + provident + wellness + sickFund + holidayFund + leavePay + paye
+    return { nbcrfli, provident, wellness, sickFund, holidayFund, leavePay, paye, total }
+  })() : null
   const subsAdvanceParsed = parseFloat(subsAdvance || 0)
   const loanDedParsed = parseFloat(loanDed || 0)
   const cashDedParsed = parseFloat(cashDed || 0)
+  const taxSarsParsed = parseFloat(taxSars || 0)
   const totalFoodPaid = cycle?.food_payments?.reduce((s, p) => s + parseFloat(p.amount || 0), 0) || 0
-  const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed : 0) + loanDedParsed + cashDedParsed + totalFoodPaid
+  const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed + taxSarsParsed : 0) + loanDedParsed + cashDedParsed + totalFoodPaid
   // Sick/Holiday/Leave are part of the wage (earnings) AND withheld into their
   // funds (deductions), so they appear on both sides and net to zero in take-home.
   // Gross/total earnings therefore includes them; net = grossEarnings − deductions.
   const accrualOffset = stat ? (stat.sickFund + stat.holidayFund + stat.leavePay) : 0
   const grossEarnings = liveCalc ? liveCalc.gross + accrualOffset : 0
   const netPayable = liveCalc ? grossEarnings - totalDeductions : 0
+  // Cost to Company — total earnings + company contributions (provident +
+  // NBCRFLI + wellness). Display line only; never part of net payable.
+  const ctcComputed = grossEarnings + (stat ? stat.provident + stat.nbcrfli + stat.wellness : 0)
 
   const downloadPayslip = async () => {
     setPdfLoading(true)
@@ -509,6 +543,15 @@ export default function DriverDetailPage() {
         subsistence_override:    ovOut(overrides.subsistence_override),
         load_incentive_override: ovOut(overrides.load_incentive_override),
         mine_bonus_override:     ovOut(overrides.mine_bonus_override),
+        nbcrfli_override:        ovOut(overrides.nbcrfli_override),
+        provident_override:      ovOut(overrides.provident_override),
+        wellness_override:       ovOut(overrides.wellness_override),
+        sick_fund_override:      ovOut(overrides.sick_fund_override),
+        holiday_fund_override:   ovOut(overrides.holiday_fund_override),
+        leave_pay_override:      ovOut(overrides.leave_pay_override),
+        paye_override:           ovOut(overrides.paye_override),
+        ctc_override:            ovOut(overrides.ctc_override),
+        tax_sars:                taxSarsParsed,
         subsistence_advance_paid:     subsAdvanceParsed,
         subsistence_advance_verified: subsVerified,
         staff_loan_balance:  parseFloat(loanBal || 0),
@@ -794,26 +837,29 @@ export default function DriverDetailPage() {
                 <h3 style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 700 }}>Payslip Summary</h3>
 
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Income</div>
-                {(liveCalc.isCasual ? [
+                {liveCalc.isCasual ? [
                   ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.earningsA)]] : []),
                   ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.earningsB)]] : []),
                   ['Additional loads',   fmt(liveCalc.additionalTotal)],
-                ] : [
-                  ['Basic salary',       fmt(liveCalc.basicSalary)],
-                  ...(stat ? [
-                    ['Sick fund',     fmt(stat.sickFund)],
-                    ['Holiday fund',  fmt(stat.holidayFund)],
-                    ['Leave pay',     fmt(stat.leavePay)],
-                  ] : []),
-                  ['Load incentive',     fmt(liveCalc.totalInc)],
-                  ['Mine bonus',         fmt(liveCalc.assmang)],
-                  ['Subsistence',        fmt(liveCalc.totalSubs)],
-                  ['Additional loads',   fmt(liveCalc.additionalTotal)],
-                ]).map(([l, v]) => (
+                ].map(([l, v]) => (
                   <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
                     <span style={{ color: 'var(--text-secondary)' }}>{l}</span><span>{v}</span>
                   </div>
-                ))}
+                )) : (
+                  <>
+                    <OverrideRow label="Basic salary" field="basic_salary_override" overrides={overrides} setOverrides={setOverrides} computed={liveCalc.basicComputed} />
+                    {statComputed && <>
+                      <OverrideRow label="Sick fund" field="sick_fund_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.sickFund} />
+                      <OverrideRow label="Holiday fund" field="holiday_fund_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.holidayFund} />
+                      <OverrideRow label="Leave pay" field="leave_pay_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.leavePay} />
+                    </>}
+                    <OverrideRow label="Load incentive" field="load_incentive_override" overrides={overrides} setOverrides={setOverrides} computed={liveCalc.incComputed} />
+                    <OverrideRow label="Mine bonus" field="mine_bonus_override" overrides={overrides} setOverrides={setOverrides}
+                      computed={liveCalc.assmangComputed} disabled={driver.exclude_mine_bonus} disabledNote="Excluded" />
+                    <OverrideRow label="Subsistence" field="subsistence_override" overrides={overrides} setOverrides={setOverrides} computed={liveCalc.subsComputed} />
+                    <SummaryRow label="Additional loads" val={fmt(liveCalc.additionalTotal)} />
+                  </>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontWeight: 600, fontSize: 13 }}>
                   <span>Gross</span><span>{fmt(grossEarnings)}</span>
                 </div>
@@ -821,20 +867,24 @@ export default function DriverDetailPage() {
                 {isPermanent && stat && (
                   <>
                     <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 6px' }}>Deductions</div>
+                    <OverrideRow label="NBCRFLI" field="nbcrfli_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.nbcrfli} />
+                    <OverrideRow label="Provident" field="provident_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.provident} />
+                    <OverrideRow label="Wellness" field="wellness_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.wellness} />
+                    <OverrideRow label="Sick fund" field="sick_fund_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.sickFund} />
+                    <OverrideRow label="Holiday fund" field="holiday_fund_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.holidayFund} />
+                    <OverrideRow label="Leave pay" field="leave_pay_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.leavePay} />
+                    <OverrideRow label="PAYE" field="paye_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.paye} />
+                    {/* Tax (SARS) — manual per-cycle amount, no computed default */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', borderBottom: '1px solid var(--border)', gap: 8, fontSize: 13 }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Tax (SARS)</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <input className="form-input" type="number" step="0.01" value={taxSars}
+                          onChange={e => setTaxSars(e.target.value)}
+                          style={{ width: 110, textAlign: 'right', padding: '2px 8px', height: 28, fontWeight: taxSarsParsed > 0 ? 700 : 500, color: taxSarsParsed > 0 ? 'var(--accent)' : 'inherit' }} />
+                        <span style={{ width: 16 }} />
+                      </span>
+                    </div>
                     {[
-                      ['NBCRFLI',       fmt(stat.nbcrfli)],
-                      ['Provident',     fmt(stat.provident)],
-                      ['Wellness',      fmt(stat.wellness)],
-                      ['Sick fund',     fmt(stat.sickFund)],
-                      ['Holiday fund',  fmt(stat.holidayFund)],
-                      ['Leave pay',     fmt(stat.leavePay)],
-                    ].map(([l, v]) => (
-                      <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>{l}</span><span style={{ color: 'var(--danger)' }}>({v})</span>
-                      </div>
-                    ))}
-                    {[
-                      ['PAYE',             fmt(stat.paye)],
                       ['Subs advance',     fmt(subsAdvanceParsed)],
                       ['Staff loan',       fmt(loanDedParsed)],
                       ['Cash advance',     fmt(cashDedParsed)],
@@ -868,6 +918,17 @@ export default function DriverDetailPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', fontWeight: 700, fontSize: 16, color: 'var(--accent)' }}>
                   <span>Net payable</span><span>{fmt(netPayable)}</span>
                 </div>
+
+                {isPermanent && stat && (
+                  <div style={{ marginTop: 10, paddingTop: 6, borderTop: '1px dashed var(--border)' }}>
+                    <OverrideRow label="CTC" hint="(cost to company)" field="ctc_override"
+                      overrides={overrides} setOverrides={setOverrides} computed={ctcComputed} />
+                  </div>
+                )}
+
+                <button className="btn-primary" style={{ marginTop: 14, width: '100%' }} onClick={saveLoads} disabled={savingLoads}>
+                  {savingLoads ? 'Saving…' : 'Save payslip changes'}
+                </button>
               </div>
             )}
           </div>
