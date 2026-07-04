@@ -67,6 +67,12 @@ def _exclude_general_expenses(db: Session, entity_id: int) -> bool:
     return bool(entity and (entity.code or '').upper() == 'OBHI')
 
 
+def _is_trailer_maintenance_supplier(inv) -> bool:
+    """OBHI's 'TRAILER MAINTENANCE' supplier is an internal costing allocation,
+    not a SARS-deductible supplier expense, so it's excluded from the report."""
+    return 'trailer maintenance' in _supplier_name(inv).lower()
+
+
 MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
@@ -205,11 +211,14 @@ def income_expenses_report(
         else:
             excl = incl
         # Report-only reclassification (source data untouched):
-        #   Sasfin → excluded entirely; general costing expenses → excluded
-        #   (OBHI only); Crack Logic 'Insurance Claim' → income.
+        #   Sasfin → excluded entirely; general costing expenses and Trailer
+        #   Maintenance supplier invoices → excluded (OBHI only); Crack Logic
+        #   'Insurance Claim' → income.
         if _is_sasfin_supplier(inv):
             continue
         if exclude_general and _is_general_expense(inv):
+            continue
+        if exclude_general and _is_trailer_maintenance_supplier(inv):
             continue
         if _is_crack_logic_insurance(inv):
             truck_income_incl[m] = truck_income_incl.get(m, 0.0) + round(incl, 2)
@@ -434,12 +443,15 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         elif inv.subcontractor_id and inv.subcontractor:
             name = inv.subcontractor.name
         # Report-only reclassification (source data untouched):
-        #   Sasfin → excluded from the report; general costing expenses →
-        #   excluded (OBHI only); Crack Logic 'Insurance Claim' → moved onto the
-        #   income/output side as an insurance-claim reimbursement.
+        #   Sasfin → excluded from the report; general costing expenses and
+        #   Trailer Maintenance supplier invoices → excluded (OBHI only);
+        #   Crack Logic 'Insurance Claim' → moved onto the income/output side
+        #   as an insurance-claim reimbursement.
         if _is_sasfin_supplier(inv):
             continue
         if exclude_general and _is_general_expense(inv):
+            continue
+        if exclude_general and _is_trailer_maintenance_supplier(inv):
             continue
         if _is_crack_logic_insurance(inv):
             output_invoices.append({
