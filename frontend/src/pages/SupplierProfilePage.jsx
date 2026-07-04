@@ -160,9 +160,11 @@ function isIntsimbiSheet(ws) {
 // expects. One row = one fill-up; rows are grouped by the INV (supplier invoice
 // number). Columns: Date | … | TransID | Driver | Slip | RegNo | … |
 // LDispensed(litres) | … | Price(rate) | Km's | Price(amount excl) | Amin Fee | INV.
-// The unique per-fill reference is TransID (the printed "Slip" repeats), so we use
-// it as item_code. Diesel is zero-rated; VAT applies only to the admin fee, so the
-// line's incl-VAT = diesel + admin fee + VAT(admin fee).
+// Slip is the printed depot slip — the same reference already captured on
+// manually-logged fill-ups and their auto-created placeholder invoices, so it
+// must be the item_code or the import can never match/absorb them. TransID is
+// kept in the description for reference only. Diesel is zero-rated; VAT applies
+// only to the admin fee, so the line's incl-VAT = diesel + admin fee + VAT(admin fee).
 function parseIntsimbiSheet(ws) {
   const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100
   const r4 = (n) => Math.round((Number(n) + Number.EPSILON) * 10000) / 10000
@@ -199,11 +201,11 @@ function parseIntsimbiSheet(ws) {
     if (!byInv.has(invNo)) byInv.set(invNo, { invoice_number: invNo, invoice_date: dateISO, line_items: [] })
     const inv = byInv.get(invNo)
     if (!inv.invoice_date && dateISO) inv.invoice_date = dateISO
+    const trans = cTrans >= 0 ? String(row[cTrans] ?? '').trim() : ''
     inv.line_items.push({
-      // TransID is the unique per-fill reference; keep the printed slip in the
-      // description for reconciliation against the physical slips.
-      item_code:        cTrans >= 0 ? String(row[cTrans] ?? '').trim() : '',
-      item_description: [driver, slip && `slip ${slip}`].filter(Boolean).join(' · '),
+      // Slip is the depot reference used everywhere else to match/link fill-ups.
+      item_code:        slip,
+      item_description: [driver, trans && `trans ${trans}`].filter(Boolean).join(' · '),
       unit:             reg.toUpperCase(),
       quantity:         litres,
       amount_excl_vat:  diesel,
