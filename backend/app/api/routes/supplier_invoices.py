@@ -19,7 +19,7 @@ from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
     SupplierInvoiceLineItemCreate, SupplierInvoiceLineItemOut,
     SupplierStatementGroup, SupplierPayablesDashboard, PendingVerificationInvoice,
-    SupplierCurrentPayable, Supplier30DaysPayable,
+    SupplierCurrentPayable, Supplier30DaysPayable, SupplierInvoiceLineSummary,
     BulkImportPayload, BulkImportResult,
     DieselConflict, DieselConflictSide, DieselConflictResolution,
 )
@@ -506,12 +506,6 @@ def get_dashboard_summary(
     period_month = month or now.month
     period_year  = year or now.year
 
-    # OBHI: don't hide 30-day invoices that fall outside the selected statement
-    # month — show every outstanding 30-day payable (original, pre-statement-period
-    # behaviour). Other entities stay scoped to the selected period.
-    is_obhi = bool(entity_id) and db.query(BusinessEntity.code).filter(
-        BusinessEntity.id == entity_id).scalar() == "OBHI"
-
     # The "Truck/Trailer (purchases)" supplier is shown only in the reports, never
     # on the dashboard — exclude it from every payables figure here. (Matches the
     # slash name only; the separate "Arqs Truck & Trailer" repair vendor stays.)
@@ -520,6 +514,7 @@ def get_dashboard_summary(
     q = (
         db.query(SupplierInvoice)
         .join(Supplier)
+        .options(joinedload(SupplierInvoice.entity))
         .filter(
             SupplierInvoice.is_paid == False,
             SupplierInvoice.is_archived != True,
@@ -535,9 +530,27 @@ def get_dashboard_summary(
 
     all_unpaid = q.all()
 
+    def to_line(inv, outstanding):
+        return SupplierInvoiceLineSummary(
+            id=inv.id,
+            invoice_number=inv.invoice_number,
+            supplier_id=inv.supplier_id,
+            supplier_name=inv.supplier.name if inv.supplier else (inv.supplier_name_text or "—"),
+            entity_code=inv.entity.code if inv.entity else None,
+            invoice_date=inv.invoice_date,
+            amount=Decimal(str(inv.amount)),
+            outstanding_amount=outstanding,
+            statement_month=inv.statement_month,
+            statement_year=inv.statement_year,
+            due_date=inv.payment_due_date,
+            paid_date=inv.paid_date,
+        )
+
     current_payables: dict = {}       # supplier_id -> {name, total, count}
     days_30_payables: dict = {}       # (supplier_id, year, month) -> {name, total, count, due_date}
     other_period_payables: dict = {}  # (supplier_id, year, month) -> current/cash from other months
+    outstanding_current_invoices: List[SupplierInvoiceLineSummary] = []
+    outstanding_days_30_invoices: List[SupplierInvoiceLineSummary] = []
 
     for inv in all_unpaid:
         supplier = inv.supplier
@@ -556,6 +569,7 @@ def get_dashboard_summary(
                     current_payables[key] = {"supplier_name": supplier.name, "total": Decimal("0"), "count": 0}
                 current_payables[key]["total"] += outstanding
                 current_payables[key]["count"] += 1
+                outstanding_current_invoices.append(to_line(inv, outstanding))
             else:
                 # Statement period is a different month — flag for visibility
                 key = (inv.supplier_id, stmt_y, stmt_m)
@@ -569,10 +583,10 @@ def get_dashboard_summary(
                     }
                 other_period_payables[key]["total"] += outstanding
                 other_period_payables[key]["count"] += 1
-        else:  # days_30 — scoped to the selected statement period (except OBHI)
+        else:  # days_30 — scoped to the selected statement period
             stmt_m = inv.statement_month or inv.invoice_date.month
             stmt_y = inv.statement_year  or inv.invoice_date.year
-            if not is_obhi and (stmt_m != period_month or stmt_y != period_year):
+            if stmt_m != period_month or stmt_y != period_year:
                 continue
             key = (inv.supplier_id, inv.statement_year, inv.statement_month)
             if key not in days_30_payables:
@@ -586,6 +600,7 @@ def get_dashboard_summary(
                 }
             days_30_payables[key]["total"] += outstanding
             days_30_payables[key]["count"] += 1
+            outstanding_days_30_invoices.append(to_line(inv, outstanding))
 
     current_list = [
         SupplierCurrentPayable(
@@ -630,19 +645,35 @@ def get_dashboard_summary(
         for inv in all_unpaid
     )
 
-    paid_q = db.query(SupplierInvoice).join(Supplier).filter(
-        SupplierInvoice.is_paid == True,
-        SupplierInvoice.paid_date != None,
-        exclude_truck_trailer,
+    paid_q = (
+        db.query(SupplierInvoice)
+        .join(Supplier)
+        .options(joinedload(SupplierInvoice.entity))
+        .filter(
+            SupplierInvoice.is_paid == True,
+            SupplierInvoice.paid_date != None,
+            exclude_truck_trailer,
+        )
     )
     if accessible is not None:
         paid_q = paid_q.filter(SupplierInvoice.entity_id.in_(accessible))
     if entity_id:
         paid_q = paid_q.filter(SupplierInvoice.entity_id == entity_id)
-    paid_this_month = sum(
-        inv.amount for inv in paid_q.all()
-        if inv.paid_date and inv.paid_date.month == period_month and inv.paid_date.year == period_year
-    )
+
+    paid_current_invoices: List[SupplierInvoiceLineSummary] = []
+    paid_days_30_invoices: List[SupplierInvoiceLineSummary] = []
+    for inv in paid_q.all():
+        if not (inv.paid_date and inv.paid_date.month == period_month and inv.paid_date.year == period_year):
+            continue
+        line = to_line(inv, Decimal(str(inv.amount)))
+        if inv.supplier.payment_term == PaymentTermType.current:
+            paid_current_invoices.append(line)
+        else:
+            paid_days_30_invoices.append(line)
+
+    total_paid_current = sum((l.amount for l in paid_current_invoices), Decimal("0"))
+    total_paid_30_days = sum((l.amount for l in paid_days_30_invoices), Decimal("0"))
+    paid_this_month = total_paid_current + total_paid_30_days
 
     return SupplierPayablesDashboard(
         current_payables=current_list,
@@ -651,7 +682,13 @@ def get_dashboard_summary(
         total_current=total_current,
         total_30_days=total_30,
         total_paid_this_month=Decimal(str(paid_this_month)),
+        total_paid_current=total_paid_current,
+        total_paid_30_days=total_paid_30_days,
         total_all_outstanding=total_all_outstanding,
+        outstanding_current_invoices=outstanding_current_invoices,
+        outstanding_days_30_invoices=outstanding_days_30_invoices,
+        paid_current_invoices=paid_current_invoices,
+        paid_days_30_invoices=paid_days_30_invoices,
     )
 
 

@@ -4,8 +4,9 @@ import { getDashboardStats, getSupplierPayablesDashboard, getDieselWarnings, get
 import { useAuth } from '../hooks/useAuth'
 import { usePendingInvoices } from '../hooks/usePendingInvoices'
 import PendingInvoicesModal from '../components/PendingInvoicesModal'
+import DrilldownModal from '../components/DrilldownModal'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
-import { TrendingUp, TrendingDown, AlertCircle, FileText, Clock, Building2, ChevronRight, ChevronDown, CreditCard, Fuel, Scale, ClipboardCheck } from 'lucide-react'
+import { TrendingUp, TrendingDown, AlertCircle, FileText, Clock, Building2, ChevronRight, ChevronDown, CreditCard, Fuel, Scale, ClipboardCheck, Users } from 'lucide-react'
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -20,6 +21,7 @@ export default function DashboardPage() {
   const [profitLoss, setProfitLoss] = useState(null)
   const [showOtherPeriods, setShowOtherPeriods] = useState(false)
   const [showPending, setShowPending] = useState(false)
+  const [drilldown, setDrilldown] = useState(null)
   const pending = usePendingInvoices(isAdmin)
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState(() => {
@@ -70,6 +72,99 @@ export default function DashboardPage() {
       const ent = entities.find(en => en.id === parseInt(val))
       setActiveEntity(ent ?? null)
     }
+  }
+
+  // ── Drill-down "show proof" modals for the Debtors/Creditors totals ────────
+  const debtorColumns = (dateLabel, dateField) => [
+    { label: 'Invoice #', render: r => r.invoice_number },
+    { label: 'Customer', render: r => r.customer_name || r.supplier_name || '—' },
+    { label: 'Entity', render: r => r.entity_code || '—' },
+    { label: 'Status', render: r => <span className={statusBadgeClass(r.status)}>{r.status}</span> },
+    { label: dateLabel, render: r => formatDate(r[dateField]) },
+    { label: 'Amount', align: 'right', render: r => formatCurrency(r.total) },
+  ]
+  const creditorColumns = (dateLabel, dateField, amountField) => [
+    { label: 'Invoice #', render: r => r.invoice_number || '—' },
+    { label: 'Supplier', render: r => r.supplier_name },
+    { label: 'Entity', render: r => r.entity_code || '—' },
+    { label: dateLabel, render: r => dateField === 'statement' ? (r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—') : formatDate(r[dateField]) },
+    { label: 'Amount', align: 'right', render: r => formatCurrency(r[amountField]) },
+  ]
+  const goToInvoice = (row) => { setDrilldown(null); navigate(`/invoices/${row.id}`) }
+  const goToSupplier = (row) => { if (!row.supplier_id) return; setDrilldown(null); navigate(`/suppliers/${row.supplier_id}`) }
+
+  const openOutstandingDebtors = () => setDrilldown({
+    title: 'Outstanding Debtors', subtitle: periodLabel,
+    rows: stats.outstanding_invoices, total: stats.outstanding_total,
+    columns: debtorColumns('Issued', 'issue_date'), onRowClick: goToInvoice,
+  })
+  const openPaidDebtors = () => setDrilldown({
+    title: 'Paid Debtors', subtitle: `Collected in ${periodLabel}`,
+    rows: stats.paid_invoices, total: stats.paid_this_month,
+    columns: debtorColumns('Paid', 'paid_date'), onRowClick: goToInvoice,
+  })
+  const openOutstandingCashCreditors = () => setDrilldown({
+    title: 'Outstanding Cash Creditors', subtitle: `Statement ${periodLabel}`,
+    rows: payables.outstanding_current_invoices, total: payables.total_current,
+    columns: creditorColumns('Statement', 'statement', 'outstanding_amount'), onRowClick: goToSupplier,
+  })
+  const openOutstanding30DayCreditors = () => setDrilldown({
+    title: 'Outstanding 30-Day Creditors', subtitle: `Statement ${periodLabel}`,
+    rows: payables.outstanding_days_30_invoices, total: payables.total_30_days,
+    columns: creditorColumns('Due', 'due_date', 'outstanding_amount'), onRowClick: goToSupplier,
+  })
+  const openPaidCashCreditors = () => setDrilldown({
+    title: 'Paid Cash Creditors', subtitle: `Paid in ${periodLabel}`,
+    rows: payables.paid_current_invoices, total: payables.total_paid_current,
+    columns: creditorColumns('Paid', 'paid_date', 'amount'), onRowClick: goToSupplier,
+  })
+  const openPaid30DayCreditors = () => setDrilldown({
+    title: 'Paid 30-Day Creditors', subtitle: `Paid in ${periodLabel}`,
+    rows: payables.paid_days_30_invoices, total: payables.total_paid_30_days,
+    columns: creditorColumns('Paid', 'paid_date', 'amount'), onRowClick: goToSupplier,
+  })
+
+  const openOverallDebtors = () => {
+    const rows = [
+      ...stats.outstanding_invoices.map(r => ({ ...r, _type: 'Outstanding', _date: r.issue_date })),
+      ...stats.paid_invoices.map(r => ({ ...r, _type: 'Paid', _date: r.paid_date })),
+    ]
+    setDrilldown({
+      title: 'Debtors — Overall Total', subtitle: `Paid + Outstanding · ${periodLabel}`,
+      rows, total: Number(stats.outstanding_total) + Number(stats.paid_this_month),
+      columns: [
+        { label: 'Invoice #', render: r => r.invoice_number },
+        { label: 'Customer', render: r => r.customer_name || r.supplier_name || '—' },
+        { label: 'Entity', render: r => r.entity_code || '—' },
+        { label: 'Type', render: r => r._type },
+        { label: 'Date', render: r => formatDate(r._date) },
+        { label: 'Amount', align: 'right', render: r => formatCurrency(r.total) },
+      ],
+      onRowClick: goToInvoice,
+    })
+  }
+
+  const openOverallCreditors = () => {
+    const rows = [
+      ...payables.outstanding_current_invoices.map(r => ({ ...r, _type: 'Outstanding Cash', _date: r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—', _amount: r.outstanding_amount })),
+      ...payables.outstanding_days_30_invoices.map(r => ({ ...r, _type: 'Outstanding 30-Day', _date: r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—', _amount: r.outstanding_amount })),
+      ...payables.paid_current_invoices.map(r => ({ ...r, _type: 'Paid Cash', _date: formatDate(r.paid_date), _amount: r.amount })),
+      ...payables.paid_days_30_invoices.map(r => ({ ...r, _type: 'Paid 30-Day', _date: formatDate(r.paid_date), _amount: r.amount })),
+    ]
+    setDrilldown({
+      title: 'Creditors — Overall Total', subtitle: `Paid + Outstanding · ${periodLabel}`,
+      rows,
+      total: Number(payables.total_current) + Number(payables.total_30_days) + Number(payables.total_paid_current) + Number(payables.total_paid_30_days),
+      columns: [
+        { label: 'Invoice #', render: r => r.invoice_number || '—' },
+        { label: 'Supplier', render: r => r.supplier_name },
+        { label: 'Entity', render: r => r.entity_code || '—' },
+        { label: 'Type', render: r => r._type },
+        { label: 'Date', render: r => r._date },
+        { label: 'Amount', align: 'right', render: r => formatCurrency(r._amount) },
+      ],
+      onRowClick: goToSupplier,
+    })
   }
 
   return (
@@ -144,97 +239,68 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* ── PRIMARY: Supplier Payables ───────────────────────────── */}
-          <SectionLabel icon={<CreditCard size={13} />} label="Supplier Payables" />
+          {/* ── PRIMARY: Creditors (Suppliers) ───────────────────────── */}
+          <SectionLabel icon={<CreditCard size={13} />} label="Creditors (Suppliers)" />
+          {payables && (
+            <div style={{ display: 'flex', marginBottom: 16 }}>
+              <div style={{ maxWidth: 320, width: '100%' }}>
+                <StatCard
+                  icon={<CreditCard size={20} />}
+                  iconBg="#4f8ef720"
+                  iconColor="var(--accent)"
+                  label="Overall Creditors Total"
+                  value={formatCurrency(
+                    Number(payables.total_current) + Number(payables.total_30_days) +
+                    Number(payables.total_paid_current) + Number(payables.total_paid_30_days)
+                  )}
+                  sub="Paid + Outstanding"
+                  onClick={
+                    (payables.outstanding_current_invoices.length || payables.outstanding_days_30_invoices.length ||
+                     payables.paid_current_invoices.length || payables.paid_days_30_invoices.length)
+                      ? openOverallCreditors : undefined
+                  }
+                />
+              </div>
+            </div>
+          )}
           <div className="grid-4" style={{ marginBottom: 24 }}>
-            <StatCard
-              icon={<CreditCard size={20} />}
-              iconBg="#ef444420"
-              iconColor="var(--danger)"
-              label="Total Outstanding"
-              value={formatCurrency(payables?.total_all_outstanding || 0)}
-              sub="All unpaid supplier invoices"
-            />
-            <StatCard
-              icon={<TrendingUp size={20} />}
-              iconBg="#22c55e20"
-              iconColor="var(--success)"
-              label={`Paid in ${MONTH_NAMES[period.month]}`}
-              value={formatCurrency(payables?.total_paid_this_month || 0)}
-              sub="Supplier payments made"
-            />
             <StatCard
               icon={<Clock size={20} />}
               iconBg="#22c55e20"
               iconColor="#16a34a"
-              label="Current / Cash"
+              label="Outstanding Cash Creditors"
               value={formatCurrency(payables?.total_current || 0)}
               sub={`Statement ${MONTH_NAMES[period.month]}`}
+              onClick={payables?.outstanding_current_invoices?.length ? openOutstandingCashCreditors : undefined}
             />
             <StatCard
               icon={<AlertCircle size={20} />}
               iconBg="#f59e0b20"
               iconColor="var(--warning)"
-              label="30-Day"
+              label="Outstanding 30-Day Creditors"
               value={formatCurrency(payables?.total_30_days || 0)}
               sub="Due 7th of next month"
+              onClick={payables?.outstanding_days_30_invoices?.length ? openOutstanding30DayCreditors : undefined}
+            />
+            <StatCard
+              icon={<TrendingUp size={20} />}
+              iconBg="#22c55e20"
+              iconColor="var(--success)"
+              label="Paid Cash Creditors"
+              value={formatCurrency(payables?.total_paid_current || 0)}
+              sub={`Paid in ${MONTH_NAMES[period.month]}`}
+              onClick={payables?.paid_current_invoices?.length ? openPaidCashCreditors : undefined}
+            />
+            <StatCard
+              icon={<TrendingUp size={20} />}
+              iconBg="#22c55e20"
+              iconColor="var(--success)"
+              label="Paid 30-Day Creditors"
+              value={formatCurrency(payables?.total_paid_30_days || 0)}
+              sub={`Paid in ${MONTH_NAMES[period.month]}`}
+              onClick={payables?.paid_days_30_invoices?.length ? openPaid30DayCreditors : undefined}
             />
           </div>
-
-          {payables && (payables.current_payables.length > 0 || payables.days_30_payables.length > 0 || payables.total_paid_this_month > 0) && (
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>Breakdown by supplier</span>
-              </div>
-              {(payables.current_payables.length > 0 || payables.days_30_payables.length > 0) && <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                {payables.current_payables.length > 0 && (
-                  <div className="card" style={{ flex: 1, minWidth: 260 }}>
-                    <div style={styles.cardHeader}>
-                      <span style={{ fontSize: 13, fontWeight: 600 }}>Current / Cash</span>
-                      <span style={styles.greenBadge}>Due this month</span>
-                    </div>
-                    <div style={{ marginTop: 12 }}>
-                      {payables.current_payables.map(p => (
-                        <div key={p.supplier_id} style={styles.payableRow}>
-                          <div>
-                            <Link to={`/suppliers/${p.supplier_id}`} style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', textDecoration: 'none' }}>
-                              {p.supplier_name}
-                            </Link>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.invoice_count} invoice{p.invoice_count !== 1 ? 's' : ''}</div>
-                          </div>
-                          <span style={{ fontWeight: 700 }}>{formatCurrency(p.total_outstanding)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {payables.days_30_payables.length > 0 && (
-                  <div className="card" style={{ flex: 1, minWidth: 260 }}>
-                    <div style={styles.cardHeader}>
-                      <span style={{ fontSize: 13, fontWeight: 600 }}>30 Days</span>
-                      <span style={styles.amberBadge}>Pay on 7th</span>
-                    </div>
-                    <div style={{ marginTop: 12 }}>
-                      {payables.days_30_payables.map(p => (
-                        <div key={`${p.supplier_id}-${p.statement_year}-${p.statement_month}`} style={styles.payableRow}>
-                          <div>
-                            <Link to={`/suppliers/${p.supplier_id}`} style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', textDecoration: 'none' }}>
-                              {p.supplier_name}
-                            </Link>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                              {MONTH_NAMES[p.statement_month]} {p.statement_year} · {p.invoice_count} invoice{p.invoice_count !== 1 ? 's' : ''}
-                              {p.due_date && ` · Due ${formatDate(p.due_date)}`}
-                            </div>
-                          </div>
-                          <span style={{ fontWeight: 700 }}>{formatCurrency(p.total_outstanding)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>}
-            </div>
-          )}
 
           {/* Diesel Warnings */}
           {dieselWarnings && (dieselWarnings.missing_slip_count > 0 || dieselWarnings.missing_invoice_count > 0) && (
@@ -337,26 +403,42 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* ── SECONDARY: Outgoing Invoices ────────────────────────── */}
+          {/* ── SECONDARY: Debtors (Customers) ────────────────────────── */}
           {stats && (
             <>
-              <SectionLabel icon={<FileText size={13} />} label="Outgoing Invoices" />
+              <SectionDivider />
+              <SectionLabel icon={<Users size={13} />} label="Debtors (Customers)" />
+              <div style={{ display: 'flex', marginBottom: 16 }}>
+                <div style={{ maxWidth: 320, width: '100%' }}>
+                  <StatCard
+                    icon={<Users size={20} />}
+                    iconBg="#4f8ef720"
+                    iconColor="var(--accent)"
+                    label="Overall Debtors Total"
+                    value={formatCurrency(Number(stats.outstanding_total) + Number(stats.paid_this_month))}
+                    sub="Paid + Outstanding"
+                    onClick={(stats.outstanding_invoices.length || stats.paid_invoices.length) ? openOverallDebtors : undefined}
+                  />
+                </div>
+              </div>
               <div className="grid-4" style={{ marginBottom: 24 }}>
                 <StatCard
                   icon={<FileText size={20} />}
                   iconBg="#4f8ef720"
                   iconColor="var(--accent)"
-                  label="Outstanding"
+                  label="Outstanding Debtors"
                   value={formatCurrency(stats.outstanding_total)}
                   sub={`${stats.total_invoices} invoices total`}
+                  onClick={stats.outstanding_invoices?.length ? openOutstandingDebtors : undefined}
                 />
                 <StatCard
                   icon={<TrendingUp size={20} />}
                   iconBg="#22c55e20"
                   iconColor="var(--success)"
-                  label={`Collected in ${MONTH_NAMES[period.month]}`}
+                  label="Paid Debtors"
                   value={formatCurrency(stats.paid_this_month)}
-                  sub="Revenue received"
+                  sub={`Collected in ${MONTH_NAMES[period.month]}`}
+                  onClick={stats.paid_invoices?.length ? openPaidDebtors : undefined}
                 />
                 <StatCard
                   icon={<AlertCircle size={20} />}
@@ -456,6 +538,8 @@ export default function DashboardPage() {
           onClose={() => setShowPending(false)}
         />
       )}
+
+      {drilldown && <DrilldownModal {...drilldown} onClose={() => setDrilldown(null)} />}
     </div>
   )
 }
@@ -465,6 +549,12 @@ function SectionLabel({ icon, label }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>
       {icon}{label}
     </div>
+  )
+}
+
+function SectionDivider() {
+  return (
+    <div style={{ height: 2, margin: '8px 0 28px', background: 'linear-gradient(90deg, transparent, var(--border) 15%, var(--border) 85%, transparent)' }} />
   )
 }
 
@@ -508,14 +598,23 @@ function ProfitLossCard({ pl }) {
   )
 }
 
-function StatCard({ icon, iconBg, iconColor, label, value, sub }) {
+function StatCard({ icon, iconBg, iconColor, label, value, sub, onClick }) {
+  const Tag = onClick ? 'button' : 'div'
   return (
-    <div className="stat-card">
+    <Tag
+      className="stat-card"
+      onClick={onClick}
+      title={onClick ? 'Click to see what makes up this total' : undefined}
+      style={onClick ? { textAlign: 'left', cursor: 'pointer', width: '100%', font: 'inherit', color: 'inherit' } : undefined}
+    >
       <div className="stat-card-icon" style={{ background: iconBg, color: iconColor }}>{icon}</div>
-      <div className="stat-card-label">{label}</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <div className="stat-card-label">{label}</div>
+        {onClick && <ChevronRight size={13} color="var(--text-muted)" />}
+      </div>
       <div className="stat-card-value">{value}</div>
       <div className="stat-card-sub">{sub}</div>
-    </div>
+    </Tag>
   )
 }
 
@@ -547,13 +646,5 @@ const styles = {
   plRow: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     padding: '8px 0', borderBottom: '1px solid var(--border)', gap: 12,
-  },
-  greenBadge: {
-    padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
-    background: 'rgba(34,197,94,0.15)', color: '#16a34a',
-  },
-  amberBadge: {
-    padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
-    background: 'rgba(245,158,11,0.15)', color: '#d97706',
   },
 }

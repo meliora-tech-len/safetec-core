@@ -154,13 +154,7 @@ def dashboard_stats(
     def in_period(d):
         return d is not None and d.month == period_month and d.year == period_year
 
-    # OBHI: don't scope the issue-based metrics to the selected month — count all
-    # outstanding/overdue/draft documents (original, pre-statement-period
-    # behaviour). "Collected in <month>" below stays period-scoped for everyone.
-    is_obhi = bool(entity_id) and db.query(BusinessEntity.code).filter(
-        BusinessEntity.id == entity_id).scalar() == "OBHI"
-
-    invoices = all_docs if is_obhi else [inv for inv in all_docs if in_period(inv.issue_date)]
+    invoices = [inv for inv in all_docs if in_period(inv.issue_date)]
 
     outstanding = sum(
         inv.total for inv in invoices
@@ -176,10 +170,8 @@ def dashboard_stats(
     total_invoices = sum(1 for inv in invoices if inv.document_type == "invoice")
     total_quotes = sum(1 for inv in invoices if inv.document_type == "quote")
 
-    recent = sorted(invoices, key=lambda x: x.created_at or datetime.min, reverse=True)[:8]
-    recent_out = []
-    for inv in recent:
-        recent_out.append(InvoiceSummary(
+    def to_summary(inv):
+        return InvoiceSummary(
             id=inv.id,
             invoice_number=inv.invoice_number,
             document_type=inv.document_type,
@@ -190,7 +182,24 @@ def dashboard_stats(
             total=inv.total,
             issue_date=inv.issue_date,
             due_date=inv.due_date,
-        ))
+            paid_date=inv.paid_date,
+        )
+
+    recent = sorted(invoices, key=lambda x: x.created_at or datetime.min, reverse=True)[:8]
+    recent_out = [to_summary(inv) for inv in recent]
+
+    # Itemized proof for the Debtors drill-down modals — same filters used above
+    # to compute outstanding_total / paid_this_month.
+    outstanding_invoices_list = sorted(
+        (inv for inv in invoices if inv.status in ("sent", "overdue", "accepted") and inv.document_type == "invoice"),
+        key=lambda x: x.issue_date or datetime.min, reverse=True,
+    )
+    paid_invoices_list = sorted(
+        (inv for inv in all_docs if inv.status == "paid" and in_period(inv.paid_date)),
+        key=lambda x: x.paid_date or datetime.min, reverse=True,
+    )
+    outstanding_invoices_out = [to_summary(inv) for inv in outstanding_invoices_list]
+    paid_invoices_out = [to_summary(inv) for inv in paid_invoices_list]
 
     # Entity breakdown
     entity_map = {}
@@ -216,6 +225,8 @@ def dashboard_stats(
         ready_count=ready_count,
         recent_invoices=recent_out,
         entity_breakdown=list(entity_map.values()),
+        outstanding_invoices=outstanding_invoices_out,
+        paid_invoices=paid_invoices_out,
     )
 
 

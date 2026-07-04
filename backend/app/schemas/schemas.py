@@ -492,6 +492,7 @@ class InvoiceSummary(BaseModel):
     total: Decimal
     issue_date: Optional[datetime] = None
     due_date: Optional[datetime] = None
+    paid_date: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -631,6 +632,9 @@ class DashboardStats(BaseModel):
     ready_count: int = 0
     recent_invoices: List[InvoiceSummary] = []
     entity_breakdown: List[dict] = []
+    # Itemized proof behind outstanding_total / paid_this_month (Debtors drill-down).
+    outstanding_invoices: List[InvoiceSummary] = []
+    paid_invoices: List[InvoiceSummary] = []
 
 
 class EntityProfitLoss(BaseModel):
@@ -1817,6 +1821,25 @@ class Supplier30DaysPayable(BaseModel):
     invoice_count: int
 
 
+class SupplierInvoiceLineSummary(BaseModel):
+    """Itemized proof behind a Creditors total — one row per supplier invoice."""
+    id: int
+    invoice_number: Optional[str] = None
+    supplier_id: Optional[int] = None
+    supplier_name: str
+    entity_code: Optional[str] = None
+    invoice_date: datetime
+    amount: Decimal
+    outstanding_amount: Decimal
+    statement_month: Optional[int] = None
+    statement_year: Optional[int] = None
+    due_date: Optional[datetime] = None
+    paid_date: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class SupplierPayablesDashboard(BaseModel):
     current_payables: List[SupplierCurrentPayable] = []
     days_30_payables: List[Supplier30DaysPayable] = []
@@ -1824,7 +1847,14 @@ class SupplierPayablesDashboard(BaseModel):
     total_current: Decimal = Decimal("0")
     total_30_days: Decimal = Decimal("0")
     total_paid_this_month: Decimal = Decimal("0")
+    total_paid_current: Decimal = Decimal("0")
+    total_paid_30_days: Decimal = Decimal("0")
     total_all_outstanding: Decimal = Decimal("0")
+    # Itemized proof for the Creditors drill-down modals.
+    outstanding_current_invoices: List[SupplierInvoiceLineSummary] = []
+    outstanding_days_30_invoices: List[SupplierInvoiceLineSummary] = []
+    paid_current_invoices: List[SupplierInvoiceLineSummary] = []
+    paid_days_30_invoices: List[SupplierInvoiceLineSummary] = []
 
 
 # ── Diesel Schemas ─────────────────────────────────────────────────────────────
