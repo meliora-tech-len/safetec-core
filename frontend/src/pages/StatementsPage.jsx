@@ -8,6 +8,11 @@ import { getStatements, deleteStatement, exportStatementPdf, exportStatementExce
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
+const entityChip = {
+  background: 'var(--accent-dim)', color: 'var(--accent)',
+  fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, letterSpacing: 0.5,
+}
+
 function fmtDate(val) {
   if (!val) return ''
   try {
@@ -115,6 +120,7 @@ export default function StatementsPage() {
           <thead>
             <tr>
               <th>Date</th>
+              {isAdmin && <th>Entity</th>}
               <th>Customer</th>
               <th>Title</th>
               <th style={{ textAlign: 'right' }}>Lines</th>
@@ -125,11 +131,11 @@ export default function StatementsPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40 }}>
+              <tr><td colSpan={isAdmin ? 8 : 7} style={{ textAlign: 'center', padding: 40 }}>
                 <div className="spinner" style={{ margin: '0 auto' }} />
               </td></tr>
             ) : statements.length === 0 ? (
-              <tr><td colSpan={7}>
+              <tr><td colSpan={isAdmin ? 8 : 7}>
                 <div className="empty-state">
                   <LayoutList size={32} />
                   <p>No statements yet — create one to get started</p>
@@ -138,6 +144,13 @@ export default function StatementsPage() {
             ) : statements.map(stmt => (
               <tr key={stmt.id}>
                 <td style={{ fontSize: 13 }}>{fmtDate(stmt.statement_date)}</td>
+                {isAdmin && (
+                  <td>
+                    {stmt.entity_code
+                      ? <span style={entityChip}>{stmt.entity_code}</span>
+                      : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                  </td>
+                )}
                 <td style={{ fontWeight: 500 }}>{stmt.customer_name || '—'}</td>
                 <td style={{ color: 'var(--text-secondary)' }}>{stmt.title || '—'}</td>
                 <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontSize: 12 }}>{(stmt.lines || []).length}</td>
