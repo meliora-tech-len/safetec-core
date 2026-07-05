@@ -107,6 +107,8 @@ def generate_costing_pdf(costing, entity) -> bytes:
     s_val     = sty("val",   fontSize=8,  textColor=black,     alignment=TA_RIGHT)
     s_bold    = sty("bold",  fontSize=8,  fontName=_FONT_BOLD, textColor=black)
     s_bold_r  = sty("br",    fontSize=8,  fontName=_FONT_BOLD, textColor=black,    alignment=TA_RIGHT)
+    s_tot     = sty("tot",   fontSize=8,  fontName=_FONT_BOLD, textColor=white)
+    s_tot_r   = sty("totr",  fontSize=8,  fontName=_FONT_BOLD, textColor=white,    alignment=TA_RIGHT)
     s_grp     = sty("grp",   fontSize=7.5, textColor=gray_mid, fontName=_FONT_BOLD)
     s_grp_r   = sty("grpr",  fontSize=7.5, textColor=gray_mid, fontName=_FONT_BOLD, alignment=TA_RIGHT)
     s_net_pos = sty("np",    fontSize=9,  fontName=_FONT_BOLD, textColor=pos_col,  alignment=TA_RIGHT)
@@ -218,14 +220,15 @@ def generate_costing_pdf(costing, entity) -> bytes:
                 else:
                     rows.append([P(sup, s_lbl), dash, dash, dash, P(_fmt(inv.amount), s_val)])
 
-        # Totals row
+        # Totals row (white text — this row gets a dark background below)
         net_s = s_net_pos if net >= 0 else s_net_neg
+        dash_w = P("—", s_tot_r)
         rows.append([
-            P("Totals", s_bold),
-            P(_fmt(inc_e), s_bold_r) if not is_vat else dash,
-            P(_fmt(inc_i), s_bold_r) if is_vat else dash,
-            P(_fmt(exp_i), s_bold_r),
-            P(_fmt(exp_e), s_bold_r),
+            P("Totals", s_tot),
+            P(_fmt(inc_e), s_tot_r) if not is_vat else dash_w,
+            P(_fmt(inc_i), s_tot_r) if is_vat else dash_w,
+            P(_fmt(exp_i), s_tot_r),
+            P(_fmt(exp_e), s_tot_r),
         ])
 
         tbl = Table(rows, colWidths=col_w, repeatRows=1)
@@ -261,8 +264,14 @@ def generate_costing_pdf(costing, entity) -> bytes:
                 P("Date", s_grp), P("Mine", s_grp), P("Slip #", s_grp),
                 P("Tonnes", s_grp_r), P("Rate", s_grp_r), P("Amount", s_grp_r),
             ]]
+            tot_tonnes = D0
+            tot_amt = D0
             for l in td.loads:
                 amt = l.subcontractor_amount_incl_vat if is_vat else l.subcontractor_amount_excl_vat
+                if l.tonnes is not None:
+                    tot_tonnes += Decimal(str(l.tonnes))
+                if amt is not None:
+                    tot_amt += Decimal(str(amt))
                 ld_rows.append([
                     P(_fmtd(l.load_date), s_dl),
                     P(l.mine_name or "—", s_dl),
@@ -271,14 +280,20 @@ def generate_costing_pdf(costing, entity) -> bytes:
                     P(_fmt(l.subcontractor_rate) if l.subcontractor_rate is not None else "—", s_dl_r),
                     P(_fmt(amt) if amt is not None else "—", s_dl_r),
                 ])
+            ld_rows.append([
+                P("Total", s_bold), P("", s_dl), P("", s_dl),
+                P(_tonnes(tot_tonnes), s_bold_r), P("", s_dl_r), P(_fmt(tot_amt), s_bold_r),
+            ])
+            ld_tot = len(ld_rows) - 1
             ld_tbl = Table(ld_rows, colWidths=[24*mm, 48*mm, 26*mm, 22*mm, 26*mm, 26*mm])
             ld_tbl.setStyle(TableStyle([
                 ("LINEBELOW",    (0, 0), (-1, 0), 0.4, border_c),
+                ("LINEABOVE",    (0, ld_tot), (-1, ld_tot), 0.6, border_c),
                 ("LEFTPADDING",  (0, 0), (-1, -1), 4),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 4),
                 ("TOPPADDING",   (0, 0), (-1, -1), 2),
                 ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, gray_lt]),
+                ("ROWBACKGROUNDS", (0, 1), (-1, ld_tot - 1), [white, gray_lt]),
                 ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
             ]))
             story.append(ld_tbl)
