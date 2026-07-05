@@ -136,6 +136,7 @@ function parseDataRow(row, colMap) {
   // a real load line always carries a quantity or a net value.
   if (!quantity && !net_value) return null
   return {
+    horse_reg,
     description: horse_reg && description ? `${horse_reg} - ${description}` : horse_reg || description,
     loading_number: load_wb,
     offloading_number: wb_ticket,
@@ -274,14 +275,18 @@ function parsePOExcel(file) {
 
           if (allLineItems.length === 0) continue
 
+          // Header text is derived from the PO's original first row (before sorting).
           const headerLine = buildHeaderLine(allLineItems, po_number, meta.project_code)
+          // Sort load lines by truck registration so the invoice reads grouped by truck.
+          const sortedLineItems = [...allLineItems].sort((a, b) =>
+            (a.horse_reg || '').localeCompare(b.horse_reg || '', undefined, { numeric: true, sensitivity: 'base' }))
           results.push({
             id: crypto.randomUUID(),
             po_number,
             po_date: meta.po_date,
             supplier_code: meta.supplier_code,
             project_code: meta.project_code,
-            line_items: [headerLine, ...allLineItems].map((li, i) => ({ ...li, sort_order: i })),
+            line_items: [headerLine, ...sortedLineItems].map((li, i) => ({ ...li, sort_order: i })),
             total_excl: allLineItems.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0),
           })
         }

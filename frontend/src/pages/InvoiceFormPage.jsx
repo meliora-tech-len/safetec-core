@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X, FileText } from 'lucide-react'
+import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X, FileText, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { getEntities, getSuppliers, getCustomers, createCustomer, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
 import DateInput from '../components/DateInput'
@@ -273,6 +273,25 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
   const addLine = (type = 'item') => setLines(prev => [...prev, emptyLine(type)])
   const removeLine = (idx) => setLines(prev => prev.filter((_, i) => i !== idx))
 
+  // Click-to-sort on the Description column: reorders only the item-type rows
+  // (header/note/spacer rows keep their positions). Cycles asc → desc → original
+  // (original = the loaded/imported sort_order, so it's always recoverable).
+  const [descSort, setDescSort] = useState(null) // null | 'asc' | 'desc'
+  const toggleDescSort = () => {
+    const next = descSort === null ? 'asc' : descSort === 'asc' ? 'desc' : null
+    setDescSort(next)
+    setLines(prev => {
+      const itemEntries = prev.map((l, i) => ({ l, i })).filter(x => (x.l.line_type || 'item') === 'item')
+      const sortedLines = [...itemEntries].sort((a, b) => next === null
+        ? (a.l.sort_order ?? 0) - (b.l.sort_order ?? 0)
+        : (next === 'asc' ? 1 : -1) * (a.l.description || '').localeCompare(b.l.description || '', undefined, { numeric: true, sensitivity: 'base' })
+      ).map(x => x.l)
+      const result = [...prev]
+      itemEntries.forEach(({ i }, k) => { result[i] = sortedLines[k] })
+      return result
+    })
+  }
+
   // ── Totals (item rows only) ───────────────────────────────────────
   const subtotal = lines
     .filter(l => (l.line_type || 'item') === 'item')
@@ -541,7 +560,18 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             <div style={{ marginTop: 16 }}>
               {/* Column labels — only relevant for item rows */}
               <div style={{ ...styles.lineHeader, paddingLeft: 62 }}>
-                <span style={{ flex: 2.5 }}>Description</span>
+                {isPOLayout ? (
+                  <span
+                    onClick={toggleDescSort}
+                    title="Sort line items by description"
+                    style={{ flex: 2.5, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', userSelect: 'none' }}
+                  >
+                    Description
+                    {descSort === 'asc' ? <ArrowUp size={12} /> : descSort === 'desc' ? <ArrowDown size={12} /> : <ArrowUpDown size={12} style={{ opacity: 0.4 }} />}
+                  </span>
+                ) : (
+                  <span style={{ flex: 2.5 }}>Description</span>
+                )}
                 {isPOLayout && <span style={{ flex: 1.5, textAlign: 'right' }}>Loading #</span>}
                 {isPOLayout && <span style={{ flex: 1.5, textAlign: 'right' }}>Offloading #</span>}
                 <span style={{ flex: 1, textAlign: 'right' }}>Qty</span>
