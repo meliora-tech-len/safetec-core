@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 
@@ -6,13 +7,14 @@ from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
     User, UserEntityAccess, BusinessEntity,
-    Budget, BudgetSection, BudgetLine, BudgetLineValue,
+    Budget, BudgetSection, BudgetLine, BudgetLineValue, BudgetLineTemplate,
 )
 from app.schemas.schemas import (
     BudgetCreate, BudgetUpdate, BudgetOut, BudgetDetailOut,
     BudgetSectionCreate, BudgetSectionUpdate, BudgetSectionOut,
     BudgetLineCreate, BudgetLineUpdate, BudgetLineOut,
     BudgetLineValueIn, BudgetLineValueOut,
+    BudgetLineTemplateCreate, BudgetLineTemplateUpdate, BudgetLineTemplateOut,
 )
 from app.services.audit import log_action
 from app.services.budget_autofill import compute_autofill
@@ -54,12 +56,6 @@ ENTITY_SECTION_EXCLUSIONS = {
     # section stays — the user fills it in manually (nothing auto-pulls into it).
     "OBHI": {"WAGES"},
 }
-
-# Recurring "usual" expenses every budget starts with under OTHER — nothing pulls
-# these from the system, they're just pre-seeded manual lines so the user isn't
-# re-typing them every month. Freely renamable/deletable per budget afterwards.
-DEFAULT_OTHER_LINES = ["Travel & Accom", "Provisional Tax", "Bank Charges"]
-
 
 def _sections_for_entity(entity) -> list:
     """DEFAULT_SECTIONS minus any sections that don't apply to this entity."""
@@ -148,6 +144,71 @@ def _budget_window(entity_code: str, month: int, year: int):
     return _rolling_months(month, year)
 
 
+SECTION_TYPE_BY_NAME = dict(DEFAULT_SECTIONS)
+
+
+def _apply_constants(budget: Budget, db: Session, sections: dict) -> int:
+    """Ensure every active BudgetLineTemplate that applies to this budget's entity
+    ('usual' recurring line, e.g. Travel & Accom — entity_id NULL means every entity;
+    a set entity_id scopes it to just that one) exists as a line in this budget. Only
+    adds what's missing — never touches an existing line's name/section/values, so a
+    user can freely rename or delete their copy per budget. Values are always left
+    blank for the user to type in; nothing here ever sets an amount. Creates the
+    target section too if a budget predates it (e.g. an older budget from before
+    OTHER was added to DEFAULT_SECTIONS) — but never for a section this entity
+    excludes."""
+    templates = (
+        db.query(BudgetLineTemplate)
+        .filter(
+            BudgetLineTemplate.is_active == True,  # noqa: E712
+            or_(BudgetLineTemplate.entity_id.is_(None), BudgetLineTemplate.entity_id == budget.entity_id),
+        )
+        .order_by(BudgetLineTemplate.sort_order)
+        .all()
+    )
+    if not templates:
+        return 0
+
+    code = (budget.entity.code or "").upper()
+    excluded = ENTITY_SECTION_EXCLUSIONS.get(code, set())
+    next_section_order = max([s.sort_order or 0 for s in sections.values()], default=-1) + 1
+
+    section_ids = [s.id for s in sections.values()]
+    existing_keys = {
+        l.source_key for l in db.query(BudgetLine).filter(
+            BudgetLine.section_id.in_(section_ids) if section_ids else False,
+            BudgetLine.source == "constant",
+        ).all()
+    } if section_ids else set()
+
+    next_order: dict = {}
+    added = 0
+    for t in templates:
+        key = f"constant:{t.id}"
+        if key in existing_keys:
+            continue
+        if t.section_name in excluded:
+            continue   # this entity never gets this section at all (e.g. OBHI/WAGES)
+        sec = sections.get(t.section_name)
+        if sec is None:
+            sec = BudgetSection(
+                budget_id=budget.id, name=t.section_name,
+                section_type=SECTION_TYPE_BY_NAME.get(t.section_name, "expense"),
+                sort_order=next_section_order,
+            )
+            next_section_order += 1
+            db.add(sec); db.flush()
+            sections[sec.name] = sec
+        if sec.id not in next_order:
+            max_order = db.query(func.max(BudgetLine.sort_order)).filter(BudgetLine.section_id == sec.id).scalar()
+            next_order[sec.id] = (max_order or -1) + 1
+        db.add(BudgetLine(section_id=sec.id, name=t.name, source="constant",
+                          source_key=key, sort_order=next_order[sec.id]))
+        next_order[sec.id] += 1
+        added += 1
+    return added
+
+
 def _apply_autofill(budget: Budget, db: Session, current_user: User) -> int:
     """Pull system data into this budget's AUTO lines. Manual lines are never
     touched, and a hand-edited (overridden) value on an auto line is preserved.
@@ -227,8 +288,10 @@ def _apply_autofill(budget: Budget, db: Session, current_user: User) -> int:
             if (v.month, v.year) in window_set and (v.month, v.year) not in keep and not v.is_overridden:
                 db.delete(v)
 
+    added_constants = _apply_constants(budget, db, sections)
+
     db.commit()
-    return len(specs)
+    return len(specs) + added_constants
 
 
 # ── Budgets ───────────────────────────────────────────────────────────────────
@@ -289,27 +352,90 @@ def create_budget(
     db.add(budget)
     db.flush()
 
-    sections_by_name = {}
     for i, (name, section_type) in enumerate(_sections_for_entity(entity)):
-        section = BudgetSection(budget_id=budget.id, name=name, section_type=section_type, sort_order=i)
-        db.add(section)
-        sections_by_name[name] = section
+        db.add(BudgetSection(budget_id=budget.id, name=name, section_type=section_type, sort_order=i))
     db.flush()
-
-    other_section = sections_by_name.get("OTHER")
-    if other_section:
-        for i, name in enumerate(DEFAULT_OTHER_LINES):
-            db.add(BudgetLine(section_id=other_section.id, name=name, source="manual", sort_order=i))
-        db.flush()
 
     log_action(
         db, "budget.created", user_id=current_user.id,
         resource_type="budget", resource_id=budget.id,
         description=f"Created budget {payload.period_month}/{payload.period_year} for {entity.code}",
     )
-    # Pre-populate from existing system data (suppliers, income, subs, wages).
+    # Pre-populate from existing system data (suppliers, income, subs, wages) and
+    # seed any active recurring "constant" lines (Travel & Accom, etc.).
     _apply_autofill(budget, db, current_user)
     return _load_detail(budget.id, db)
+
+
+# ── Line Templates ("constants") ──────────────────────────────────────────────
+# Admin-managed, global (apply across every entity's budgets). Each active template
+# is seeded into a budget's matching section on creation and on every "Pull from
+# system" refresh (see _apply_constants) if it isn't already there.
+# NOTE: these must be registered before the /{budget_id} routes below — otherwise
+# Starlette's path matcher treats "line-templates" as a candidate budget_id and a
+# 422 (not the intended handler) would answer GET /api/budgets/line-templates.
+
+def _ensure_admin(user: User):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only an admin can manage budget constants")
+
+
+@router.get("/line-templates", response_model=List[BudgetLineTemplateOut])
+def list_line_templates(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return db.query(BudgetLineTemplate).order_by(BudgetLineTemplate.section_name, BudgetLineTemplate.sort_order).all()
+
+
+@router.post("/line-templates", response_model=BudgetLineTemplateOut)
+def create_line_template(
+    payload: BudgetLineTemplateCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_admin(current_user)
+    template = BudgetLineTemplate(
+        name=payload.name, section_name=payload.section_name,
+        sort_order=payload.sort_order, is_active=payload.is_active,
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return template
+
+
+@router.patch("/line-templates/{template_id}", response_model=BudgetLineTemplateOut)
+def update_line_template(
+    template_id: int,
+    payload: BudgetLineTemplateUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_admin(current_user)
+    template = db.query(BudgetLineTemplate).filter(BudgetLineTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Budget constant not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(template, field, value)
+    db.commit()
+    db.refresh(template)
+    return template
+
+
+@router.delete("/line-templates/{template_id}")
+def delete_line_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_admin(current_user)
+    template = db.query(BudgetLineTemplate).filter(BudgetLineTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Budget constant not found")
+    db.delete(template)
+    db.commit()
+    return {"detail": "Budget constant deleted"}
 
 
 @router.post("/{budget_id}/refresh-from-system", response_model=BudgetDetailOut)

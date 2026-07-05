@@ -1531,3 +1531,26 @@ class BudgetLineValue(Base):
     line = relationship("BudgetLine", back_populates="values")
 
     __table_args__ = (UniqueConstraint("line_id", "month", "year"),)
+
+
+class BudgetLineTemplate(Base):
+    """A recurring 'usual' line a budget should carry — e.g. Travel & Accom,
+    Provisional Tax, Bank Charges (entity_id NULL = every entity), or a line specific
+    to one entity's arrangement (entity_id set, e.g. an OBHI-only debit order).
+    Seeded on budget creation and added by 'Pull from system' if a budget is missing
+    it (e.g. it was added to the template after that budget already existed). Values
+    are always left blank for the user to fill in; only the line's existence is
+    managed here. A single budget's copy can still be freely renamed/deleted without
+    touching this table."""
+    __tablename__ = "budget_line_templates"
+
+    id           = Column(Integer, primary_key=True)
+    name         = Column(String(300), nullable=False)
+    section_name = Column(String(200), nullable=False)   # must match a budget section name, e.g. "OTHER"
+    entity_id    = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=True)
+    sort_order   = Column(Integer, default=0)
+    is_active    = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at   = Column(DateTime(timezone=True), onupdate=func.now())
+
+    entity = relationship("BusinessEntity")

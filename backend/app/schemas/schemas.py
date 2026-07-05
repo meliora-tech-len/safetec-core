@@ -2466,3 +2466,31 @@ class BudgetOut(BaseModel):
 
 class BudgetDetailOut(BudgetOut):
     sections: List[BudgetSectionOut] = []
+
+
+class BudgetLineTemplateCreate(BaseModel):
+    name: str
+    section_name: str
+    entity_id: Optional[int] = None   # None = applies to every entity
+    sort_order: int = 0
+    is_active: bool = True
+
+
+class BudgetLineTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    section_name: Optional[str] = None
+    entity_id: Optional[int] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class BudgetLineTemplateOut(BaseModel):
+    id: int
+    name: str
+    section_name: str
+    entity_id: Optional[int] = None
+    sort_order: int = 0
+    is_active: bool = True
+
+    class Config:
+        from_attributes = True

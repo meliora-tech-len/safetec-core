@@ -161,6 +161,7 @@ def _suppliers(db, entity_id, months, shift_30day: bool = False) -> List[dict]:
             SupplierInvoice.statement_month, SupplierInvoice.statement_year,
             Supplier.id, Supplier.name, Supplier.is_diesel_supplier, Supplier.payment_term,
             Supplier.is_intercompany, Supplier.exclude_from_budget,
+            SupplierInvoice.invoice_number,
         )
         .outerjoin(Supplier, SupplierInvoice.supplier_id == Supplier.id)
         .filter(
@@ -171,7 +172,7 @@ def _suppliers(db, entity_id, months, shift_30day: bool = False) -> List[dict]:
         .all()
     )
     grouped: Dict[str, dict] = {}
-    for (sup_id, text_name, amount, is_paid, m, y, s_id, s_name, s_diesel, s_term, s_intercompany, s_excluded) in rows:
+    for (sup_id, text_name, amount, is_paid, m, y, s_id, s_name, s_diesel, s_term, s_intercompany, s_excluded, inv_number) in rows:
         if (m, y) not in months:
             continue
         if s_id is not None:
@@ -190,6 +191,13 @@ def _suppliers(db, entity_id, months, shift_30day: bool = False) -> List[dict]:
             else:
                 section = SEC_CASH
         else:
+            # No linked supplier AND no invoice number = a free-text "general" expense
+            # added in the costing module (e.g. trailer/truck insurance allocations).
+            # Those are internal costing allocations already reflected in the
+            # Subcontractors section's payout figures — pulling them again here would
+            # double-count them, so they're excluded from the budget entirely.
+            if not (inv_number or "").strip():
+                continue
             name = (text_name or "Other").strip() or "Other"
             key = f"supplier_text:{name.lower()}"
             section = SEC_OTHER

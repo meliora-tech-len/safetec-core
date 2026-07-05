@@ -420,4 +420,11 @@ export const upsertBudgetLineValue = (lineId, data) => api.put(`/budgets/lines/$
 // budget's auto lines. Manual lines and hand-edited cells are preserved.
 export const refreshBudgetFromSystem = (id) => api.post(`/budgets/${id}/refresh-from-system`)
 
+// Budget "constants" — recurring lines (e.g. Travel & Accom) seeded into every
+// budget's matching section on creation and on every "Pull from system" refresh.
+export const getBudgetLineTemplates = () => api.get('/budgets/line-templates')
+export const createBudgetLineTemplate = (data) => api.post('/budgets/line-templates', data)
+export const updateBudgetLineTemplate = (id, data) => api.patch(`/budgets/line-templates/${id}`, data)
+export const deleteBudgetLineTemplate = (id) => api.delete(`/budgets/line-templates/${id}`)
+
 export default api

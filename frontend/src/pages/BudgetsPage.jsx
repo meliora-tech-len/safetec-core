@@ -7,8 +7,9 @@ import {
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
   addBudgetLine, deleteBudgetLine, upsertBudgetLineValue, refreshBudgetFromSystem,
   getVerifications, verifyValue, finalizeValue, getSuppliers, updateSupplier,
+  getBudgetLineTemplates, createBudgetLineTemplate, updateBudgetLineTemplate, deleteBudgetLineTemplate,
 } from '../services/api'
-import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown, Ban, Search } from 'lucide-react'
+import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown, Ban, Search, ListChecks } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { errorMessage, formatCurrency } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
@@ -28,6 +29,12 @@ const VISIBLE_MONTHS = 3
 // other entity (selecting May shows May/June/July). (Mirror the backend
 // STATEMENT_PERIOD_ENTITIES.)
 const STATEMENT_PERIOD_ENTITIES = []
+
+// Mirrors the backend's DEFAULT_SECTIONS names — the set a constant line can target.
+const CONSTANT_SECTION_OPTIONS = [
+  'INCOME', '30 DAY SUPPLIERS', 'CASH / CURRENT SUPPLIERS', 'DIESEL',
+  'INTERCOMPANY INVOICES', 'SUB CONTRACTORS', 'DEBIT ORDERS', 'WAGES', 'OTHER',
+]
 
 function periodMonths(month, year, statementMode = false) {
   if (statementMode) {
@@ -70,6 +77,11 @@ export default function BudgetsPage() {
   const [showExclusions, setShowExclusions] = useState(false)
   const [exclSaving, setExclSaving] = useState({}) // supplierId -> boolean (in flight)
   const [exclSearch, setExclSearch] = useState('')
+  const [showConstants, setShowConstants] = useState(false)
+  const [constants, setConstants] = useState([])   // BudgetLineTemplate rows (admin-managed, global)
+  const [constantsLoading, setConstantsLoading] = useState(false)
+  const [constantSaving, setConstantSaving] = useState({}) // templateId -> boolean (in flight)
+  const [newConstant, setNewConstant] = useState({ name: '', section_name: 'OTHER', entity_id: '' })
 
   // Entities this user can see budgets for (admin: all)
   const budgetEntities = useMemo(() => {
@@ -185,6 +197,58 @@ export default function BudgetsPage() {
       toast.error(errorMessage(e, 'Failed to update supplier'))
     } finally {
       setExclSaving(p => { const q = { ...p }; delete q[supplier.id]; return q })
+    }
+  }
+
+  const loadConstants = useCallback(() => {
+    setConstantsLoading(true)
+    getBudgetLineTemplates()
+      .then(r => setConstants(r.data || []))
+      .catch(e => toast.error(errorMessage(e, 'Failed to load budget constants')))
+      .finally(() => setConstantsLoading(false))
+  }, [])
+
+  const openConstants = () => { setShowConstants(true); loadConstants() }
+
+  const addConstant = async () => {
+    if (!newConstant.name.trim()) return
+    setConstantSaving(p => ({ ...p, __new: true }))
+    try {
+      const res = await createBudgetLineTemplate({
+        name: newConstant.name.trim(),
+        section_name: newConstant.section_name,
+        entity_id: newConstant.entity_id ? Number(newConstant.entity_id) : null,
+        sort_order: constants.length,
+      })
+      setConstants(list => [...list, res.data])
+      setNewConstant({ name: '', section_name: newConstant.section_name, entity_id: newConstant.entity_id })
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to add constant'))
+    } finally {
+      setConstantSaving(p => { const q = { ...p }; delete q.__new; return q })
+    }
+  }
+
+  const updateConstant = async (template, changes) => {
+    setConstantSaving(p => ({ ...p, [template.id]: true }))
+    try {
+      const res = await updateBudgetLineTemplate(template.id, changes)
+      setConstants(list => list.map(c => c.id === template.id ? res.data : c))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to update constant'))
+    } finally {
+      setConstantSaving(p => { const q = { ...p }; delete q[template.id]; return q })
+    }
+  }
+
+  const removeConstant = async (template) => {
+    setConstantSaving(p => ({ ...p, [template.id]: true }))
+    try {
+      await deleteBudgetLineTemplate(template.id)
+      setConstants(list => list.filter(c => c.id !== template.id))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to delete constant'))
+      setConstantSaving(p => { const q = { ...p }; delete q[template.id]; return q })
     }
   }
 
@@ -495,8 +559,13 @@ export default function BudgetsPage() {
             <button className="btn-ghost btn-sm" onClick={() => setShowExclusions(true)}>
               <Ban size={14} /> Supplier Exclusions
             </button>
+            {isAdmin && (
+              <button className="btn-ghost btn-sm" onClick={openConstants}>
+                <ListChecks size={14} /> Manage Constants
+              </button>
+            )}
             <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
-              Tip: click any amount cell to type a figure. Lines marked <span className="badge badge-sent" style={{ fontSize: 10 }}>auto</span> come from the system — editing a cell pins it.
+              Tip: click any amount cell to type a figure. Lines marked <span className="badge badge-sent" style={{ fontSize: 10 }}>auto</span> come from the system — editing a cell pins it. Lines marked <span className="badge badge-paid" style={{ fontSize: 10 }}>fixed</span> are recurring constants you fill in yourself.
             </span>
           </div>
 
@@ -597,10 +666,13 @@ export default function BudgetsPage() {
                     <tbody>
                       {sortedLines(section).map(line => (
                         <tr key={line.id}>
-                          <td style={{ fontWeight: 500, minWidth: 180, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                          <td style={{ fontWeight: 500, minWidth: 180, maxWidth: 260, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'top' }} title={line.name}>
                             {line.name}
                             {line.source === 'auto' && (
                               <span className="badge badge-sent" style={{ fontSize: 9, marginLeft: 6, verticalAlign: 'middle' }}>auto</span>
+                            )}
+                            {line.source === 'constant' && (
+                              <span className="badge badge-paid" style={{ fontSize: 9, marginLeft: 6, verticalAlign: 'middle' }} title="A recurring line seeded from Manage Constants">fixed</span>
                             )}
                           </td>
                           {months.map(({ month: m, year: y }) => {
@@ -800,6 +872,140 @@ export default function BudgetsPage() {
             {/* Footer */}
             <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
               <button className="btn-primary btn-sm" onClick={closeExclusions}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showConstants && (
+        <div className="modal-overlay" onClick={() => setShowConstants(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 560, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <ListChecks size={18} style={{ color: 'var(--accent)' }} />
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>Manage Budget Constants</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Applies to every entity's budgets</div>
+                </div>
+              </div>
+              <button className="btn-icon" onClick={() => setShowConstants(false)}><X size={16} /></button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, flex: 1 }}>
+              <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                A constant is seeded — with no amount, blank for the user to fill in — into the matching
+                section of every budget on creation, and added to any existing budget missing it on the
+                next &quot;Pull from system&quot;. Renaming or deleting a constant here only affects
+                future/refreshed budgets; a budget's own copy of the line can still be freely edited or
+                removed without touching this list.
+              </p>
+
+              {constantsLoading && (
+                <div className="loading-center" style={{ padding: 20 }}><div className="spinner" /></div>
+              )}
+
+              {!constantsLoading && (
+                <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, minHeight: 160 }}>
+                  {constants.length === 0 && (
+                    <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No constants defined yet</div>
+                  )}
+                  {constants.map((c, i) => (
+                    <div
+                      key={c.id}
+                      style={{
+                        display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 12px',
+                        borderBottom: i < constants.length - 1 ? '1px solid var(--border)' : 'none',
+                        opacity: constantSaving[c.id] ? 0.6 : (c.is_active ? 1 : 0.55),
+                      }}
+                    >
+                      <input
+                        className="form-input"
+                        style={{ width: '100%', fontSize: 13, padding: '5px 8px' }}
+                        value={c.name}
+                        disabled={!!constantSaving[c.id]}
+                        onChange={e => setConstants(list => list.map(x => x.id === c.id ? { ...x, name: e.target.value } : x))}
+                        onBlur={e => { if (e.target.value.trim() && e.target.value !== c.name) updateConstant(c, { name: e.target.value.trim() }) }}
+                      />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <select
+                          className="form-input"
+                          style={{ width: 180, fontSize: 12, padding: '5px 8px' }}
+                          value={c.section_name}
+                          disabled={!!constantSaving[c.id]}
+                          onChange={e => updateConstant(c, { section_name: e.target.value })}
+                        >
+                          {CONSTANT_SECTION_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <select
+                          className="form-input"
+                          style={{ width: 170, fontSize: 12, padding: '5px 8px' }}
+                          value={c.entity_id ?? ''}
+                          disabled={!!constantSaving[c.id]}
+                          onChange={e => updateConstant(c, { entity_id: e.target.value ? Number(e.target.value) : null })}
+                        >
+                          <option value="">All entities</option>
+                          {(entities || []).map(e => <option key={e.id} value={e.id}>{e.code}</option>)}
+                        </select>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={c.is_active}
+                            disabled={!!constantSaving[c.id]}
+                            onChange={() => updateConstant(c, { is_active: !c.is_active })}
+                          />
+                          Active
+                        </label>
+                        <button className="btn-icon" onClick={() => removeConstant(c)} disabled={!!constantSaving[c.id]}
+                          title="Delete constant" style={{ color: 'var(--danger)', marginLeft: 'auto' }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                <input
+                  className="form-input"
+                  style={{ width: '100%', fontSize: 13 }}
+                  placeholder="New constant name…"
+                  value={newConstant.name}
+                  onChange={e => setNewConstant(p => ({ ...p, name: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') addConstant() }}
+                />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <select
+                    className="form-input"
+                    style={{ width: 180, fontSize: 12 }}
+                    value={newConstant.section_name}
+                    onChange={e => setNewConstant(p => ({ ...p, section_name: e.target.value }))}
+                  >
+                    {CONSTANT_SECTION_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <select
+                    className="form-input"
+                    style={{ width: 170, fontSize: 12 }}
+                    value={newConstant.entity_id}
+                    onChange={e => setNewConstant(p => ({ ...p, entity_id: e.target.value }))}
+                  >
+                    <option value="">All entities</option>
+                    {(entities || []).map(e => <option key={e.id} value={e.id}>{e.code}</option>)}
+                  </select>
+                  <button className="btn-primary btn-sm" style={{ marginLeft: 'auto' }} onClick={addConstant} disabled={!newConstant.name.trim() || !!constantSaving.__new}>
+                    <Plus size={13} /> Add
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
+              <button className="btn-primary btn-sm" onClick={() => setShowConstants(false)}>Done</button>
             </div>
           </div>
         </div>
