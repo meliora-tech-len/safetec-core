@@ -232,7 +232,11 @@ export default function DashboardPage() {
           {/* ── Profit & Loss (BTP / Thembi) ─────────────────────────── */}
           {profitLoss?.length > 0 && (
             <div style={{ marginBottom: 24 }}>
-              <SectionLabel icon={<Scale size={13} />} label={`Profit & Loss · ${periodLabel}`} />
+              <SectionLabel
+                icon={<Scale size={13} />}
+                label={`Profit & Loss · ${periodLabel}`}
+                hint="Accrual basis: every invoice/supplier invoice dated in this period, any status — including unpaid. Won't match the Debtors/Creditors totals below, which track outstanding balances and cash actually paid."
+              />
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                 {profitLoss.map(pl => <ProfitLossCard key={pl.entity_id} pl={pl} />)}
               </div>
@@ -240,7 +244,11 @@ export default function DashboardPage() {
           )}
 
           {/* ── PRIMARY: Creditors (Suppliers) ───────────────────────── */}
-          <SectionLabel icon={<CreditCard size={13} />} label="Creditors (Suppliers)" />
+          <SectionLabel
+            icon={<CreditCard size={13} />}
+            label="Creditors (Suppliers)"
+            hint="Cash basis: outstanding balances as of now, plus what was actually paid in this period (by payment date) — not what was billed/incurred in this period."
+          />
           {payables && (
             <div style={{ display: 'flex', marginBottom: 16 }}>
               <div style={{ maxWidth: 320, width: '100%' }}>
@@ -407,7 +415,11 @@ export default function DashboardPage() {
           {stats && (
             <>
               <SectionDivider />
-              <SectionLabel icon={<Users size={13} />} label="Debtors (Customers)" />
+              <SectionLabel
+                icon={<Users size={13} />}
+                label="Debtors (Customers)"
+                hint="Cash basis: outstanding balances as of now, plus what was actually collected in this period (by payment date) — not what was billed/issued in this period. Drafts and quotes aren't counted here."
+              />
               <div style={{ display: 'flex', marginBottom: 16 }}>
                 <div style={{ maxWidth: 320, width: '100%' }}>
                   <StatCard
@@ -544,10 +556,17 @@ export default function DashboardPage() {
   )
 }
 
-function SectionLabel({ icon, label }) {
+function SectionLabel({ icon, label, hint }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>
-      {icon}{label}
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+        {icon}{label}
+      </div>
+      {hint && (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'none', letterSpacing: 'normal', fontWeight: 400, marginTop: 2 }}>
+          {hint}
+        </div>
+      )}
     </div>
   )
 }
