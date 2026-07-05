@@ -682,6 +682,7 @@ def create_fillup(
         rate_per_litre=payload.rate_per_litre,
         invoice_number=payload.invoice_number,
         slip_number=payload.slip_number,
+        depot_slip_number=payload.depot_slip_number or payload.slip_number,
         truckload_id=payload.truckload_id,
         supplier_invoice_id=payload.supplier_invoice_id,
         notes=payload.notes,
@@ -839,7 +840,7 @@ def import_diesel(
             f = DieselFillUp(
                 entity_id=payload.entity_id, truck_id=truck.id, supplier_id=supplier_id,
                 fillup_date=row.fillup_date, litres=litres, rate_per_litre=rate,
-                slip_number=slip or None, notes=(row.depot or None),
+                slip_number=slip or None, depot_slip_number=slip or None, notes=(row.depot or None),
                 admin_fee_pct=admin_fee_pct,
                 diesel_type=diesel_type_for_supplier(supplier_objs.get(supplier_id)),
                 **amounts, created_by=current_user.id,

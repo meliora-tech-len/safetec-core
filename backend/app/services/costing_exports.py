@@ -112,6 +112,8 @@ def generate_costing_pdf(costing, entity) -> bytes:
     s_grp     = sty("grp",   fontSize=7.5, textColor=gray_mid, fontName=_FONT_BOLD)
     s_grp_r   = sty("grpr",  fontSize=7.5, textColor=gray_mid, fontName=_FONT_BOLD, alignment=TA_RIGHT)
     s_sec     = sty("sec",   fontSize=9.5, textColor=black,    fontName=_FONT_BOLD)
+    s_dsup    = sty("dsup",  fontSize=8.5, textColor=black,    fontName=_FONT_BOLD)
+    s_subhdr  = sty("subh",  fontSize=9.5, textColor=gray_mid, fontName=_FONT_BOLD)
     s_net_pos = sty("np",    fontSize=9,  fontName=_FONT_BOLD, textColor=pos_col,  alignment=TA_RIGHT)
     s_net_neg = sty("nn",    fontSize=9,  fontName=_FONT_BOLD, textColor=neg_col,  alignment=TA_RIGHT)
     s_smry    = sty("sm",    fontSize=9,  fontName=_FONT_BOLD, textColor=white,    alignment=TA_RIGHT)
@@ -260,7 +262,7 @@ def generate_costing_pdf(costing, entity) -> bytes:
         # ── Load details (listed underneath the truck table) ──────────────────
         if td.loads:
             story.append(Spacer(1, 2.5*mm))
-            story.append(Paragraph("Load Details", s_grp))
+            story.append(Paragraph("Load Details", s_subhdr))
             ld_rows = [[
                 P("Date", s_grp), P("Mine", s_grp), P("Slip #", s_grp),
                 P("Tonnes", s_grp_r), P("Rate", s_grp_r), P("Amount", s_grp_r),
@@ -298,6 +300,54 @@ def generate_costing_pdf(costing, entity) -> bytes:
                 ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
             ]))
             story.append(ld_tbl)
+
+        # ── Diesel summary (per supplier, listed underneath Load Details) ──────
+        if td.diesel_groups:
+            story.append(Spacer(1, 3*mm))
+            story.append(Paragraph("Diesel Summary", s_subhdr))
+            for dg in td.diesel_groups:
+                story.append(Spacer(1, 1.5*mm))
+                story.append(Paragraph(_diesel_label(dg.supplier_name), s_dsup))
+                ds_rows = [[
+                    P("Date", s_grp), P("Slip #", s_grp), P("Trans ID", s_grp), P("Invoice #", s_grp),
+                    P("Litres", s_grp_r), P("R/Lt", s_grp_r),
+                    P("Amt Excl", s_grp_r), P("Admin Fee Incl", s_grp_r), P("Grand Total", s_grp_r),
+                ]]
+                tot_litres = D0
+                for r in dg.rows:
+                    if r.litres is not None:
+                        tot_litres += Decimal(str(r.litres))
+                    ds_rows.append([
+                        P(_fmtd(r.fillup_date), s_dl),
+                        P(r.depot_slip_number or "—", s_dl),
+                        P(r.slip_number or "—", s_dl),
+                        P(r.invoice_number or "—", s_dl),
+                        P(_tonnes(r.litres) if r.litres is not None else "—", s_dl_r),
+                        P(_fmt(r.rate_per_litre) if r.rate_per_litre is not None else "—", s_dl_r),
+                        P(_fmt(r.amount_excl), s_dl_r),
+                        P(_fmt(r.admin_fee_incl), s_dl_r),
+                        P(_fmt(r.grand_total), s_dl_r),
+                    ])
+                ds_rows.append([
+                    P("Total", s_bold), P("", s_dl), P("", s_dl), P("", s_dl),
+                    P(_tonnes(tot_litres), s_bold_r), P("", s_dl_r),
+                    P(_fmt(dg.tot_excl_admin_fee), s_bold_r),
+                    P(_fmt(dg.tot_admin_fee_incl), s_bold_r),
+                    P(_fmt(dg.tot_grand_total), s_bold_r),
+                ])
+                ds_tot = len(ds_rows) - 1
+                ds_tbl = Table(ds_rows, colWidths=[20*mm, 18*mm, 18*mm, 16*mm, 14*mm, 16*mm, 24*mm, 26*mm, 26*mm])
+                ds_tbl.setStyle(TableStyle([
+                    ("LINEBELOW",    (0, 0), (-1, 0), 0.4, border_c),
+                    ("LINEABOVE",    (0, ds_tot), (-1, ds_tot), 0.6, border_c),
+                    ("LEFTPADDING",  (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING",   (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, ds_tot - 1), [white, gray_lt]),
+                    ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
+                ]))
+                story.append(ds_tbl)
 
         story.append(Spacer(1, 5*mm))
 
@@ -367,6 +417,9 @@ def generate_costing_excel(costing, entity) -> bytes:
     COL_W = [38, 16, 16, 16, 16]
     for i, w in enumerate(COL_W, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
+    # F/G/H/I are only used by the per-supplier Diesel Summary tables below.
+    for letter, w in zip(("F", "G", "H", "I"), (14, 16, 16, 16)):
+        ws.column_dimensions[letter].width = w
 
     row = 1
 
@@ -572,7 +625,57 @@ def generate_costing_excel(costing, entity) -> bytes:
         c.font = font(bold=True, color=net_color, size=10)
         c.alignment = align(h="right")
         ws.row_dimensions[row].height = 16
-        row += 2
+        row += 1
+
+        # ── Diesel summary (per supplier, listed underneath the truck block) ───
+        if td.diesel_groups:
+            row += 1
+            c = ws.cell(row=row, column=1, value="Diesel Summary")
+            c.font = font(bold=True, size=10)
+            row += 1
+
+            ds_headers = ["Date", "Slip #", "Trans ID", "Invoice #", "Litres", "R/Lt",
+                          "Amt Excl", "Admin Fee Incl", "Grand Total"]
+            ds_align = lambda col: align(h="left" if col <= 4 else "right")
+
+            for dg in td.diesel_groups:
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=9)
+                c = ws.cell(row=row, column=1, value=_diesel_label(dg.supplier_name))
+                c.font = font(bold=True, size=9.5)
+                c.fill = fill("F3F4F6")
+                row += 1
+
+                for col, val in enumerate(ds_headers, 1):
+                    cc = ws.cell(row=row, column=col, value=val)
+                    cc.font = font(bold=True, color="6B7280", size=8)
+                    cc.alignment = ds_align(col)
+                    cc.border = Border(bottom=thin)
+                row += 1
+
+                tot_litres = 0.0
+                for r in dg.rows:
+                    lit = fmt_val(r.litres)
+                    if lit is not None:
+                        tot_litres += lit
+                    vals = [_fmtd(r.fillup_date), r.depot_slip_number or "—", r.slip_number or "—", r.invoice_number or "—",
+                            lit, fmt_val(r.rate_per_litre), fmt_val(r.amount_excl),
+                            fmt_val(r.admin_fee_incl), fmt_val(r.grand_total)]
+                    for col, val in enumerate(vals, 1):
+                        cc = ws.cell(row=row, column=col, value=val)
+                        cc.font = font(color="6B7280", size=8)
+                        cc.alignment = ds_align(col)
+                    row += 1
+
+                tot_vals = ["Total", None, None, None, round(tot_litres, 2), None,
+                            fmt_val(dg.tot_excl_admin_fee), fmt_val(dg.tot_admin_fee_incl), fmt_val(dg.tot_grand_total)]
+                for col, val in enumerate(tot_vals, 1):
+                    cc = ws.cell(row=row, column=col, value=val)
+                    cc.font = font(bold=True, size=8)
+                    cc.alignment = ds_align(col)
+                    cc.border = Border(top=thin)
+                row += 2
+
+        row += 1
 
     # ── Summary ───────────────────────────────────────────────────────────────
     sm = costing.summary

@@ -675,6 +675,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                     fillup_id=f.id,
                     fillup_date=f.fillup_date,
                     slip_number=f.slip_number,
+                    depot_slip_number=f.depot_slip_number,
                     invoice_number=f.invoice_number,
                     supplier_name=sup_name,
                     litres=Decimal(str(f.litres)),

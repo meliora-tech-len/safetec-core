@@ -1490,6 +1490,7 @@ function DieselGroupTable({ group, truckReg, V }) {
           <tr style={{ background: 'var(--bg-surface)' }}>
             {dTh('Reg')}
             {dTh('Date')}
+            {dTh('Slip #')}
             {dTh('Trans ID')}
             {dTh('Delivery Note')}
             {dTh('Depot')}
@@ -1510,6 +1511,7 @@ function DieselGroupTable({ group, truckReg, V }) {
             <tr key={i}>
               <td style={tdStyle}>{truckReg}</td>
               <td style={tdStyle}>{r.fillup_date}</td>
+              <td style={{ ...tdStyle, fontWeight: 600 }}>{r.depot_slip_number || '—'}</td>
               <td style={tdStyle}>{r.slip_number || '—'}</td>
               <td style={tdStyle}>{r.invoice_number || '—'}</td>
               <td style={tdStyle}>{r.supplier_name || '—'}</td>
@@ -1526,12 +1528,12 @@ function DieselGroupTable({ group, truckReg, V }) {
         </tbody>
         <tfoot>
           <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
-            <td style={tdStyle} colSpan={11} align="right">TOT ADMIN FEE</td>
+            <td style={tdStyle} colSpan={12} align="right">TOT ADMIN FEE</td>
             <td style={{ ...tdStyle, textAlign: 'right' }}><W field={`dieselsupplier:${sKey}:fee_incl`}>{fmtC(group.tot_admin_fee_incl)}</W></td>
             <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}><W field={`dieselsupplier:${sKey}:grand_total`}>{fmtC(group.tot_grand_total)}</W></td>
           </tr>
           <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
-            <td style={tdStyle} colSpan={12} align="right">TOT EXCL ADMIN FEE</td>
+            <td style={tdStyle} colSpan={13} align="right">TOT EXCL ADMIN FEE</td>
             <td style={{ ...tdStyle, textAlign: 'right' }}><W field={`dieselsupplier:${sKey}:excl`}>{fmtC(group.tot_excl_admin_fee)}</W></td>
           </tr>
         </tfoot>

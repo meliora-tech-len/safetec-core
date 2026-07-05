@@ -1930,6 +1930,7 @@ class DieselFillUpCreate(BaseModel):
     rate_per_litre: Decimal
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
+    depot_slip_number: Optional[str] = None
     truckload_id: Optional[int] = None
     supplier_invoice_id: Optional[int] = None
     diesel_type: str = 'fillup'
@@ -1945,6 +1946,7 @@ class DieselFillUpUpdate(BaseModel):
     rate_per_litre: Optional[Decimal] = None
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
+    depot_slip_number: Optional[str] = None
     truckload_id: Optional[int] = None
     supplier_invoice_id: Optional[int] = None
     diesel_type: Optional[str] = None
@@ -1968,6 +1970,7 @@ class DieselFillUpOut(BaseModel):
     total_amount: Decimal
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
+    depot_slip_number: Optional[str] = None
     truckload_id: Optional[int] = None
     supplier_invoice_id: Optional[int] = None
     diesel_type: str = 'fillup'
@@ -2187,6 +2190,7 @@ class DieselFillUpCostingRow(BaseModel):
     fillup_id: Optional[int] = None
     fillup_date: date
     slip_number: Optional[str] = None
+    depot_slip_number: Optional[str] = None
     invoice_number: Optional[str] = None
     supplier_name: Optional[str] = None
     litres: Decimal

@@ -1235,6 +1235,11 @@ class DieselFillUp(Base):
 
     invoice_number = Column(String(100))
     slip_number = Column(String(100))
+    # Authoritative depot slip #, distinct from slip_number (labelled "Trans ID"
+    # on screen). Some supplier imports (Intsimbi) historically wrote a system
+    # transaction ID into slip_number instead of the printed slip; this column
+    # is always the genuine slip so the two can be shown/verified side by side.
+    depot_slip_number = Column(String(100))
     truckload_id = Column(Integer, ForeignKey("truck_loads.id", ondelete="SET NULL"), nullable=True)
     supplier_invoice_id = Column(Integer, ForeignKey("supplier_invoices.id", ondelete="SET NULL"), nullable=True)
     is_archived  = Column(Boolean, nullable=False, default=False)
