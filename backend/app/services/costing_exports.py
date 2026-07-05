@@ -111,6 +111,7 @@ def generate_costing_pdf(costing, entity) -> bytes:
     s_tot_r   = sty("totr",  fontSize=8,  fontName=_FONT_BOLD, textColor=white,    alignment=TA_RIGHT)
     s_grp     = sty("grp",   fontSize=7.5, textColor=gray_mid, fontName=_FONT_BOLD)
     s_grp_r   = sty("grpr",  fontSize=7.5, textColor=gray_mid, fontName=_FONT_BOLD, alignment=TA_RIGHT)
+    s_sec     = sty("sec",   fontSize=9.5, textColor=black,    fontName=_FONT_BOLD)
     s_net_pos = sty("np",    fontSize=9,  fontName=_FONT_BOLD, textColor=pos_col,  alignment=TA_RIGHT)
     s_net_neg = sty("nn",    fontSize=9,  fontName=_FONT_BOLD, textColor=neg_col,  alignment=TA_RIGHT)
     s_smry    = sty("sm",    fontSize=9,  fontName=_FONT_BOLD, textColor=white,    alignment=TA_RIGHT)
@@ -163,7 +164,7 @@ def generate_costing_pdf(costing, entity) -> bytes:
     story.append(Spacer(1, 5*mm))
 
     # ── Per-truck tables ──────────────────────────────────────────────────────
-    col_w = [68*mm, 26*mm, 26*mm, 26*mm, 26*mm]  # label, income excl, income incl, exp incl, exp excl
+    col_w = [58*mm, 30*mm, 30*mm, 30*mm, 30*mm]  # label, income excl, income incl, exp incl, exp excl
     ts_hdr = TableStyle([
         ("BACKGROUND",   (0, 0), (-1, 0), hdr_bg),
         ("TEXTCOLOR",    (0, 0), (-1, 0), white),
@@ -198,8 +199,8 @@ def generate_costing_pdf(costing, entity) -> bytes:
         rows = [
             [P("", s_hdr), P("Income Excl VAT", s_hdr_r), P("Income Incl VAT", s_hdr_r),
              P("Expenses Incl VAT", s_hdr_r), P("Expenses Excl VAT", s_hdr_r)],
-            [P(f"Loads ({len(td.loads)})", s_lbl),
-             P(_fmt(inc_e), s_val) if not is_vat else dash,
+            [P(f"Loads ({len(td.loads)})", s_sec),
+             P(_fmt(inc_e), s_val),
              P(_fmt(inc_i), s_val) if is_vat else dash,
              dash, dash],
             [P("Admin Fee", s_lbl), dash, dash, P(_fmt(td.admin_fee), s_val), dash],
@@ -212,7 +213,7 @@ def generate_costing_pdf(costing, entity) -> bytes:
 
         # Supplier invoices
         if td.supplier_invoices:
-            rows.append([P("Supplier Invoices", s_grp), P("", s_val), P("", s_val), P("", s_val), P("", s_val)])
+            rows.append([P("Supplier Invoices", s_sec), P("", s_val), P("", s_val), P("", s_val), P("", s_val)])
             for inv in td.supplier_invoices:
                 sup = inv.supplier_name or f"Supplier #{inv.supplier_id}"
                 if inv.vat_applicable:
@@ -225,7 +226,7 @@ def generate_costing_pdf(costing, entity) -> bytes:
         dash_w = P("—", s_tot_r)
         rows.append([
             P("Totals", s_tot),
-            P(_fmt(inc_e), s_tot_r) if not is_vat else dash_w,
+            P(_fmt(inc_e), s_tot_r),
             P(_fmt(inc_i), s_tot_r) if is_vat else dash_w,
             P(_fmt(exp_i), s_tot_r),
             P(_fmt(exp_e), s_tot_r),
@@ -480,10 +481,11 @@ def generate_costing_excel(costing, entity) -> bytes:
         inc_i = fmt_val(td.income_incl_vat)
         net   = fmt_val(td.net_payable)
 
-        # Column letters: income lands in B (excl) or C (incl) per VAT status;
-        # expenses always in D (incl) and E (excl).
-        income_col = 3 if is_vat else 2
-        INC_L   = get_column_letter(income_col)
+        # Column letters: income excl VAT always lands in B, incl VAT in C
+        # (only populated when the entity is VAT-registered); expenses always
+        # in D (incl) and E (excl).
+        EXCL_L  = get_column_letter(2)
+        INCL_L  = get_column_letter(3)
         EXP_I_L = get_column_letter(4)
         EXP_E_L = get_column_letter(5)
         exp_incl_cells = []  # cells summed into the Expenses Incl VAT total
@@ -494,25 +496,25 @@ def generate_costing_excel(costing, entity) -> bytes:
         loads_row = row
         n_loads   = len(td.loads)
         if n_loads:
-            income_val = f"=SUM({INC_L}{loads_row + 1}:{INC_L}{loads_row + n_loads})"
+            excl_val = f"=SUM({EXCL_L}{loads_row + 1}:{EXCL_L}{loads_row + n_loads})"
+            incl_val = f"=SUM({INCL_L}{loads_row + 1}:{INCL_L}{loads_row + n_loads})" if is_vat else None
         else:
-            income_val = inc_i if is_vat else inc_e
+            excl_val = inc_e
+            incl_val = inc_i if is_vat else None
         write_row(
-            [f"Loads ({n_loads})",
-             income_val if not is_vat else None,
-             income_val if is_vat else None,
-             None, None],
+            [f"Loads ({n_loads})", excl_val, incl_val, None, None],
             fnt=LBL_FONT, fills=[None]*5, row_h=15,
         )
 
         # Per-load detail rows (collapsed by default; expand via the +/- control)
         detail_font = font(color="6B7280", size=8)
         for l in td.loads:
-            amt = fmt_val(l.subcontractor_amount_incl_vat if is_vat else l.subcontractor_amount_excl_vat)
+            amt_excl = fmt_val(l.subcontractor_amount_excl_vat)
+            amt_incl = fmt_val(l.subcontractor_amount_incl_vat)
             write_row(
                 [_load_label(l),
-                 amt if not is_vat else None,
-                 amt if is_vat else None,
+                 amt_excl,
+                 amt_incl if is_vat else None,
                  None, None],
                 fnt=detail_font, fills=[None]*5, row_h=14,
             )
@@ -551,11 +553,12 @@ def generate_costing_excel(costing, entity) -> bytes:
         # visible: income references the Loads row, expenses sum their line items.
         def _sum(cells):
             return f"=SUM({','.join(cells)})" if cells else 0
-        inc_total = f"={INC_L}{loads_row}"
+        inc_total_excl = f"={EXCL_L}{loads_row}"
+        inc_total_incl = f"={INCL_L}{loads_row}" if is_vat else None
         write_row(
             ["Totals",
-             inc_total if not is_vat else None,
-             inc_total if is_vat else None,
+             inc_total_excl,
+             inc_total_incl,
              _sum(exp_incl_cells), _sum(exp_excl_cells)],
             fnt=TOT_WHITE,
             fills=[TOTAL_FILL] * 5,
