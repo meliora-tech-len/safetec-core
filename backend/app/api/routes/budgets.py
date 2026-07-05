@@ -27,8 +27,10 @@ ROLLING_MONTHS = 3
 # Entities whose budget is built around a single STATEMENT PERIOD rather than a
 # forward-rolling window. For these, the selected month IS the statement period and
 # the grid shows [statement-1, statement]: 30-day supplier invoices land in the
-# previous month, cash (and everything else) in the statement month. (OBHI.)
-STATEMENT_PERIOD_ENTITIES = {"OBHI"}
+# previous month, cash (and everything else) in the statement month. Empty for now —
+# OBHI used to be statement-period but now uses the standard rolling window like
+# every other entity (selecting May shows May/June/July).
+STATEMENT_PERIOD_ENTITIES = set()
 
 # Default section template applied to every new budget — mirrors the structure
 # shared by all the entity budget spreadsheets. Per-entity customisation
@@ -52,6 +54,11 @@ ENTITY_SECTION_EXCLUSIONS = {
     # section stays — the user fills it in manually (nothing auto-pulls into it).
     "OBHI": {"WAGES"},
 }
+
+# Recurring "usual" expenses every budget starts with under OTHER — nothing pulls
+# these from the system, they're just pre-seeded manual lines so the user isn't
+# re-typing them every month. Freely renamable/deletable per budget afterwards.
+DEFAULT_OTHER_LINES = ["Travel & Accom", "Provisional Tax", "Bank Charges"]
 
 
 def _sections_for_entity(entity) -> list:
@@ -190,6 +197,12 @@ def _apply_autofill(budget: Budget, db: Session, current_user: User) -> int:
             auto_lines[spec["source_key"]] = line
         else:
             line.name = spec["line_name"]   # keep fresh (e.g. supplier renamed)
+            if line.section_id != sec.id:
+                # Classification changed (e.g. a supplier was flagged intercompany) —
+                # move the line, and its value history, into its new section.
+                line.section_id = sec.id
+                line.sort_order = line_order.get(sec.id, 0)
+                line_order[sec.id] = line_order.get(sec.id, 0) + 1
 
         provided[spec["source_key"]] = set(spec["values"].keys())
         existing = {(v.month, v.year): v for v in db.query(BudgetLineValue).filter(BudgetLineValue.line_id == line.id).all()}
@@ -276,9 +289,18 @@ def create_budget(
     db.add(budget)
     db.flush()
 
+    sections_by_name = {}
     for i, (name, section_type) in enumerate(_sections_for_entity(entity)):
-        db.add(BudgetSection(budget_id=budget.id, name=name, section_type=section_type, sort_order=i))
+        section = BudgetSection(budget_id=budget.id, name=name, section_type=section_type, sort_order=i)
+        db.add(section)
+        sections_by_name[name] = section
     db.flush()
+
+    other_section = sections_by_name.get("OTHER")
+    if other_section:
+        for i, name in enumerate(DEFAULT_OTHER_LINES):
+            db.add(BudgetLine(section_id=other_section.id, name=name, source="manual", sort_order=i))
+        db.flush()
 
     log_action(
         db, "budget.created", user_id=current_user.id,

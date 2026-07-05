@@ -7,8 +7,10 @@ updates the same line instead of duplicating it.
 
 Sources (each lands in its own section):
   - INCOME                    → customer invoices for the period
-  - 30 DAY / CASH / DIESEL    → supplier invoices grouped by supplier (due vs paid),
-                                sectioned by payment term / diesel flag
+  - 30 DAY / CASH / DIESEL /
+    INTERCOMPANY              → supplier invoices grouped by supplier (due vs paid),
+                                sectioned by payment term / diesel / is_intercompany flag
+                                (intercompany takes priority over the other flags)
   - SUB CONTRACTORS           → per-subcontractor net payable
   - WAGES                     → payroll gross per period
 
@@ -28,6 +30,7 @@ from app.models.models import (
     SupplierInvoice, Supplier, PaymentTermType,
     Invoice, DocumentType, InvoiceStatus,
     Subcontractor, PayrollEntry, TruckLoad, Truck,
+    BusinessEntity,
 )
 
 log = logging.getLogger(__name__)
@@ -38,9 +41,16 @@ SEC_INCOME = ("INCOME", "income")
 SEC_30DAY = ("30 DAY SUPPLIERS", "expense")
 SEC_CASH = ("CASH / CURRENT SUPPLIERS", "expense")
 SEC_DIESEL = ("DIESEL", "expense")
+SEC_INTERCOMPANY = ("INTERCOMPANY INVOICES", "expense")
 SEC_SUBS = ("SUB CONTRACTORS", "expense")
 SEC_WAGES = ("WAGES", "expense")
 SEC_OTHER = ("OTHER", "expense")
+
+# Entities whose invoicing lags into the following month (Tradekor pays out PO
+# invoices in arrears) — their INCOME line counts everything issued from the 1st
+# of the budgeted month through the 15th of the NEXT month, not just the
+# calendar month. Every other entity keeps plain calendar-month bucketing.
+INCOME_EXTENDED_WINDOW_ENTITIES = {"OBHI", "SFT"}
 
 
 def _d(v) -> Decimal:
@@ -49,6 +59,10 @@ def _d(v) -> Decimal:
 
 def _prev_month(month: int, year: int) -> Tuple[int, int]:
     return (12, year - 1) if month == 1 else (month - 1, year)
+
+
+def _next_month(month: int, year: int) -> Tuple[int, int]:
+    return (1, year + 1) if month == 12 else (month + 1, year)
 
 
 def compute_autofill(entity_id: int, months: List[Tuple[int, int]], current_user=None,
@@ -98,19 +112,31 @@ def compute_autofill(entity_id: int, months: List[Tuple[int, int]], current_user
 
 # ── Income (customer invoices) ────────────────────────────────────────────────
 def _income(db, entity_id, months) -> List[dict]:
+    code = (db.query(BusinessEntity.code).filter(BusinessEntity.id == entity_id).scalar() or "").upper()
+    extended = code in INCOME_EXTENDED_WINDOW_ENTITIES
+
     values: Dict[Tuple[int, int], dict] = {}
     for (m, y) in months:
-        total = (
-            db.query(func.coalesce(func.sum(Invoice.total), 0))
-            .filter(
-                Invoice.entity_id == entity_id,
+        q = db.query(func.coalesce(func.sum(Invoice.total), 0)).filter(
+            Invoice.entity_id == entity_id,
+            Invoice.document_type == DocumentType.invoice,
+            Invoice.status != InvoiceStatus.cancelled,
+        )
+        if extended:
+            # Everything issued from the 1st of (m, y) through the 15th of the
+            # following month — Tradekor PO invoices often land a few weeks late.
+            nm, ny = _next_month(m, y)
+            q = q.filter(or_(
+                and_(extract("year", Invoice.issue_date) == y, extract("month", Invoice.issue_date) == m),
+                and_(extract("year", Invoice.issue_date) == ny, extract("month", Invoice.issue_date) == nm,
+                     extract("day", Invoice.issue_date) <= 15),
+            ))
+        else:
+            q = q.filter(
                 extract("month", Invoice.issue_date) == m,
                 extract("year", Invoice.issue_date) == y,
-                Invoice.document_type == DocumentType.invoice,
-                Invoice.status != InvoiceStatus.cancelled,
             )
-            .scalar()
-        )
+        total = q.scalar()
         if total:
             values[(m, y)] = {"due": _d(total), "paid": None}
     if not values:
@@ -134,6 +160,7 @@ def _suppliers(db, entity_id, months, shift_30day: bool = False) -> List[dict]:
             SupplierInvoice.amount, SupplierInvoice.is_paid,
             SupplierInvoice.statement_month, SupplierInvoice.statement_year,
             Supplier.id, Supplier.name, Supplier.is_diesel_supplier, Supplier.payment_term,
+            Supplier.is_intercompany, Supplier.exclude_from_budget,
         )
         .outerjoin(Supplier, SupplierInvoice.supplier_id == Supplier.id)
         .filter(
@@ -144,13 +171,19 @@ def _suppliers(db, entity_id, months, shift_30day: bool = False) -> List[dict]:
         .all()
     )
     grouped: Dict[str, dict] = {}
-    for (sup_id, text_name, amount, is_paid, m, y, s_id, s_name, s_diesel, s_term) in rows:
+    for (sup_id, text_name, amount, is_paid, m, y, s_id, s_name, s_diesel, s_term, s_intercompany, s_excluded) in rows:
         if (m, y) not in months:
             continue
         if s_id is not None:
+            if s_excluded:
+                continue   # user explicitly excluded this supplier from budget pulls
             key = f"supplier:{s_id}"
             name = s_name
-            if s_diesel:
+            # Intercompany takes priority over diesel/term — a supplier that's another
+            # entity in the Safetec system belongs in its own section, not cash/current.
+            if s_intercompany:
+                section = SEC_INTERCOMPANY
+            elif s_diesel:
                 section = SEC_DIESEL
             elif s_term == PaymentTermType.days_30:
                 section = SEC_30DAY

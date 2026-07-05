@@ -6,9 +6,9 @@ import {
   getBudgets, getBudget, createBudget, deleteBudget,
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
   addBudgetLine, deleteBudgetLine, upsertBudgetLineValue, refreshBudgetFromSystem,
-  getVerifications, verifyValue, finalizeValue, getSuppliers,
+  getVerifications, verifyValue, finalizeValue, getSuppliers, updateSupplier,
 } from '../services/api'
-import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
+import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown, Ban, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { errorMessage, formatCurrency } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
@@ -23,9 +23,11 @@ const VISIBLE_MONTHS = 3
 
 // Entities whose budget is a single STATEMENT PERIOD: the selected month is the
 // statement period and the grid shows [statement-1, statement]. 30-day invoices
-// land in the previous month, cash in the statement month. (Mirror the backend
+// land in the previous month, cash in the statement month. Empty for now — OBHI
+// used to be statement-period but now uses the standard rolling window like every
+// other entity (selecting May shows May/June/July). (Mirror the backend
 // STATEMENT_PERIOD_ENTITIES.)
-const STATEMENT_PERIOD_ENTITIES = ['OBHI']
+const STATEMENT_PERIOD_ENTITIES = []
 
 function periodMonths(month, year, statementMode = false) {
   if (statementMode) {
@@ -65,6 +67,9 @@ export default function BudgetsPage() {
   const [verif, setVerif] = useState({})           // target -> ValueVerification
   const [sortByCol, setSortByCol] = useState({})   // sectionId -> { key, dir }
   const [suppliers, setSuppliers] = useState([])   // suppliers for the selected entity (Add Expense picker)
+  const [showExclusions, setShowExclusions] = useState(false)
+  const [exclSaving, setExclSaving] = useState({}) // supplierId -> boolean (in flight)
+  const [exclSearch, setExclSearch] = useState('')
 
   // Entities this user can see budgets for (admin: all)
   const budgetEntities = useMemo(() => {
@@ -167,6 +172,19 @@ export default function BudgetsPage() {
       toast.error(errorMessage(e, 'Failed to pull from system'))
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  const toggleSupplierExclusion = async (supplier) => {
+    const next = !supplier.exclude_from_budget
+    setExclSaving(p => ({ ...p, [supplier.id]: true }))
+    try {
+      await updateSupplier(supplier.id, { exclude_from_budget: next })
+      setSuppliers(list => list.map(s => s.id === supplier.id ? { ...s, exclude_from_budget: next } : s))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to update supplier'))
+    } finally {
+      setExclSaving(p => { const q = { ...p }; delete q[supplier.id]; return q })
     }
   }
 
@@ -358,6 +376,18 @@ export default function BudgetsPage() {
 
   const selectedEntity = budgetEntities.find(e => String(e.id) === String(entityId))
 
+  const sortedSuppliers = useMemo(
+    () => [...suppliers].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
+    [suppliers],
+  )
+  const filteredSuppliers = useMemo(() => {
+    const q = exclSearch.trim().toLowerCase()
+    return q ? sortedSuppliers.filter(s => (s.name || '').toLowerCase().includes(q)) : sortedSuppliers
+  }, [sortedSuppliers, exclSearch])
+  const excludedCount = suppliers.filter(s => s.exclude_from_budget).length
+
+  const closeExclusions = () => { setShowExclusions(false); setExclSearch('') }
+
   return (
     <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
       {/* Header */}
@@ -461,6 +491,9 @@ export default function BudgetsPage() {
             </button>
             <button className="btn-ghost btn-sm" onClick={() => openQuickAdd('expense')}>
               <TrendingDown size={14} /> Add Expense
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => setShowExclusions(true)}>
+              <Ban size={14} /> Supplier Exclusions
             </button>
             <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
               Tip: click any amount cell to type a figure. Lines marked <span className="badge badge-sent" style={{ fontSize: 10 }}>auto</span> come from the system — editing a cell pins it.
@@ -692,6 +725,85 @@ export default function BudgetsPage() {
           ? `Delete the ${MONTHS[confirmDelete.period_month - 1]} ${confirmDelete.period_year} budget for ${selectedEntity?.code || ''}? All sections, lines and amounts will be removed.`
           : ''}
       />
+
+      {showExclusions && (
+        <div className="modal-overlay" onClick={closeExclusions}>
+          <div className="modal" onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 520, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Ban size={18} style={{ color: 'var(--accent)' }} />
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>Supplier Exclusions</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{selectedEntity?.code} — {selectedEntity?.name}</div>
+                </div>
+              </div>
+              <button className="btn-icon" onClick={closeExclusions}><X size={16} /></button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, flex: 1 }}>
+              <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                Excluded suppliers are skipped entirely by &quot;Pull from system&quot; — they never appear or update in any budget section, in any period.
+              </p>
+
+              <div className="search-bar">
+                <Search size={14} />
+                <input
+                  autoFocus
+                  placeholder="Search suppliers…"
+                  value={exclSearch}
+                  onChange={e => setExclSearch(e.target.value)}
+                />
+                {exclSearch && <button className="btn-icon" onClick={() => setExclSearch('')}><X size={13} /></button>}
+              </div>
+
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                {filteredSuppliers.length} of {suppliers.length} supplier{suppliers.length === 1 ? '' : 's'}
+                {excludedCount > 0 && <> · <strong style={{ color: 'var(--danger)' }}>{excludedCount} excluded</strong></>}
+              </div>
+
+              <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, minHeight: 200 }}>
+                {suppliers.length === 0 && (
+                  <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No suppliers for this entity</div>
+                )}
+                {suppliers.length > 0 && filteredSuppliers.length === 0 && (
+                  <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No suppliers match &quot;{exclSearch}&quot;</div>
+                )}
+                {filteredSuppliers.map((s, i) => (
+                  <label
+                    key={s.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
+                      borderBottom: i < filteredSuppliers.length - 1 ? '1px solid var(--border)' : 'none',
+                      fontSize: 13, cursor: 'pointer',
+                      background: s.exclude_from_budget ? 'var(--danger-bg, rgba(220,38,38,0.06))' : 'transparent',
+                      opacity: exclSaving[s.id] ? 0.6 : 1,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!s.exclude_from_budget}
+                      disabled={!!exclSaving[s.id]}
+                      onChange={() => toggleSupplierExclusion(s)}
+                      style={{ width: 15, height: 15, flexShrink: 0, cursor: 'pointer' }}
+                    />
+                    <span style={{ flex: 1, fontWeight: s.exclude_from_budget ? 600 : 400 }}>{s.name}</span>
+                    {s.exclude_from_budget && <span className="badge badge-overdue" style={{ fontSize: 10, flexShrink: 0 }}>excluded</span>}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
+              <button className="btn-primary btn-sm" onClick={closeExclusions}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

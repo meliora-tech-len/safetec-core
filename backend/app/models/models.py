@@ -211,6 +211,7 @@ class Supplier(Base):
     is_diesel_supplier       = Column(Boolean, default=False)
     is_intercompany          = Column(Boolean, nullable=False, default=False, server_default='0')
     requires_registration    = Column(Boolean, nullable=False, default=True)
+    exclude_from_budget      = Column(Boolean, nullable=False, default=False, server_default='0')
 
     entity = relationship("BusinessEntity", back_populates="suppliers")
     invoices = relationship("Invoice", back_populates="supplier")

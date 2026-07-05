@@ -222,6 +222,7 @@ class SupplierBase(BaseModel):
     is_diesel_supplier: bool = False
     is_intercompany: bool = False
     requires_registration: bool = True
+    exclude_from_budget: bool = False
 
 class SupplierCreate(SupplierBase):
     pass
@@ -243,6 +244,7 @@ class SupplierBulkCreate(BaseModel):
     is_diesel_supplier: bool = False
     is_intercompany: bool = False
     requires_registration: bool = True
+    exclude_from_budget: bool = False
 
 class SupplierUpdate(BaseModel):
     name: Optional[str] = None
@@ -261,6 +263,7 @@ class SupplierUpdate(BaseModel):
     is_diesel_supplier: Optional[bool] = None
     is_intercompany: Optional[bool] = None
     requires_registration: Optional[bool] = None
+    exclude_from_budget: Optional[bool] = None
 
 class SupplierOut(SupplierBase):
     id: int
