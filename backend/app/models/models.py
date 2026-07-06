@@ -259,6 +259,10 @@ class Subcontractor(Base):
     vat_number          = Column(String(50))
     notes               = Column(Text)
     is_active           = Column(Boolean, default=True)
+    # Last day of engagement. Once past, the subcontractor and their truck(s)
+    # drop out of "active" pickers for new loads/diesel/invoices, but existing
+    # records and costing remain untouched and fully viewable.
+    end_date            = Column(Date, nullable=True)
     created_at          = Column(DateTime(timezone=True), server_default=func.now())
     updated_at          = Column(DateTime(timezone=True), onupdate=func.now())
 

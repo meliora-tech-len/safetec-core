@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import User, Truck, Trailer, TruckStatus, DriverAdditionalLoad, DriverFoodPayment, DriverPayCycle, Driver, CasualTruckAssignment, TruckLoad, PersonalVehicle, PersonalVehicleStatus, TruckMonthlyExpenses, Subcontractor, LicenceAlertAck, BusinessEntity, TruckWash
@@ -94,6 +94,7 @@ def list_trucks(
     extra_context: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     is_subcontractor: Optional[bool] = Query(None),
+    subcontractor_id: Optional[int] = Query(None),
     registration: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
@@ -108,6 +109,17 @@ def list_trucks(
         q = q.filter(Truck.entity_id.in_(accessible))
     if registration:
         q = q.filter(Truck.registration.ilike(registration))
+    if subcontractor_id is not None:
+        # Scoped lookup (e.g. a subcontractor's own profile page) always sees
+        # its own trucks, even past end_date — only the general pickers below
+        # hide ended subcontractors.
+        q = q.filter(Truck.subcontractor_id == subcontractor_id)
+    else:
+        ended_sub_ids = db.query(Subcontractor.id).filter(
+            Subcontractor.end_date.isnot(None),
+            Subcontractor.end_date < date.today(),
+        )
+        q = q.filter(or_(Truck.subcontractor_id.is_(None), Truck.subcontractor_id.notin_(ended_sub_ids)))
     if entity_id and extra_context:
         # Include trucks from this entity OR own-fleet trucks from any entity with the given
         # contract context. Subcontractor trucks are excluded from the cross-entity portion —

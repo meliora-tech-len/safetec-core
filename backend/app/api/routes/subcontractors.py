@@ -56,6 +56,10 @@ def list_subcontractors(
 
     if not include_inactive:
         query = query.filter(Subcontractor.is_active == True)
+        query = query.filter(or_(
+            Subcontractor.end_date.is_(None),
+            Subcontractor.end_date >= datetime.now(timezone.utc).date(),
+        ))
 
     if search:
         term = f"%{search}%"
@@ -163,9 +167,13 @@ def update_subcontractor(
         raise HTTPException(status_code=404, detail="Subcontractor not found")
     _check_entity_access(sub.entity_id, current_user)
 
-    old_vals = {k: str(getattr(sub, k)) for k in payload.model_dump(exclude_none=True)}
-    for field, value in payload.model_dump(exclude_none=True).items():
+    updates = payload.model_dump(exclude_none=True, exclude={"clear_end_date"})
+    old_vals = {k: str(getattr(sub, k)) for k in updates}
+    for field, value in updates.items():
         setattr(sub, field, value)
+    if payload.clear_end_date:
+        old_vals["end_date"] = str(sub.end_date)
+        sub.end_date = None
 
     log_action(
         db, "subcontractor.updated", user_id=current_user.id,

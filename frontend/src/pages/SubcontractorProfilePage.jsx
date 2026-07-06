@@ -671,6 +671,11 @@ export default function SubcontractorProfilePage() {
             {subcontractor.trading_name && (
               <p className="page-subtitle">{subcontractor.trading_name}</p>
             )}
+            {subcontractor.end_date && (
+              <p className="page-subtitle" style={{ color: 'var(--warning, #b45309)' }}>
+                {subcontractor.end_date <= todayStr ? 'Ended' : 'Ends'} {formatDate(subcontractor.end_date)}
+              </p>
+            )}
           </div>
         </div>
         {activeTab === 'invoices' && (

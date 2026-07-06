@@ -165,6 +165,7 @@ export default function SubcontractorsPage() {
                     {sub.name}
                   </Link>
                   {sub.trading_name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sub.trading_name}</div>}
+                  {sub.end_date && <div style={{ fontSize: 11, color: 'var(--warning, #b45309)' }}>Ends {formatDate(sub.end_date)}</div>}
                 </td>
                 <td>{sub.contact_person || '—'}</td>
                 <td>{sub.email || '—'}</td>
@@ -315,6 +316,7 @@ function SubcontractorModal({ mode, sub, entities, onSave, onClose }) {
     registration_number: sub?.registration_number || '',
     vat_number:          sub?.vat_number          || '',
     notes:               sub?.notes               || '',
+    end_date:            sub?.end_date            || '',
   })
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -327,11 +329,18 @@ function SubcontractorModal({ mode, sub, entities, onSave, onClose }) {
     }
     setSaving(true)
     if (mode === 'create') {
-      const { entity_id, entity_ids, ...fields } = form
-      await onSave({ entity_ids, ...fields })
+      const { entity_id, entity_ids, end_date, ...fields } = form
+      await onSave({ entity_ids, end_date: end_date || null, ...fields })
     } else {
-      const { entity_id, entity_ids, ...fields } = form
-      await onSave({ ...fields, entity_id: parseInt(entity_id), copyEntityIds: copyMode ? copyEntityIds : [] })
+      const { entity_id, entity_ids, end_date, ...fields } = form
+      const clearing = !end_date && !!sub?.end_date
+      await onSave({
+        ...fields,
+        entity_id: parseInt(entity_id),
+        ...(end_date ? { end_date } : {}),
+        ...(clearing ? { clear_end_date: true } : {}),
+        copyEntityIds: copyMode ? copyEntityIds : [],
+      })
     }
     setSaving(false)
   }
@@ -426,9 +435,18 @@ function SubcontractorModal({ mode, sub, entities, onSave, onClose }) {
               </div>
             </div>
 
-            <div className="form-group">
-              <label>VAT Number</label>
-              <input value={form.vat_number} onChange={e => set('vat_number', e.target.value)} placeholder="e.g. 4720123456" />
+            <div className="form-row">
+              <div className="form-group">
+                <label>VAT Number</label>
+                <input value={form.vat_number} onChange={e => set('vat_number', e.target.value)} placeholder="e.g. 4720123456" />
+              </div>
+              <div className="form-group">
+                <label>End Date</label>
+                <input type="date" value={form.end_date} onChange={e => set('end_date', e.target.value)} />
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Last day of engagement. Once passed, this subcontractor and their truck(s) stop appearing in pickers for new loads/diesel/invoices — past records and costing are untouched.
+                </div>
+              </div>
             </div>
 
             <div className="form-group">

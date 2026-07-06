@@ -357,6 +357,7 @@ class SubcontractorBase(BaseModel):
     registration_number: Optional[str] = None
     vat_number:          Optional[str] = None
     notes:               Optional[str] = None
+    end_date:            Optional[date] = None
 
 
 class SubcontractorCreate(SubcontractorBase):
@@ -385,6 +386,8 @@ class SubcontractorUpdate(BaseModel):
     vat_number:          Optional[str]  = None
     notes:               Optional[str]  = None
     is_active:           Optional[bool] = None
+    end_date:            Optional[date] = None
+    clear_end_date:      Optional[bool] = None
 
 
 class SubcontractorOut(SubcontractorBase):
