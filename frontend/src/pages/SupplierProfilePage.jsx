@@ -757,7 +757,7 @@ export default function SupplierProfilePage() {
   // Fetch subcontractors for diesel supplier's entity (used for Subbie Name dropdown)
   useEffect(() => {
     if (!supplier?.is_diesel_supplier || !supplier?.entity_id) { setSubbies([]); return }
-    getSubcontractors({ entity_id: supplier.entity_id, limit: 500 })
+    getSubcontractors({ entity_id: supplier.entity_id, exclude_ended: true, limit: 500 })
       .then(r => setSubbies(r.data || []))
       .catch(() => setSubbies([]))
   }, [supplier?.id, supplier?.entity_id, supplier?.is_diesel_supplier])

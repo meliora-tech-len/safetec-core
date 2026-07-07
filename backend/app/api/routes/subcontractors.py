@@ -39,6 +39,7 @@ def list_subcontractors(
     entity_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
+    exclude_ended: bool = Query(False),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, le=500),
     db: Session = Depends(get_db),
@@ -56,6 +57,11 @@ def list_subcontractors(
 
     if not include_inactive:
         query = query.filter(Subcontractor.is_active == True)
+
+    # Only pickers for capturing NEW work (e.g. the diesel "Subbie Name" dropdown)
+    # ask for this — ended subcontractors still need to show up in management
+    # views so their historical records and costing stay reachable.
+    if exclude_ended:
         query = query.filter(or_(
             Subcontractor.end_date.is_(None),
             Subcontractor.end_date >= datetime.now(timezone.utc).date(),
