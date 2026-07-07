@@ -152,9 +152,16 @@ def _norm_slip(s: Optional[str]) -> str:
 
 
 def _slip_eq(value: str):
-    """SQLAlchemy predicate matching DieselFillUp.slip_number to `value`
-    space- and case-insensitively (DB-side; works on SQLite and PostgreSQL)."""
-    return func.upper(func.replace(DieselFillUp.slip_number, ' ', '')) == _norm_slip(value)
+    """SQLAlchemy predicate matching a DieselFillUp's depot slip to `value`,
+    space- and case-insensitively (DB-side; works on SQLite and PostgreSQL).
+
+    Matches on depot_slip_number, the authoritative printed-slip field
+    (migration 109) — every creation path in this file sets it, defaulting to
+    slip_number when no separate value is supplied, so it's never null. Some
+    older/backfilled rows (e.g. Intsimbi, where slip_number instead holds the
+    system Trans ID) only agree with an import's parsed slip on this column;
+    matching on slip_number there always misses and creates a duplicate."""
+    return func.upper(func.replace(DieselFillUp.depot_slip_number, ' ', '')) == _norm_slip(value)
 
 
 def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, slip_number: str, user_id: int) -> None:
