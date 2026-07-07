@@ -170,12 +170,15 @@ def income_expenses_report(
         diesel_expense[cm]   = diesel_expense.get(cm, 0.0) + float(amount or 0)
         diesel_input_vat[cm] = diesel_input_vat.get(cm, 0.0) + float(vat or 0)
 
-    # ── Supplier invoice expenses grouped by statement month ───────────────────
+    # ── Supplier invoice expenses grouped by actual invoice date ────────────────
+    # Unlike costing (which uses statement_month/statement_year so a late-arriving
+    # invoice costs in the statement it was captured against), this report reflects
+    # the real SARS-deductible period, so it groups by the invoice's own date.
     all_supplier_invoices = (
         db.query(SupplierInvoice)
         .filter(
             SupplierInvoice.entity_id == entity_id,
-            SupplierInvoice.statement_year == year,
+            func.extract('year', SupplierInvoice.invoice_date) == year,
             SupplierInvoice.is_archived != True,
         )
         .all()
@@ -199,10 +202,9 @@ def income_expenses_report(
     supplier_incl_by_month: dict[int, float] = {}
     supplier_excl_by_month: dict[int, float] = {}
     for inv in all_supplier_invoices:
-        m = inv.statement_month
-        if m is None:
+        if inv.invoice_date is None:
             continue
-        m = int(m)
+        m = inv.invoice_date.month
         incl = float(inv.amount)
         if inv.id in line_excl_by_inv:
             excl = line_excl_by_inv[inv.id]
@@ -402,12 +404,15 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
     # (Output grouping is built below, after supplier invoices are processed —
     #  Crack Logic 'Insurance Claim' invoices get reclassified onto the income side.)
 
+    # Grouped by the invoice's actual date, not statement_month/statement_year —
+    # costing uses the statement period, but SARS deductibility follows the real
+    # invoice date regardless of which statement it was captured against.
     sup_invoices = (
         db.query(SupplierInvoice)
         .filter(
             SupplierInvoice.entity_id == entity_id,
-            SupplierInvoice.statement_year == year,
-            SupplierInvoice.statement_month == month,
+            func.extract('year', SupplierInvoice.invoice_date) == year,
+            func.extract('month', SupplierInvoice.invoice_date) == month,
             SupplierInvoice.is_archived != True,
         )
         .order_by(SupplierInvoice.invoice_date)
