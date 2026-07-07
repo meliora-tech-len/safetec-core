@@ -1944,8 +1944,8 @@ def bulk_import_invoices(
                 # only rand-level price errors — not penny rounding — flag as conflicts.
                 amount_tol = max(0.05, float(litres_d) * 0.0002)
                 amount_mismatch = abs(float(existing_fillup.amount or 0) - float(excl_d)) > amount_tol
-                if litres_mismatch or amount_mismatch:
-                    # Same truck + slip but different litres or amount — flag as conflict.
+                if litres_mismatch:
+                    # Litres themselves disagree — a real discrepancy, surface for review.
                     conflicts.append(DieselConflict(
                         slip_number=slip,
                         fillup_id=existing_fillup.id,
@@ -1967,10 +1967,20 @@ def bulk_import_invoices(
                         ),
                     ))
                 else:
-                    # Same truck, same slip, same litres — re-link the fill-up to the
-                    # imported invoice, then archive the placeholder invoice it was
-                    # auto-created under (otherwise it lingers as a duplicate "Pending"
-                    # row on the Supplier Profile).
+                    # Same truck, same slip, same litres — the litres already match, so
+                    # any amount/rate mismatch just means the fill-up was logged with an
+                    # estimated rate before the supplier's invoice arrived. The import
+                    # carries the invoiced rate, which is authoritative — apply it
+                    # directly instead of prompting the user to pick a side.
+                    if amount_mismatch:
+                        amounts = DieselCalculationService.calculate_fillup_amounts(
+                            litres=litres_d, rate_per_litre=rate_d,
+                            admin_fee_pct=Decimal(str(existing_fillup.admin_fee_pct or 0)),
+                            apply_admin_fee=apply_admin_fee, vat_rate=vat_rate,
+                        )
+                        existing_fillup.rate_per_litre = rate_d
+                        for field, value in amounts.items():
+                            setattr(existing_fillup, field, value)
                     old_inv_id = existing_fillup.supplier_invoice_id
                     existing_fillup.invoice_number = num or None
                     existing_fillup.supplier_invoice_id = inv.id

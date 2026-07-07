@@ -108,7 +108,7 @@ function parseZAR(val) {
 
 function parseWBGSheet(ws) {
   // raw: true (default) keeps numbers as numbers and dates as Date objects via
-  // cellDates — raw: false would stringify numbers and break the typeof check below.
+  // cellDates — raw: false would stringify numbers and dates below.
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, cellDates: true })
   const invoices = []
   let pending = []
@@ -120,9 +120,12 @@ function parseWBGSheet(ws) {
     const invNo    = row[10]
     const invTotal = row[11]
     if (!siteOrDate && !invNo) continue
-    if (invNo && typeof siteOrDate !== 'string') {
+    // Invoice-summary rows never carry a Slip Number (col 2) — data rows always do.
+    // The date in col 0 is sometimes a real Excel date, sometimes plain text
+    // ("03-07-2026"), so typeof can't reliably tell a summary row from a data row.
+    if (invNo && !slip) {
       invoices.push({
-        invoice_date:   invDate instanceof Date ? fmtISODate(invDate) : invDate,
+        invoice_date:   invDate instanceof Date ? fmtISODate(invDate) : (parseSlipDate(invDate) || invDate),
         invoice_number: String(invNo).trim(),
         amount:         parseZAR(invTotal),
         line_items:     pending,
