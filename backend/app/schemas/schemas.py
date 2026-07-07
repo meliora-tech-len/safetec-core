@@ -483,6 +483,15 @@ class InvoiceOut(InvoiceBase):
     supplier: Optional[SupplierSummary] = None
     customer: Optional[CustomerSummary] = None
     entity: Optional[EntityOut] = None
+    # PO attachment. attachment_filename comes straight off the model;
+    # has_attachment is derived so the row can show a paperclip without
+    # exposing the storage key.
+    attachment_filename: Optional[str] = None
+
+    @computed_field
+    @property
+    def has_attachment(self) -> bool:
+        return bool(self.attachment_filename)
 
     class Config:
         from_attributes = True

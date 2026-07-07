@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getInvoices, getEntities, downloadInvoicePdf, downloadInvoicesBulk, updateInvoice, deleteInvoice } from '../services/api'
+import {
+  getInvoices, getEntities, downloadInvoicePdf, downloadInvoicesBulk, updateInvoice, deleteInvoice,
+  uploadInvoiceAttachment, deleteInvoiceAttachment, viewInvoiceAttachment,
+} from '../services/api'
 import { formatCurrency, formatDate, statusBadgeClass, statusLabel, errorMessage } from '../utils/helpers'
-import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2, Upload, ChevronDown, FileArchive, Files, Scissors } from 'lucide-react'
+import { Plus, Search, X, FileText, Download, EyeOff, Send, CheckCircle, Trash2, Upload, ChevronDown, FileArchive, Files, Scissors, Paperclip, Eye } from 'lucide-react'
 import ImportPOModal from '../components/ImportPOModal'
 import SplitPOModal from '../components/SplitPOModal'
 import ExportButton from '../components/ExportButton'
@@ -67,6 +70,10 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const [selectedIds, setSelectedIds] = useState(new Set())  // rows ticked for bulk actions (mark-paid / PDF download)
   const [payingBulk, setPayingBulk] = useState(false)
   const [downloadingBulk, setDownloadingBulk] = useState(false)
+  const [attachBusyId, setAttachBusyId] = useState(null)
+  const [pdfMenuOpenId, setPdfMenuOpenId] = useState(null)
+  const attachInputRef = useRef(null)
+  const attachTargetId = useRef(null)
   const navigate = useNavigate()
   const { theme } = useTheme()
 
@@ -136,10 +143,10 @@ export default function InvoicesPage({ docType = 'invoice' }) {
     return { paid, outstanding: overall - paid, overall }
   }, [displayedInvoices])
 
-  const handlePdf = async (e, inv) => {
+  const handlePdf = async (e, inv, includeAttachment = true) => {
     e.stopPropagation()
     try {
-      await downloadInvoicePdf(inv.id, inv.invoice_number, theme)
+      await downloadInvoicePdf(inv.id, inv.invoice_number, theme, includeAttachment)
       // PDF download advances draft → ready automatically on the backend; refresh list
       if (inv.status === 'draft') load()
     }
@@ -153,6 +160,60 @@ export default function InvoicesPage({ docType = 'invoice' }) {
       toast.success(`Marked as ${statusLabel(newStatus)}`)
       load()
     } catch { toast.error('Failed to update status') }
+  }
+
+  // Patch a single invoice's fields in place, avoiding a full list refetch.
+  const patchInvoice = (updated) => {
+    setAllInvoices(list => list.map(i => i.id === updated.id ? { ...i, ...updated } : i))
+  }
+
+  // ── PO attachment (attach the split PO PDF to its generated invoice) ────────
+  const openAttachPicker = (e, inv) => {
+    e.stopPropagation()
+    attachTargetId.current = inv.id
+    if (attachInputRef.current) {
+      attachInputRef.current.value = ''  // allow re-picking the same filename
+      attachInputRef.current.click()
+    }
+  }
+
+  const handleAttachFile = async (e) => {
+    const file = e.target.files?.[0]
+    const id = attachTargetId.current
+    if (!file || !id) return
+    setAttachBusyId(id)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const { data } = await uploadInvoiceAttachment(id, formData)
+      patchInvoice(data)
+      toast.success('PO attached — it will be included when you download the PDF')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setAttachBusyId(null)
+      attachTargetId.current = null
+    }
+  }
+
+  const handleViewAttachment = async (e, inv) => {
+    e.stopPropagation()
+    try { await viewInvoiceAttachment(inv.id) }
+    catch (err) { toast.error(errorMessage(err)) }
+  }
+
+  const handleRemoveAttachment = async (e, inv) => {
+    e.stopPropagation()
+    setAttachBusyId(inv.id)
+    try {
+      await deleteInvoiceAttachment(inv.id)
+      patchInvoice({ id: inv.id, has_attachment: false, attachment_filename: null })
+      toast.success('PO attachment removed')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setAttachBusyId(null)
+    }
   }
 
   const isInvoice = docType === 'invoice'
@@ -354,7 +415,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
               <SortableHeader label="Due Date" col="due_date" sort={sort} onSort={onSort} />
               <SortableHeader label="Status" col="status" sort={sort} onSort={onSort} />
               <SortableHeader label="Total" col="total" sort={sort} onSort={onSort} className="text-right" />
-              <th style={{ width: 90 }}></th>
+              <th style={{ width: isInvoice ? 190 : 90 }}></th>
             </tr>
           </thead>
           <tbody>
@@ -405,9 +466,76 @@ export default function InvoicesPage({ docType = 'invoice' }) {
                 <td className="text-right font-bold">{formatCurrency(inv.total)}</td>
                 <td style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-                    <button className="btn-icon btn-ghost" title="Download PDF" onClick={e => handlePdf(e, inv)}>
-                      <Download size={13} />
-                    </button>
+                    {inv.has_attachment ? (
+                      <div style={{ position: 'relative', display: 'inline-flex' }}>
+                        <button
+                          className="btn-icon btn-ghost"
+                          title="Choose what to download"
+                          onClick={e => { e.stopPropagation(); setPdfMenuOpenId(id => id === inv.id ? null : inv.id) }}
+                        >
+                          <Download size={13} />
+                        </button>
+                        {pdfMenuOpenId === inv.id && (
+                          <>
+                            <div onClick={() => setPdfMenuOpenId(null)} style={{ position: 'fixed', inset: 0, zIndex: 100 }} />
+                            <div style={{
+                              position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 101,
+                              background: 'var(--bg-card)', border: '1px solid var(--border)',
+                              borderRadius: 8, boxShadow: 'var(--shadow)', overflow: 'hidden', minWidth: 200,
+                            }}>
+                              <button onClick={e => { setPdfMenuOpenId(null); handlePdf(e, inv, true) }} style={menuItemStyle}>
+                                Invoice + PO (merged)
+                              </button>
+                              <button onClick={e => { setPdfMenuOpenId(null); handlePdf(e, inv, false) }} style={menuItemStyle}>
+                                Invoice only
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <button className="btn-icon btn-ghost" title="Download PDF" onClick={e => handlePdf(e, inv)}>
+                        <Download size={13} />
+                      </button>
+                    )}
+                    {isInvoice && isPoImport(inv) && (
+                      inv.has_attachment ? (
+                        <>
+                          <button
+                            className="btn-icon btn-ghost"
+                            onClick={e => handleViewAttachment(e, inv)}
+                            title={inv.attachment_filename ? `View attached PO (${inv.attachment_filename})` : 'View attached PO'}
+                          >
+                            <Eye size={13} color="var(--accent)" />
+                          </button>
+                          <button
+                            className="btn-icon btn-ghost"
+                            disabled={attachBusyId === inv.id}
+                            onClick={e => openAttachPicker(e, inv)}
+                            title="Replace attached PO"
+                          >
+                            <Upload size={12} />
+                          </button>
+                          <button
+                            className="btn-icon btn-ghost"
+                            disabled={attachBusyId === inv.id}
+                            onClick={e => handleRemoveAttachment(e, inv)}
+                            title="Remove attached PO"
+                          >
+                            <X size={12} color="var(--danger)" />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="btn-icon btn-ghost"
+                          disabled={attachBusyId === inv.id}
+                          onClick={e => openAttachPicker(e, inv)}
+                          title="Attach PO PDF — included when downloading the invoice PDF"
+                        >
+                          <Paperclip size={13} color="var(--text-muted)" />
+                        </button>
+                      )
+                    )}
                     {(inv.status === 'draft' || inv.status === 'ready') && (
                       <button
                         className="btn-icon btn-ghost"
@@ -534,6 +662,15 @@ export default function InvoicesPage({ docType = 'invoice' }) {
 
       {showImportPO && <ImportPOModal onClose={() => setShowImportPO(false)} entities={entities} onImported={load} />}
       {showSplitPO && <SplitPOModal onClose={() => setShowSplitPO(false)} />}
+
+      {/* Shared hidden picker for PO attachments (targeted per row) */}
+      <input
+        ref={attachInputRef}
+        type="file"
+        accept="application/pdf"
+        style={{ display: 'none' }}
+        onChange={handleAttachFile}
+      />
 
       <DeleteModal
         isOpen={!!deleteTarget}

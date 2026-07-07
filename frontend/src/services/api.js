@@ -70,9 +70,9 @@ export const getProfitLossSummary = (params = {}) =>
 export const sendInvoiceEmail = (id, theme = 'dark') =>
   api.post(`/invoices/${id}/send-email`, null, { params: { theme } })
 
-export const downloadInvoicePdf = async (id, invoiceNumber, theme = 'dark') => {
+export const downloadInvoicePdf = async (id, invoiceNumber, theme = 'dark', includeAttachment = true) => {
   const res = await api.get(`/invoices/${id}/pdf`, {
-    params: { theme },
+    params: { theme, include_attachment: includeAttachment },
     responseType: 'blob',
   })
   const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
@@ -105,11 +105,26 @@ export const splitPoPdf = async (file) => {
   return parseInt(res.headers['x-po-count'] || '0', 10)
 }
 
+// PO attachment (the source purchase-order document this invoice was generated from)
+export const uploadInvoiceAttachment = (id, formData) =>
+  api.post(`/invoices/${id}/attachment`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+export const deleteInvoiceAttachment = (id) =>
+  api.delete(`/invoices/${id}/attachment`)
+// Fetches the file with the auth header, then opens it inline in a new tab.
+// (A plain window.open of the endpoint would not send the JWT bearer header.)
+export const viewInvoiceAttachment = async (id) => {
+  const res = await api.get(`/invoices/${id}/attachment`, { responseType: 'blob' })
+  const url = window.URL.createObjectURL(res.data)
+  window.open(url, '_blank')
+  setTimeout(() => window.URL.revokeObjectURL(url), 60_000)
+}
+
 // Bulk download: merge=false → ZIP of separate PDFs, merge=true → one merged PDF.
-export const downloadInvoicesBulk = async (invoiceIds, { merge = false, theme = 'dark' } = {}) => {
+export const downloadInvoicesBulk = async (invoiceIds, { merge = false, theme = 'dark', includeAttachments = true } = {}) => {
   const res = await api.post('/invoices/bulk-pdf', {
     invoice_ids: Array.from(invoiceIds),
     merge,
+    include_attachments: includeAttachments,
   }, {
     params: { theme },
     responseType: 'blob',

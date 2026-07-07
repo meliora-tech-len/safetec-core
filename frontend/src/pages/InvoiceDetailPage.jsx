@@ -1,12 +1,25 @@
-﻿import { useState, useEffect } from 'react'
+﻿import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getInvoice, updateInvoice, deleteInvoice, downloadInvoicePdf } from '../services/api'
+import {
+  getInvoice, updateInvoice, deleteInvoice, downloadInvoicePdf,
+  uploadInvoiceAttachment, deleteInvoiceAttachment, viewInvoiceAttachment,
+} from '../services/api'
 import { useTheme } from '../hooks/useTheme'
 import { formatCurrency, formatDate, statusBadgeClass, statusLabel, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail, Send, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Edit2, Download, Trash2, CheckCircle, ChevronDown, Mail, Send, AlertTriangle, Paperclip, Upload, Eye, X } from 'lucide-react'
 import DeleteModal from '../components/DeleteModal'
 import DateInput from '../components/DateInput'
+
+// True when an invoice came from a Tradekor PO import (Obhi/Safetec/Bokamosho) —
+// mirrors InvoicesPage's isPoImport so the PO-attachment card only shows where
+// there's actually a PO to attach.
+function isPoImport(inv) {
+  const fromNotes = (inv?.notes || '').match(/POH\s*\d+/i)
+  if (fromNotes) return true
+  const header = (inv?.line_items || []).find(li => li.line_type === 'header')
+  return /POH\s*\d+/i.test(header?.description || '')
+}
 
 // Any status can be set from the "Change Status" override menu — this also lets
 // users correct mistakes (e.g. an invoice marked paid by accident).
@@ -28,6 +41,9 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
   const [revertTarget, setRevertTarget] = useState(null)
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10))
   const [payRef, setPayRef] = useState('')
+  const [attachBusy, setAttachBusy] = useState(false)
+  const [pdfMenuOpen, setPdfMenuOpen] = useState(false)
+  const attachInputRef = useRef(null)
 
   const closePayModal = () => {
     setShowPayModal(false)
@@ -88,9 +104,52 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
 
   const handleDelete = () => setShowDeleteModal(true)
 
-  const handlePdf = async (pdfTheme) => {
-    try { await downloadInvoicePdf(invoice.id, invoice.invoice_number, pdfTheme) }
+  const handlePdf = async (pdfTheme, includeAttachment = true) => {
+    try { await downloadInvoicePdf(invoice.id, invoice.invoice_number, pdfTheme, includeAttachment) }
     catch { toast.error('PDF generation failed') }
+  }
+
+  // ── PO attachment (attach the split PO PDF to its generated invoice) ────────
+  const openAttachPicker = () => {
+    if (attachInputRef.current) {
+      attachInputRef.current.value = ''  // allow re-picking the same filename
+      attachInputRef.current.click()
+    }
+  }
+
+  const handleAttachFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setAttachBusy(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const { data } = await uploadInvoiceAttachment(invoice.id, formData)
+      setInvoice(v => ({ ...v, ...data }))
+      toast.success('PO attached — it will be included when you download the PDF')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setAttachBusy(false)
+    }
+  }
+
+  const handleViewAttachment = async () => {
+    try { await viewInvoiceAttachment(invoice.id) }
+    catch (err) { toast.error(errorMessage(err)) }
+  }
+
+  const handleRemoveAttachment = async () => {
+    setAttachBusy(true)
+    try {
+      await deleteInvoiceAttachment(invoice.id)
+      setInvoice(v => ({ ...v, has_attachment: false, attachment_filename: null }))
+      toast.success('PO attachment removed')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setAttachBusy(false)
+    }
   }
 
   const handleEmail = async () => {
@@ -119,16 +178,34 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
           <ArrowLeft size={14} /> Back
         </button>
         <div style={styles.actions}>
-          {/* PDF split button */}
+          {/* PDF split button — when a PO is attached, the chevron offers a choice
+              between the merged download (default) and the invoice alone */}
           <div style={{ position: 'relative', display: 'inline-flex' }}>
             <button className="btn-ghost btn-sm" style={{ borderRadius: '6px 0 0 6px', borderRight: 'none' }}
-              onClick={() => handlePdf(theme)}>
+              onClick={() => handlePdf(theme, true)}>
               <Download size={13} /> PDF
             </button>
             <button className="btn-ghost btn-sm" style={{ borderRadius: '0 6px 6px 0', padding: '5px 7px' }}
-             onClick={() => handlePdf(theme)}>
+             onClick={() => invoice.has_attachment ? setPdfMenuOpen(o => !o) : handlePdf(theme, true)}>
               <ChevronDown size={12} />
             </button>
+            {pdfMenuOpen && invoice.has_attachment && (
+              <>
+                <div onClick={() => setPdfMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 41,
+                  background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 6,
+                  boxShadow: '0 6px 18px rgba(0,0,0,0.18)', minWidth: 210, overflow: 'hidden', padding: 4,
+                }}>
+                  <button onClick={() => { setPdfMenuOpen(false); handlePdf(theme, true) }} style={menuItemStyle}>
+                    Invoice + PO (merged)
+                  </button>
+                  <button onClick={() => { setPdfMenuOpen(false); handlePdf(theme, false) }} style={menuItemStyle}>
+                    Invoice only
+                  </button>
+                </div>
+              </>
+            )}
           </div>
           <button className="btn-ghost btn-sm" onClick={handleEmail}>
             <Mail size={13} /> Email
@@ -355,6 +432,38 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
             <div style={{ ...styles.infoRow, borderBottom: 'none' }}><span>Currency</span><span>ZAR (R)</span></div>
           </div>
 
+          {/* PO attachment — only for invoices generated via PO Import */}
+          {isPoImport(invoice) && (
+            <div className="card">
+              <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 12 }}>PO Attachment</div>
+              {invoice.has_attachment ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Paperclip size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={invoice.attachment_filename}>
+                    {invoice.attachment_filename || 'PO document'}
+                  </span>
+                  <button className="btn-icon btn-ghost" title="View attached PO" onClick={handleViewAttachment}>
+                    <Eye size={13} />
+                  </button>
+                  <button className="btn-icon btn-ghost" disabled={attachBusy} title="Replace attached PO" onClick={openAttachPicker}>
+                    <Upload size={12} />
+                  </button>
+                  <button className="btn-icon btn-ghost" disabled={attachBusy} title="Remove attached PO" onClick={handleRemoveAttachment}>
+                    <X size={12} color="var(--danger)" />
+                  </button>
+                </div>
+              ) : (
+                <button className="btn-ghost btn-sm" disabled={attachBusy} onClick={openAttachPicker}>
+                  <Paperclip size={13} /> Attach PO PDF
+                </button>
+              )}
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0 0' }}>
+                Attached PO is merged into this invoice's PDF on download.
+              </p>
+              <input ref={attachInputRef} type="file" accept="application/pdf" style={{ display: 'none' }} onChange={handleAttachFile} />
+            </div>
+          )}
+
           {/* Notes */}
           <div className="card" style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -496,6 +605,13 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
       />
     </div>
   )
+}
+
+const menuItemStyle = {
+  display: 'flex', alignItems: 'center', gap: 9,
+  width: '100%', padding: '9px 14px',
+  background: 'none', border: 'none', cursor: 'pointer',
+  fontSize: 13, color: 'var(--text-primary)', textAlign: 'left', whiteSpace: 'nowrap',
 }
 
 const styles = {

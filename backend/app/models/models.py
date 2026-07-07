@@ -303,6 +303,16 @@ class Invoice(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    # PO attachment (the source purchase-order document this invoice was generated
+    # from, e.g. a split PO PDF). Stored privately and streamed back via an
+    # authenticated endpoint; merged into the invoice PDF on download when present.
+    attachment_key = Column(String(500))
+    attachment_filename = Column(String(300))
+    attachment_content_type = Column(String(100))
+    attachment_size = Column(Integer)
+    attachment_uploaded_at = Column(DateTime(timezone=True))
+    attachment_uploaded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     entity = relationship("BusinessEntity", back_populates="invoices")
     supplier = relationship("Supplier", back_populates="invoices", foreign_keys=[supplier_id])
     customer = relationship("Customer", back_populates="invoices", foreign_keys=[customer_id])

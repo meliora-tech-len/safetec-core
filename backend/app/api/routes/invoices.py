@@ -1,6 +1,10 @@
 import asyncio
+import logging
+import os
 import re
 import zipfile
+import httpx
+from pathlib import Path
 from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
@@ -21,6 +25,97 @@ from app.services.pdf_generator import generate_invoice_pdf
 from app.services.email import send_invoice_email
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
+logger = logging.getLogger("safetec.invoices")
+
+# ── PO attachment storage (the source purchase-order document) ────────────────
+# Mirrors the supplier-invoice attachment pattern (supplier_invoices.py): files
+# are stored privately (never on a public URL) and streamed back through the
+# authenticated GET endpoint below. Restricted to PDF only — the whole point of
+# this attachment is to be merged into the invoice PDF on download.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+ATTACH_BUCKET = "invoices"
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+IS_LOCAL = DATABASE_URL.startswith("sqlite") or not SUPABASE_URL
+
+LOCAL_ATTACH_DIR = Path(__file__).resolve().parents[3] / "uploads" / "invoices"
+MAX_ATTACH_BYTES = 25 * 1024 * 1024  # 25 MB
+
+
+def _attach_save(invoice_id: int, file_bytes: bytes) -> str:
+    """Persist the PO PDF and return its storage key (deterministic per invoice,
+    so a re-upload overwrites the previous file)."""
+    key = f"inv_{invoice_id}.pdf"
+    if IS_LOCAL:
+        LOCAL_ATTACH_DIR.mkdir(parents=True, exist_ok=True)
+        (LOCAL_ATTACH_DIR / key).write_bytes(file_bytes)
+    else:
+        upload_url = f"{SUPABASE_URL}/storage/v1/object/{ATTACH_BUCKET}/{key}"
+        resp = httpx.put(
+            upload_url, content=file_bytes,
+            headers={
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "Content-Type": "application/pdf",
+                "x-upsert": "true",
+            },
+        )
+        if resp.status_code not in (200, 201):
+            raise HTTPException(status_code=500, detail=f"Attachment upload failed: {resp.text}")
+    return key
+
+
+def _attach_read(key: str) -> bytes:
+    """Read the stored PO PDF bytes (local disk or private Supabase object)."""
+    if IS_LOCAL:
+        path = LOCAL_ATTACH_DIR / key
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Attachment file not found")
+        return path.read_bytes()
+    download_url = f"{SUPABASE_URL}/storage/v1/object/{ATTACH_BUCKET}/{key}"
+    resp = httpx.get(download_url, headers={"Authorization": f"Bearer {SUPABASE_SERVICE_KEY}"})
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Attachment file not found")
+    return resp.content
+
+
+def _attach_delete(key: str) -> None:
+    """Remove the stored file. Best-effort: clearing the DB metadata is what matters."""
+    if IS_LOCAL:
+        try:
+            (LOCAL_ATTACH_DIR / key).unlink(missing_ok=True)
+        except OSError:
+            pass
+    else:
+        delete_url = f"{SUPABASE_URL}/storage/v1/object/{ATTACH_BUCKET}/{key}"
+        try:
+            httpx.request("DELETE", delete_url, headers={"Authorization": f"Bearer {SUPABASE_SERVICE_KEY}"})
+        except httpx.HTTPError:
+            pass
+
+
+def _merge_with_attachment(pdf_bytes: bytes, invoice: Invoice) -> bytes:
+    """Append the invoice's attached PO PDF (if any) to its generated PDF, so a
+    single download carries both. Best-effort — a missing/corrupt attachment
+    falls back to the invoice PDF alone rather than failing the download."""
+    if not invoice.attachment_key:
+        return pdf_bytes
+    try:
+        attach_bytes = _attach_read(invoice.attachment_key)
+        from pypdf import PdfReader, PdfWriter
+        writer = PdfWriter()
+        for reader in (PdfReader(BytesIO(pdf_bytes)), PdfReader(BytesIO(attach_bytes))):
+            for page in reader.pages:
+                writer.add_page(page)
+        out = BytesIO()
+        writer.write(out)
+        return out.getvalue()
+    except Exception:
+        logger.exception(
+            "Failed to merge PO attachment (invoice %s, key %s) — falling back to invoice-only PDF",
+            invoice.id, invoice.attachment_key,
+        )
+        return pdf_bytes
 
 
 def _check_entity_access(entity_id: int, user: User):
@@ -583,6 +678,7 @@ def delete_invoice(
 async def download_invoice_pdf(
     invoice_id: int,
     theme: str = Query("dark", pattern="^(dark|light)$"),
+    include_attachment: bool = Query(True, description="Merge the attached PO into the download when present"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -596,10 +692,15 @@ async def download_invoice_pdf(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(invoice.entity_id, current_user)
 
-    pdf_bytes = await asyncio.to_thread(
-        generate_invoice_pdf, invoice, invoice.entity, invoice.supplier,
-        customer=invoice.customer, theme=theme
-    )
+    def _build():
+        pdf_bytes = generate_invoice_pdf(
+            invoice, invoice.entity, invoice.supplier, customer=invoice.customer, theme=theme
+        )
+        if include_attachment:
+            pdf_bytes = _merge_with_attachment(pdf_bytes, invoice)
+        return pdf_bytes
+
+    pdf_bytes = await asyncio.to_thread(_build)
 
     # Advance draft → ready on first PDF generation
     if invoice.status == "draft":
@@ -618,9 +719,108 @@ async def download_invoice_pdf(
     )
 
 
+# ── PO attachment (the source purchase-order document) ────────────────────────
+
+@router.post("/{invoice_id}/attachment", response_model=InvoiceOut)
+async def upload_invoice_attachment(
+    invoice_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    invoice = db.query(Invoice).options(
+        joinedload(Invoice.line_items), joinedload(Invoice.supplier),
+        joinedload(Invoice.customer), joinedload(Invoice.entity),
+    ).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(invoice.entity_id, current_user)
+
+    if (file.content_type or "").lower() != "application/pdf" and not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty")
+    if len(file_bytes) > MAX_ATTACH_BYTES:
+        raise HTTPException(status_code=400, detail="Attachment must be under 25MB")
+
+    key = _attach_save(invoice_id, file_bytes)
+
+    invoice.attachment_key = key
+    invoice.attachment_filename = file.filename or f"invoice_{invoice_id}.pdf"
+    invoice.attachment_content_type = "application/pdf"
+    invoice.attachment_size = len(file_bytes)
+    invoice.attachment_uploaded_at = datetime.now(timezone.utc)
+    invoice.attachment_uploaded_by_id = current_user.id
+
+    log_action(
+        db, "invoice.attachment_added", user_id=current_user.id,
+        entity_id=invoice.entity_id, resource_type="invoice", resource_id=invoice.id,
+        description=f"Attached PO document '{invoice.attachment_filename}' to invoice {invoice.invoice_number}",
+    )
+    db.commit()
+    db.refresh(invoice)
+    return invoice
+
+
+@router.get("/{invoice_id}/attachment")
+def view_invoice_attachment(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(invoice.entity_id, current_user)
+    if not invoice.attachment_key:
+        raise HTTPException(status_code=404, detail="No attachment for this invoice")
+
+    file_bytes = _attach_read(invoice.attachment_key)
+    filename = invoice.attachment_filename or invoice.attachment_key
+    return Response(
+        content=file_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.delete("/{invoice_id}/attachment")
+def delete_invoice_attachment(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_entity_access(invoice.entity_id, current_user)
+    if not invoice.attachment_key:
+        raise HTTPException(status_code=404, detail="No attachment for this invoice")
+
+    removed_name = invoice.attachment_filename
+    _attach_delete(invoice.attachment_key)
+    invoice.attachment_key = None
+    invoice.attachment_filename = None
+    invoice.attachment_content_type = None
+    invoice.attachment_size = None
+    invoice.attachment_uploaded_at = None
+    invoice.attachment_uploaded_by_id = None
+
+    log_action(
+        db, "invoice.attachment_removed", user_id=current_user.id,
+        entity_id=invoice.entity_id, resource_type="invoice", resource_id=invoice.id,
+        description=f"Removed PO document '{removed_name}' from invoice {invoice.invoice_number}",
+    )
+    db.commit()
+    return {"detail": "Attachment removed"}
+
+
 class BulkPdfRequest(BaseModel):
     invoice_ids: List[int] = Field(..., min_length=1, max_length=500)
     merge: bool = False  # True → single combined PDF; False → ZIP of separate PDFs
+    include_attachments: bool = True  # merge each invoice's attached PO into its PDF when present
 
 
 def _safe_filename(name: str) -> str:
@@ -662,6 +862,8 @@ async def download_invoices_bulk_pdf(
             pdf_bytes = generate_invoice_pdf(
                 inv, inv.entity, inv.supplier, customer=inv.customer, theme=theme
             )
+            if payload.include_attachments:
+                pdf_bytes = _merge_with_attachment(pdf_bytes, inv)
             rendered.append((inv, pdf_bytes))
 
         if payload.merge:
@@ -818,10 +1020,13 @@ async def send_invoice_email_endpoint(
     if not recipient or not recipient.email:
         raise HTTPException(status_code=422, detail="Supplier/customer has no email address")
 
-    pdf_bytes = await asyncio.to_thread(
-        generate_invoice_pdf, invoice, invoice.entity, invoice.supplier,
-        customer=invoice.customer, theme=theme
-    )
+    def _build():
+        pdf_bytes = generate_invoice_pdf(
+            invoice, invoice.entity, invoice.supplier, customer=invoice.customer, theme=theme
+        )
+        return _merge_with_attachment(pdf_bytes, invoice)
+
+    pdf_bytes = await asyncio.to_thread(_build)
     send_invoice_email(
         to=recipient.email,
         invoice_number=invoice.invoice_number,
