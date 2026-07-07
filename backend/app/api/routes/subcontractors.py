@@ -805,7 +805,7 @@ def _ensure_costing_not_sent(db: Session, truck_id: int, month: int, year: int):
         raise HTTPException(
             status_code=403,
             detail="This costing has been sent to the subcontractor and is locked — "
-                   "no values can be added or removed. An admin must un-send it first.",
+                   "no values can be added or removed. It must be un-sent first.",
         )
 
 
@@ -820,9 +820,9 @@ def set_truck_costing_sent(
     current_user: User = Depends(get_current_user),
 ):
     """Mark a truck's costing for this period as SENT to the subcontractor
-    (locks it), or un-send it (admin only). The optional sent_date backdates
-    the send: expenses captured after that date roll forward into the next
-    month's costing instead of changing the statement that already went out."""
+    (locks it), or un-send it. The optional sent_date backdates the send:
+    expenses captured after that date roll forward into the next month's
+    costing instead of changing the statement that already went out."""
     sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Subcontractor not found")
@@ -848,8 +848,6 @@ def set_truck_costing_sent(
     if not payload.sent:
         if not row:
             return {"sent_at": None}
-        if current_user.role != "admin":
-            raise HTTPException(status_code=403, detail="Only an admin can un-send a costing")
         db.delete(row)
         log_action(
             db, "subcontractor_costing.unsent", user_id=current_user.id,

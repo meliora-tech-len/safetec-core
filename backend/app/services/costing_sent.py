@@ -137,7 +137,7 @@ def invoice_sent_lock_message(db: Session, inv: SupplierInvoice,
             return (
                 f"This expense is part of the {eff[1]:02d}/{eff[0]} costing for {t.registration}, "
                 "which has been sent to the subcontractor and is locked. "
-                "An admin must un-send that costing before this can change."
+                "It must be un-sent before this can change."
             )
     return None
 

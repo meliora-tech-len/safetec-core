@@ -1750,10 +1750,10 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
               >
                 <Lock size={11} /> SENT {formatDate(sent_at)}
               </span>
-              {isAdmin && onUnsend && (
+              {onUnsend && (
                 <button
                   className="btn-icon btn-ghost"
-                  title="Un-send (unlock this costing) — admin only"
+                  title="Un-send (unlock this costing)"
                   onClick={onUnsend}
                   style={{ padding: 2 }}
                 >
