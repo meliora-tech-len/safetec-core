@@ -95,6 +95,7 @@ def list_trucks(
     status: Optional[str] = Query(None),
     is_subcontractor: Optional[bool] = Query(None),
     subcontractor_id: Optional[int] = Query(None),
+    exclude_ended: bool = Query(False),
     registration: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
@@ -110,11 +111,11 @@ def list_trucks(
     if registration:
         q = q.filter(Truck.registration.ilike(registration))
     if subcontractor_id is not None:
-        # Scoped lookup (e.g. a subcontractor's own profile page) always sees
-        # its own trucks, even past end_date — only the general pickers below
-        # hide ended subcontractors.
         q = q.filter(Truck.subcontractor_id == subcontractor_id)
-    else:
+    # Ended subcontractors' trucks stay visible in management views (Fleet/Truck
+    # Loads, driver assignments, etc.) so their historical loads and costing stay
+    # reachable — only pickers for capturing NEW work opt in via exclude_ended.
+    if exclude_ended:
         ended_sub_ids = db.query(Subcontractor.id).filter(
             Subcontractor.end_date.isnot(None),
             Subcontractor.end_date < date.today(),
