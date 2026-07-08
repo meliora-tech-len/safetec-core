@@ -24,7 +24,9 @@ from app.schemas.schemas import (
     DieselConflict, DieselConflictSide, DieselConflictResolution,
 )
 from app.services.audit import log_action
-from app.services.costing_sent import ensure_not_on_sent_costing
+from app.services.costing_sent import (
+    ensure_not_on_sent_costing, build_sent_map, natural_invoice_period, roll_past_sent,
+)
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
     build_initials_cache, intent_from_action,
@@ -713,15 +715,35 @@ def list_invoices_by_vehicle(
 ):
     target = vehicle_reg.strip().upper()
 
+    # Resolve the truck to determine its entity (for the Safetec cash-timing
+    # exemption) and id (for the sent-costing roll-forward) — same period
+    # rules Costing uses, so an invoice shows up in the same month on both.
+    truck = (
+        db.query(Truck)
+        .filter(or_(Truck.registration.ilike(target), Truck.temp_registration.ilike(target)))
+        .first()
+    )
+    is_safetec = False
+    if truck:
+        entity = db.query(BusinessEntity).filter(BusinessEntity.id == truck.entity_id).first()
+        is_safetec = bool(entity and (entity.code or "").upper() == "SFT")
+    sent_map = build_sent_map(db, [truck.id] if truck else [])
+
+    # Candidate window: statement periods from 3 months back (natural periods
+    # that may have rolled forward through consecutive sent months into this
+    # one) up to next month (cash invoices whose natural period is this month) —
+    # mirrors the window used to build subcontractor costing.
+    period_idx = year * 12 + (month - 1)
+    stmt_idx = SupplierInvoice.statement_year * 12 + (SupplierInvoice.statement_month - 1)
+
     # Match single-line invoices on the main-line reg, and multi-line/split
     # invoices on any of their sub-line regs (stored in line_items.unit).
-    invoices = (
+    candidates = (
         db.query(SupplierInvoice)
         .options(joinedload(SupplierInvoice.line_items))
         .filter(
-            SupplierInvoice.statement_month == month,
-            SupplierInvoice.statement_year == year,
             SupplierInvoice.is_archived != True,
+            stmt_idx.between(period_idx - 3, period_idx + 1),
             or_(
                 SupplierInvoice.vehicle_reg.ilike(vehicle_reg),
                 SupplierInvoice.line_items.any(
@@ -732,6 +754,16 @@ def list_invoices_by_vehicle(
         .order_by(SupplierInvoice.invoice_date.asc(), SupplierInvoice.id.asc())
         .all()
     )
+
+    def _in_period(inv: SupplierInvoice) -> bool:
+        natural = natural_invoice_period(inv, is_safetec)
+        if natural is None:
+            return False
+        if not truck or inv.is_fixed_expense:
+            return natural == (year, month)
+        return roll_past_sent(natural, truck.id, inv.created_at, sent_map) == (year, month)
+
+    invoices = [inv for inv in candidates if _in_period(inv)]
 
     def _amount_for_truck(inv: SupplierInvoice) -> float:
         """Incl-VAT amount of this invoice attributable to the requested reg.
