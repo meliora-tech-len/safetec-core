@@ -1633,6 +1633,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
   const {
     truck, loads,
     income_excl_vat, income_incl_vat,
+    loads_income_excl_vat, loads_income_incl_vat,
     admin_fee, supplier_invoices,
     manual_incomes = [],
     total_expenses_excl_vat, total_expenses_incl_vat,
@@ -1691,6 +1692,11 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
   const incomeExcl  = parseFloat(income_excl_vat) || 0
   const incomeIncl  = parseFloat(income_incl_vat) || 0
   const vat         = incomeIncl - incomeExcl
+  // Loads-only (excludes manual income lines) — for the Loads row/total,
+  // which must reflect Truck Loads alone, not other income added in the module.
+  const loadsIncomeExcl = parseFloat(loads_income_excl_vat) || 0
+  const loadsIncomeIncl = parseFloat(loads_income_incl_vat) || 0
+  const loadsVat        = loadsIncomeIncl - loadsIncomeExcl
 
   // Build lookup: supplier_name (upper) → { diesel: inv|null, fee: inv|null }
   const invBySupplier = {}
@@ -1823,9 +1829,9 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                   )}
                 </button>
               </td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: isVatRegistered ? 'var(--text-muted)' : undefined, fontWeight: isVatRegistered ? undefined : 700 }}>{fmtC(incomeExcl)}</td>
-              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{isVatRegistered ? fmtC(vat) : dash}</td>
-              <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{isVatRegistered ? fmtC(incomeIncl) : dash}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: isVatRegistered ? 'var(--text-muted)' : undefined, fontWeight: isVatRegistered ? undefined : 700 }}>{fmtC(loadsIncomeExcl)}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>{isVatRegistered ? fmtC(loadsVat) : dash}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{isVatRegistered ? fmtC(loadsIncomeIncl) : dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
               <td style={tdStyle}></td>
@@ -2206,8 +2212,8 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
               <tfoot>
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
                   <td style={tdStyle} colSpan={5}>Total</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>{isVatRegistered ? fmtC(income_excl_vat) : <V field="income_excl">{fmtC(income_excl_vat)}</V>}</td>
-                  {isVatRegistered && <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}><V field="income_incl">{fmtC(income_incl_vat)}</V></td>}
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>{isVatRegistered ? fmtC(loadsIncomeExcl) : <V field="income_excl">{fmtC(loadsIncomeExcl)}</V>}</td>
+                  {isVatRegistered && <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--accent)' }}><V field="income_incl">{fmtC(loadsIncomeIncl)}</V></td>}
                 </tr>
               </tfoot>
             </table>

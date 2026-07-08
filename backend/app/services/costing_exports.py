@@ -193,6 +193,8 @@ def generate_costing_pdf(costing, entity) -> bytes:
 
         inc_e = float(td.income_excl_vat or 0)
         inc_i = float(td.income_incl_vat or 0)
+        loads_inc_e = float(td.loads_income_excl_vat or 0)
+        loads_inc_i = float(td.loads_income_incl_vat or 0)
         exp_i = float(td.total_expenses_incl_vat or 0)
         exp_e = float(td.total_expenses_excl_vat or 0)
         net   = float(td.net_payable or 0)
@@ -202,11 +204,20 @@ def generate_costing_pdf(costing, entity) -> bytes:
             [P("", s_hdr), P("Income Excl VAT", s_hdr_r), P("Income Incl VAT", s_hdr_r),
              P("Expenses Incl VAT", s_hdr_r), P("Expenses Excl VAT", s_hdr_r)],
             [P(f"Loads ({len(td.loads)})", s_sec),
-             P(_fmt(inc_e), s_val),
-             P(_fmt(inc_i), s_val) if is_vat else dash,
+             P(_fmt(loads_inc_e), s_val),
+             P(_fmt(loads_inc_i), s_val) if is_vat else dash,
              dash, dash],
-            [P("Admin Fee", s_lbl), dash, dash, P(_fmt(td.admin_fee), s_val), dash],
         ]
+        for mi in (td.manual_incomes or []):
+            m_excl = float(mi.amount_excl_vat or 0)
+            m_incl = float(mi.amount_incl_vat or 0)
+            rows.append([
+                P(mi.description, s_lbl),
+                P(_fmt(m_excl), s_val),
+                P(_fmt(m_incl), s_val) if is_vat else dash,
+                dash, dash,
+            ])
+        rows.append([P("Admin Fee", s_lbl), dash, dash, P(_fmt(td.admin_fee), s_val), dash])
 
         # Diesel groups
         for dg in (td.diesel_groups or []):
@@ -532,6 +543,8 @@ def generate_costing_excel(costing, entity) -> bytes:
 
         inc_e = fmt_val(td.income_excl_vat)
         inc_i = fmt_val(td.income_incl_vat)
+        loads_inc_e = fmt_val(td.loads_income_excl_vat)
+        loads_inc_i = fmt_val(td.loads_income_incl_vat)
         net   = fmt_val(td.net_payable)
 
         # Column letters: income excl VAT always lands in B, incl VAT in C
@@ -552,12 +565,14 @@ def generate_costing_excel(costing, entity) -> bytes:
             excl_val = f"=SUM({EXCL_L}{loads_row + 1}:{EXCL_L}{loads_row + n_loads})"
             incl_val = f"=SUM({INCL_L}{loads_row + 1}:{INCL_L}{loads_row + n_loads})" if is_vat else None
         else:
-            excl_val = inc_e
-            incl_val = inc_i if is_vat else None
+            excl_val = loads_inc_e
+            incl_val = loads_inc_i if is_vat else None
         write_row(
             [f"Loads ({n_loads})", excl_val, incl_val, None, None],
             fnt=LBL_FONT, fills=[None]*5, row_h=15,
         )
+        inc_excl_cells = [f"{EXCL_L}{loads_row}"]  # cells summed into the Income Excl VAT total
+        inc_incl_cells = [f"{INCL_L}{loads_row}"]  # cells summed into the Income Incl VAT total
 
         # Per-load detail rows (collapsed by default; expand via the +/- control)
         detail_font = font(color="6B7280", size=8)
@@ -573,6 +588,15 @@ def generate_costing_excel(costing, entity) -> bytes:
             )
             ws.row_dimensions[row - 1].outline_level = 1
             ws.row_dimensions[row - 1].hidden = True
+
+        # Manual income lines — added in the costing module only
+        for mi in (td.manual_incomes or []):
+            write_row(
+                [mi.description, fmt_val(mi.amount_excl_vat), fmt_val(mi.amount_incl_vat) if is_vat else None, None, None],
+                fnt=LBL_FONT, fills=[None]*5, row_h=15,
+            )
+            inc_excl_cells.append(f"{EXCL_L}{row - 1}")
+            inc_incl_cells.append(f"{INCL_L}{row - 1}")
 
         # Admin fee
         write_row(["Admin Fee", None, None, fmt_val(td.admin_fee), None], fnt=LBL_FONT, row_h=15)
@@ -603,11 +627,12 @@ def generate_costing_excel(costing, entity) -> bytes:
                     exp_excl_cells.append(f"{EXP_E_L}{row - 1}")
 
         # Totals — built from Excel SUM formulas so the component cells are
-        # visible: income references the Loads row, expenses sum their line items.
+        # visible: income sums the Loads row plus any manual income lines,
+        # expenses sum their line items.
         def _sum(cells):
             return f"=SUM({','.join(cells)})" if cells else 0
-        inc_total_excl = f"={EXCL_L}{loads_row}"
-        inc_total_incl = f"={INCL_L}{loads_row}" if is_vat else None
+        inc_total_excl = _sum(inc_excl_cells)
+        inc_total_incl = _sum(inc_incl_cells) if is_vat else None
         write_row(
             ["Totals",
              inc_total_excl,

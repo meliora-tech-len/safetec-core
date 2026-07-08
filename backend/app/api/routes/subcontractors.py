@@ -590,6 +590,10 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             (Decimal(str(l.subcontractor_amount_incl_vat)) for l in loads if l.subcontractor_amount_incl_vat is not None),
             D0,
         )
+        # Loads-only income, captured before manual income lines are folded in
+        # below — the "Loads" row/total must reflect Truck Loads alone.
+        loads_income_excl = income_excl
+        loads_income_incl = income_incl
 
         # Manual costing-only income lines for this truck/period — added straight
         # into the income columns (and so into the net payable below), but never
@@ -730,6 +734,8 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             loads=[_enrich_load(l) for l in loads],
             income_excl_vat=income_excl,
             income_incl_vat=income_incl,
+            loads_income_excl_vat=loads_income_excl,
+            loads_income_incl_vat=loads_income_incl,
             admin_fee=admin_fee,
             supplier_invoices=[
                 _enrich_invoice(db, i).model_copy(update={"amount": amt})

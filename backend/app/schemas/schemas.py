@@ -2246,6 +2246,10 @@ class SubcontractorTruckCostingOut(BaseModel):
     loads: List[TruckLoadOut]
     income_excl_vat: Decimal
     income_incl_vat: Decimal
+    # Loads-only income (Truck Loads alone, before manual income lines below are
+    # folded in) — used for the "Loads" row/total, which must never include them.
+    loads_income_excl_vat: Decimal
+    loads_income_incl_vat: Decimal
     admin_fee: Decimal
     supplier_invoices: List[SupplierInvoiceOut]
     # Manual income lines added directly in the costing module (costing-only;
