@@ -983,8 +983,10 @@ def finalize_additional_load(
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
     was_locked = bool(entry.verified3_by)
+    # require_step1=False: the admin may final-lock on her own, without a prior
+    # step-1 tick (ticks can still be added to empty steps afterwards).
     apply_finalize_step(entry, current_user, is_admin=(current_user.role == "admin"),
-                        desired=intent_from_action(action))
+                        require_step1=False, desired=intent_from_action(action))
     locked = bool(entry.verified3_by)
     if locked != was_locked:
         log_action(db, "additional_load.finalized" if locked else "additional_load.unfinalized",
@@ -1124,8 +1126,10 @@ def finalize_food_payment(
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
     was_locked = bool(entry.verified3_by)
+    # require_step1=False: the admin may final-lock on her own, without a prior
+    # step-1 tick (ticks can still be added to empty steps afterwards).
     apply_finalize_step(entry, current_user, is_admin=(current_user.role == "admin"),
-                        desired=intent_from_action(action))
+                        require_step1=False, desired=intent_from_action(action))
     locked = bool(entry.verified3_by)
     if locked != was_locked:
         log_action(db, "food_payment.finalized" if locked else "food_payment.unfinalized",

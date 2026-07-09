@@ -1040,8 +1040,10 @@ def finalize_fillup(
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
     was_locked = bool(f.verified3_by)
+    # require_step1=False: the admin may final-lock on her own, without a prior
+    # step-1 tick (ticks can still be added to empty steps afterwards).
     apply_finalize_step(f, current_user, is_admin=(current_user.role == "admin"),
-                        desired=intent_from_action(action))
+                        require_step1=False, desired=intent_from_action(action))
     locked = bool(f.verified3_by)
     if locked != was_locked:
         log_action(

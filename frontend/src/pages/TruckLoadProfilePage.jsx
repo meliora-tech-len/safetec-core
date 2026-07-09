@@ -783,7 +783,7 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
                           <td onClick={e => e.stopPropagation()}>
                             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                               <VerifyBadge item={f} onVerify={handleVerifyFillup} onFinalize={handleFinalizeFillup}
-                                currentUserId={dieselUser?.id} isAdmin={dieselIsAdmin} />
+                                currentUserId={dieselUser?.id} isAdmin={dieselIsAdmin} adminFinalizeAnytime />
                               <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(f)}>
                                 <Trash2 size={13} />
                               </button>
@@ -1191,7 +1191,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
                         <VerifyBadge item={alVerif[alTarget(e.id)] || {}}
                           onVerify={(_i, intent) => handleVerifyAl(alTarget(e.id), intent)}
                           onFinalize={(_i, intent) => handleFinalizeAl(alTarget(e.id), intent)}
-                          currentUserId={alUser?.id} isAdmin={alIsAdmin} />
+                          currentUserId={alUser?.id} isAdmin={alIsAdmin} adminFinalizeAnytime />
                         <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(e)}>
                           <Trash2 size={13} />
                         </button>
@@ -2839,7 +2839,7 @@ export default function TruckLoadProfilePage() {
                           <VerifyBadge item={loadVerif[loadVerifTarget(l.id)] || {}}
                             onVerify={(_i, intent) => handleVerifyLoad(loadVerifTarget(l.id), intent)}
                             onFinalize={(_i, intent) => handleFinalizeLoad(loadVerifTarget(l.id), intent)}
-                            currentUserId={user?.id} isAdmin={isAdmin} />
+                            currentUserId={user?.id} isAdmin={isAdmin} adminFinalizeAnytime />
                         </div>
                       </td>
                     </tr>
@@ -2910,7 +2910,7 @@ export default function TruckLoadProfilePage() {
                         <VerifyBadge item={loadVerif[loadVerifTarget(l.id)] || {}}
                           onVerify={(_i, intent) => handleVerifyLoad(loadVerifTarget(l.id), intent)}
                           onFinalize={(_i, intent) => handleFinalizeLoad(loadVerifTarget(l.id), intent)}
-                          currentUserId={user?.id} isAdmin={isAdmin} />
+                          currentUserId={user?.id} isAdmin={isAdmin} adminFinalizeAnytime />
                       </div>
                     </td>
                   </tr>,

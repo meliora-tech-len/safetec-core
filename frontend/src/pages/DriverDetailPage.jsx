@@ -961,7 +961,7 @@ export default function DriverDetailPage() {
                             ...(al.verified2_by ? { background: 'rgba(253,224,71,0.55)', fontWeight: 700 } : {}),
                           }}>{fmt(al.amount)}</td>
                           <td>
-                            <VerifyBadge item={al} currentUserId={user?.id} isAdmin={isAdmin}
+                            <VerifyBadge item={al} currentUserId={user?.id} isAdmin={isAdmin} adminFinalizeAnytime
                               onVerify={async (item, intent) => {
                                 try {
                                   const { data } = await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/verify`, null, { params: intent ? { action: intent } : {} })
@@ -1032,7 +1032,7 @@ export default function DriverDetailPage() {
                             ...(fp.verified2_by ? { background: 'rgba(253,224,71,0.55)', fontWeight: 700 } : {}),
                           }}>{fmt(fp.amount)}</td>
                           <td>
-                            <VerifyBadge item={fp} currentUserId={user?.id} isAdmin={isAdmin}
+                            <VerifyBadge item={fp} currentUserId={user?.id} isAdmin={isAdmin} adminFinalizeAnytime
                               onVerify={async (item, intent) => {
                                 try {
                                   const { data } = await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/verify`, null, { params: intent ? { action: intent } : {} })

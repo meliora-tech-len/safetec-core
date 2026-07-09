@@ -14,7 +14,7 @@ import {
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
@@ -636,6 +636,7 @@ export default function SupplierProfilePage() {
   const [selectedIds, setSelectedIds] = useState(new Set())  // invoices ticked for bulk verify / pay
   const [verifyingBulk, setVerifyingBulk] = useState(false)
   const [payingBulk, setPayingBulk] = useState(false)
+  const [finalizingBulk, setFinalizingBulk] = useState(false)
   const firstInputRef = useRef(null)
   // Physical-invoice attachment: one shared hidden file input, targeted at a row.
   const attachInputRef = useRef(null)
@@ -1053,9 +1054,15 @@ export default function SupplierProfilePage() {
     return false
   }
 
-  // A row is selectable if there's a bulk action it can take part in:
-  // a pending verification tick, or it's still unpaid (for bulk mark-paid).
-  const canUserSelect = (inv) => canUserVerify(inv) || !inv.is_paid
+  // Whether the current (admin) user can apply the final lock to this invoice —
+  // admin only, not already locked. No step-1 prerequisite: the admin may lock
+  // on her own; other users can still add ticks to empty steps afterwards.
+  const canUserFinalize = (inv) =>
+    isAdmin && !(inv.verified3_by || inv.verified3_by_initials)
+
+  // A row is selectable if there's a bulk action it can take part in: a pending
+  // verification tick, a pending final lock, or it's still unpaid (bulk mark-paid).
+  const canUserSelect = (inv) => canUserVerify(inv) || canUserFinalize(inv) || !inv.is_paid
 
   const toggleSelect = (id) => setSelectedIds(s => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
@@ -1083,6 +1090,28 @@ export default function SupplierProfilePage() {
     setVerifyingBulk(false)
     clearSelection()
     if (ok) toast.success(`Verified ${ok} invoice${ok === 1 ? '' : 's'}`)
+  }
+
+  // Apply the admin final lock to every selected eligible invoice. Reuses the
+  // single-invoice endpoint with the explicit 'apply' intent (no-ops server-side
+  // on anything already locked), patching each row in place as it returns.
+  const handleFinalizeSelected = async () => {
+    const targets = groups.flatMap(g => g.invoices)
+      .filter(i => selectedIds.has(i.id) && canUserFinalize(i))
+    if (!targets.length) return
+    if (!confirm(`Apply the final lock to ${targets.length} invoice${targets.length === 1 ? '' : 's'}? Locked invoices can no longer be edited.`)) return
+    setFinalizingBulk(true)
+    let ok = 0
+    for (const inv of targets) {
+      try {
+        const { data } = await finalizeSupplierInvoice(inv.id, 'apply')
+        patchInvoice(data)
+        ok++
+      } catch (e) { toast.error(errorMessage(e)) }
+    }
+    setFinalizingBulk(false)
+    clearSelection()
+    if (ok) toast.success(`Final lock applied to ${ok} invoice${ok === 1 ? '' : 's'}`)
   }
 
   // Mark every selected unpaid invoice as paid (a single payment covering many
@@ -1145,8 +1174,10 @@ export default function SupplierProfilePage() {
   })
 
   const allInvoices = groups.flatMap(g => g.invoices)
-  const selectedVerifiable = allInvoices.filter(i => selectedIds.has(i.id) && canUserVerify(i))
-  const selectedUnpaid     = allInvoices.filter(i => selectedIds.has(i.id) && !i.is_paid)
+  const selectedVerifiable  = allInvoices.filter(i => selectedIds.has(i.id) && canUserVerify(i))
+  const selectedUnpaid      = allInvoices.filter(i => selectedIds.has(i.id) && !i.is_paid)
+  const selectedFinalizable = allInvoices.filter(i => selectedIds.has(i.id) && canUserFinalize(i))
+  const bulkBusy = verifyingBulk || payingBulk || finalizingBulk
   const multiEntity = entities.length > 1
 
   // Map a vehicle registration to its owning subcontractor (display fallback).
@@ -1421,26 +1452,40 @@ export default function SupplierProfilePage() {
           {selectedVerifiable.length > 0 && (
             <button
               onClick={handleVerifySelected}
-              disabled={verifyingBulk || payingBulk}
+              disabled={bulkBusy}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '7px 16px', borderRadius: 7, border: 'none',
                 background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
-                cursor: verifyingBulk ? 'default' : 'pointer', opacity: (verifyingBulk || payingBulk) ? 0.6 : 1,
+                cursor: verifyingBulk ? 'default' : 'pointer', opacity: bulkBusy ? 0.6 : 1,
               }}>
               <CheckCircle size={15} />
               {verifyingBulk ? 'Verifying…' : `Verify selected (${selectedVerifiable.length})`}
             </button>
           )}
+          {selectedFinalizable.length > 0 && (
+            <button
+              onClick={handleFinalizeSelected}
+              disabled={bulkBusy}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 7, border: 'none',
+                background: '#7c3aed', color: '#fff', fontWeight: 600, fontSize: 13,
+                cursor: finalizingBulk ? 'default' : 'pointer', opacity: bulkBusy ? 0.6 : 1,
+              }}>
+              <Lock size={15} />
+              {finalizingBulk ? 'Locking…' : `Final lock selected (${selectedFinalizable.length})`}
+            </button>
+          )}
           {selectedUnpaid.length > 0 && (
             <button
               onClick={handleMarkPaidSelected}
-              disabled={verifyingBulk || payingBulk}
+              disabled={bulkBusy}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '7px 16px', borderRadius: 7, border: 'none',
                 background: '#2563eb', color: '#fff', fontWeight: 600, fontSize: 13,
-                cursor: payingBulk ? 'default' : 'pointer', opacity: (verifyingBulk || payingBulk) ? 0.6 : 1,
+                cursor: payingBulk ? 'default' : 'pointer', opacity: bulkBusy ? 0.6 : 1,
               }}>
               <CheckCircle size={15} />
               {payingBulk ? 'Marking…' : `Mark paid (${selectedUnpaid.length})`}
@@ -1448,7 +1493,7 @@ export default function SupplierProfilePage() {
           )}
           <button
             onClick={clearSelection}
-            disabled={verifyingBulk || payingBulk}
+            disabled={bulkBusy}
             className="btn-ghost"
             style={{ fontSize: 13, padding: '6px 10px' }}>
             Clear
@@ -1933,7 +1978,7 @@ export default function SupplierProfilePage() {
 
                             {/* Verified */}
                             <td style={styles.td}>
-                              <VerifyBadge item={inv} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} />
+                              <VerifyBadge item={inv} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} adminFinalizeAnytime />
                             </td>
 
                             {/* Paid */}

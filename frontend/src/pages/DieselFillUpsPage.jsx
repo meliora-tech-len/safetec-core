@@ -530,7 +530,7 @@ export default function DieselFillUpsPage() {
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.invoice_number || '—'}</td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.slip_number || '—'}</td>
                   <td>
-                    <VerifyBadge item={f} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} />
+                    <VerifyBadge item={f} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} adminFinalizeAnytime />
                   </td>
                   <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
                     {!!f.verified3_by && (

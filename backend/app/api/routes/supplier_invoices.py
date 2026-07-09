@@ -1300,8 +1300,11 @@ def finalize_supplier_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_invoice_access(inv, current_user)
     was_locked = bool(inv.verified3_by)
+    # require_step1=False: the admin may final-lock on her own, without a prior
+    # step-1 tick. Other users can still add their ticks afterwards (the lock
+    # freezes values and existing ticks, not empty steps).
     apply_finalize_step(inv, current_user, is_admin=(current_user.role == "admin"),
-                        desired=intent_from_action(action))
+                        require_step1=False, desired=intent_from_action(action))
     locked = bool(inv.verified3_by)
     # Only log when the lock state actually changed (a stale-tab no-op leaves it as-is).
     if locked != was_locked:
