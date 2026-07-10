@@ -231,6 +231,7 @@ export const getFleetTrucks = (params = {}) => api.get('/fleet/trucks', { params
 export const getTruckLoads = (params = {}) => api.get('/truck-loads', { params })
 export const getTruckLoadSummary      = (params = {}) => api.get('/truck-loads/summary', { params })
 export const getTruckFleetSummary         = (params = {}) => api.get('/truck-loads/fleet-summary', { params })
+export const downloadTruckFleetSummaryPdf = (params = {}) => api.get('/truck-loads/fleet-summary/export/pdf', { params, responseType: 'blob' })
 export const getDieselInvoiceReconciliation = (params = {}) => api.get('/diesel/invoice-reconciliation', { params })
 export const createTruckLoad = (data) => api.post('/truck-loads', data)
 export const createSplitLoad = (data) => api.post('/truck-loads/split', data)

@@ -636,6 +636,36 @@ def get_fleet_summary(
     ]
 
 
+@router.get("/fleet-summary/export/pdf")
+def export_fleet_summary_pdf(
+    statement_month: int = Query(..., ge=1, le=12),
+    statement_year: int = Query(..., ge=2020),
+    entity_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The Summary tab's truck totals as a branded PDF (letterhead when a
+    single entity is selected)."""
+    import io
+    from fastapi.responses import StreamingResponse
+    from app.services.fleet_summary_export import generate_fleet_summary_pdf
+
+    rows = get_fleet_summary(entity_id=entity_id, statement_month=statement_month,
+                             statement_year=statement_year, db=db, current_user=current_user)
+    entity = None
+    if entity_id is not None:
+        entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+
+    pdf_bytes = generate_fleet_summary_pdf(rows, entity, statement_month, statement_year)
+    ent_part = (entity.code or entity.name).replace(" ", "-").lower() if entity else "all"
+    filename = f"truck-totals-{ent_part}-{statement_year}-{statement_month:02d}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ── Recalculate sub amounts ───────────────────────────────────────────────────
 
 @router.post("/recalculate-sub")

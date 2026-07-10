@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, Fragment, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Package, Search, X, ChevronRight, AlertCircle, CheckCircle } from 'lucide-react'
+import { Package, Search, X, ChevronRight, AlertCircle, CheckCircle, FileDown } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
-import { getFleetTrucks, getTruckFleetSummary, getDieselInvoiceReconciliation } from '../services/api'
+import { getFleetTrucks, getTruckFleetSummary, getDieselInvoiceReconciliation, downloadTruckFleetSummaryPdf } from '../services/api'
 import { formatCurrency } from '../utils/helpers'
 import toast from 'react-hot-toast'
 
@@ -24,7 +24,7 @@ const currentYear  = () => new Date().getFullYear()
 
 // ── Shared period + entity selector ──────────────────────────────────────────
 
-function PeriodEntityBar({ month, setMonth, year, setYear, entityId, setEntityId, entities, isAdmin }) {
+function PeriodEntityBar({ month, setMonth, year, setYear, entityId, setEntityId, entities, isAdmin, children }) {
   return (
     <div style={{ display: 'flex', gap: 10, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
       {isAdmin && (
@@ -38,6 +38,7 @@ function PeriodEntityBar({ month, setMonth, year, setYear, entityId, setEntityId
       </select>
       <input type="number" value={year} onChange={e => setYear(Number(e.target.value))}
         style={{ width: 80 }} min={2020} max={2099} />
+      {children}
     </div>
   )
 }
@@ -171,6 +172,7 @@ function SummaryTab({ entities, isAdmin }) {
   const [month, setMonth]     = useSessionState('period:truck-loads:month', currentMonth())
   const [year, setYear]       = useSessionState('period:truck-loads:year', currentYear())
   const [entityId, setEntityId] = useEntityFilter()
+  const [downloading, setDownloading] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -188,6 +190,26 @@ function SummaryTab({ entities, isAdmin }) {
 
   useEffect(() => { load() }, [load])
 
+  const handleDownloadPdf = async () => {
+    setDownloading(true)
+    try {
+      const params = { statement_month: month, statement_year: year }
+      if (entityId) params.entity_id = entityId
+      const r = await downloadTruckFleetSummaryPdf(params)
+      const entCode = entities.find(e => e.id === parseInt(entityId))?.code?.toLowerCase() || 'all'
+      const url = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `truck-totals-${entCode}-${year}-${String(month).padStart(2, '0')}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error('Failed to download PDF')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   const totalMissing = rows.reduce((s, r) => s + r.loads_missing_invoice, 0)
   const fmt2 = (v) => Number(v).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -202,7 +224,15 @@ function SummaryTab({ entities, isAdmin }) {
   return (
     <>
       <PeriodEntityBar month={month} setMonth={setMonth} year={year} setYear={setYear}
-        entityId={entityId} setEntityId={setEntityId} entities={entities} isAdmin={isAdmin} />
+        entityId={entityId} setEntityId={setEntityId} entities={entities} isAdmin={isAdmin}>
+        <button className="btn-ghost btn-sm" onClick={handleDownloadPdf}
+          disabled={downloading || loading || rows.length === 0}
+          style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, marginLeft: 'auto' }}
+          title="Export PDF">
+          <FileDown size={14} />
+          {downloading ? 'Exporting…' : 'PDF'}
+        </button>
+      </PeriodEntityBar>
 
       {totalMissing > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14,
