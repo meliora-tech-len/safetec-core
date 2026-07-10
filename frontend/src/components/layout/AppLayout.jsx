@@ -3,7 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { Menu } from 'lucide-react'
 import Sidebar from './Sidebar'
-import FeedbackWidget from '../FeedbackWidget'
+// import FeedbackWidget from '../FeedbackWidget'  // hidden for now — floating help/bug buttons
 import ErrorBoundary from '../ErrorBoundary'
 import { useAuth } from '../../hooks/useAuth'
 import { useIsMobile } from '../../hooks/useIsMobile'
@@ -60,7 +60,7 @@ export default function AppLayout() {
           error: { iconTheme: { primary: 'var(--danger)', secondary: 'var(--bg-card)' } },
         }}
       />
-      <FeedbackWidget />
+      {/* <FeedbackWidget /> */}
     </div>
   )
 }
