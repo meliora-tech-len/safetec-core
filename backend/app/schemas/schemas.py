@@ -477,6 +477,7 @@ class InvoiceOut(InvoiceBase):
     total: Decimal
     paid_date: Optional[datetime] = None
     payment_reference: Optional[str] = None
+    po_number: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     line_items: List[LineItemOut] = []
@@ -2486,6 +2487,38 @@ class BudgetOut(BaseModel):
 
 class BudgetDetailOut(BudgetOut):
     sections: List[BudgetSectionOut] = []
+
+
+# ── Income selection ──────────────────────────────────────────────────────────
+# Income is chosen, not pulled: the modal lists one candidate per PO plus an
+# "All Invoices Paid" bucket for invoices without one, and the user ticks what
+# belongs in the budget.
+
+class BudgetIncomeCandidateValue(BaseModel):
+    month: int
+    year: int
+    amount_due: Decimal
+
+
+class BudgetIncomeCandidateOut(BaseModel):
+    source_key: str
+    line_name: str
+    values: List[BudgetIncomeCandidateValue] = []
+    total: Decimal                 # sum across the budget's whole window
+    selected: bool = False         # already a line in this budget
+
+
+class BudgetIncomeSelection(BaseModel):
+    """The income lines this budget should have, as source_keys. Authoritative:
+    a key that's present is created/refreshed, one that's absent is removed."""
+    source_keys: List[str] = []
+
+
+class BudgetReplicateOut(BaseModel):
+    budget: BudgetDetailOut
+    created: bool                  # target budget didn't exist and was created
+    lines_added: int
+    values_filled: int
 
 
 class BudgetLineTemplateCreate(BaseModel):

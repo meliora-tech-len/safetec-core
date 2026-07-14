@@ -21,6 +21,7 @@ from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Su
 from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, DashboardStats, InvoiceSummary, EntityProfitLoss
 from app.services.audit import log_action
 from app.services.invoice_numbering import generate_invoice_number, peek_invoice_number
+from app.services.po_number import po_number_for_invoice
 from app.services.pdf_generator import generate_invoice_pdf
 from app.services.email import send_invoice_email
 
@@ -512,6 +513,7 @@ def create_invoice(
             vat_amount=vat_amount,
             total=total,
             vat_rate=vat_rate,
+            po_number=po_number_for_invoice(payload.notes, payload.line_items),
         )
         db.add(invoice)
         db.flush()
@@ -618,6 +620,18 @@ def update_invoice(
             invoice.subtotal = subtotal
             invoice.vat_amount = vat_amount
             invoice.total = total
+
+        # The PO number lives in the notes / header line item, so re-derive it
+        # whenever either could have changed — an edit that removes the PO Ref
+        # must drop the link, not leave a stale one behind.
+        if payload.notes is not None or payload.line_items is not None:
+            items = payload.line_items if payload.line_items is not None else (
+                db.query(InvoiceLineItem)
+                .filter(InvoiceLineItem.invoice_id == invoice_id)
+                .order_by(InvoiceLineItem.sort_order)
+                .all()
+            )
+            invoice.po_number = po_number_for_invoice(invoice.notes, items)
 
         if invoice.supplier_id:
             inv_rec = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()

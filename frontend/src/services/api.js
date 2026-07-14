@@ -342,6 +342,7 @@ export const getPayrollSettings = () => api.get('/payroll-settings')
 export const getIncomeExpensesReport = (params) => api.get('/reports/income-expenses', { params })
 export const getSarsVatDetail = (params) => api.get('/reports/sars-vat-detail', { params })
 export const getSarsVatDetailAnnual = (params) => api.get('/reports/sars-vat-detail-annual', { params })
+export const getSubcontractorLoadsReport = (params) => api.get('/reports/subcontractor-loads', { params })
 export const getPayrollEntries = (params = {}) => api.get('/payroll-entries/', { params })
 export const getPayrollEntriesSummary = (params) => api.get('/payroll-entries/summary', { params })
 
@@ -432,12 +433,28 @@ export const addBudgetLine = (sectionId, data) => api.post(`/budgets/sections/${
 export const updateBudgetLine = (lineId, data) => api.patch(`/budgets/lines/${lineId}`, data)
 export const deleteBudgetLine = (lineId) => api.delete(`/budgets/lines/${lineId}`)
 export const upsertBudgetLineValue = (lineId, data) => api.put(`/budgets/lines/${lineId}/values`, data)
-// Pull existing system data (suppliers, income, subcontractors, wages) into the
-// budget's auto lines. Manual lines and hand-edited cells are preserved.
-export const refreshBudgetFromSystem = (id) => api.post(`/budgets/${id}/refresh-from-system`)
+
+// Pull existing system data into ONE section's auto lines (the section header's
+// "Pull from System"). Manual lines, hand-edited cells and every other section
+// are left untouched.
+export const pullBudgetSection = (budgetId, sectionId) =>
+  api.post(`/budgets/${budgetId}/sections/${sectionId}/pull`)
+
+// Income is chosen, not pulled: list the candidates (one per PO, plus an
+// "All Invoices Paid" bucket for invoices without one), then set the budget's
+// income lines to exactly the ticked source_keys.
+export const getBudgetIncomeCandidates = (budgetId) =>
+  api.get(`/budgets/${budgetId}/income-candidates`)
+export const setBudgetIncomeLines = (budgetId, sourceKeys) =>
+  api.put(`/budgets/${budgetId}/income-lines`, { source_keys: sourceKeys })
+
+// Carry this budget forward into the next month, creating it if needed. Figures
+// keep their absolute month, so only those still inside the next month's window
+// come along. Merges into an existing budget rather than overwriting it.
+export const replicateBudget = (budgetId) => api.post(`/budgets/${budgetId}/replicate`)
 
 // Budget "constants" — recurring lines (e.g. Travel & Accom) seeded into every
-// budget's matching section on creation and on every "Pull from system" refresh.
+// budget's matching section on creation, and into a section when it's pulled.
 export const getBudgetLineTemplates = () => api.get('/budgets/line-templates')
 export const createBudgetLineTemplate = (data) => api.post('/budgets/line-templates', data)
 export const updateBudgetLineTemplate = (id, data) => api.patch(`/budgets/line-templates/${id}`, data)

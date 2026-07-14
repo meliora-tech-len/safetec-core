@@ -5,11 +5,12 @@ import { useSessionState } from '../hooks/useSessionState'
 import {
   getBudgets, getBudget, createBudget, deleteBudget,
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
-  addBudgetLine, deleteBudgetLine, upsertBudgetLineValue, refreshBudgetFromSystem,
+  addBudgetLine, deleteBudgetLine, upsertBudgetLineValue,
+  pullBudgetSection, getBudgetIncomeCandidates, setBudgetIncomeLines, replicateBudget,
   getVerifications, verifyValue, finalizeValue, getSuppliers, updateSupplier,
   getBudgetLineTemplates, createBudgetLineTemplate, updateBudgetLineTemplate, deleteBudgetLineTemplate,
 } from '../services/api'
-import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, TrendingDown, ChevronUp, ChevronDown, ChevronsUpDown, Ban, Search, ListChecks } from 'lucide-react'
+import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, ChevronUp, ChevronDown, ChevronsUpDown, Ban, Search, ListChecks, CopyPlus } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { errorMessage, formatCurrency } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
@@ -35,6 +36,39 @@ const CONSTANT_SECTION_OPTIONS = [
   'INCOME', '30 DAY SUPPLIERS', 'CASH / CURRENT SUPPLIERS', 'DIESEL',
   'INTERCOMPANY INVOICES', 'SUB CONTRACTORS', 'DEBIT ORDERS', 'WAGES', 'OTHER',
 ]
+
+const INCOME_SECTION = 'INCOME'
+
+// Sections the backend can pull system data into — mirrors SECTION_SOURCES in
+// budget_autofill.py. Anything else (DEBIT ORDERS, a hand-added section) has no
+// system source, so it gets no "Pull from System" button. INCOME is absent on
+// purpose: it's chosen in the modal, never pulled wholesale.
+const PULLABLE_SECTIONS = [
+  '30 DAY SUPPLIERS', 'CASH / CURRENT SUPPLIERS', 'DIESEL',
+  'INTERCOMPANY INVOICES', 'SUB CONTRACTORS', 'WAGES', 'OTHER',
+]
+
+// Sections fed by supplier invoices — these get the "Exclude" button, since
+// excluding a supplier is what shapes what they pull.
+const SUPPLIER_SECTIONS = [
+  '30 DAY SUPPLIERS', 'CASH / CURRENT SUPPLIERS', 'DIESEL',
+  'INTERCOMPANY INVOICES', 'OTHER',
+]
+
+// Which suppliers the Exclude modal lists for a given section — the ones that
+// would classify into it. Mirrors the sectioning in budget_autofill._suppliers,
+// where intercompany wins over diesel, which wins over payment term. OTHER holds
+// free-text rows that match no supplier record, so it lists them all.
+function suppliersForSection(sectionName, suppliers) {
+  if (sectionName === 'OTHER') return suppliers
+  return suppliers.filter(s => {
+    if (s.is_intercompany) return sectionName === 'INTERCOMPANY INVOICES'
+    if (s.is_diesel_supplier) return sectionName === 'DIESEL'
+    // The API serialises PaymentTermType.days_30 as its value, "30_days".
+    if (s.payment_term === '30_days') return sectionName === '30 DAY SUPPLIERS'
+    return sectionName === 'CASH / CURRENT SUPPLIERS'
+  })
+}
 
 function periodMonths(month, year, statementMode = false) {
   if (statementMode) {
@@ -67,14 +101,17 @@ export default function BudgetsPage() {
   const [creating, setCreating] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(null) // budget object
   const [cellEdits, setCellEdits] = useState({})   // `${lineId}:${m}:${y}:${field}` -> string
-  const [newLine, setNewLine] = useState({})       // sectionId -> name
   const [newSection, setNewSection] = useState(null) // null | { name, section_type }
-  const [refreshing, setRefreshing] = useState(false)
+  const [pulling, setPulling] = useState({})       // sectionId -> boolean (in flight)
+  const [replicating, setReplicating] = useState(false)
   const [quickAdd, setQuickAdd] = useState(null)   // null | { kind: 'income'|'expense', sectionId, name }
   const [verif, setVerif] = useState({})           // target -> ValueVerification
   const [sortByCol, setSortByCol] = useState({})   // sectionId -> { key, dir }
   const [suppliers, setSuppliers] = useState([])   // suppliers for the selected entity (Add Expense picker)
-  const [showExclusions, setShowExclusions] = useState(false)
+  const [showExclusions, setShowExclusions] = useState(null) // null | section name being filtered on
+  // Income picker: null | { loading, candidates, picked: Set<source_key>, saving }
+  const [incomeModal, setIncomeModal] = useState(null)
+  const [incomeSearch, setIncomeSearch] = useState('')
   const [exclSaving, setExclSaving] = useState({}) // supplierId -> boolean (in flight)
   const [exclSearch, setExclSearch] = useState('')
   const [showConstants, setShowConstants] = useState(false)
@@ -172,18 +209,91 @@ export default function BudgetsPage() {
     }
   }
 
-  const handleRefresh = async () => {
+  const handlePullSection = async (section) => {
     if (!budget) return
-    setRefreshing(true)
+    setPulling(p => ({ ...p, [section.id]: true }))
     try {
-      const res = await refreshBudgetFromSystem(budget.id)
+      const res = await pullBudgetSection(budget.id, section.id)
       setBudget(res.data)
       setCellEdits({})
-      toast.success('Pulled latest figures from the system')
+      toast.success(`Pulled ${section.name} from the system`)
     } catch (e) {
-      toast.error(errorMessage(e, 'Failed to pull from system'))
+      toast.error(errorMessage(e, `Failed to pull ${section.name}`))
     } finally {
-      setRefreshing(false)
+      setPulling(p => { const q = { ...p }; delete q[section.id]; return q })
+    }
+  }
+
+  const handleReplicate = async () => {
+    if (!budget) return
+    setReplicating(true)
+    try {
+      const { data } = await replicateBudget(budget.id)
+      const { period_month: pm, period_year: py } = data.budget
+      toast.success(
+        `${data.created ? 'Created' : 'Updated'} ${MONTHS[pm - 1]} ${py} — `
+        + `${data.lines_added} line(s) added, ${data.values_filled} amount(s) carried over`
+      )
+      // Jump to the month we just filled so the result is visible, rather than
+      // leaving the user on the source month wondering whether anything happened.
+      setMonth(pm)
+      setYear(py)
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to replicate budget'))
+    } finally {
+      setReplicating(false)
+    }
+  }
+
+  // ── Income picker ───────────────────────────────────────────────────────────
+  const openIncomeModal = async () => {
+    if (!budget) return
+    setIncomeSearch('')
+    setIncomeModal({ loading: true, candidates: [], picked: new Set(), saving: false })
+    try {
+      const { data } = await getBudgetIncomeCandidates(budget.id)
+      setIncomeModal({
+        loading: false,
+        candidates: data || [],
+        picked: new Set((data || []).filter(c => c.selected).map(c => c.source_key)),
+        saving: false,
+      })
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to load income'))
+      setIncomeModal(null)
+    }
+  }
+
+  const toggleIncomePick = (key) => setIncomeModal(m => {
+    const picked = new Set(m.picked)
+    if (picked.has(key)) picked.delete(key)
+    else picked.add(key)
+    return { ...m, picked }
+  })
+
+  // Bulk tick/untick acts on what's currently visible, so a search narrows what
+  // "Select all" means — a real period can run to 70+ POs, and ticking those one
+  // at a time is not a reasonable ask.
+  const setIncomePicks = (keys, on) => setIncomeModal(m => {
+    const picked = new Set(m.picked)
+    for (const k of keys) {
+      if (on) picked.add(k)
+      else picked.delete(k)
+    }
+    return { ...m, picked }
+  })
+
+  const submitIncome = async () => {
+    setIncomeModal(m => ({ ...m, saving: true }))
+    try {
+      const res = await setBudgetIncomeLines(budget.id, [...incomeModal.picked])
+      setBudget(res.data)
+      setCellEdits({})
+      setIncomeModal(null)
+      toast.success('Income updated')
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to update income'))
+      setIncomeModal(m => ({ ...m, saving: false }))
     }
   }
 
@@ -252,12 +362,11 @@ export default function BudgetsPage() {
     }
   }
 
-  // Quick "Add Income" / "Add Expense": pick a matching section + name the line.
-  // Expenses mirror the costing "Add Expense": choose a once-off (free-typed) name
-  // or pick a Supplier from a searchable list. Either way it's just the line name.
-  const openQuickAdd = (kind) => {
-    const sec = budget?.sections?.find(s => s.section_type === kind)
-    setQuickAdd({ kind, sectionId: sec ? sec.id : '', name: '', mode: 'once_off' })
+  // A section header's "Add": name a line that this section owns. Expenses mirror
+  // the costing "Add Expense": choose a once-off (free-typed) name or pick a
+  // Supplier from a searchable list. Either way it's just the line name.
+  const openQuickAdd = (kind, sectionId) => {
+    setQuickAdd({ kind, sectionId, name: '', mode: 'once_off' })
   }
 
   const submitQuickAdd = async () => {
@@ -306,23 +415,6 @@ export default function BudgetsPage() {
       setBudget(b => ({ ...b, sections: b.sections.filter(s => s.id !== section.id) }))
     } catch (e) {
       toast.error(errorMessage(e, 'Failed to delete section'))
-    }
-  }
-
-  const handleAddLine = async (section) => {
-    const name = (newLine[section.id] || '').trim()
-    if (!name) return
-    try {
-      const res = await addBudgetLine(section.id, { name })
-      setBudget(b => ({
-        ...b,
-        sections: b.sections.map(s =>
-          s.id === section.id ? { ...s, lines: [...s.lines, { ...res.data, values: [] }] } : s
-        ),
-      }))
-      setNewLine(p => ({ ...p, [section.id]: '' }))
-    } catch (e) {
-      toast.error(errorMessage(e, 'Failed to add line'))
     }
   }
 
@@ -440,17 +532,23 @@ export default function BudgetsPage() {
 
   const selectedEntity = budgetEntities.find(e => String(e.id) === String(entityId))
 
+  // The Exclude modal opens from a section header, so it lists that section's
+  // suppliers — the ones that would classify into it on a pull.
+  const sectionSuppliers = useMemo(
+    () => (showExclusions ? suppliersForSection(showExclusions, suppliers) : []),
+    [showExclusions, suppliers],
+  )
   const sortedSuppliers = useMemo(
-    () => [...suppliers].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
-    [suppliers],
+    () => [...sectionSuppliers].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
+    [sectionSuppliers],
   )
   const filteredSuppliers = useMemo(() => {
     const q = exclSearch.trim().toLowerCase()
     return q ? sortedSuppliers.filter(s => (s.name || '').toLowerCase().includes(q)) : sortedSuppliers
   }, [sortedSuppliers, exclSearch])
-  const excludedCount = suppliers.filter(s => s.exclude_from_budget).length
+  const excludedCount = sectionSuppliers.filter(s => s.exclude_from_budget).length
 
-  const closeExclusions = () => { setShowExclusions(false); setExclSearch('') }
+  const closeExclusions = () => { setShowExclusions(null); setExclSearch('') }
 
   return (
     <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
@@ -518,7 +616,9 @@ export default function BudgetsPage() {
             <Wallet size={32} />
             <p>No budget for {selectedEntity?.code} — {MONTHS[Number(month) - 1]} {year}</p>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: -6 }}>
-              Creating it pulls suppliers, income, sub-contractors and wages from the system — then you edit and add the rest.
+              Creating it lays out every section, empty. You then fill each one from its own header —
+              pull suppliers, sub-contractors and wages from the system, pick the income that belongs,
+              and type in the rest.
             </p>
             <button className="btn-primary" onClick={handleCreate} disabled={creating}>
               <Plus size={15} /> {creating ? 'Creating…' : 'Create Budget'}
@@ -547,17 +647,11 @@ export default function BudgetsPage() {
 
           {/* Toolbar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-            <button className="btn-primary btn-sm" onClick={handleRefresh} disabled={refreshing} title="Re-pull suppliers, income, sub-contractors and wages from the system. Your manual lines and edits are kept.">
-              <RefreshCw size={14} className={refreshing ? 'spin' : undefined} /> {refreshing ? 'Pulling…' : 'Pull from system'}
-            </button>
-            <button className="btn-ghost btn-sm" onClick={() => openQuickAdd('income')}>
-              <TrendingUp size={14} /> Add Income
-            </button>
-            <button className="btn-ghost btn-sm" onClick={() => openQuickAdd('expense')}>
-              <TrendingDown size={14} /> Add Expense
-            </button>
-            <button className="btn-ghost btn-sm" onClick={() => setShowExclusions(true)}>
-              <Ban size={14} /> Supplier Exclusions
+            <button
+              className="btn-primary btn-sm" onClick={handleReplicate} disabled={replicating}
+              title={`Carry this budget forward into ${MONTHS[(Number(month) % 12)]} ${Number(month) === 12 ? Number(year) + 1 : year}. Lines and amounts come along; amounts keep their own month, so ${MONTHS[Number(month) - 1]} drops off the front. Existing figures there are never overwritten.`}
+            >
+              <CopyPlus size={14} /> {replicating ? 'Replicating…' : `Replicate to ${MONTHS[(Number(month) % 12)]}`}
             </button>
             {isAdmin && (
               <button className="btn-ghost btn-sm" onClick={openConstants}>
@@ -565,79 +659,105 @@ export default function BudgetsPage() {
               </button>
             )}
             <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
-              Tip: click any amount cell to type a figure. Lines marked <span className="badge badge-sent" style={{ fontSize: 10 }}>auto</span> come from the system — editing a cell pins it. Lines marked <span className="badge badge-paid" style={{ fontSize: 10 }}>fixed</span> are recurring constants you fill in yourself.
+              Tip: fill each box from its own header — <strong>Pull from System</strong> for supplier, sub-contractor and wage figures, <strong>Add</strong> for anything you type yourself. Lines marked <span className="badge badge-sent" style={{ fontSize: 10 }}>auto</span> come from the system — editing a cell pins it. Lines marked <span className="badge badge-paid" style={{ fontSize: 10 }}>fixed</span> are recurring constants you fill in yourself.
             </span>
           </div>
-
-          {/* Quick add income/expense */}
-          {quickAdd && (
-            <div className="card" style={{ padding: 12, marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <strong style={{ fontSize: 13 }}>{quickAdd.kind === 'income' ? 'Add income line' : 'Add expense line'}</strong>
-              <select className="form-input" style={{ width: 'auto', fontSize: 12 }} value={quickAdd.sectionId}
-                onChange={e => setQuickAdd(p => ({ ...p, sectionId: e.target.value }))}>
-                <option value="">Section…</option>
-                {budget.sections.filter(s => s.section_type === quickAdd.kind).map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-
-              {/* Expense: once-off vs supplier (mirrors the costing Add Expense) */}
-              {quickAdd.kind === 'expense' && (
-                <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                  {[['once_off', 'Once-off'], ['supplier', 'Supplier']].map(([m, label]) => (
-                    <button key={m} type="button"
-                      onClick={() => setQuickAdd(p => ({ ...p, mode: m, name: '' }))}
-                      style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer',
-                        background: quickAdd.mode === m ? 'var(--accent)' : 'var(--bg-surface)',
-                        color: quickAdd.mode === m ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {quickAdd.kind === 'expense' && quickAdd.mode === 'supplier' ? (
-                <div style={{ width: 260 }}>
-                  <SearchableSelect
-                    value={quickAdd.name}
-                    onChange={v => setQuickAdd(p => ({ ...p, name: v }))}
-                    options={suppliers}
-                    getValue={s => s.name}
-                    getLabel={s => s.name}
-                    placeholder="Search supplier…"
-                    creatable
-                  />
-                </div>
-              ) : (
-                <input className="form-input" autoFocus style={{ width: 260, fontSize: 12 }}
-                  placeholder={quickAdd.kind === 'income' ? 'Income source name' : 'Expense name'}
-                  value={quickAdd.name}
-                  onChange={e => setQuickAdd(p => ({ ...p, name: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter') submitQuickAdd() }} />
-              )}
-
-              <button className="btn-primary btn-sm" onClick={submitQuickAdd} disabled={!quickAdd.name.trim() || !quickAdd.sectionId}>Add</button>
-              <button className="btn-ghost btn-sm" onClick={() => setQuickAdd(null)}>Cancel</button>
-            </div>
-          )}
 
           {/* Sections */}
           {budget.sections.map(section => {
             const isIncome = section.section_type === 'income'
+            const isIncomeSection = section.name === INCOME_SECTION
+            const canPull = PULLABLE_SECTIONS.includes(section.name)
+            const canExclude = SUPPLIER_SECTIONS.includes(section.name)
+            const isPulling = !!pulling[section.id]
             return (
               <div key={section.id} className="card" style={{ padding: 0, marginBottom: 16, overflow: 'hidden' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', padding: '10px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontWeight: 600, fontSize: 14 }}>{section.name}</span>
                     <span className={`badge ${isIncome ? 'badge-paid' : 'badge-sent'}`}>
                       {isIncome ? 'Income' : 'Expense'}
                     </span>
                   </div>
-                  <button className="btn-icon" onClick={() => handleDeleteSection(section)} title="Delete section"
-                    style={{ color: 'var(--danger)' }}>
-                    <Trash2 size={14} />
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button className="btn-ghost btn-sm" onClick={() => openQuickAdd(section.section_type, section.id)}
+                      title={`Add a line to ${section.name} that you fill in yourself`}>
+                      <Plus size={13} /> Add
+                    </button>
+
+                    {/* Income is chosen, not pulled — the modal lists one row per
+                        PO plus an "All Invoices Paid" bucket to tick. */}
+                    {isIncomeSection && (
+                      <button className="btn-ghost btn-sm" onClick={openIncomeModal}
+                        title="Choose which income on the system belongs in this budget">
+                        <TrendingUp size={13} /> Pull from System
+                      </button>
+                    )}
+
+                    {!isIncomeSection && canPull && (
+                      <button className="btn-ghost btn-sm" onClick={() => handlePullSection(section)} disabled={isPulling}
+                        title={`Pull ${section.name} figures from the system. Your manual lines and edited cells are kept.`}>
+                        <RefreshCw size={13} className={isPulling ? 'spin' : undefined} /> {isPulling ? 'Pulling…' : 'Pull from System'}
+                      </button>
+                    )}
+
+                    {canExclude && (
+                      <button className="btn-ghost btn-sm" onClick={() => setShowExclusions(section.name)}
+                        title={`Choose which suppliers ${section.name} should skip`}>
+                        <Ban size={13} /> Exclude
+                      </button>
+                    )}
+
+                    <button className="btn-icon" onClick={() => handleDeleteSection(section)} title="Delete section"
+                      style={{ color: 'var(--danger)' }}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
+
+                {/* Quick add — sits in the section its "Add" was clicked from, so
+                    the input appears where the user is looking. */}
+                {quickAdd?.sectionId === section.id && (
+                  <div style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
+                    {/* Expense: once-off vs supplier (mirrors the costing Add Expense) */}
+                    {quickAdd.kind === 'expense' && (
+                      <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                        {[['once_off', 'Once-off'], ['supplier', 'Supplier']].map(([m, label]) => (
+                          <button key={m} type="button"
+                            onClick={() => setQuickAdd(p => ({ ...p, mode: m, name: '' }))}
+                            style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer',
+                              background: quickAdd.mode === m ? 'var(--accent)' : 'var(--bg-surface)',
+                              color: quickAdd.mode === m ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {quickAdd.kind === 'expense' && quickAdd.mode === 'supplier' ? (
+                      <div style={{ width: 260 }}>
+                        <SearchableSelect
+                          value={quickAdd.name}
+                          onChange={v => setQuickAdd(p => ({ ...p, name: v }))}
+                          options={suppliersForSection(section.name, suppliers)}
+                          getValue={s => s.name}
+                          getLabel={s => s.name}
+                          placeholder="Search supplier…"
+                          creatable
+                        />
+                      </div>
+                    ) : (
+                      <input className="form-input" autoFocus style={{ width: 260, fontSize: 12 }}
+                        placeholder={quickAdd.kind === 'income' ? 'Income source name' : 'Expense name'}
+                        value={quickAdd.name}
+                        onChange={e => setQuickAdd(p => ({ ...p, name: e.target.value }))}
+                        onKeyDown={e => { if (e.key === 'Enter') submitQuickAdd() }} />
+                    )}
+
+                    <button className="btn-primary btn-sm" onClick={submitQuickAdd} disabled={!quickAdd.name.trim()}>Add</button>
+                    <button className="btn-ghost btn-sm" onClick={() => setQuickAdd(null)}>Cancel</button>
+                  </div>
+                )}
 
                 <div style={{ overflowX: 'auto' }}>
                   <table className="compact-table">
@@ -731,23 +851,16 @@ export default function BudgetsPage() {
                         </tr>
                       )}
 
-                      {/* Add line */}
-                      <tr>
-                        <td colSpan={1 + months.length * (isIncome ? 1 : 2) + 1}>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <input
-                              style={{ maxWidth: 320, fontSize: 12, padding: '5px 9px' }}
-                              placeholder="Add item (supplier, income source…)"
-                              value={newLine[section.id] || ''}
-                              onChange={e => setNewLine(p => ({ ...p, [section.id]: e.target.value }))}
-                              onKeyDown={e => { if (e.key === 'Enter') handleAddLine(section) }}
-                            />
-                            <button className="btn-ghost btn-sm" onClick={() => handleAddLine(section)} disabled={!(newLine[section.id] || '').trim()}>
-                              <Plus size={13} /> Add
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
+                      {section.lines.length === 0 && (
+                        <tr>
+                          <td colSpan={1 + months.length * (isIncome ? 1 : 2) + 1}
+                            style={{ padding: '14px 10px', fontSize: 12, color: 'var(--text-muted)' }}>
+                            Nothing here yet — {canPull ? <>use <strong>Pull from System</strong> for the system&apos;s figures, or </>
+                              : isIncomeSection ? <>use <strong>Pull from System</strong> to pick the income, or </> : ''}
+                            <strong>Add</strong> a line to type in yourself.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -808,7 +921,7 @@ export default function BudgetsPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <Ban size={18} style={{ color: 'var(--accent)' }} />
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>Supplier Exclusions</div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>Exclude Suppliers — {showExclusions}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{selectedEntity?.code} — {selectedEntity?.name}</div>
                 </div>
               </div>
@@ -818,7 +931,10 @@ export default function BudgetsPage() {
             {/* Body */}
             <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, flex: 1 }}>
               <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                Excluded suppliers are skipped entirely by &quot;Pull from system&quot; — they never appear or update in any budget section, in any period.
+                The suppliers that fall under <strong>{showExclusions}</strong>. Ticking one excludes it
+                from &quot;Pull from System&quot; <strong>everywhere</strong> — it won&apos;t appear or
+                update in any budget section, for any entity, in any period. Lines already pulled into a
+                budget stay put; untick to start pulling it again.
               </p>
 
               <div className="search-bar">
@@ -833,15 +949,15 @@ export default function BudgetsPage() {
               </div>
 
               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                {filteredSuppliers.length} of {suppliers.length} supplier{suppliers.length === 1 ? '' : 's'}
+                {filteredSuppliers.length} of {sectionSuppliers.length} supplier{sectionSuppliers.length === 1 ? '' : 's'}
                 {excludedCount > 0 && <> · <strong style={{ color: 'var(--danger)' }}>{excludedCount} excluded</strong></>}
               </div>
 
               <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, minHeight: 200 }}>
-                {suppliers.length === 0 && (
-                  <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No suppliers for this entity</div>
+                {sectionSuppliers.length === 0 && (
+                  <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No suppliers fall under {showExclusions}</div>
                 )}
-                {suppliers.length > 0 && filteredSuppliers.length === 0 && (
+                {sectionSuppliers.length > 0 && filteredSuppliers.length === 0 && (
                   <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No suppliers match &quot;{exclSearch}&quot;</div>
                 )}
                 {filteredSuppliers.map((s, i) => (
@@ -877,6 +993,133 @@ export default function BudgetsPage() {
         </div>
       )}
 
+      {incomeModal && (
+        <div className="modal-overlay" onClick={() => !incomeModal.saving && setIncomeModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 600, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <TrendingUp size={18} style={{ color: 'var(--accent)' }} />
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>Select Income</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {selectedEntity?.code} — {months.map(({ month: m, year: y }) => `${MONTHS[m - 1]} ${y}`).join(', ')}
+                  </div>
+                </div>
+              </div>
+              <button className="btn-icon" onClick={() => setIncomeModal(null)} disabled={incomeModal.saving}><X size={16} /></button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, flex: 1 }}>
+              {incomeModal.loading && (
+                <div className="loading-center" style={{ padding: 20 }}><div className="spinner" /></div>
+              )}
+
+              {!incomeModal.loading && incomeModal.candidates.length > 0 && (
+                <div className="search-bar">
+                  <Search size={14} />
+                  <input
+                    autoFocus
+                    placeholder="Search PO number…"
+                    value={incomeSearch}
+                    onChange={e => setIncomeSearch(e.target.value)}
+                  />
+                  {incomeSearch && <button className="btn-icon" onClick={() => setIncomeSearch('')}><X size={13} /></button>}
+                </div>
+              )}
+
+              {!incomeModal.loading && (() => {
+                const q = incomeSearch.trim().toLowerCase()
+                const shown = q
+                  ? incomeModal.candidates.filter(c => c.line_name.toLowerCase().includes(q))
+                  : incomeModal.candidates
+                const shownKeys = shown.map(c => c.source_key)
+                const allOn = shown.length > 0 && shownKeys.every(k => incomeModal.picked.has(k))
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+                      <span>
+                        {shown.length} of {incomeModal.candidates.length} shown · <strong style={{ color: 'var(--accent)' }}>{incomeModal.picked.size} selected</strong>
+                      </span>
+                      {shown.length > 0 && (
+                        <button className="btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 8px' }}
+                          onClick={() => setIncomePicks(shownKeys, !allOn)}>
+                          {allOn ? 'Clear' : 'Select'} {q ? 'these' : 'all'}
+                        </button>
+                      )}
+                    </div>
+
+                    <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, minHeight: 180 }}>
+                      {incomeModal.candidates.length === 0 && (
+                        <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+                          No income on the system for this period
+                        </div>
+                      )}
+                      {incomeModal.candidates.length > 0 && shown.length === 0 && (
+                        <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+                          Nothing matches &quot;{incomeSearch}&quot;
+                        </div>
+                      )}
+                      {shown.map((c, i) => {
+                        const on = incomeModal.picked.has(c.source_key)
+                        return (
+                          <label
+                            key={c.source_key}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
+                              borderBottom: i < shown.length - 1 ? '1px solid var(--border)' : 'none',
+                              fontSize: 13, cursor: 'pointer',
+                              background: on ? 'var(--accent-bg, rgba(37,99,235,0.06))' : 'transparent',
+                            }}
+                          >
+                            <input
+                              type="checkbox" checked={on}
+                              onChange={() => toggleIncomePick(c.source_key)}
+                              style={{ width: 15, height: 15, flexShrink: 0, cursor: 'pointer' }}
+                            />
+                            <span style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.line_name}>
+                              {c.line_name}
+                            </span>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                              {c.values.map(v => MONTHS[v.month - 1]).join(', ')}
+                            </span>
+                            <span style={{ fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap', minWidth: 100, textAlign: 'right' }}>
+                              {formatCurrency(c.total)}
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+
+                    {/* Totals the whole selection, not just what the search shows,
+                        so a filter can't make the figure look wrong. */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700 }}>
+                      <span>Selected total</span>
+                      <span>{formatCurrency(
+                        incomeModal.candidates
+                          .filter(c => incomeModal.picked.has(c.source_key))
+                          .reduce((sum, c) => sum + num(c.total), 0)
+                      )}</span>
+                    </div>
+                  </>
+                )
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
+              <button className="btn-ghost btn-sm" onClick={() => setIncomeModal(null)} disabled={incomeModal.saving}>Cancel</button>
+              <button className="btn-primary btn-sm" onClick={submitIncome} disabled={incomeModal.loading || incomeModal.saving}>
+                {incomeModal.saving ? 'Saving…' : 'Apply'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showConstants && (
         <div className="modal-overlay" onClick={() => setShowConstants(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}
@@ -898,9 +1141,9 @@ export default function BudgetsPage() {
             <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, flex: 1 }}>
               <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 A constant is seeded — with no amount, blank for the user to fill in — into the matching
-                section of every budget on creation, and added to any existing budget missing it on the
-                next &quot;Pull from system&quot;. Renaming or deleting a constant here only affects
-                future/refreshed budgets; a budget's own copy of the line can still be freely edited or
+                section of every budget on creation, and added to any existing budget missing it the next
+                time that section is pulled. Renaming or deleting a constant here only affects
+                future budgets; a budget&apos;s own copy of the line can still be freely edited or
                 removed without touching this list.
               </p>
 
