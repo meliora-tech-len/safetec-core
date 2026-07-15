@@ -31,6 +31,11 @@ export default function DashboardPage() {
   const navigate = useNavigate()
 
   const periodLabel = `${MONTH_NAMES[period.month]} ${period.year}`
+  // 30-day terms run to the end of the month after the statement month, and we pay
+  // on the 7th of the month after that: a July statement is paid 7 September.
+  const days30PayLabel = `Due 7th of ${MONTH_NAMES[(period.month + 1) % 12 + 1]}`
+  const days30PayDate = (month, year) =>
+    month && year ? formatDate(new Date(year, month + 1, 7)) : '—'
   const yearOptions = (() => {
     const cur = new Date().getFullYear()
     const yrs = []
@@ -83,11 +88,19 @@ export default function DashboardPage() {
     { label: dateLabel, render: r => formatDate(r[dateField]) },
     { label: 'Amount', align: 'right', render: r => formatCurrency(r.total) },
   ]
+  const creditorDate = (r, dateField) => {
+    if (dateField === 'statement') return r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—'
+    // 'pay_30' is derived here rather than read off the invoice: payment_due_date is
+    // still stored on the old rule, and correcting it there would move the date on
+    // every other screen too.
+    if (dateField === 'pay_30') return days30PayDate(r.statement_month, r.statement_year)
+    return formatDate(r[dateField])
+  }
   const creditorColumns = (dateLabel, dateField, amountField) => [
     { label: 'Invoice #', render: r => r.invoice_number || '—' },
     { label: 'Supplier', render: r => r.supplier_name },
     { label: 'Entity', render: r => r.entity_code || '—' },
-    { label: dateLabel, render: r => dateField === 'statement' ? (r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—') : formatDate(r[dateField]) },
+    { label: dateLabel, render: r => creditorDate(r, dateField) },
     { label: 'Amount', align: 'right', render: r => formatCurrency(r[amountField]) },
   ]
   const goToInvoice = (row) => { setDrilldown(null); navigate(`/invoices/${row.id}`) }
@@ -111,7 +124,7 @@ export default function DashboardPage() {
   const openOutstanding30DayCreditors = () => setDrilldown({
     title: 'Outstanding 30-Day Creditors', subtitle: `Statement ${periodLabel}`,
     rows: payables.outstanding_days_30_invoices, total: payables.total_30_days,
-    columns: creditorColumns('Due', 'due_date', 'outstanding_amount'), onRowClick: goToSupplier,
+    columns: creditorColumns('Due', 'pay_30', 'outstanding_amount'), onRowClick: goToSupplier,
   })
   const openPaidCashCreditors = () => setDrilldown({
     title: 'Paid Cash Creditors', subtitle: `Paid in ${periodLabel}`,
@@ -287,7 +300,7 @@ export default function DashboardPage() {
               iconColor="var(--warning)"
               label="Outstanding 30-Day Creditors"
               value={formatCurrency(payables?.total_30_days || 0)}
-              sub="Due 7th of next month"
+              sub={days30PayLabel}
               onClick={payables?.outstanding_days_30_invoices?.length ? openOutstanding30DayCreditors : undefined}
             />
             <StatCard
