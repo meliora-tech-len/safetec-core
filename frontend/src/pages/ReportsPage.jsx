@@ -5,7 +5,7 @@ import { useSessionState } from '../hooks/useSessionState'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
-  getSubcontractorLoadsReport,
+  getSubcontractorLoadsReport, getPoLoadReconciliationReport,
 } from '../services/api'
 import toast from 'react-hot-toast'
 import * as XLSX from 'xlsx'
@@ -22,6 +22,7 @@ const fmtN = (n, d = 2) => Number(n || 0).toFixed(d)
 const TABS = [
   { key: 'income',   label: 'Income vs Expenses' },
   { key: 'subloads', label: 'Subcontractor Loads' },
+  { key: 'poloads',  label: 'Invoiced PO vs Loads' },
   { key: 'truck',    label: 'Diesel by Truck' },
   { key: 'supplier', label: 'Diesel by Supplier' },
   { key: 'annual',   label: 'Diesel Annual' },
@@ -46,6 +47,7 @@ export default function ReportsPage() {
   const [incomeData, setIncomeData]   = useState(null)
   const [detailData, setDetailData]   = useState(null)
   const [subData, setSubData]         = useState(null)
+  const [poData, setPoData]           = useState(null)
 
   const loadDetail = useCallback(async (m) => {
     if (!entityId) return
@@ -68,6 +70,7 @@ export default function ReportsPage() {
     setIncomeData(null)
     setDetailData(null)
     setSubData(null)
+    setPoData(null)
     try {
       if (tab === 'income') {
         const res = await getIncomeExpensesReport({ entity_id: entityId, year })
@@ -75,6 +78,9 @@ export default function ReportsPage() {
       } else if (tab === 'subloads') {
         const res = await getSubcontractorLoadsReport({ entity_id: entityId, year, month })
         setSubData(res.data)
+      } else if (tab === 'poloads') {
+        const res = await getPoLoadReconciliationReport({ entity_id: entityId, year, month })
+        setPoData(res.data)
       } else {
         const p = { entity_id: entityId, year, month }
         let res
@@ -597,8 +603,213 @@ export default function ReportsPage() {
     doc.save(`subcontractor-loads-${year}-${String(month).padStart(2, '0')}.pdf`)
   }
 
+  // ── Invoiced PO vs Loads export ─────────────────────────────────────────────
+  const PO_ISSUE_LABEL = {
+    no_load: 'No matching load',
+    reg:     'Truck differs',
+    tonnes:  'Tonnes differ',
+    amount:  'Amount differs',
+    period:  'Load in another period',
+  }
+  const poIssueText = (issues) => (issues || []).map(i => PO_ISSUE_LABEL[i] || i).join(', ')
+
+  const handlePoExportExcel = () => {
+    if (!poData) return
+    setShowExportMenu(false)
+    const { month_name, pos = [], uninvoiced = [], totals, uninvoiced_totals } = poData
+    const title   = `Invoiced PO vs Truck Loads — ${month_name} ${year}`
+    const now     = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' })
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+    const wb      = XLSX.utils.book_new()
+
+    // Sheet 1: one row per PO → truck, invoiced against loads
+    const ws1 = XLSX.utils.aoa_to_sheet([
+      [title], [`Generated: ${now}`], [],
+      ['PO Number', 'Invoice(s)', 'Registration', 'Invoiced Loads', 'Invoiced Tonnes', 'Invoiced Amount',
+       'Load Count', 'Load Tonnes', 'Load Amount', 'Diff Loads', 'Diff Tonnes', 'Diff Amount', 'Issues'],
+      ...pos.flatMap(p => [
+        ...p.trucks.map(t => [
+          p.po_number, p.invoices.map(i => i.invoice_number).join(', '), t.registration,
+          t.totals.invoiced_loads, t.totals.invoiced_tonnes, t.totals.invoiced_amount,
+          t.totals.load_loads, t.totals.load_tonnes, t.totals.load_amount,
+          t.totals.diff_loads, t.totals.diff_tonnes, t.totals.diff_amount,
+          t.issue_count ? `${t.issue_count} line(s)` : '',
+        ]),
+        [`${p.po_number} TOTAL`, '', '', p.totals.invoiced_loads, p.totals.invoiced_tonnes, p.totals.invoiced_amount,
+         p.totals.load_loads, p.totals.load_tonnes, p.totals.load_amount,
+         p.totals.diff_loads, p.totals.diff_tonnes, p.totals.diff_amount, ''],
+        [],
+      ]),
+      ['GRAND TOTAL', '', '', totals.invoiced_loads, totals.invoiced_tonnes, totals.invoiced_amount,
+       totals.load_loads, totals.load_tonnes, totals.load_amount,
+       totals.diff_loads, totals.diff_tonnes, totals.diff_amount, ''],
+    ])
+    ws1['!cols'] = [{ wch: 22 }, { wch: 20 }, { wch: 14 }, { wch: 13 }, { wch: 14 }, { wch: 16 },
+                    { wch: 11 }, { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 11 }, { wch: 14 }, { wch: 16 }]
+    XLSX.utils.book_append_sheet(wb, ws1, 'Summary')
+
+    // Sheet 2: every invoice line beside the load it matched
+    const ws2 = XLSX.utils.aoa_to_sheet([
+      [title], [`Generated: ${now}`], [],
+      ['PO Number', 'Invoice', 'Registration', 'Slip #', 'Invoiced Reg', 'Invoiced Tonnes', 'Invoiced Rate', 'Invoiced Amount',
+       'Load Date', 'Load Reg', 'Load Tonnes', 'Load Rate', 'Load Amount', 'Load Period', 'Issues'],
+      ...pos.flatMap(p => p.trucks.flatMap(t => t.lines.map(l => [
+        p.po_number, l.invoice_number, t.registration, l.slip_number || '',
+        l.invoiced_registration || '', l.invoiced_tonnes, l.invoiced_rate, l.invoiced_amount,
+        fmtDate(l.load_date), l.load_registration || '', l.load_tonnes || '', l.load_rate || '', l.load_amount || '',
+        l.load_period || '', poIssueText(l.issues),
+      ]))),
+    ])
+    ws2['!cols'] = [{ wch: 22 }, { wch: 12 }, { wch: 13 }, { wch: 12 }, { wch: 13 }, { wch: 14 }, { wch: 12 }, { wch: 15 },
+                    { wch: 13 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 30 }]
+    XLSX.utils.book_append_sheet(wb, ws2, 'Line Detail')
+
+    // Sheet 3: loads in the period that no invoice bills
+    const ws3 = XLSX.utils.aoa_to_sheet([
+      [`${title} — Loads Not Invoiced`], [`Generated: ${now}`], [],
+      ['Registration', 'Fleet #', 'Date', 'Slip #', 'Mine', 'Driver', 'Tonnes', 'Rate', 'Amount'],
+      ...uninvoiced.flatMap(g => [
+        ...g.loads.map(l => [
+          g.registration, g.fleet_number || '', fmtDate(l.load_date), l.slip_number || '',
+          l.mine_name || '', l.driver_name || '', l.load_tonnes, l.load_rate, l.load_amount,
+        ]),
+        [`${g.registration} TOTAL`, '', '', '', '', '', g.totals.load_tonnes, '', g.totals.load_amount],
+        [],
+      ]),
+      ['GRAND TOTAL', '', '', '', '', '', uninvoiced_totals.load_tonnes, '', uninvoiced_totals.load_amount],
+    ])
+    ws3['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 20 }, { wch: 10 }, { wch: 10 }, { wch: 14 }]
+    XLSX.utils.book_append_sheet(wb, ws3, 'Not Invoiced')
+
+    XLSX.writeFile(wb, `invoiced-po-vs-loads-${year}-${String(month).padStart(2, '0')}.xlsx`)
+  }
+
+  const handlePoExportPdf = () => {
+    if (!poData) return
+    setShowExportMenu(false)
+    const { month_name, pos = [], uninvoiced = [], totals, uninvoiced_totals, issue_count } = poData
+    const title   = `Invoiced PO vs Truck Loads — ${month_name} ${year}`
+    const now     = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
+    const fmtAmt  = (n) => `R ${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' }) : '—'
+    const doc     = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+
+    doc.setFontSize(15); doc.setFont('helvetica', 'bold')
+    doc.text(title, 14, 15)
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(120)
+    doc.text(`Generated ${now}  ·  ${pos.length} PO(s)  ·  ${issue_count} line(s) needing attention`, 14, 21)
+    doc.setTextColor(0)
+
+    autoTable(doc, {
+      head: [['PO Number', 'Registration', 'Inv Loads', 'Inv Tonnes', 'Inv Amount',
+              'Loads', 'Load Tonnes', 'Load Amount', 'Diff Amount', 'Issues']],
+      body: [
+        ...pos.flatMap(p => [
+          ...p.trucks.map((t, i) => [
+            i === 0 ? p.po_number : '', t.registration,
+            t.totals.invoiced_loads, fmtT(t.totals.invoiced_tonnes), fmtAmt(t.totals.invoiced_amount),
+            t.totals.load_loads, fmtT(t.totals.load_tonnes), fmtAmt(t.totals.load_amount),
+            fmtAmt(t.totals.diff_amount), t.issue_count || '',
+          ]),
+          [`${p.po_number} subtotal`, '', p.totals.invoiced_loads, fmtT(p.totals.invoiced_tonnes), fmtAmt(p.totals.invoiced_amount),
+           p.totals.load_loads, fmtT(p.totals.load_tonnes), fmtAmt(p.totals.load_amount), fmtAmt(p.totals.diff_amount), ''],
+        ]),
+        ['GRAND TOTAL', '', totals.invoiced_loads, fmtT(totals.invoiced_tonnes), fmtAmt(totals.invoiced_amount),
+         totals.load_loads, fmtT(totals.load_tonnes), fmtAmt(totals.load_amount), fmtAmt(totals.diff_amount), ''],
+      ],
+      startY: 26,
+      styles: { fontSize: 7.5, cellPadding: 1.8 },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 40 }, 1: { cellWidth: 24 },
+        2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' },
+        5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' },
+        8: { halign: 'right' }, 9: { halign: 'right' },
+      },
+      didParseCell: (d) => {
+        if (d.section !== 'body') return
+        const first = String(d.row.raw?.[0] ?? '')
+        if (first === 'GRAND TOTAL' || first.endsWith(' subtotal')) {
+          d.cell.styles.fontStyle = 'bold'
+          d.cell.styles.fillColor = first === 'GRAND TOTAL' ? [225, 225, 225] : [241, 245, 249]
+        }
+      },
+      margin: { left: 14, right: 14 },
+    })
+
+    // Only the lines that disagree — the part that needs working through
+    const problem = pos.flatMap(p => p.trucks.flatMap(t =>
+      t.lines.filter(l => l.issues.length).map(l => [
+        p.po_number, l.invoice_number, t.registration, l.slip_number || '—',
+        fmtT(l.invoiced_tonnes), fmtAmt(l.invoiced_amount),
+        l.load_id ? fmtDate(l.load_date) : '—',
+        l.load_id ? fmtT(l.load_tonnes) : '—',
+        l.load_id ? fmtAmt(l.load_amount) : '—',
+        poIssueText(l.issues),
+      ])))
+    if (problem.length) {
+      doc.addPage()
+      doc.setFontSize(12); doc.setFont('helvetica', 'bold')
+      doc.text(`Discrepancies — ${month_name} ${year}`, 14, 14)
+      autoTable(doc, {
+        head: [['PO Number', 'Invoice', 'Registration', 'Slip #', 'Inv Tonnes', 'Inv Amount',
+                'Load Date', 'Load Tonnes', 'Load Amount', 'Issue']],
+        body: problem,
+        startY: 20,
+        styles: { fontSize: 7, cellPadding: 1.5 },
+        headStyles: { fillColor: [185, 28, 28], textColor: 255, fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 38 }, 1: { cellWidth: 20 }, 2: { cellWidth: 22 }, 3: { cellWidth: 20 },
+          4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' },
+          7: { halign: 'right' }, 8: { halign: 'right' }, 9: { cellWidth: 40 },
+        },
+        margin: { left: 14, right: 14 },
+      })
+    }
+
+    if (uninvoiced.length) {
+      doc.addPage()
+      doc.setFontSize(12); doc.setFont('helvetica', 'bold')
+      doc.text(`Loads Not Invoiced — ${month_name} ${year}`, 14, 14)
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(120)
+      doc.text(`${uninvoiced_totals.load_loads} load(s) · ${fmtT(uninvoiced_totals.load_tonnes)} · ${fmtAmt(uninvoiced_totals.load_amount)}`, 14, 19)
+      doc.setTextColor(0)
+      autoTable(doc, {
+        head: [['Registration', 'Fleet #', 'Date', 'Slip #', 'Mine', 'Driver', 'Tonnes', 'Rate', 'Amount']],
+        body: [
+          ...uninvoiced.flatMap(g => [
+            ...g.loads.map((l, i) => [
+              i === 0 ? g.registration : '', i === 0 ? (g.fleet_number || '—') : '',
+              fmtDate(l.load_date), l.slip_number || '—', l.mine_name || '—', l.driver_name || '—',
+              fmtT(l.load_tonnes), fmtAmt(l.load_rate), fmtAmt(l.load_amount),
+            ]),
+          ]),
+          ['GRAND TOTAL', '', '', '', '', '', fmtT(uninvoiced_totals.load_tonnes), '', fmtAmt(uninvoiced_totals.load_amount)],
+        ],
+        startY: 23,
+        styles: { fontSize: 7, cellPadding: 1.5 },
+        headStyles: { fillColor: [180, 83, 9], textColor: 255, fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 24 }, 1: { cellWidth: 16 }, 2: { cellWidth: 18 }, 3: { cellWidth: 22 },
+          4: { cellWidth: 30 }, 5: { cellWidth: 30 },
+          6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' },
+        },
+        didParseCell: (d) => {
+          if (d.section === 'body' && String(d.row.raw?.[0] ?? '') === 'GRAND TOTAL') {
+            d.cell.styles.fontStyle = 'bold'
+            d.cell.styles.fillColor = [225, 225, 225]
+          }
+        },
+        margin: { left: 14, right: 14 },
+      })
+    }
+
+    doc.save(`invoiced-po-vs-loads-${year}-${String(month).padStart(2, '0')}.pdf`)
+  }
+
   const hasData = tab === 'income' ? !!incomeData
     : tab === 'subloads' ? !!subData?.subcontractors?.length
+    : tab === 'poloads' ? !!(poData?.pos?.length || poData?.uninvoiced?.length)
     : dieselData.length > 0
 
   return (
@@ -609,7 +820,7 @@ export default function ReportsPage() {
           <p style={styles.subtitle}>Business reports and reconciliations</p>
         </div>
         <div style={{ position: 'relative' }}>
-          {tab === 'income' || tab === 'subloads' ? (
+          {tab === 'income' || tab === 'subloads' || tab === 'poloads' ? (
             <>
               <button
                 onClick={() => setShowExportMenu(v => !v)}
@@ -628,6 +839,8 @@ export default function ReportsPage() {
                   }}>
                     {(tab === 'subloads'
                       ? [{ label: 'Export Excel (.xlsx)', action: handleSubExportExcel }, { label: 'Export PDF', action: handleSubExportPdf }]
+                      : tab === 'poloads'
+                      ? [{ label: 'Export Excel (.xlsx)', action: handlePoExportExcel }, { label: 'Export PDF', action: handlePoExportPdf }]
                       : detailData
                         ? [{ label: 'Export Excel (.xlsx)', action: handleDetailExportExcel }, { label: 'Export PDF', action: handleDetailExportPdf }]
                         : [{ label: 'Export Excel (.xlsx)', action: handleAnnualExportExcel }, { label: 'Export PDF', action: handleAnnualExportPdf }]
@@ -697,6 +910,12 @@ export default function ReportsPage() {
           : subData.subcontractors.length === 0
             ? <div style={{ ...styles.card, ...styles.empty }}>No subcontractor loads for this period.</div>
             : <SubcontractorLoadsReport data={subData} year={year} />
+      ) : tab === 'poloads' ? (
+        !poData
+          ? <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
+          : poData.pos.length === 0 && poData.uninvoiced.length === 0
+            ? <div style={{ ...styles.card, ...styles.empty }}>No invoiced POs for this period.</div>
+            : <PoLoadReconciliationReport data={poData} year={year} issueLabels={PO_ISSUE_LABEL} />
       ) : (
         <div style={styles.card}>
           {dieselData.length === 0 ? (
@@ -1477,6 +1696,304 @@ const badge = {
   marginLeft: 6, padding: '1px 5px', borderRadius: 4, fontSize: 9, fontWeight: 700,
   fontFamily: 'inherit', letterSpacing: '0.04em',
   background: 'var(--bg-hover)', color: 'var(--text-muted)',
+}
+
+// ── Invoiced PO vs Truck Loads ────────────────────────────────────────────────
+// 'period' is informational (the load is real, it just carries another month's
+// statement period), so it's styled as a note rather than an error.
+const PO_ISSUE_STYLE = {
+  no_load: { bg: '#fee2e2', fg: '#b91c1c' },
+  reg:     { bg: '#fee2e2', fg: '#b91c1c' },
+  tonnes:  { bg: '#fef3c7', fg: '#b45309' },
+  amount:  { bg: '#fef3c7', fg: '#b45309' },
+  period:  { bg: 'var(--bg-hover)', fg: 'var(--text-muted)' },
+}
+
+function IssueTag({ issue, label }) {
+  const s = PO_ISSUE_STYLE[issue] || PO_ISSUE_STYLE.period
+  return (
+    <span style={{
+      display: 'inline-block', padding: '1px 6px', borderRadius: 4, fontSize: 9.5,
+      fontWeight: 700, letterSpacing: '0.02em', whiteSpace: 'nowrap',
+      background: s.bg, color: s.fg, marginRight: 4,
+    }}>
+      {label}
+    </span>
+  )
+}
+
+// Signed difference — blank when the two sides agree, so the eye lands on the gaps.
+function Diff({ value, format }) {
+  if (!value) return <span style={{ color: 'var(--text-muted)' }}>—</span>
+  return (
+    <b style={{ color: value > 0 ? '#b45309' : '#b91c1c' }}>
+      {value > 0 ? '+' : ''}{format(value)}
+    </b>
+  )
+}
+
+function PoLoadReconciliationReport({ data, year, issueLabels }) {
+  const { month_name, pos, uninvoiced, totals, uninvoiced_totals, issue_count } = data
+  const [collapsed, setCollapsed] = useState({})
+  const [onlyIssues, setOnlyIssues] = useState(false)
+
+  const toggle = (po) => setCollapsed(c => ({ ...c, [po]: !c[po] }))
+  const visiblePos = onlyIssues ? pos.filter(p => p.issue_count > 0) : pos
+  const allCollapsed = visiblePos.length > 0 && visiblePos.every(p => collapsed[p.po_number])
+  const toggleAll = () =>
+    setCollapsed(allCollapsed ? {} : Object.fromEntries(visiblePos.map(p => [p.po_number, true])))
+
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' }) : '—'
+
+  return (
+    <div>
+      {/* Grand totals */}
+      <div style={{ ...styles.card, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Invoiced PO vs Truck Loads — {month_name} {year}
+          </span>
+          <span style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setOnlyIssues(v => !v)} style={{
+              padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              background: onlyIssues ? '#b91c1c' : 'var(--bg-hover)',
+              color: onlyIssues ? '#fff' : 'var(--text-primary)',
+              border: '1px solid var(--border)', borderRadius: 6,
+            }}>
+              {onlyIssues ? 'Showing discrepancies' : 'Discrepancies only'}
+            </button>
+            <button onClick={toggleAll} style={{
+              padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              background: 'var(--bg-hover)', color: 'var(--text-primary)',
+              border: '1px solid var(--border)', borderRadius: 6,
+            }}>
+              {allCollapsed ? 'Expand all' : 'Collapse all'}
+            </button>
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 32, padding: '12px 20px', background: 'var(--bg-surface)', flexWrap: 'wrap' }}>
+          {[
+            { label: 'POs',             value: String(pos.length) },
+            { label: 'Invoiced Loads',  value: String(totals.invoiced_loads) },
+            { label: 'Matched Loads',   value: String(totals.load_loads) },
+            { label: 'Invoiced Tonnes', value: fmtT(totals.invoiced_tonnes) },
+            { label: 'Load Tonnes',     value: fmtT(totals.load_tonnes) },
+            { label: 'Invoiced Amount', value: fmtR(totals.invoiced_amount) },
+            { label: 'Load Amount',     value: fmtR(totals.load_amount) },
+            { label: 'Difference',      value: fmtR(totals.diff_amount), color: totals.diff_amount ? '#b91c1c' : '#16a34a' },
+            { label: 'Lines to Check',  value: String(issue_count), color: issue_count ? '#b91c1c' : '#16a34a' },
+          ].map(c => (
+            <div key={c.label} style={{ fontSize: 12 }}>
+              <div style={{ color: 'var(--text-muted)', marginBottom: 2, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{c.label}</div>
+              <div style={{ fontWeight: 700, color: c.color || 'var(--text-primary)' }}>{c.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {onlyIssues && visiblePos.length === 0 && (
+        <div style={{ ...styles.card, ...styles.empty, marginBottom: 16 }}>
+          Every invoiced line matches its truck load for this period.
+        </div>
+      )}
+
+      {/* One card per PO */}
+      {visiblePos.map(p => {
+        const isCollapsed = !!collapsed[p.po_number]
+        const trucks = onlyIssues ? p.trucks.filter(t => t.issue_count > 0) : p.trucks
+        return (
+          <div key={p.po_number} style={{ ...styles.card, marginBottom: 16 }}>
+            <div
+              onClick={() => toggle(p.po_number)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 16, padding: '12px 20px', cursor: 'pointer', flexWrap: 'wrap',
+                borderBottom: isCollapsed ? 'none' : '1px solid var(--border)',
+              }}
+            >
+              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                <span style={{ display: 'inline-block', width: 14, color: 'var(--text-muted)' }}>{isCollapsed ? '▸' : '▾'}</span>
+                {p.po_number}
+                <span style={{ marginLeft: 8, fontWeight: 500, fontSize: 12, color: 'var(--text-muted)' }}>
+                  {p.invoices.map(i => i.invoice_number).join(', ')}
+                  {p.customer_name ? ` · ${p.customer_name}` : ''}
+                  {' · '}{p.trucks.length} truck{p.trucks.length === 1 ? '' : 's'}
+                </span>
+                {p.issue_count > 0 && (
+                  <span style={{ ...badge, background: '#fee2e2', color: '#b91c1c' }}>
+                    {p.issue_count} TO CHECK
+                  </span>
+                )}
+              </span>
+              <span style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12 }}>
+                <span><span style={{ color: 'var(--text-muted)' }}>Invoiced: </span><b>{fmtR(p.totals.invoiced_amount)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Loads: </span><b>{fmtR(p.totals.load_amount)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Diff: </span><Diff value={p.totals.diff_amount} format={fmtR} /></span>
+              </span>
+            </div>
+
+            {!isCollapsed && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Invoice</th>
+                      <th style={styles.th}>Slip #</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Inv Tonnes</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Inv Rate</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Invoiced</th>
+                      <th style={{ ...styles.th, borderLeft: '2px solid var(--border)' }}>Load Date</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Load Tonnes</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Load Rate</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Load Amount</th>
+                      <th style={{ ...styles.th, textAlign: 'right', borderLeft: '2px solid var(--border)' }}>Diff</th>
+                      <th style={styles.th}>Issue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trucks.map(t => {
+                      const lines = onlyIssues ? t.lines.filter(l => l.issues.length) : t.lines
+                      return (
+                        <Fragment key={t.registration}>
+                          <tr>
+                            <td colSpan={11} style={{
+                              padding: '8px 12px', background: 'var(--bg-surface)',
+                              fontSize: 12, fontWeight: 700, color: 'var(--text-primary)',
+                              borderTop: '1px solid var(--border)',
+                            }}>
+                              {t.fleet_number ? `${t.fleet_number} — ` : ''}{t.registration}
+                              <span style={{ marginLeft: 8, fontWeight: 500, color: 'var(--text-muted)' }}>
+                                {t.totals.invoiced_loads} invoiced · {t.totals.load_loads} matched
+                              </span>
+                              {!t.known_truck && (
+                                <span style={{ ...badge, background: '#fee2e2', color: '#b91c1c' }}>NOT A FLEET TRUCK</span>
+                              )}
+                            </td>
+                          </tr>
+                          {lines.map((l, i) => {
+                            const bad = l.issues.filter(x => x !== 'period')
+                            return (
+                              <tr key={`${l.invoice_number}-${l.slip_number}-${i}`}
+                                  style={bad.length ? { background: 'rgba(239,68,68,0.05)' } : undefined}>
+                                <td style={styles.td}>{l.invoice_number}</td>
+                                <td style={styles.td}>{l.slip_number || '—'}</td>
+                                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtT(l.invoiced_tonnes)}</td>
+                                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(l.invoiced_rate)}</td>
+                                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(l.invoiced_amount)}</td>
+                                <td style={{ ...styles.td, borderLeft: '2px solid var(--border)' }}>
+                                  {l.load_id ? fmtDate(l.load_date) : <span style={{ color: '#b91c1c', fontWeight: 600 }}>missing</span>}
+                                </td>
+                                <td style={{ ...styles.td, textAlign: 'right' }}>{l.load_id ? fmtT(l.load_tonnes) : '—'}</td>
+                                <td style={{ ...styles.td, textAlign: 'right' }}>{l.load_id ? fmtR(l.load_rate) : '—'}</td>
+                                <td style={{ ...styles.td, textAlign: 'right' }}>{l.load_id ? fmtR(l.load_amount) : '—'}</td>
+                                <td style={{ ...styles.td, textAlign: 'right', borderLeft: '2px solid var(--border)' }}>
+                                  {l.load_id
+                                    ? <Diff value={Number((l.invoiced_amount - l.load_amount).toFixed(2))} format={fmtR} />
+                                    : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                                </td>
+                                <td style={styles.td}>
+                                  {l.issues.length === 0
+                                    ? <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>
+                                    : l.issues.map(x => (
+                                        <IssueTag key={x} issue={x} label={
+                                          x === 'reg' && l.load_registration
+                                            ? `Load is ${l.load_registration}`
+                                            : x === 'period' && l.load_period
+                                              ? l.load_period
+                                              : issueLabels[x] || x
+                                        } />
+                                      ))}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                          <tr>
+                            <td style={{ ...styles.td, fontWeight: 700 }}>{t.registration} total</td>
+                            <td style={styles.td} />
+                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtT(t.totals.invoiced_tonnes)}</td>
+                            <td style={styles.td} />
+                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(t.totals.invoiced_amount)}</td>
+                            <td style={{ ...styles.td, borderLeft: '2px solid var(--border)' }} />
+                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtT(t.totals.load_tonnes)}</td>
+                            <td style={styles.td} />
+                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(t.totals.load_amount)}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', borderLeft: '2px solid var(--border)' }}>
+                              <Diff value={t.totals.diff_amount} format={fmtR} />
+                            </td>
+                            <td style={styles.td} />
+                          </tr>
+                        </Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      {/* Loads with no invoice behind them */}
+      {uninvoiced.length > 0 && (
+        <div style={{ ...styles.card, marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '12px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#b45309' }}>
+              Loads Not Invoiced
+              <span style={{ marginLeft: 8, fontWeight: 500, fontSize: 12, color: 'var(--text-muted)' }}>
+                {uninvoiced_totals.load_loads} load{uninvoiced_totals.load_loads === 1 ? '' : 's'} in this period on no invoice
+              </span>
+            </span>
+            <span style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12 }}>
+              <span><span style={{ color: 'var(--text-muted)' }}>Tonnes: </span><b>{fmtT(uninvoiced_totals.load_tonnes)}</b></span>
+              <span><span style={{ color: 'var(--text-muted)' }}>Value: </span><b style={{ color: '#b45309' }}>{fmtR(uninvoiced_totals.load_amount)}</b></span>
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Registration</th>
+                  <th style={styles.th}>Date</th>
+                  <th style={styles.th}>Slip #</th>
+                  <th style={styles.th}>Mine</th>
+                  <th style={styles.th}>Driver</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Tonnes</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Rate</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {uninvoiced.map(g => g.loads.map((l, i) => (
+                  <tr key={l.load_id}>
+                    <td style={styles.td}>
+                      {i === 0 ? `${g.fleet_number ? `${g.fleet_number} — ` : ''}${g.registration}` : ''}
+                    </td>
+                    <td style={styles.td}>{fmtDate(l.load_date)}</td>
+                    <td style={styles.td}>
+                      {l.slip_number || '—'}
+                      {l.is_projection && <span style={badge}>PROJ</span>}
+                    </td>
+                    <td style={styles.td}>{l.mine_name || '—'}</td>
+                    <td style={styles.td}>{l.driver_name || '—'}</td>
+                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtT(l.load_tonnes)}</td>
+                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(l.load_rate)}</td>
+                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(l.load_amount)}</td>
+                  </tr>
+                )))}
+                <tr>
+                  <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
+                  <td style={styles.td} /><td style={styles.td} /><td style={styles.td} /><td style={styles.td} />
+                  <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtT(uninvoiced_totals.load_tonnes)}</td>
+                  <td style={styles.td} />
+                  <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(uninvoiced_totals.load_amount)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 const styles = {

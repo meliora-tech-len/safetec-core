@@ -343,6 +343,7 @@ export const getIncomeExpensesReport = (params) => api.get('/reports/income-expe
 export const getSarsVatDetail = (params) => api.get('/reports/sars-vat-detail', { params })
 export const getSarsVatDetailAnnual = (params) => api.get('/reports/sars-vat-detail-annual', { params })
 export const getSubcontractorLoadsReport = (params) => api.get('/reports/subcontractor-loads', { params })
+export const getPoLoadReconciliationReport = (params) => api.get('/reports/po-load-reconciliation', { params })
 export const getPayrollEntries = (params = {}) => api.get('/payroll-entries/', { params })
 export const getPayrollEntriesSummary = (params) => api.get('/payroll-entries/summary', { params })
 
