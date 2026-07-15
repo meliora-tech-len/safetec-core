@@ -1023,11 +1023,94 @@ function AnnualReport({ data, year }) {
 }
 
 // ── SARS VAT Monthly Detail ────────────────────────────────────────────────────
+// Fill-up breakdown shown under an expanded diesel invoice. Columns mirror the
+// costing Diesel Summary so the two reconcile line for line: the diesel amount is
+// zero-rated, and the 1% admin fee is the only part carrying VAT.
+function DieselFillUpBreakdown({ lines, fmtDate, invoiceTotal }) {
+  const tot = lines.reduce((a, l) => ({
+    litres:         a.litres         + Number(l.litres || 0),
+    amount_excl:    a.amount_excl    + Number(l.amount_excl || 0),
+    admin_fee_excl: a.admin_fee_excl + Number(l.admin_fee_excl || 0),
+    admin_fee_vat:  a.admin_fee_vat  + Number(l.admin_fee_vat || 0),
+    admin_fee_incl: a.admin_fee_incl + Number(l.admin_fee_incl || 0),
+    total:          a.total          + Number(l.total || 0),
+  }), { litres: 0, amount_excl: 0, admin_fee_excl: 0, admin_fee_vat: 0, admin_fee_incl: 0, total: 0 })
+
+  const th = { padding: '5px 8px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }
+  const td = { padding: '5px 8px', fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }
+  const R  = { textAlign: 'right' }
+
+  return (
+    <div style={{ overflowX: 'auto', padding: '8px 0' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+            <th style={{ ...th, textAlign: 'left' }}>Date</th>
+            <th style={{ ...th, textAlign: 'left' }}>Slip #</th>
+            <th style={{ ...th, textAlign: 'left' }}>Truck</th>
+            <th style={{ ...th, ...R }}>Litres</th>
+            <th style={{ ...th, ...R }}>R/Lt</th>
+            <th style={{ ...th, ...R }}>Diesel</th>
+            <th style={{ ...th, ...R }}>1% Fee Excl</th>
+            <th style={{ ...th, ...R }}>Fee VAT</th>
+            <th style={{ ...th, ...R }}>1% Fee Incl</th>
+            <th style={{ ...th, ...R }}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map(l => (
+            <tr key={l.fillup_id} style={{ borderBottom: '1px solid var(--border)' }}>
+              <td style={td}>{fmtDate(l.date)}</td>
+              <td style={{ ...td, fontFamily: 'monospace', fontWeight: 600 }}>{l.slip_number || '—'}</td>
+              <td style={td}>{l.truck_registration || '—'}</td>
+              <td style={{ ...td, ...R }}>{fmtN(l.litres)}</td>
+              <td style={{ ...td, ...R }}>{fmtN(l.rate_per_litre, 4)}</td>
+              <td style={{ ...td, ...R }}>{fmtR(l.amount_excl)}</td>
+              <td style={{ ...td, ...R }}>{fmtR(l.admin_fee_excl)}</td>
+              <td style={{ ...td, ...R, fontWeight: 700, color: 'var(--text-primary)' }}>{fmtR(l.admin_fee_vat)}</td>
+              <td style={{ ...td, ...R }}>{fmtR(l.admin_fee_incl)}</td>
+              <td style={{ ...td, ...R, fontWeight: 600 }}>{fmtR(l.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ fontWeight: 700 }}>
+            <td style={{ ...td, fontWeight: 700 }} colSpan={3}>TOTAL ({lines.length})</td>
+            <td style={{ ...td, ...R, fontWeight: 700 }}>{fmtN(tot.litres)}</td>
+            <td style={td}></td>
+            <td style={{ ...td, ...R, fontWeight: 700 }}>{fmtR(tot.amount_excl)}</td>
+            <td style={{ ...td, ...R, fontWeight: 700 }}>{fmtR(tot.admin_fee_excl)}</td>
+            <td style={{ ...td, ...R, fontWeight: 800, color: 'var(--text-primary)' }}>{fmtR(tot.admin_fee_vat)}</td>
+            <td style={{ ...td, ...R, fontWeight: 700 }}>{fmtR(tot.admin_fee_incl)}</td>
+            <td style={{ ...td, ...R, fontWeight: 700 }}>{fmtR(tot.total)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      {/* The fill-ups should account for the whole invoice. When they don't, say so
+          rather than leaving the reader to wonder why the lines don't add up. */}
+      {invoiceTotal != null && Math.abs(tot.total - invoiceTotal) > 0.05 && (
+        <div style={{ padding: '2px 8px 4px', fontSize: 10, color: 'var(--danger)', fontWeight: 600 }}>
+          ⚠ Fill-ups total {fmtR(tot.total)} but the invoice is {fmtR(invoiceTotal)} — a difference of {fmtR(Math.abs(tot.total - invoiceTotal))} is not covered by any linked fill-up. The invoice amount above is used; only the fee VAT comes from these lines.
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 function SarsVatDetail({ data, year, onBack }) {
   const { month_name, output_invoices, output_groups = [], input_invoices, input_groups = [], output_totals, input_totals, vat_payable } = data
   const vatColor = vat_payable > 0 ? 'var(--danger)' : vat_payable < 0 ? '#16a34a' : 'var(--text-muted)'
   const fmtDate  = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
   const title    = `SARS VAT Return — ${month_name} ${year}`
+
+  // Invoices carrying a diesel fill-up breakdown (Intsimbi) expand to show it.
+  const [expanded, setExpanded] = useState(() => new Set())
+  const toggleRow = (id) => setExpanded(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
 
   return (
     <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
@@ -1146,19 +1229,50 @@ function SarsVatDetail({ data, year, onBack }) {
                     {g.label} ({g.count})
                   </td>
                 </tr>
-                {input_invoices.filter(r => r.category === g.key).map((r, i) => (
-                  <tr key={`${g.key}-${i}`} style={styles.row}>
-                    <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>{fmtDate(r.date)}</td>
-                    <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>{r.invoice_number || '—'}</td>
-                    <td style={{ ...styles.td, fontWeight: 600 }}>{r.supplier_name || '—'}</td>
-                    <td style={{ ...styles.td, color: 'var(--text-muted)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description || '—'}</td>
-                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_incl)}</td>
-                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_excl)}</td>
-                    <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: r.vat_applicable ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
-                      {r.vat_applicable ? fmtR(r.vat) : <span style={{ fontSize: 10 }}>Non-VAT</span>}
-                    </td>
-                  </tr>
-                ))}
+                {input_invoices.filter(r => r.category === g.key).map((r, i) => {
+                  const lines  = r.fillup_lines || []
+                  const isOpen = expanded.has(r.invoice_id)
+                  return (
+                    <Fragment key={`${g.key}-${r.invoice_id ?? i}`}>
+                      <tr style={styles.row}>
+                        <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>{fmtDate(r.date)}</td>
+                        <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>
+                          {lines.length > 0 ? (
+                            <button
+                              onClick={() => toggleRow(r.invoice_id)}
+                              title={isOpen ? 'Hide fill-up breakdown' : 'Show fill-up breakdown'}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 6,
+                                padding: 0, border: 'none', background: 'none', cursor: 'pointer',
+                                font: 'inherit', color: 'var(--accent)', fontWeight: 600,
+                              }}
+                            >
+                              <span style={{ fontSize: 9, width: 8, display: 'inline-block' }}>{isOpen ? '▼' : '▶'}</span>
+                              {r.invoice_number || '—'}
+                              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'inherit' }}>
+                                ({lines.length})
+                              </span>
+                            </button>
+                          ) : (r.invoice_number || '—')}
+                        </td>
+                        <td style={{ ...styles.td, fontWeight: 600 }}>{r.supplier_name || '—'}</td>
+                        <td style={{ ...styles.td, color: 'var(--text-muted)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description || '—'}</td>
+                        <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_incl)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_excl)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: r.vat_applicable ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+                          {r.vat_applicable ? fmtR(r.vat) : <span style={{ fontSize: 10 }}>Non-VAT</span>}
+                        </td>
+                      </tr>
+                      {isOpen && lines.length > 0 && (
+                        <tr>
+                          <td colSpan={7} style={{ padding: '0 0 0 28px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+                            <DieselFillUpBreakdown lines={lines} fmtDate={fmtDate} invoiceTotal={r.amount_incl} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
                 <tr style={{ background: 'var(--bg-surface)' }}>
                   <td style={{ ...styles.td, fontWeight: 700, fontSize: 12 }} colSpan={4}>{g.label} subtotal</td>
                   <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(g.amount_incl)}</td>

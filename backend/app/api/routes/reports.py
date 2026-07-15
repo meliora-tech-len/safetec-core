@@ -74,6 +74,78 @@ def _is_trailer_maintenance_supplier(inv) -> bool:
     return 'trailer maintenance' in _supplier_name(inv).lower()
 
 
+def _is_intsimbi_diesel(inv) -> bool:
+    """Intsimbi bills its admin fee on its own statement, so that fee's VAT is
+    genuine supplier input VAT — unlike the internal 1% markup every other diesel
+    supplier's fill-ups carry, whose VAT is ours and must not be claimed
+    (see the input_vat note in income_expenses_report)."""
+    return 'intsimbi' in _supplier_name(inv).lower()
+
+
+def _fee_vat_by_invoice(db: Session, inv_ids: list) -> dict:
+    """Admin-fee VAT per supplier invoice, summed from its diesel fill-ups.
+
+    Intsimbi's diesel is zero-rated and its admin fee is the only VAT-bearing part,
+    but the invoice stores a single incl-VAT header amount, so the report's usual
+    `incl − Σ line excl` would book fee + fee VAT as VAT (≈7× over-claim). The
+    fill-ups hold the fee and its VAT split out, which is what costing reports off —
+    so read the VAT from there and let excl fall out as incl − VAT."""
+    if not inv_ids:
+        return {}
+    rows = (
+        db.query(
+            DieselFillUp.supplier_invoice_id.label('inv_id'),
+            func.coalesce(func.sum(DieselFillUp.admin_fee_vat), 0).label('vat'),
+        )
+        .filter(
+            DieselFillUp.supplier_invoice_id.in_(inv_ids),
+            DieselFillUp.is_archived != True,
+        )
+        .group_by(DieselFillUp.supplier_invoice_id)
+        .all()
+    )
+    return {r.inv_id: float(r.vat) for r in rows}
+
+
+def _diesel_fillup_lines(db: Session, inv_ids: list) -> dict:
+    """Per-invoice diesel fill-up breakdown, mirroring costing's Diesel Summary
+    columns so the SARS drill-down and costing read the same way.
+
+    Each line carries the zero-rated diesel amount and the admin fee split into
+    excl / VAT / incl — the fee being the only VAT-bearing part of the invoice."""
+    if not inv_ids:
+        return {}
+    fillups = (
+        db.query(DieselFillUp)
+        .options(joinedload(DieselFillUp.truck))
+        .filter(
+            DieselFillUp.supplier_invoice_id.in_(inv_ids),
+            DieselFillUp.is_archived != True,
+        )
+        .order_by(DieselFillUp.fillup_date, DieselFillUp.id)
+        .all()
+    )
+    lines: dict[int, list] = {}
+    for f in fillups:
+        amt      = float(f.amount or 0)
+        fee_excl = float(f.admin_fee_amount or 0)
+        fee_vat  = float(f.admin_fee_vat or 0)
+        lines.setdefault(f.supplier_invoice_id, []).append({
+            'fillup_id':          f.id,
+            'date':               f.fillup_date.strftime('%Y-%m-%d') if f.fillup_date else None,
+            'slip_number':        f.depot_slip_number or f.slip_number or None,
+            'truck_registration': f.truck.registration if f.truck else None,
+            'litres':             round(float(f.litres or 0), 2),
+            'rate_per_litre':     round(float(f.rate_per_litre or 0), 4),
+            'amount_excl':        round(amt, 2),
+            'admin_fee_excl':     round(fee_excl, 2),
+            'admin_fee_vat':      round(fee_vat, 2),
+            'admin_fee_incl':     round(fee_excl + fee_vat, 2),
+            'total':              round(float(f.total_amount or 0), 2),
+        })
+    return lines
+
+
 MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
@@ -200,6 +272,9 @@ def income_expenses_report(
         )
         line_excl_by_inv = {r.invoice_id: float(r.excl) for r in li_rows}
 
+    fee_vat_by_inv = _fee_vat_by_invoice(
+        db, [inv.id for inv in all_supplier_invoices if _is_intsimbi_diesel(inv)])
+
     supplier_incl_by_month: dict[int, float] = {}
     supplier_excl_by_month: dict[int, float] = {}
     for inv in all_supplier_invoices:
@@ -207,7 +282,9 @@ def income_expenses_report(
             continue
         m = inv.invoice_date.month
         incl = float(inv.amount)
-        if inv.id in line_excl_by_inv:
+        if _is_intsimbi_diesel(inv):
+            excl = round(incl, 2) - round(fee_vat_by_inv.get(inv.id, 0.0), 2)
+        elif inv.id in line_excl_by_inv:
             excl = line_excl_by_inv[inv.id]
         elif inv.vat_applicable:
             excl = incl / 1.15
@@ -434,10 +511,22 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         )
         line_excl_by_inv = {r.invoice_id: float(r.excl) for r in li_rows}
 
+    fillup_lines_by_inv = _diesel_fillup_lines(
+        db, [inv.id for inv in sup_invoices if _is_intsimbi_diesel(inv)])
+
     input_invoices = []
     for inv in sup_invoices:
         incl = float(inv.amount)
-        if inv.id in line_excl_by_inv:
+        # Intsimbi's stored vat_applicable=False makes the row render "Non-VAT",
+        # but its admin fee does carry VAT — surface it as a VAT-bearing row, and
+        # derive the VAT from the same fill-up lines the row expands to show, so
+        # the header and the breakdown can never disagree.
+        is_intsimbi = _is_intsimbi_diesel(inv)
+        fillup_lines = fillup_lines_by_inv.get(inv.id, []) if is_intsimbi else []
+        vat_applicable = True if is_intsimbi else inv.vat_applicable
+        if is_intsimbi:
+            excl = round(incl, 2) - round(sum(l['admin_fee_vat'] for l in fillup_lines), 2)
+        elif inv.id in line_excl_by_inv:
             excl = line_excl_by_inv[inv.id]
         elif inv.vat_applicable:
             excl = incl / 1.15
@@ -480,6 +569,7 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         else:
             category = 'other'
         input_invoices.append({
+            'invoice_id':     inv.id,
             'date':           inv.invoice_date.strftime('%Y-%m-%d') if inv.invoice_date else None,
             'invoice_number': inv.invoice_number or '',
             'supplier_name':  name,
@@ -487,8 +577,11 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             'amount_incl':    round(incl, 2),
             'amount_excl':    round(excl, 2),
             'vat':            round(incl - excl, 2),
-            'vat_applicable': inv.vat_applicable,
+            'vat_applicable': vat_applicable,
             'category':       category,
+            # Diesel fill-up breakdown for rows that expand (Intsimbi only, where
+            # the admin fee is supplier-billed and carries the invoice's only VAT).
+            'fillup_lines':   fillup_lines,
         })
 
     # Order by category (diesel, subcontractor, intercompany, other) then date,
