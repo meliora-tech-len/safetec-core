@@ -5,6 +5,7 @@ import { useSessionState } from '../hooks/useSessionState'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
+  getSubcontractorLoadsReport,
 } from '../services/api'
 import toast from 'react-hot-toast'
 import * as XLSX from 'xlsx'
@@ -20,10 +21,13 @@ const fmtN = (n, d = 2) => Number(n || 0).toFixed(d)
 
 const TABS = [
   { key: 'income',   label: 'Income vs Expenses' },
+  { key: 'subloads', label: 'Subcontractor Loads' },
   { key: 'truck',    label: 'Diesel by Truck' },
   { key: 'supplier', label: 'Diesel by Supplier' },
   { key: 'annual',   label: 'Diesel Annual' },
 ]
+
+const fmtT = (n) => `${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`
 
 const thisYear = new Date().getFullYear()
 const thisMonth = new Date().getMonth() + 1
@@ -37,10 +41,11 @@ export default function ReportsPage() {
   const [month, setMonth]     = useSessionState('period:reports:month', thisMonth)
   const [loading, setLoading] = useState(false)
 
-  // Diesel reports use an array; income report uses a structured object
+  // Diesel reports use an array; income + subcontractor loads use structured objects
   const [dieselData, setDieselData]   = useState([])
   const [incomeData, setIncomeData]   = useState(null)
   const [detailData, setDetailData]   = useState(null)
+  const [subData, setSubData]         = useState(null)
 
   const loadDetail = useCallback(async (m) => {
     if (!entityId) return
@@ -62,10 +67,14 @@ export default function ReportsPage() {
     setDieselData([])
     setIncomeData(null)
     setDetailData(null)
+    setSubData(null)
     try {
       if (tab === 'income') {
         const res = await getIncomeExpensesReport({ entity_id: entityId, year })
         setIncomeData(res.data)
+      } else if (tab === 'subloads') {
+        const res = await getSubcontractorLoadsReport({ entity_id: entityId, year, month })
+        setSubData(res.data)
       } else {
         const p = { entity_id: entityId, year, month }
         let res
@@ -421,7 +430,176 @@ export default function ReportsPage() {
     doc.save(`sars-vat-annual-${year}.pdf`)
   }
 
-  const hasData = tab === 'income' ? !!incomeData : dieselData.length > 0
+  // ── Subcontractor Loads exports ─────────────────────────────────────────────
+  // Column order matches the on-screen table so the two can be read side by side.
+  const SUB_HDRS = ['Date', 'Mine', 'Slip #', 'PO #', 'Driver', 'Tonnes', 'Rate', 'Invoiced Excl VAT',
+                    'Sub Rate', 'Payout Excl VAT', 'Payout Incl VAT', 'Admin Fee']
+
+  const subTotalRow = (label, t) => [label, '', '', '', '', t.tonnes, '', t.invoiced_excl, '', t.payout_excl, t.payout_incl, t.admin_fee]
+
+  const handleSubExportExcel = () => {
+    if (!subData) return
+    setShowExportMenu(false)
+    const { month_name, subcontractors = [], totals } = subData
+    const title   = `Subcontractor Loads — ${month_name} ${year}`
+    const now     = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' })
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+    const wb      = XLSX.utils.book_new()
+
+    // Sheet 1: one row per truck, grouped by subcontractor
+    const ws1 = XLSX.utils.aoa_to_sheet([
+      [title], [`Generated: ${now}`], [],
+      ['Subcontractor', 'Fleet #', 'Registration', 'Loads', 'Tonnes', 'Invoiced Excl VAT', 'Payout Excl VAT', 'Payout Incl VAT', 'Admin Fee'],
+      ...subcontractors.flatMap(s => [
+        ...s.trucks.map(t => [
+          s.subcontractor_name, t.fleet_number || '', t.truck_registration,
+          t.totals.loads, t.totals.tonnes, t.totals.invoiced_excl, t.totals.payout_excl, t.totals.payout_incl, t.totals.admin_fee,
+        ]),
+        [`${s.subcontractor_name} TOTAL`, '', '', s.totals.loads, s.totals.tonnes, s.totals.invoiced_excl, s.totals.payout_excl, s.totals.payout_incl, s.totals.admin_fee],
+        [],
+      ]),
+      ['GRAND TOTAL', '', '', totals.loads, totals.tonnes, totals.invoiced_excl, totals.payout_excl, totals.payout_incl, totals.admin_fee],
+    ])
+    ws1['!cols'] = [{ wch: 24 }, { wch: 10 }, { wch: 16 }, { wch: 8 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 14 }]
+    XLSX.utils.book_append_sheet(wb, ws1, 'Summary')
+
+    // Sheet 2: every load record, under its subcontractor + truck heading
+    const ws2 = XLSX.utils.aoa_to_sheet([
+      [title], [`Generated: ${now}`], [],
+      ...subcontractors.flatMap(s => [
+        [s.subcontractor_name.toUpperCase()],
+        ...s.trucks.flatMap(t => [
+          [`${t.fleet_number ? `${t.fleet_number} — ` : ''}${t.truck_registration} (${t.totals.loads} loads)`],
+          SUB_HDRS,
+          ...t.loads.map(l => [
+            fmtDate(l.load_date), l.mine_name || '', l.slip_number || '', l.po_number || '', l.driver_name || '',
+            l.tonnes, l.rate_per_ton, l.invoiced_excl,
+            l.subcontractor_rate, l.payout_excl, l.payout_incl, l.admin_fee,
+          ]),
+          subTotalRow(`${t.truck_registration} total`, t.totals),
+          [],
+        ]),
+        subTotalRow(`${s.subcontractor_name} TOTAL`, s.totals),
+        [],
+      ]),
+      subTotalRow('GRAND TOTAL', totals),
+    ])
+    ws2['!cols'] = [{ wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 10 }, { wch: 10 },
+                    { wch: 18 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 12 }]
+    XLSX.utils.book_append_sheet(wb, ws2, 'Load Detail')
+
+    XLSX.writeFile(wb, `subcontractor-loads-${year}-${String(month).padStart(2, '0')}.xlsx`)
+  }
+
+  const handleSubExportPdf = () => {
+    if (!subData) return
+    setShowExportMenu(false)
+    const { month_name, subcontractors = [], totals } = subData
+    const title   = `Subcontractor Loads — ${month_name} ${year}`
+    const now     = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
+    const fmtAmt  = (n) => `R ${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' }) : ''
+    const doc     = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+
+    doc.setFontSize(15); doc.setFont('helvetica', 'bold')
+    doc.text(title, 14, 15)
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(120)
+    doc.text(`Generated ${now}`, 14, 21)
+    doc.setTextColor(0)
+
+    // Page 1: per-truck totals grouped by subcontractor
+    autoTable(doc, {
+      head: [['Subcontractor', 'Fleet #', 'Registration', 'Loads', 'Tonnes', 'Invoiced Excl', 'Payout Excl', 'Payout Incl', 'Admin Fee']],
+      body: [
+        ...subcontractors.flatMap(s => [
+          ...s.trucks.map((t, i) => [
+            i === 0 ? s.subcontractor_name : '', t.fleet_number || '—', t.truck_registration,
+            t.totals.loads, fmtT(t.totals.tonnes), fmtAmt(t.totals.invoiced_excl),
+            fmtAmt(t.totals.payout_excl), fmtAmt(t.totals.payout_incl), fmtAmt(t.totals.admin_fee),
+          ]),
+          [`${s.subcontractor_name} subtotal`, '', '', s.totals.loads, fmtT(s.totals.tonnes),
+           fmtAmt(s.totals.invoiced_excl), fmtAmt(s.totals.payout_excl), fmtAmt(s.totals.payout_incl), fmtAmt(s.totals.admin_fee)],
+        ]),
+        ['GRAND TOTAL', '', '', totals.loads, fmtT(totals.tonnes), fmtAmt(totals.invoiced_excl),
+         fmtAmt(totals.payout_excl), fmtAmt(totals.payout_incl), fmtAmt(totals.admin_fee)],
+      ],
+      startY: 26,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 38 }, 1: { cellWidth: 16 }, 2: { cellWidth: 26 },
+        3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' },
+        6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' },
+      },
+      didParseCell: (d) => {
+        if (d.section !== 'body') return
+        const first = String(d.row.raw?.[0] ?? '')
+        if (first === 'GRAND TOTAL' || first.endsWith(' subtotal')) {
+          d.cell.styles.fontStyle = 'bold'
+          d.cell.styles.fillColor = first === 'GRAND TOTAL' ? [225, 225, 225] : [241, 245, 249]
+        }
+      },
+      margin: { left: 14, right: 14 },
+    })
+
+    // Then a page per subcontractor with every load record behind the totals
+    subcontractors.forEach(s => {
+      doc.addPage()
+      doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(0)
+      doc.text(`${s.subcontractor_name} — ${month_name} ${year}`, 14, 14)
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(120)
+      doc.text(
+        `${s.totals.loads} loads · ${fmtT(s.totals.tonnes)} · Invoiced ${fmtAmt(s.totals.invoiced_excl)} · ` +
+        `Payout ${fmtAmt(s.totals.payout_excl)} · Admin fee ${fmtAmt(s.totals.admin_fee)}`,
+        14, 19,
+      )
+      doc.setTextColor(0)
+
+      autoTable(doc, {
+        head: [['Date', 'Mine', 'Slip #', 'Driver', 'Tonnes', 'Rate', 'Invoiced Excl', 'Sub Rate', 'Payout Excl', 'Admin Fee']],
+        body: [
+          ...s.trucks.flatMap(t => [
+            [{ content: `${t.fleet_number ? `${t.fleet_number} — ` : ''}${t.truck_registration}  (${t.totals.loads} loads)`,
+               colSpan: 10, styles: { fontStyle: 'bold', fillColor: [226, 232, 240] } }],
+            ...t.loads.map(l => [
+              fmtDate(l.load_date), l.mine_name || '—',
+              (l.slip_number || '—') + (l.is_split_load ? ' (split)' : '') + (l.is_projection ? ' (proj)' : ''),
+              l.driver_name || '—',
+              fmtT(l.tonnes), fmtAmt(l.rate_per_ton), fmtAmt(l.invoiced_excl),
+              fmtAmt(l.subcontractor_rate), fmtAmt(l.payout_excl), fmtAmt(l.admin_fee),
+            ]),
+            [`${t.truck_registration} total`, '', '', '', fmtT(t.totals.tonnes), '', fmtAmt(t.totals.invoiced_excl),
+             '', fmtAmt(t.totals.payout_excl), fmtAmt(t.totals.admin_fee)],
+          ]),
+          [`${s.subcontractor_name} TOTAL`, '', '', '', fmtT(s.totals.tonnes), '', fmtAmt(s.totals.invoiced_excl),
+           '', fmtAmt(s.totals.payout_excl), fmtAmt(s.totals.admin_fee)],
+        ],
+        startY: 23,
+        styles: { fontSize: 7, cellPadding: 1.5 },
+        headStyles: { fillColor: [71, 85, 105], textColor: 255, fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 16 }, 1: { cellWidth: 26 }, 2: { cellWidth: 26 }, 3: { cellWidth: 30 },
+          4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' },
+          7: { halign: 'right' }, 8: { halign: 'right' }, 9: { halign: 'right' },
+        },
+        didParseCell: (d) => {
+          if (d.section !== 'body') return
+          const first = String(d.row.raw?.[0]?.content ?? d.row.raw?.[0] ?? '')
+          if (first.endsWith(' TOTAL') || first.endsWith(' total')) {
+            d.cell.styles.fontStyle = 'bold'
+            d.cell.styles.fillColor = first.endsWith(' TOTAL') ? [225, 225, 225] : [245, 245, 245]
+          }
+        },
+        margin: { left: 14, right: 14 },
+      })
+    })
+
+    doc.save(`subcontractor-loads-${year}-${String(month).padStart(2, '0')}.pdf`)
+  }
+
+  const hasData = tab === 'income' ? !!incomeData
+    : tab === 'subloads' ? !!subData?.subcontractors?.length
+    : dieselData.length > 0
 
   return (
     <div style={styles.page}>
@@ -431,7 +609,7 @@ export default function ReportsPage() {
           <p style={styles.subtitle}>Business reports and reconciliations</p>
         </div>
         <div style={{ position: 'relative' }}>
-          {tab === 'income' ? (
+          {tab === 'income' || tab === 'subloads' ? (
             <>
               <button
                 onClick={() => setShowExportMenu(v => !v)}
@@ -448,9 +626,11 @@ export default function ReportsPage() {
                     background: 'var(--bg-card)', border: '1px solid var(--border)',
                     borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', minWidth: 180, overflow: 'hidden',
                   }}>
-                    {(detailData
-                      ? [{ label: 'Export Excel (.xlsx)', action: handleDetailExportExcel }, { label: 'Export PDF', action: handleDetailExportPdf }]
-                      : [{ label: 'Export Excel (.xlsx)', action: handleAnnualExportExcel }, { label: 'Export PDF', action: handleAnnualExportPdf }]
+                    {(tab === 'subloads'
+                      ? [{ label: 'Export Excel (.xlsx)', action: handleSubExportExcel }, { label: 'Export PDF', action: handleSubExportPdf }]
+                      : detailData
+                        ? [{ label: 'Export Excel (.xlsx)', action: handleDetailExportExcel }, { label: 'Export PDF', action: handleDetailExportPdf }]
+                        : [{ label: 'Export Excel (.xlsx)', action: handleAnnualExportExcel }, { label: 'Export PDF', action: handleAnnualExportPdf }]
                     ).map(item => (
                       <button key={item.label} onClick={item.action} style={{
                         display: 'block', width: '100%', textAlign: 'left',
@@ -511,6 +691,12 @@ export default function ReportsPage() {
           : incomeData
             ? <IncomeExpensesReport data={incomeData} year={year} onViewDetail={loadDetail} />
             : <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
+      ) : tab === 'subloads' ? (
+        !subData
+          ? <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
+          : subData.subcontractors.length === 0
+            ? <div style={{ ...styles.card, ...styles.empty }}>No subcontractor loads for this period.</div>
+            : <SubcontractorLoadsReport data={subData} year={year} />
       ) : (
         <div style={styles.card}>
           {dieselData.length === 0 ? (
@@ -1014,6 +1200,170 @@ function SarsVatDetail({ data, year, onBack }) {
   )
 }
 
+
+// ── Subcontractor Loads ────────────────────────────────────────────────────────
+// Subcontractor → truck → every load record behind the truck's total.
+function SubcontractorLoadsReport({ data, year }) {
+  const { month_name, subcontractors, totals } = data
+  const [collapsed, setCollapsed] = useState({})
+
+  const toggle = (id) => setCollapsed(c => ({ ...c, [id]: !c[id] }))
+  const allCollapsed = subcontractors.every(s => collapsed[s.subcontractor_id])
+  const toggleAll = () =>
+    setCollapsed(allCollapsed ? {} : Object.fromEntries(subcontractors.map(s => [s.subcontractor_id, true])))
+
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' }) : '—'
+  const COLS = 11
+
+  return (
+    <div>
+      {/* Grand totals */}
+      <div style={{ ...styles.card, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Subcontractor Loads — {month_name} {year}
+          </span>
+          <button onClick={toggleAll} style={{
+            padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            background: 'var(--bg-hover)', color: 'var(--text-primary)',
+            border: '1px solid var(--border)', borderRadius: 6,
+          }}>
+            {allCollapsed ? 'Expand all' : 'Collapse all'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: 32, padding: '12px 20px', background: 'var(--bg-surface)', flexWrap: 'wrap' }}>
+          {[
+            { label: 'Subcontractors', value: String(subcontractors.length) },
+            { label: 'Loads',          value: String(totals.loads) },
+            { label: 'Tonnes',         value: fmtT(totals.tonnes) },
+            { label: 'Invoiced Excl VAT', value: fmtR(totals.invoiced_excl) },
+            { label: 'Payout Excl VAT',   value: fmtR(totals.payout_excl), color: '#16a34a' },
+            { label: 'Admin Fee',         value: fmtR(totals.admin_fee) },
+          ].map(c => (
+            <div key={c.label} style={{ fontSize: 12 }}>
+              <div style={{ color: 'var(--text-muted)', marginBottom: 2, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{c.label}</div>
+              <div style={{ fontWeight: 700, color: c.color || 'var(--text-primary)' }}>{c.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* One card per subcontractor */}
+      {subcontractors.map(s => {
+        const isCollapsed = !!collapsed[s.subcontractor_id]
+        return (
+          <div key={s.subcontractor_id} style={{ ...styles.card, marginBottom: 16 }}>
+            <div
+              onClick={() => toggle(s.subcontractor_id)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 16, padding: '12px 20px', cursor: 'pointer', flexWrap: 'wrap',
+                borderBottom: isCollapsed ? 'none' : '1px solid var(--border)',
+              }}
+            >
+              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                <span style={{ display: 'inline-block', width: 14, color: 'var(--text-muted)' }}>{isCollapsed ? '▸' : '▾'}</span>
+                {s.subcontractor_name}
+                <span style={{ marginLeft: 8, fontWeight: 500, fontSize: 12, color: 'var(--text-muted)' }}>
+                  {s.trucks.length} truck{s.trucks.length === 1 ? '' : 's'} · {s.totals.loads} load{s.totals.loads === 1 ? '' : 's'}
+                </span>
+              </span>
+              <span style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12 }}>
+                <span><span style={{ color: 'var(--text-muted)' }}>Tonnes: </span><b>{fmtT(s.totals.tonnes)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Invoiced: </span><b>{fmtR(s.totals.invoiced_excl)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Payout: </span><b style={{ color: '#16a34a' }}>{fmtR(s.totals.payout_excl)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Admin fee: </span><b>{fmtR(s.totals.admin_fee)}</b></span>
+              </span>
+            </div>
+
+            {!isCollapsed && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Date</th>
+                      <th style={styles.th}>Mine</th>
+                      <th style={styles.th}>Slip #</th>
+                      <th style={styles.th}>Driver</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Tonnes</th>
+                      <th style={{ ...styles.th, textAlign: 'right', borderLeft: '2px solid var(--border)' }}>Rate</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Invoiced Excl</th>
+                      <th style={{ ...styles.th, textAlign: 'right', borderLeft: '2px solid var(--border)', color: '#16a34a' }}>Sub Rate</th>
+                      <th style={{ ...styles.th, textAlign: 'right', color: '#16a34a' }}>Payout Excl</th>
+                      <th style={{ ...styles.th, textAlign: 'right', color: '#16a34a' }}>Payout Incl</th>
+                      <th style={{ ...styles.th, textAlign: 'right', borderLeft: '2px solid var(--border)' }}>Admin Fee</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.trucks.map(t => (
+                      <Fragment key={t.truck_id}>
+                        <tr>
+                          <td colSpan={COLS} style={{
+                            ...styles.td, fontWeight: 800, fontSize: 11, textTransform: 'uppercase',
+                            letterSpacing: '0.05em', color: 'var(--text-muted)', background: 'var(--bg-surface)',
+                          }}>
+                            {t.fleet_number ? `${t.fleet_number} — ` : ''}{t.truck_registration} ({t.totals.loads})
+                          </td>
+                        </tr>
+                        {t.loads.map(l => (
+                          <tr key={l.load_id} style={styles.row}>
+                            <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>{fmtDate(l.load_date)}</td>
+                            <td style={{ ...styles.td, fontWeight: 600 }}>{l.mine_name || '—'}</td>
+                            <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>
+                              {l.slip_number || '—'}
+                              {l.is_split_load && <span style={badge}>SPLIT</span>}
+                              {l.is_projection && <span style={{ ...badge, background: 'rgba(234,179,8,0.15)', color: '#92400e' }}>PROJ</span>}
+                            </td>
+                            <td style={{ ...styles.td, color: 'var(--text-muted)' }}>{l.driver_name || '—'}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtT(l.tonnes)}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '2px solid var(--border)' }}>{fmtR(l.rate_per_ton)}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtR(l.invoiced_excl)}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '2px solid var(--border)' }}>{fmtR(l.subcontractor_rate)}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', color: '#16a34a' }}>{fmtR(l.payout_excl)}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', color: '#16a34a' }}>{fmtR(l.payout_incl)}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', borderLeft: '2px solid var(--border)' }}>{fmtR(l.admin_fee)}</td>
+                          </tr>
+                        ))}
+                        <tr style={{ background: 'var(--bg-surface)' }}>
+                          <td style={{ ...styles.td, fontWeight: 700, fontSize: 12 }} colSpan={4}>{t.truck_registration} total</td>
+                          <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtT(t.totals.tonnes)}</td>
+                          <td style={{ ...styles.td, borderLeft: '2px solid var(--border)' }}></td>
+                          <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtR(t.totals.invoiced_excl)}</td>
+                          <td style={{ ...styles.td, borderLeft: '2px solid var(--border)' }}></td>
+                          <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', color: '#16a34a' }}>{fmtR(t.totals.payout_excl)}</td>
+                          <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', color: '#16a34a' }}>{fmtR(t.totals.payout_incl)}</td>
+                          <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', borderLeft: '2px solid var(--border)' }}>{fmtR(t.totals.admin_fee)}</td>
+                        </tr>
+                      </Fragment>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={styles.totalRow}>
+                      <td style={{ ...styles.td, fontWeight: 700 }} colSpan={4}>{s.subcontractor_name.toUpperCase()} TOTAL</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtT(s.totals.tonnes)}</td>
+                      <td style={{ ...styles.td, borderLeft: '2px solid var(--border)' }}></td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap' }}>{fmtR(s.totals.invoiced_excl)}</td>
+                      <td style={{ ...styles.td, borderLeft: '2px solid var(--border)' }}></td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', color: '#16a34a' }}>{fmtR(s.totals.payout_excl)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', color: '#16a34a' }}>{fmtR(s.totals.payout_incl)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', borderLeft: '2px solid var(--border)' }}>{fmtR(s.totals.admin_fee)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const badge = {
+  marginLeft: 6, padding: '1px 5px', borderRadius: 4, fontSize: 9, fontWeight: 700,
+  fontFamily: 'inherit', letterSpacing: '0.04em',
+  background: 'var(--bg-hover)', color: 'var(--text-muted)',
+}
 
 const styles = {
   page: { padding: 'var(--page-pad)', flex: 1 },

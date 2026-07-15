@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import Optional
 
@@ -9,6 +9,7 @@ from app.models.models import (
     User, TruckLoad, DieselFillUp, SupplierInvoice, SupplierInvoiceLineItem,
     DriverPayCycle, Driver, PayrollSettings, PayrollEntry, Supplier, PaymentTermType,
     Invoice, Customer, DocumentType, InvoiceStatus, BusinessEntity,
+    Truck, Subcontractor,
 )
 from app.services.payroll_calculator import calculate_pay_cycle
 
@@ -574,3 +575,153 @@ def sars_vat_detail_annual(
     _check_entity_access(entity_id, current_user)
     months = [_build_month_detail(db, entity_id, year, m) for m in range(1, 13)]
     return {'year': year, 'entity_id': entity_id, 'months': months}
+
+
+# ── Subcontractor truck loads ─────────────────────────────────────────────────
+
+def _zero_load_totals() -> dict:
+    return {
+        'loads': 0, 'tonnes': 0.0,
+        'invoiced_excl': 0.0, 'invoiced_incl': 0.0,
+        'payout_excl': 0.0, 'payout_incl': 0.0,
+        'admin_fee': 0.0,
+    }
+
+
+def _add_load_totals(dst: dict, src: dict):
+    for k in dst:
+        dst[k] += src[k]
+
+
+def _round_load_totals(t: dict) -> dict:
+    return {
+        'loads': t['loads'],
+        'tonnes': round(t['tonnes'], 3),
+        **{k: round(t[k], 2) for k in
+           ('invoiced_excl', 'invoiced_incl', 'payout_excl', 'payout_incl', 'admin_fee')},
+    }
+
+
+@router.get("/subcontractor-loads")
+def subcontractor_loads_report(
+    entity_id: int = Query(...),
+    year: int = Query(..., ge=2020),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Truck loads for the period, grouped subcontractor → truck → individual loads,
+    with the invoiced amount and the subcontractor payout side by side.
+
+    Only trucks linked to a subcontractor are included; own-fleet trucks are out of
+    scope for this report.
+
+    Scoping deliberately mirrors the subcontractor costing module so the two
+    reconcile: subcontractors are selected by their own entity_id (not the load's),
+    and a load belongs to its STATEMENT period when one is set, falling back to the
+    load date.
+    """
+    _check_entity_access(entity_id, current_user)
+
+    loads = (
+        db.query(TruckLoad)
+        .join(Truck, Truck.id == TruckLoad.truck_id)
+        .join(Subcontractor, Subcontractor.id == Truck.subcontractor_id)
+        .options(joinedload(TruckLoad.mine))
+        .filter(
+            Subcontractor.entity_id == entity_id,
+            TruckLoad.is_archived == False,
+            func.coalesce(TruckLoad.statement_month, func.extract('month', TruckLoad.load_date)) == month,
+            func.coalesce(TruckLoad.statement_year, func.extract('year', TruckLoad.load_date)) == year,
+        )
+        .add_columns(
+            Subcontractor.id.label('sub_id'),
+            Subcontractor.name.label('sub_name'),
+            Truck.id.label('t_id'),
+            Truck.registration.label('t_reg'),
+            Truck.fleet_number.label('t_fleet'),
+        )
+        .order_by(
+            Subcontractor.name, Truck.fleet_number, Truck.registration,
+            TruckLoad.load_date, TruckLoad.id,
+        )
+        .all()
+    )
+
+    subs: dict[int, dict] = {}
+    trucks: dict[tuple, dict] = {}
+
+    for load, sub_id, sub_name, t_id, t_reg, t_fleet in loads:
+        sub = subs.get(sub_id)
+        if sub is None:
+            sub = subs[sub_id] = {
+                'subcontractor_id': sub_id,
+                'subcontractor_name': sub_name,
+                'trucks': [],
+                'totals': _zero_load_totals(),
+            }
+        truck = trucks.get((sub_id, t_id))
+        if truck is None:
+            truck = trucks[(sub_id, t_id)] = {
+                'truck_id': t_id,
+                'truck_registration': t_reg,
+                'fleet_number': t_fleet,
+                'loads': [],
+                'totals': _zero_load_totals(),
+            }
+            sub['trucks'].append(truck)
+
+        tonnes        = float(load.tonnes or 0)
+        invoiced_excl = float(load.amount_excl_vat or 0)
+        invoiced_incl = float(load.amount_incl_vat or 0)
+        payout_excl   = float(load.subcontractor_amount_excl_vat or 0)
+        payout_incl   = float(load.subcontractor_amount_incl_vat or 0)
+        # Taken as the difference rather than tonnes × fee so the invoiced, payout
+        # and admin-fee columns always reconcile against the stored, separately
+        # rounded amounts.
+        admin_fee     = invoiced_excl - payout_excl
+
+        truck['loads'].append({
+            'load_id': load.id,
+            'load_date': load.load_date,
+            'mine_name': load.mine.name if load.mine else None,
+            'slip_number': load.slip_number,
+            'po_number': load.po_number,
+            'driver_name': load.driver_name,
+            'tonnes': round(tonnes, 3),
+            'rate_per_ton': float(load.rate_per_ton or 0),
+            'invoiced_excl': round(invoiced_excl, 2),
+            'invoiced_incl': round(invoiced_incl, 2),
+            'subcontractor_rate': float(load.subcontractor_rate or 0),
+            'payout_excl': round(payout_excl, 2),
+            'payout_incl': round(payout_incl, 2),
+            'admin_fee_per_ton': float(load.subcontractor_admin_fee_per_ton or 0),
+            'admin_fee': round(admin_fee, 2),
+            'is_split_load': bool(load.is_split_load),
+            'is_projection': bool(load.is_projection),
+        })
+
+        row_totals = {
+            'loads': 1, 'tonnes': tonnes,
+            'invoiced_excl': invoiced_excl, 'invoiced_incl': invoiced_incl,
+            'payout_excl': payout_excl, 'payout_incl': payout_incl,
+            'admin_fee': admin_fee,
+        }
+        _add_load_totals(truck['totals'], row_totals)
+        _add_load_totals(sub['totals'], row_totals)
+
+    grand = _zero_load_totals()
+    for sub in subs.values():
+        _add_load_totals(grand, sub['totals'])
+        for truck in sub['trucks']:
+            truck['totals'] = _round_load_totals(truck['totals'])
+        sub['totals'] = _round_load_totals(sub['totals'])
+
+    return {
+        'entity_id': entity_id,
+        'year': year,
+        'month': month,
+        'month_name': MONTH_NAMES[month - 1],
+        'subcontractors': list(subs.values()),
+        'totals': _round_load_totals(grand),
+    }
