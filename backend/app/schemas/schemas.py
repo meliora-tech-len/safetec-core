@@ -662,6 +662,9 @@ class EntityProfitLoss(BaseModel):
     supplier_invoices_total: Decimal = Decimal("0")
     supplier_invoices_count: int = 0
     profit_loss: Decimal = Decimal("0")
+    # Itemized proof behind each side of the card (Profit & Loss drill-down).
+    invoices: List[InvoiceSummary] = []
+    supplier_invoices: List["SupplierInvoiceLineSummary"] = []
 
 
 # ── Rebuild forward references ────────────────────────────────────────────────
@@ -1854,6 +1857,11 @@ class SupplierInvoiceLineSummary(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# EntityProfitLoss (defined above) references SupplierInvoiceLineSummary, which only
+# exists from here down — resolve that forward reference now that it does.
+EntityProfitLoss.model_rebuild()
 
 
 class SupplierPayablesDashboard(BaseModel):

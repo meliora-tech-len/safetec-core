@@ -350,9 +350,13 @@ def profit_loss_summary(
                          month (falling back to invoice_date), excl. archived, full
                          amount.
     Profit/loss        : invoices_total − supplier_invoices_total.
+
+    Each side also carries the rows it was summed from, so the dashboard card can
+    show exactly which invoices make up the figure.
     """
     from sqlalchemy import func
     from app.models.models import SupplierInvoice, DocumentType, InvoiceStatus
+    from app.schemas.schemas import SupplierInvoiceLineSummary
 
     now = datetime.now(timezone.utc)
     period_month = month or now.month
@@ -373,12 +377,9 @@ def profit_loss_summary(
 
     entity_ids = [e.id for e in entities]
 
-    inv_rows = (
-        db.query(
-            Invoice.entity_id,
-            func.coalesce(func.sum(Invoice.total), 0).label("total"),
-            func.count(Invoice.id).label("count"),
-        )
+    invoices = (
+        db.query(Invoice)
+        .options(joinedload(Invoice.supplier), joinedload(Invoice.customer), joinedload(Invoice.entity))
         .filter(
             Invoice.entity_id.in_(entity_ids),
             Invoice.document_type == DocumentType.invoice,
@@ -386,17 +387,28 @@ def profit_loss_summary(
             func.extract("month", Invoice.issue_date) == period_month,
             func.extract("year", Invoice.issue_date) == period_year,
         )
-        .group_by(Invoice.entity_id)
+        .order_by(Invoice.issue_date.desc())
         .all()
     )
-    inv_by_entity = {r.entity_id: r for r in inv_rows}
+    inv_by_entity: dict = {}
+    for inv in invoices:
+        inv_by_entity.setdefault(inv.entity_id, []).append(InvoiceSummary(
+            id=inv.id,
+            invoice_number=inv.invoice_number,
+            document_type=inv.document_type,
+            status=inv.status,
+            supplier_name=(inv.supplier.name if inv.supplier else (inv.customer.name if inv.customer else None)),
+            customer_name=(inv.customer.name if inv.customer else None),
+            entity_code=inv.entity.code if inv.entity else None,
+            total=inv.total,
+            issue_date=inv.issue_date,
+            due_date=inv.due_date,
+            paid_date=inv.paid_date,
+        ))
 
-    sup_rows = (
-        db.query(
-            SupplierInvoice.entity_id,
-            func.coalesce(func.sum(SupplierInvoice.amount), 0).label("total"),
-            func.count(SupplierInvoice.id).label("count"),
-        )
+    sup_invoices = (
+        db.query(SupplierInvoice)
+        .options(joinedload(SupplierInvoice.supplier), joinedload(SupplierInvoice.entity))
         .filter(
             SupplierInvoice.entity_id.in_(entity_ids),
             SupplierInvoice.is_archived != True,
@@ -409,29 +421,46 @@ def profit_loss_summary(
                 func.extract("year", SupplierInvoice.invoice_date),
             ) == period_year,
         )
-        .group_by(SupplierInvoice.entity_id)
+        .order_by(SupplierInvoice.invoice_date.desc())
         .all()
     )
-    sup_by_entity = {r.entity_id: r for r in sup_rows}
+    sup_by_entity: dict = {}
+    for si in sup_invoices:
+        sup_by_entity.setdefault(si.entity_id, []).append(SupplierInvoiceLineSummary(
+            id=si.id,
+            invoice_number=si.invoice_number,
+            supplier_id=si.supplier_id,
+            supplier_name=si.supplier.name if si.supplier else (si.supplier_name_text or "—"),
+            entity_code=si.entity.code if si.entity else None,
+            invoice_date=si.invoice_date,
+            amount=Decimal(str(si.amount)),
+            outstanding_amount=Decimal(str(si.amount)) - Decimal(str(si.deposit_paid or 0)),
+            statement_month=si.statement_month,
+            statement_year=si.statement_year,
+            due_date=si.payment_due_date,
+            paid_date=si.paid_date,
+        ))
 
     order = {code: i for i, code in enumerate(_PROFIT_LOSS_ENTITY_CODES)}
     entities.sort(key=lambda e: order.get(e.code, len(order)))
 
     out: List[EntityProfitLoss] = []
     for e in entities:
-        inv = inv_by_entity.get(e.id)
-        sup = sup_by_entity.get(e.id)
-        inv_total = Decimal(str(inv.total)) if inv else Decimal("0")
-        sup_total = Decimal(str(sup.total)) if sup else Decimal("0")
+        inv_lines = inv_by_entity.get(e.id, [])
+        sup_lines = sup_by_entity.get(e.id, [])
+        inv_total = sum((l.total for l in inv_lines), Decimal("0"))
+        sup_total = sum((l.amount for l in sup_lines), Decimal("0"))
         out.append(EntityProfitLoss(
             entity_id=e.id,
             entity_code=e.code,
             entity_name=e.name,
             invoices_total=inv_total,
-            invoices_count=inv.count if inv else 0,
+            invoices_count=len(inv_lines),
             supplier_invoices_total=sup_total,
-            supplier_invoices_count=sup.count if sup else 0,
+            supplier_invoices_count=len(sup_lines),
             profit_loss=inv_total - sup_total,
+            invoices=inv_lines,
+            supplier_invoices=sup_lines,
         ))
     return out
 

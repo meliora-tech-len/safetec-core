@@ -157,6 +157,34 @@ export default function DashboardPage() {
     })
   }
 
+  // ── Profit & Loss drill-downs: the invoices behind each side of a P&L card ──
+  const openPlInvoices = (pl) => setDrilldown({
+    title: `${pl.entity_name} — Invoices generated`, subtitle: periodLabel,
+    rows: pl.invoices || [], total: pl.invoices_total,
+    columns: [
+      { label: 'Invoice #', render: r => r.invoice_number },
+      { label: 'Customer', render: r => r.customer_name || r.supplier_name || '—' },
+      { label: 'Status', render: r => <span className={statusBadgeClass(r.status)}>{r.status}</span> },
+      { label: 'Issued', render: r => formatDate(r.issue_date) },
+      { label: 'Amount', align: 'right', render: r => formatCurrency(r.total) },
+    ],
+    onRowClick: goToInvoice,
+  })
+  const openPlSupplierInvoices = (pl) => setDrilldown({
+    title: `${pl.entity_name} — Supplier invoices`, subtitle: periodLabel,
+    rows: pl.supplier_invoices || [], total: pl.supplier_invoices_total,
+    columns: [
+      { label: 'Invoice #', render: r => r.invoice_number || '—' },
+      { label: 'Supplier', render: r => r.supplier_name },
+      { label: 'Invoice date', render: r => formatDate(r.invoice_date) },
+      // The P&L groups supplier invoices by statement period, so show it next to
+      // the invoice date — the two often fall in different months.
+      { label: 'Statement', render: r => creditorDate(r, 'statement') },
+      { label: 'Amount', align: 'right', render: r => formatCurrency(r.amount) },
+    ],
+    onRowClick: goToSupplier,
+  })
+
   const openOverallCreditors = () => {
     const rows = [
       ...payables.outstanding_current_invoices.map(r => ({ ...r, _type: 'Outstanding Cash', _date: r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—', _amount: r.outstanding_amount })),
@@ -248,10 +276,16 @@ export default function DashboardPage() {
               <SectionLabel
                 icon={<Scale size={13} />}
                 label={`Profit & Loss · ${periodLabel}`}
-                hint="Accrual basis: every invoice/supplier invoice dated in this period, any status — including unpaid. Won't match the Debtors/Creditors totals below, which track outstanding balances and cash actually paid."
               />
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                {profitLoss.map(pl => <ProfitLossCard key={pl.entity_id} pl={pl} />)}
+                {profitLoss.map(pl => (
+                  <ProfitLossCard
+                    key={pl.entity_id}
+                    pl={pl}
+                    onInvoices={() => openPlInvoices(pl)}
+                    onSupplierInvoices={() => openPlSupplierInvoices(pl)}
+                  />
+                ))}
               </div>
             </div>
           )}
@@ -590,7 +624,7 @@ function SectionDivider() {
   )
 }
 
-function ProfitLossCard({ pl }) {
+function ProfitLossCard({ pl, onInvoices, onSupplierInvoices }) {
   const profit = Number(pl.profit_loss) >= 0
   const accent = profit ? '#16a34a' : 'var(--danger)'
   return (
@@ -600,24 +634,20 @@ function ProfitLossCard({ pl }) {
         <span style={styles.entityChip}>{pl.entity_code}</span>
       </div>
       <div style={{ marginTop: 12 }}>
-        <div style={styles.plRow}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Invoices generated</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {pl.invoices_count} invoice{pl.invoices_count !== 1 ? 's' : ''}
-            </div>
-          </div>
-          <span style={{ fontWeight: 700, color: '#16a34a' }}>{formatCurrency(pl.invoices_total)}</span>
-        </div>
-        <div style={styles.plRow}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Supplier invoices</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {pl.supplier_invoices_count} invoice{pl.supplier_invoices_count !== 1 ? 's' : ''}
-            </div>
-          </div>
-          <span style={{ fontWeight: 700, color: 'var(--danger)' }}>−{formatCurrency(pl.supplier_invoices_total)}</span>
-        </div>
+        <PlRow
+          label="Invoices generated"
+          count={pl.invoices_count}
+          amount={formatCurrency(pl.invoices_total)}
+          color="#16a34a"
+          onClick={pl.invoices_count ? onInvoices : undefined}
+        />
+        <PlRow
+          label="Supplier invoices"
+          count={pl.supplier_invoices_count}
+          amount={`−${formatCurrency(pl.supplier_invoices_total)}`}
+          color="var(--danger)"
+          onClick={pl.supplier_invoices_count ? onSupplierInvoices : undefined}
+        />
         <div style={{ ...styles.plRow, borderBottom: 'none', marginTop: 4, paddingTop: 12, borderTop: '2px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {profit ? <TrendingUp size={16} color={accent} /> : <TrendingDown size={16} color={accent} />}
@@ -627,6 +657,33 @@ function ProfitLossCard({ pl }) {
         </div>
       </div>
     </div>
+  )
+}
+
+function PlRow({ label, count, amount, color, onClick }) {
+  const Tag = onClick ? 'button' : 'div'
+  return (
+    <Tag
+      onClick={onClick}
+      title={onClick ? 'Click to see which invoices make up this total' : undefined}
+      style={{
+        ...styles.plRow,
+        ...(onClick
+          ? { width: '100%', font: 'inherit', color: 'inherit', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer', textAlign: 'left' }
+          : {}),
+      }}
+    >
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+          {label}
+          {onClick && <ChevronRight size={13} color="var(--text-muted)" />}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {count} invoice{count !== 1 ? 's' : ''}
+        </div>
+      </div>
+      <span style={{ fontWeight: 700, color }}>{amount}</span>
+    </Tag>
   )
 }
 
