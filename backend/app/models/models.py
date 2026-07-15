@@ -1582,3 +1582,33 @@ class BudgetLineTemplate(Base):
     updated_at   = Column(DateTime(timezone=True), onupdate=func.now())
 
     entity = relationship("BusinessEntity")
+
+
+class ReportExclusion(Base):
+    """A row a user removed from the Income vs Expenses / SARS report.
+
+    Report-only and reversible: the underlying invoice is never touched, and every
+    other module (costing, diesel, payouts) still counts it. Restoring simply
+    deletes the row. This is the user-controlled sibling of the hardcoded
+    report-only adjustments in reports.py (Sasfin, Trailer Maintenance, general
+    costing expenses) — same idea, but per record and without a code change.
+
+    Polymorphic because the report has two sides: `invoice` (customer invoices, the
+    income/output-VAT rows) and `supplier_invoice` (the expense/input-VAT rows).
+    """
+    __tablename__ = "report_exclusions"
+
+    id          = Column(Integer, primary_key=True)
+    entity_id   = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    record_type = Column(String(30), nullable=False)   # 'invoice' | 'supplier_invoice'
+    record_id   = Column(Integer, nullable=False)
+    reason      = Column(Text)
+    excluded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    excluded_at    = Column(DateTime(timezone=True), server_default=func.now())
+
+    entity      = relationship("BusinessEntity")
+    excluded_by = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint('record_type', 'record_id', name='uq_report_exclusion_record'),
+    )

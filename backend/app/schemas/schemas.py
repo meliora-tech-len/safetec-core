@@ -2547,3 +2547,10 @@ class BudgetLineTemplateOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ReportExclusionCreate(BaseModel):
+    """Drop one record from the Income vs Expenses / SARS report (report-only)."""
+    record_type: str          # 'invoice' | 'supplier_invoice'
+    record_id: int
+    reason: Optional[str] = None

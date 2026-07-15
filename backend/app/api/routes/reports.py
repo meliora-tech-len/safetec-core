@@ -10,8 +10,10 @@ from app.models.models import (
     User, TruckLoad, DieselFillUp, SupplierInvoice, SupplierInvoiceLineItem,
     DriverPayCycle, Driver, PayrollSettings, PayrollEntry, Supplier, PaymentTermType,
     Invoice, InvoiceLineItem, Customer, DocumentType, InvoiceStatus, BusinessEntity,
-    Truck, Subcontractor,
+    Truck, Subcontractor, ReportExclusion,
 )
+from app.services.audit import log_action
+from app.schemas.schemas import ReportExclusionCreate
 from app.services.payroll_calculator import calculate_pay_cycle
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -73,6 +75,19 @@ def _is_trailer_maintenance_supplier(inv) -> bool:
     """OBHI's 'TRAILER MAINTENANCE' supplier is an internal costing allocation,
     not a SARS-deductible supplier expense, so it's excluded from the report."""
     return 'trailer maintenance' in _supplier_name(inv).lower()
+
+
+def _excluded_ids(db: Session, entity_id: int, record_type: str) -> set:
+    """Record ids the user has dropped from this report (see ReportExclusion).
+
+    Report-only: the records still exist and every other module still counts them.
+    """
+    return {
+        r[0] for r in db.query(ReportExclusion.record_id).filter(
+            ReportExclusion.entity_id == entity_id,
+            ReportExclusion.record_type == record_type,
+        ).all()
+    }
 
 
 def _is_intsimbi_diesel(inv) -> bool:
@@ -181,6 +196,8 @@ def income_expenses_report(
     """
     _check_entity_access(entity_id, current_user)
     exclude_general = _exclude_general_expenses(db, entity_id)
+    excluded_income   = _excluded_ids(db, entity_id, 'invoice')
+    excluded_expenses = _excluded_ids(db, entity_id, 'supplier_invoice')
 
     # ── Income source: customer invoices (output VAT basis) ────────────────────
     # Income is every customer invoice issued in the period — the actual tax
@@ -201,6 +218,7 @@ def income_expenses_report(
             func.extract('year', Invoice.issue_date) == year,
             Invoice.document_type == DocumentType.invoice,
             Invoice.status != InvoiceStatus.cancelled,
+            *([Invoice.id.notin_(excluded_income)] if excluded_income else []),
         )
         .group_by(func.extract('month', Invoice.issue_date))
         .all()
@@ -221,6 +239,7 @@ def income_expenses_report(
             DieselFillUp.total_amount,
             DieselFillUp.admin_fee_vat,
             Supplier.payment_term,
+            Supplier.name,
         )
         .join(Supplier, Supplier.id == DieselFillUp.supplier_id)
         .filter(
@@ -232,7 +251,7 @@ def income_expenses_report(
     )
     diesel_expense: dict[int, float] = {}
     diesel_input_vat: dict[int, float] = {}
-    for fd, amount, vat, term in diesel_fillups:
+    for fd, amount, vat, term, sup_name in diesel_fillups:
         is_cash = getattr(term, 'value', term) == PaymentTermType.current.value
         if is_cash:
             cm = fd.month - 1 if fd.month > 1 else 12
@@ -241,8 +260,13 @@ def income_expenses_report(
             cm, cy = fd.month, fd.year
         if cy != year:
             continue
-        diesel_expense[cm]   = diesel_expense.get(cm, 0.0) + float(amount or 0)
-        diesel_input_vat[cm] = diesel_input_vat.get(cm, 0.0) + float(vat or 0)
+        diesel_expense[cm] = diesel_expense.get(cm, 0.0) + float(amount or 0)
+        # diesel_input_vat reports the fee VAT that is NOT in input_vat — i.e. our
+        # own 1% markup. Intsimbi's fee is supplier-billed, so its VAT is already
+        # claimed through the supplier-invoice block below; counting it here too
+        # would report the same rand twice with opposite meanings.
+        if 'intsimbi' not in (sup_name or '').lower():
+            diesel_input_vat[cm] = diesel_input_vat.get(cm, 0.0) + float(vat or 0)
 
     # ── Supplier invoice expenses grouped by actual invoice date ────────────────
     # Unlike costing (which uses statement_month/statement_year so a late-arriving
@@ -295,6 +319,8 @@ def income_expenses_report(
         #   Sasfin → excluded entirely; general costing expenses and Trailer
         #   Maintenance supplier invoices → excluded (OBHI only); Crack Logic
         #   'Insurance Claim' → income.
+        if inv.id in excluded_expenses:
+            continue   # user dropped this row from the report (ReportExclusion)
         if _is_sasfin_supplier(inv):
             continue
         if exclude_general and _is_general_expense(inv):
@@ -383,6 +409,9 @@ def income_expenses_report(
         # 1% diesel admin-fee markup, NOT supplier input VAT, so it must not be added
         # here (doing so over-claimed input VAT and understated VAT payable, most
         # visibly for OBHI where diesel volume is high). Reported separately for info.
+        # (Intsimbi's fee IS supplier-billed, so its VAT reaches input_vat via
+        # sup_incl − sup_excl and is kept out of diesel_input_vat — see the fill-up
+        # loop above.)
         input_vat   = (sup_incl - sup_excl)
         vat_payable = output_vat - input_vat
 
@@ -441,8 +470,15 @@ def income_expenses_report(
 
 
 def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
-    """Build per-invoice detail dict for one month (shared by single and annual endpoints)."""
-    exclude_general = _exclude_general_expenses(db, entity_id)
+    """Build per-invoice detail dict for one month (shared by single and annual endpoints).
+
+    User-excluded rows (ReportExclusion) are still listed, flagged `excluded`, so they
+    can be seen and restored — but they're left out of every group and total, exactly
+    as they are in the annual figures.
+    """
+    exclude_general   = _exclude_general_expenses(db, entity_id)
+    excluded_income   = _excluded_ids(db, entity_id, 'invoice')
+    excluded_expenses = _excluded_ids(db, entity_id, 'supplier_invoice')
     # Income side: every customer invoice issued in the month (output VAT basis),
     # for all entities — the actual tax invoices, not operational truck loads.
     income_invoices = (
@@ -472,6 +508,9 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         else:
             ocat = 'other'
         output_invoices.append({
+            'record_type': 'invoice',
+            'record_id':   inv.id,
+            'excluded':    inv.id in excluded_income,
             'date':        inv.issue_date.strftime('%Y-%m-%d') if inv.issue_date else None,
             'description': desc,
             'amount_incl': round(incl, 2),
@@ -551,6 +590,9 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             continue
         if _is_crack_logic_insurance(inv):
             output_invoices.append({
+                'record_type': 'supplier_invoice',
+                'record_id':   inv.id,
+                'excluded':    inv.id in excluded_expenses,
                 'date':        inv.invoice_date.strftime('%Y-%m-%d') if inv.invoice_date else None,
                 'description': f"{name} — {inv.description}".strip(' —') or (inv.invoice_number or ''),
                 'amount_incl': round(incl, 2),
@@ -571,6 +613,9 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             category = 'other'
         input_invoices.append({
             'invoice_id':     inv.id,
+            'record_type':    'supplier_invoice',
+            'record_id':      inv.id,
+            'excluded':       inv.id in excluded_expenses,
             'date':           inv.invoice_date.strftime('%Y-%m-%d') if inv.invoice_date else None,
             'invoice_number': inv.invoice_number or '',
             'supplier_name':  name,
@@ -596,13 +641,15 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         rows = [x for x in input_invoices if x['category'] == key]
         if not rows:
             continue
+        # Excluded rows stay listed (so they can be restored) but must not count.
+        counted = [x for x in rows if not x['excluded']]
         input_groups.append({
             'key':         key,
             'label':       _CAT_LABEL[key],
-            'count':       len(rows),
-            'amount_incl': round(sum(x['amount_incl'] for x in rows), 2),
-            'amount_excl': round(sum(x['amount_excl'] for x in rows), 2),
-            'vat':         round(sum(x['vat'] for x in rows), 2),
+            'count':       len(counted),
+            'amount_incl': round(sum(x['amount_incl'] for x in counted), 2),
+            'amount_excl': round(sum(x['amount_excl'] for x in counted), 2),
+            'vat':         round(sum(x['vat'] for x in counted), 2),
         })
 
     # Order Tradekor → Intercompany → Other (then date) and build per-group subtotals.
@@ -616,20 +663,25 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         rows = [x for x in output_invoices if x['category'] == key]
         if not rows:
             continue
+        counted = [x for x in rows if not x['excluded']]
         output_groups.append({
             'key':         key,
             'label':       _OCAT_LABEL[key],
-            'count':       len(rows),
-            'amount_incl': round(sum(x['amount_incl'] for x in rows), 2),
-            'amount_excl': round(sum(x['amount_excl'] for x in rows), 2),
-            'vat':         round(sum(x['vat'] for x in rows), 2),
+            'count':       len(counted),
+            'amount_incl': round(sum(x['amount_incl'] for x in counted), 2),
+            'amount_excl': round(sum(x['amount_excl'] for x in counted), 2),
+            'vat':         round(sum(x['vat'] for x in counted), 2),
         })
 
-    out_incl = sum(x['amount_incl'] for x in output_invoices)
-    out_excl = sum(x['amount_excl'] for x in output_invoices)
+    # Totals count only what isn't excluded, so this month's VAT payable matches the
+    # annual row (which drops excluded records at query time).
+    out_counted = [x for x in output_invoices if not x['excluded']]
+    in_counted  = [x for x in input_invoices  if not x['excluded']]
+    out_incl = sum(x['amount_incl'] for x in out_counted)
+    out_excl = sum(x['amount_excl'] for x in out_counted)
     out_vat  = round(out_incl - out_excl, 2)
-    in_incl  = sum(x['amount_incl'] for x in input_invoices)
-    in_excl  = sum(x['amount_excl'] for x in input_invoices)
+    in_incl  = sum(x['amount_incl'] for x in in_counted)
+    in_excl  = sum(x['amount_excl'] for x in in_counted)
     in_vat   = round(in_incl - in_excl, 2)
 
     return {
@@ -669,6 +721,89 @@ def sars_vat_detail_annual(
     _check_entity_access(entity_id, current_user)
     months = [_build_month_detail(db, entity_id, year, m) for m in range(1, 13)]
     return {'year': year, 'entity_id': entity_id, 'months': months}
+
+
+# ── Report exclusions ─────────────────────────────────────────────────────────
+# Dropping a row is report-only: the invoice itself is never touched, so costing,
+# diesel and payouts are unaffected and it's always reversible. That's why these
+# deliberately carry no verification/sent-costing lock check and no admin gate —
+# any user with access to the entity may exclude and restore. Entity access is
+# still enforced: it scopes who sees the data at all, it isn't a record lock.
+
+_EXCLUDABLE = {
+    'invoice':          (Invoice, 'invoice_number'),
+    'supplier_invoice': (SupplierInvoice, 'invoice_number'),
+}
+
+
+@router.post("/exclusions")
+def create_report_exclusion(
+    payload: ReportExclusionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Drop one record from the Income vs Expenses / SARS report."""
+    if payload.record_type not in _EXCLUDABLE:
+        raise HTTPException(status_code=400, detail="Unknown record type")
+    model, label_field = _EXCLUDABLE[payload.record_type]
+
+    record = db.query(model).filter(model.id == payload.record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    _check_entity_access(record.entity_id, current_user)
+
+    existing = db.query(ReportExclusion).filter(
+        ReportExclusion.record_type == payload.record_type,
+        ReportExclusion.record_id == payload.record_id,
+    ).first()
+    if existing:
+        return {'status': 'already_excluded', 'id': existing.id}
+
+    excl = ReportExclusion(
+        entity_id=record.entity_id,
+        record_type=payload.record_type,
+        record_id=payload.record_id,
+        reason=(payload.reason or '').strip() or None,
+        excluded_by_id=current_user.id,
+    )
+    db.add(excl)
+    label = getattr(record, label_field, None) or f"#{payload.record_id}"
+    log_action(
+        db, "report.excluded", user_id=current_user.id,
+        entity_id=record.entity_id, resource_type=payload.record_type,
+        resource_id=payload.record_id,
+        description=(f"Removed {label} from the Income vs Expenses report"
+                     + (f" — {excl.reason}" if excl.reason else "")),
+    )
+    db.commit()
+    db.refresh(excl)
+    return {'status': 'excluded', 'id': excl.id}
+
+
+@router.delete("/exclusions/{record_type}/{record_id}")
+def delete_report_exclusion(
+    record_type: str,
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Restore a previously excluded record to the report."""
+    excl = db.query(ReportExclusion).filter(
+        ReportExclusion.record_type == record_type,
+        ReportExclusion.record_id == record_id,
+    ).first()
+    if not excl:
+        raise HTTPException(status_code=404, detail="Exclusion not found")
+    _check_entity_access(excl.entity_id, current_user)
+
+    log_action(
+        db, "report.restored", user_id=current_user.id,
+        entity_id=excl.entity_id, resource_type=record_type, resource_id=record_id,
+        description="Restored record to the Income vs Expenses report",
+    )
+    db.delete(excl)
+    db.commit()
+    return {'status': 'restored'}
 
 
 # ── Subcontractor truck loads ─────────────────────────────────────────────────

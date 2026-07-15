@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
@@ -6,7 +6,9 @@ import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
   getSubcontractorLoadsReport, getPoLoadReconciliationReport,
+  createReportExclusion, deleteReportExclusion,
 } from '../services/api'
+import { errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
@@ -49,10 +51,14 @@ export default function ReportsPage() {
   const [subData, setSubData]         = useState(null)
   const [poData, setPoData]           = useState(null)
 
+  // Which month's drill-down is open — needed to refetch it after an exclusion.
+  const detailMonthRef = useRef(null)
+
   const loadDetail = useCallback(async (m) => {
     if (!entityId) return
     setLoading(true)
     setDetailData(null)
+    detailMonthRef.current = m
     try {
       const res = await getSarsVatDetail({ entity_id: entityId, year, month: m })
       setDetailData(res.data)
@@ -60,6 +66,28 @@ export default function ReportsPage() {
       toast.error('Failed to load detail')
     } finally {
       setLoading(false)
+    }
+  }, [entityId, year])
+
+  // Remove a row from the report / put it back. Report-only: the invoice itself is
+  // untouched, so this is always reversible. Refresh the detail AND the annual
+  // figures behind it, since the totals there change too.
+  const toggleExclusion = useCallback(async (row, restore) => {
+    try {
+      if (restore) {
+        await deleteReportExclusion(row.record_type, row.record_id)
+      } else {
+        await createReportExclusion({ record_type: row.record_type, record_id: row.record_id })
+      }
+      const [detail, annual] = await Promise.all([
+        getSarsVatDetail({ entity_id: entityId, year, month: detailMonthRef.current }),
+        getIncomeExpensesReport({ entity_id: entityId, year }),
+      ])
+      setDetailData(detail.data)
+      setIncomeData(annual.data)
+      toast.success(restore ? 'Restored to the report' : 'Removed from the report')
+    } catch (err) {
+      toast.error(errorMessage(err, restore ? 'Failed to restore' : 'Failed to remove'))
     }
   }, [entityId, year])
 
@@ -166,7 +194,7 @@ export default function ReportsPage() {
       ['Date', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT'],
       ...output_groups.flatMap(g => [
         [`${g.label.toUpperCase()} (${g.count})`],
-        ...output_invoices.filter(r => r.category === g.key).map(r => [fmtDate(r.date), r.description, r.amount_incl, r.amount_excl, r.vat]),
+        ...output_invoices.filter(r => r.category === g.key && !r.excluded).map(r => [fmtDate(r.date), r.description, r.amount_incl, r.amount_excl, r.vat]),
         [`${g.label} subtotal`, '', g.amount_incl, g.amount_excl, g.vat],
       ]),
       [],
@@ -180,7 +208,7 @@ export default function ReportsPage() {
       ['Date', 'Invoice #', 'Supplier', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT'],
       ...input_groups.flatMap(g => [
         [`${g.label.toUpperCase()} (${g.count})`],
-        ...input_invoices.filter(r => r.category === g.key).map(r => [
+        ...input_invoices.filter(r => r.category === g.key && !r.excluded).map(r => [
           fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '',
           r.amount_incl, r.amount_excl, r.vat_applicable ? r.vat : 'Non-VAT',
         ]),
@@ -220,7 +248,7 @@ export default function ReportsPage() {
       body: [
         ...output_groups.flatMap(g => [
           [{ content: `${g.label.toUpperCase()} (${g.count})`, colSpan: 5, styles: { fontStyle: 'bold', fillColor: [220, 240, 228] } }],
-          ...output_invoices.filter(r => r.category === g.key).map(r => [fmtDate(r.date), r.description, fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), fmtAmt(r.vat)]),
+          ...output_invoices.filter(r => r.category === g.key && !r.excluded).map(r => [fmtDate(r.date), r.description, fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), fmtAmt(r.vat)]),
           [`${g.label} subtotal`, '', fmtAmt(g.amount_incl), fmtAmt(g.amount_excl), fmtAmt(g.vat)],
         ]),
         ['TOTAL INCOME', '', fmtAmt(output_totals.amount_incl), fmtAmt(output_totals.amount_excl), fmtAmt(output_totals.vat)],
@@ -248,7 +276,7 @@ export default function ReportsPage() {
       body: [
         ...input_groups.flatMap(g => [
           [{ content: `${g.label.toUpperCase()} (${g.count})`, colSpan: 7, styles: { fontStyle: 'bold', fillColor: [241, 245, 249] } }],
-          ...input_invoices.filter(r => r.category === g.key).map(r => [
+          ...input_invoices.filter(r => r.category === g.key && !r.excluded).map(r => [
             fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '',
             fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), r.vat_applicable ? fmtAmt(r.vat) : 'Non-VAT',
           ]),
@@ -332,7 +360,7 @@ export default function ReportsPage() {
       const expHdrs = ['Month', 'Date', 'Invoice #', 'Supplier', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT']
       const expRows = []
       detail.months.forEach(m => {
-        m.input_invoices.forEach(r => expRows.push([m.month_name, fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '', r.amount_incl, r.amount_excl, r.vat_applicable ? r.vat : 'Non-VAT']))
+        m.input_invoices.filter(r => !r.excluded).forEach(r => expRows.push([m.month_name, fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '', r.amount_incl, r.amount_excl, r.vat_applicable ? r.vat : 'Non-VAT']))
         if (m.input_invoices.length) expRows.push([`${m.month_name} TOTAL`, '', '', '', '', m.input_totals.amount_incl, m.input_totals.amount_excl, m.input_totals.vat])
         expRows.push([])
       })
@@ -403,7 +431,7 @@ export default function ReportsPage() {
         autoTable(doc, {
           head: [['Date', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT']],
           body: [
-            ...m.output_invoices.map(r => [fmtDate(r.date), r.description, fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), fmtAmt(r.vat)]),
+            ...m.output_invoices.filter(r => !r.excluded).map(r => [fmtDate(r.date), r.description, fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), fmtAmt(r.vat)]),
             ['TOTAL', '', fmtAmt(m.output_totals.amount_incl), fmtAmt(m.output_totals.amount_excl), fmtAmt(m.output_totals.vat)],
           ],
           startY: 25,
@@ -420,7 +448,7 @@ export default function ReportsPage() {
         autoTable(doc, {
           head: [['Date', 'Invoice #', 'Supplier', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT']],
           body: [
-            ...m.input_invoices.map(r => [fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '', fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), r.vat_applicable ? fmtAmt(r.vat) : 'Non-VAT']),
+            ...m.input_invoices.filter(r => !r.excluded).map(r => [fmtDate(r.date), r.invoice_number || '', r.supplier_name || '', r.description || '', fmtAmt(r.amount_incl), fmtAmt(r.amount_excl), r.vat_applicable ? fmtAmt(r.vat) : 'Non-VAT']),
             ['TOTAL', '', '', '', fmtAmt(m.input_totals.amount_incl), fmtAmt(m.input_totals.amount_excl), fmtAmt(m.input_totals.vat)],
           ],
           startY: y2 + 3,
@@ -900,7 +928,7 @@ export default function ReportsPage() {
         <div style={{ ...styles.card, ...styles.empty }}>Loading…</div>
       ) : tab === 'income' ? (
         detailData
-          ? <SarsVatDetail data={detailData} year={year} onBack={() => setDetailData(null)} />
+          ? <SarsVatDetail data={detailData} year={year} onBack={() => setDetailData(null)} onToggleExclusion={toggleExclusion} />
           : incomeData
             ? <IncomeExpensesReport data={incomeData} year={year} onViewDetail={loadDetail} />
             : <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
@@ -1090,7 +1118,7 @@ function IncomeExpensesReport({ data, year, onViewDetail }) {
       {/* Diesel input VAT footnote */}
       {totals.diesel_input_vat > 0 && (
         <div style={{ padding: '8px 20px', fontSize: 11, color: 'var(--text-muted)' }}>
-          * Expenses VAT includes {fmtR(totals.diesel_input_vat)} diesel admin fee VAT (diesel is zero-rated; only the admin fee carries VAT).
+          * Expenses VAT excludes {fmtR(totals.diesel_input_vat)} VAT on our own 1% diesel admin fee — that fee is an internal markup, not a supplier charge, so it is not claimable. Fees billed by the diesel supplier are included.
         </div>
       )}
     </div>
@@ -1317,7 +1345,30 @@ function DieselFillUpBreakdown({ lines, fmtDate, invoiceTotal }) {
 }
 
 
-function SarsVatDetail({ data, year, onBack }) {
+// Remove / restore control on a report row. Any user may use it: it's report-only
+// and reversible, so it carries no lock or admin gate.
+function RowExclusionButton({ row, onToggle }) {
+  const excluded = !!row.excluded
+  return (
+    <button
+      onClick={() => onToggle(row, excluded)}
+      title={excluded ? 'Put this row back on the report'
+                      : 'Remove this row from the report (the invoice itself is not deleted)'}
+      style={{
+        padding: '2px 8px', fontSize: 10, fontWeight: 600, cursor: 'pointer',
+        borderRadius: 5, whiteSpace: 'nowrap',
+        background: 'none',
+        border: `1px solid ${excluded ? 'var(--accent)' : 'var(--border)'}`,
+        color: excluded ? 'var(--accent)' : 'var(--text-muted)',
+      }}
+    >
+      {excluded ? 'Restore' : '✕'}
+    </button>
+  )
+}
+
+
+function SarsVatDetail({ data, year, onBack, onToggleExclusion }) {
   const { month_name, output_invoices, output_groups = [], input_invoices, input_groups = [], output_totals, input_totals, vat_payable } = data
   const vatColor = vat_payable > 0 ? 'var(--danger)' : vat_payable < 0 ? '#16a34a' : 'var(--text-muted)'
   const fmtDate  = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
@@ -1384,32 +1435,40 @@ function SarsVatDetail({ data, year, onBack }) {
               {['Date', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT'].map((h, i) => (
                 <th key={h} style={{ ...styles.th, textAlign: i >= 2 ? 'right' : 'left', color: '#16a34a' }}>{h}</th>
               ))}
+              <th style={{ ...styles.th, textAlign: 'center' }}></th>
             </tr>
           </thead>
           <tbody>
             {output_invoices.length === 0 ? (
-              <tr><td colSpan={5} style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }}>No income invoices for this month.</td></tr>
+              <tr><td colSpan={6} style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }}>No income invoices for this month.</td></tr>
             ) : output_groups.map(g => (
               <Fragment key={g.key}>
                 <tr>
-                  <td colSpan={5} style={{ ...styles.td, fontWeight: 800, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', background: 'var(--bg-surface)' }}>
+                  <td colSpan={6} style={{ ...styles.td, fontWeight: 800, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', background: 'var(--bg-surface)' }}>
                     {g.label} ({g.count})
                   </td>
                 </tr>
-                {output_invoices.filter(r => r.category === g.key).map((r, i) => (
-                  <tr key={`${g.key}-${i}`} style={styles.row}>
-                    <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>{fmtDate(r.date)}</td>
-                    <td style={{ ...styles.td, fontWeight: 600 }}>{r.description}</td>
-                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_incl)}</td>
-                    <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_excl)}</td>
-                    <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmtR(r.vat)}</td>
-                  </tr>
-                ))}
+                {output_invoices.filter(r => r.category === g.key).map((r, i) => {
+                  const off = !!r.excluded   // removed from the report: shown, but not counted
+                  return (
+                    <tr key={`${g.key}-${r.record_id ?? i}`} style={{ ...styles.row, opacity: off ? 0.45 : 1, textDecoration: off ? 'line-through' : 'none' }}>
+                      <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>{fmtDate(r.date)}</td>
+                      <td style={{ ...styles.td, fontWeight: 600 }}>{r.description}</td>
+                      <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_incl)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount_excl)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmtR(r.vat)}</td>
+                      <td style={{ ...styles.td, textAlign: 'center', textDecoration: 'none' }}>
+                        <RowExclusionButton row={r} onToggle={onToggleExclusion} />
+                      </td>
+                    </tr>
+                  )
+                })}
                 <tr style={{ background: 'var(--bg-surface)' }}>
                   <td style={{ ...styles.td, fontWeight: 700, fontSize: 12 }} colSpan={2}>{g.label} subtotal</td>
                   <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(g.amount_incl)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(g.amount_excl)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{fmtR(g.vat)}</td>
+                  <td style={styles.td}></td>
                 </tr>
               </Fragment>
             ))}
@@ -1420,6 +1479,7 @@ function SarsVatDetail({ data, year, onBack }) {
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(output_totals.amount_incl)}</td>
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(output_totals.amount_excl)}</td>
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, color: '#16a34a' }}>{fmtR(output_totals.vat)}</td>
+              <td style={styles.td}></td>
             </tr>
           </tfoot>
         </table>
@@ -1436,24 +1496,26 @@ function SarsVatDetail({ data, year, onBack }) {
               {['Date', 'Invoice #', 'Supplier', 'Description', 'Amount Incl VAT', 'Amount Excl VAT', 'VAT'].map((h, i) => (
                 <th key={h} style={{ ...styles.th, textAlign: i >= 4 ? 'right' : 'left' }}>{h}</th>
               ))}
+              <th style={{ ...styles.th, textAlign: 'center' }}></th>
             </tr>
           </thead>
           <tbody>
             {input_invoices.length === 0 ? (
-              <tr><td colSpan={7} style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }}>No expense invoices for this month.</td></tr>
+              <tr><td colSpan={8} style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)' }}>No expense invoices for this month.</td></tr>
             ) : input_groups.map(g => (
               <Fragment key={g.key}>
                 <tr>
-                  <td colSpan={7} style={{ ...styles.td, fontWeight: 800, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', background: 'var(--bg-surface)' }}>
+                  <td colSpan={8} style={{ ...styles.td, fontWeight: 800, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', background: 'var(--bg-surface)' }}>
                     {g.label} ({g.count})
                   </td>
                 </tr>
                 {input_invoices.filter(r => r.category === g.key).map((r, i) => {
                   const lines  = r.fillup_lines || []
                   const isOpen = expanded.has(r.invoice_id)
+                  const off    = !!r.excluded   // removed from the report: shown, but not counted
                   return (
                     <Fragment key={`${g.key}-${r.invoice_id ?? i}`}>
-                      <tr style={styles.row}>
+                      <tr style={{ ...styles.row, opacity: off ? 0.45 : 1, textDecoration: off ? 'line-through' : 'none' }}>
                         <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>{fmtDate(r.date)}</td>
                         <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>
                           {lines.length > 0 ? (
@@ -1481,10 +1543,13 @@ function SarsVatDetail({ data, year, onBack }) {
                         <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: r.vat_applicable ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
                           {r.vat_applicable ? fmtR(r.vat) : <span style={{ fontSize: 10 }}>Non-VAT</span>}
                         </td>
+                        <td style={{ ...styles.td, textAlign: 'center', textDecoration: 'none' }}>
+                          <RowExclusionButton row={r} onToggle={onToggleExclusion} />
+                        </td>
                       </tr>
                       {isOpen && lines.length > 0 && (
                         <tr>
-                          <td colSpan={7} style={{ padding: '0 0 0 28px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
+                          <td colSpan={8} style={{ padding: '0 0 0 28px', background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}>
                             <DieselFillUpBreakdown lines={lines} fmtDate={fmtDate} invoiceTotal={r.amount_incl} />
                           </td>
                         </tr>
@@ -1497,6 +1562,7 @@ function SarsVatDetail({ data, year, onBack }) {
                   <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(g.amount_incl)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(g.amount_excl)}</td>
                   <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(g.vat)}</td>
+                  <td style={styles.td}></td>
                 </tr>
               </Fragment>
             ))}
@@ -1507,6 +1573,7 @@ function SarsVatDetail({ data, year, onBack }) {
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(input_totals.amount_incl)}</td>
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(input_totals.amount_excl)}</td>
               <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800 }}>{fmtR(input_totals.vat)}</td>
+              <td style={styles.td}></td>
             </tr>
           </tfoot>
         </table>
