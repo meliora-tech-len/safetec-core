@@ -1712,6 +1712,17 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
   for (const g of diesel_groups) {
     dieselGroupMap[g.supplier_name.toUpperCase()] = g
   }
+  // Rows to render for diesel: the standard template suppliers (always shown,
+  // even empty) PLUS any supplier that actually has fill-ups this period but
+  // isn't in the template (e.g. a diesel supplier with no active DieselRate for
+  // this entity — its expenses still count, so it must show as a row too).
+  const templateKeys = templateSuppliers.map(s => s.toUpperCase())
+  const dieselSupplierRows = [
+    ...templateSuppliers,
+    ...diesel_groups
+      .map(g => g.supplier_name)
+      .filter(name => !templateKeys.includes(name.toUpperCase())),
+  ]
   // Any invoices from suppliers not in the template (custom additions)
   const extraInvoices = supplier_invoices.filter(inv => {
     const key = (inv.supplier_name || `Supplier #${inv.supplier_id}`).toUpperCase()
@@ -1879,8 +1890,9 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
               <td style={tdStyle}></td>
             </tr>
 
-            {/* Template supplier rows — greyed, always present, no delete */}
-            {templateSuppliers.map(supplierName => {
+            {/* Template supplier rows — greyed, always present, no delete.
+                Plus any extra diesel supplier with fill-ups this period. */}
+            {dieselSupplierRows.map(supplierName => {
               const key = supplierName.toUpperCase()
               const dg = dieselGroupMap[key]
               const dieselExcl = dg ? parseFloat(dg.tot_excl_admin_fee) : 0
