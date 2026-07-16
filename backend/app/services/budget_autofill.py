@@ -33,7 +33,7 @@ from app.db.database import SessionLocal
 from app.models.models import (
     SupplierInvoice, Supplier, PaymentTermType,
     Invoice, DocumentType, InvoiceStatus, Customer,
-    Subcontractor, PayrollEntry, TruckLoad, Truck,
+    Subcontractor, PayrollEntry,
     BusinessEntity,
 )
 
@@ -105,8 +105,14 @@ def compute_autofill(entity_id: int, months: List[Tuple[int, int]], current_user
 
         for fn in fns:
             try:
-                specs += fn(db, entity_id, mths, shift_30day=shift_30day) if fn is _suppliers \
-                    else fn(db, entity_id, mths)
+                if fn is _suppliers:
+                    specs += fn(db, entity_id, mths, shift_30day=shift_30day)
+                elif fn is _subcontractors:
+                    # Needs the user to run the per-subcontractor costing (access
+                    # check + fixed-expense carry-forward).
+                    specs += fn(db, entity_id, mths, current_user)
+                else:
+                    specs += fn(db, entity_id, mths)
             except Exception:
                 db.rollback()
                 log.exception("budget autofill: source %s failed", fn.__name__)
@@ -273,49 +279,49 @@ def _suppliers(db, entity_id, months, shift_30day: bool = False) -> List[dict]:
     return list(grouped.values())
 
 
-# ── Sub-contractors (gross payout from loads) ────────────────────────────────
-def _subcontractors(db, entity_id, months) -> List[dict]:
-    """Per-subcontractor gross payout = sum of TruckLoad.subcontractor_amount_incl_vat
-    for that subcontractor's trucks in the period. This is the GROSS payable from the
-    loads, before the operator's own diesel/expense deductions — one lean query, so
-    the refresh stays fast and reliable (the full net-payable costing is far too heavy
-    to run synchronously). The user can adjust to net on the (editable) line.
+# ── Sub-contractors (net "to be paid" from the costing) ──────────────────────
+def _subcontractors(db, entity_id, months, current_user=None) -> List[dict]:
+    """Per-subcontractor net payable = the monthly-summary "To Be Paid Out" figure
+    from that subcontractor's costing for the period — income less the operator's own
+    diesel/invoice/admin expenses, honouring any manual net-payable override. This is
+    exactly the total the Subcontractor Costing screen shows (e.g. Alex Maintenance's
+    July summary), so the budget line matches the costing to the rand.
+
+    One line per active subcontractor, valued per month from that month's costing
+    summary. Running the full costing per subcontractor/month is heavier than a single
+    load SUM, but the SUB CONTRACTORS pull is a manual, per-section action, so the
+    accuracy is worth the round-trips. Each build reads/writes on the throwaway
+    autofill session; a per-subcontractor failure is caught by compute_autofill and
+    that subcontractor simply contributes no line (the user can add it by hand).
     """
-    rows = (
-        db.query(
-            Truck.subcontractor_id,
-            Subcontractor.name,
-            TruckLoad.statement_year, TruckLoad.statement_month,
-            TruckLoad.load_date, TruckLoad.subcontractor_amount_incl_vat,
-        )
-        .join(Truck, TruckLoad.truck_id == Truck.id)
-        .join(Subcontractor, Truck.subcontractor_id == Subcontractor.id)
+    # Lazy import avoids a route↔service import cycle at module load.
+    from app.api.routes.subcontractors import _build_subcontractor_costing
+
+    subs = (
+        db.query(Subcontractor)
         .filter(
             Subcontractor.entity_id == entity_id,
             Subcontractor.is_active == True,            # noqa: E712
-            TruckLoad.is_archived == False,             # noqa: E712
-            TruckLoad.subcontractor_amount_incl_vat.isnot(None),
         )
+        .order_by(Subcontractor.name)
         .all()
     )
-    grouped: Dict[str, dict] = {}
-    for sub_id, sub_name, st_year, st_month, load_date, amount in rows:
-        # Costing files a load under its statement period, falling back to load_date.
-        m = st_month or (load_date.month if load_date else None)
-        y = st_year or (load_date.year if load_date else None)
-        if (m, y) not in months:
-            continue
-        key = f"subcontractor:{sub_id}"
-        spec = grouped.get(key)
-        if spec is None:
-            spec = {
+
+    specs: List[dict] = []
+    for sub in subs:
+        values: Dict[Tuple[int, int], dict] = {}
+        for (m, y) in months:
+            costing = _build_subcontractor_costing(sub.id, m, y, db, current_user)
+            net = costing.summary.net_payable
+            if net:
+                values[(m, y)] = {"due": _d(net), "paid": None}
+        if values:
+            specs.append({
                 "section_name": SEC_SUBS[0], "section_type": SEC_SUBS[1],
-                "source_key": key, "line_name": sub_name, "values": {},
-            }
-            grouped[key] = spec
-        cell = spec["values"].setdefault((m, y), {"due": Decimal("0"), "paid": None})
-        cell["due"] += _d(amount)
-    return list(grouped.values())
+                "source_key": f"subcontractor:{sub.id}", "line_name": sub.name,
+                "values": values,
+            })
+    return specs
 
 
 # ── Wages (payroll gross per period) ─────────────────────────────────────────
