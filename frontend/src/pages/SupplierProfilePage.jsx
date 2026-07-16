@@ -1584,6 +1584,10 @@ export default function SupplierProfilePage() {
         const key = `${group.statement_year}-${group.statement_month}`
         const isOpen = !collapsed[key]
         const unpaidCount = group.invoices.filter(i => !i.is_paid).length
+        // Paid = fully-paid invoices in full + any deposits on the rest; outstanding is the remainder.
+        const paidTotal = group.invoices.reduce((s, i) =>
+          s + (i.is_paid ? (parseFloat(i.amount) || 0) : (parseFloat(i.deposit_paid) || 0)), 0)
+        const outstandingTotal = (group.subtotal || 0) - paidTotal
         const groupSelectable = group.invoices.filter(canUserSelect)
         const allGroupSelected = groupSelectable.length > 0 && groupSelectable.every(i => selectedIds.has(i.id))
         const toggleGroupSelect = () => setSelectedIds(s => {
@@ -1613,7 +1617,18 @@ export default function SupplierProfilePage() {
                 <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
                   {group.invoices.length} invoice{group.invoices.length !== 1 ? 's' : ''}
                 </span>
-                <span style={{ fontWeight: 700, fontSize: 15 }}>{formatCurrency(group.subtotal)}</span>
+                <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.2 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.3 }}>Paid</span>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: '#16a34a' }}>{formatCurrency(paidTotal)}</span>
+                </span>
+                <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.2 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.3 }}>Total</span>
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{formatCurrency(group.subtotal)}</span>
+                </span>
+                <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.2 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.3 }}>Outstanding</span>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: outstandingTotal > 0.005 ? '#d97706' : '#16a34a' }}>{formatCurrency(outstandingTotal)}</span>
+                </span>
                 {group.payment_due_date && (
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     Due: {formatDate(group.payment_due_date)}
