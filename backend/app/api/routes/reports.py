@@ -1,7 +1,7 @@
 import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import Optional
 
 from app.db.database import get_db

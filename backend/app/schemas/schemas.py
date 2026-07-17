@@ -1624,11 +1624,18 @@ class InvoiceLineItemImport(BaseModel):
     # amount and the fill-up's admin fee/VAT are derived from it instead of the
     # entity's admin-fee %.
     admin_fee: Optional[Decimal] = None
+    # Intsimbi's per-fill TransID — the only value unique to a single pump
+    # transaction (a printed slip can cover several). Stored as the fill-up's
+    # slip_number so re-imports match transaction-for-transaction; the printed
+    # slip (item_code) stays in depot_slip_number.
+    trans_id: Optional[str] = None
 
 
 class InvoiceImportItem(BaseModel):
     invoice_date: date
-    invoice_number: str
+    # Optional: a WBG day WBG hasn't consolidated yet has fills but no invoice
+    # number. It imports as a "Pending" invoice, numbered later once WBG sends it.
+    invoice_number: Optional[str] = None
     amount: Decimal = Decimal('0')
     line_items: List[InvoiceLineItemImport] = []
 

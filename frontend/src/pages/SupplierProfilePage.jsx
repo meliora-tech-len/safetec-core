@@ -106,6 +106,20 @@ function parseZAR(val) {
   return 0
 }
 
+const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100
+const r4 = (n) => Math.round((Number(n) + Number.EPSILON) * 10000) / 10000
+
+// True when a cell holds a date rather than a site name — a real Excel date, or
+// text like "09-07-2026" / "08/12/2025 14:14:08". Day-total rows put the date in
+// the Site column and carry no Slip #, which otherwise makes them look exactly
+// like the continuation rows handled in parseWBGSheet.
+function looksLikeDateCell(val) {
+  if (val instanceof Date) return true
+  if (typeof val !== 'string') return false
+  const s = val.trim()
+  return /^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{4}(\s|$)/.test(s) || /^\d{4}-\d{1,2}-\d{1,2}(\s|$)/.test(s)
+}
+
 function parseWBGSheet(ws) {
   // raw: true (default) keeps numbers as numbers and dates as Date objects via
   // cellDates — raw: false would stringify numbers and dates below.
@@ -133,7 +147,53 @@ function parseWBGSheet(ws) {
       pending = []
       continue
     }
-    // Col 0 is the site/location; col 1 is the Date column (next to Slip# at col 2)
+    // Same day-total row, but WBG hasn't issued the day's consolidated invoice
+    // number yet (the Invoice No column is still blank while the date and due date
+    // are filled in). Import the day anyway as a numberless invoice — it shows as
+    // "Pending" in the list — so the fills are captured now and someone fills the
+    // number in when WBG sends it. Distinguished from the numbered case above by
+    // col 0 being a date and there being no Invoice No.
+    if (!slip && !invNo && looksLikeDateCell(siteOrDate) && pending.length) {
+      const iso = siteOrDate instanceof Date ? fmtISODate(siteOrDate)
+        : (parseSlipDate(siteOrDate) || (invDate instanceof Date ? fmtISODate(invDate) : parseSlipDate(invDate)))
+      invoices.push({
+        invoice_date:   iso,
+        invoice_number: null,
+        amount:         parseZAR(txnVal),   // the day-total transaction value (col 8)
+        line_items:     pending,
+      })
+      pending = []
+      continue
+    }
+    // A data row with no Slip # is the continuation of the fill above it: the
+    // depot dispensed one fuel transaction in several tranches (the pump cut out
+    // and restarted), and only the first tranche carries the slip, reg and driver.
+    // Keep each tranche as its OWN line — the invoice must show every row the depot
+    // billed, and its block subtotal counts them all, so dropping one under-bills —
+    // but carry the slip/reg/driver down so the tranche is attributed to the same
+    // slip and truck. Otherwise it has no slip to appear under and no reg to find a
+    // truck by, which is why it was being dropped. Guarded on col 0 being a site
+    // name: day-total rows also lack a slip but hold a date there and must not
+    // inherit one.
+    if (!slip && !reg && !looksLikeDateCell(siteOrDate) && pending.length && parseZAR(ltr) > 0) {
+      const prev = pending[pending.length - 1]
+      const excl = parseZAR(txnVal)
+      pending.push({
+        item_code:        prev.item_code,
+        unit:             prev.unit,
+        item_description: prev.item_description,
+        quantity:         parseZAR(ltr),
+        amount_excl_vat:  excl,
+        amount_incl_vat:  excl,
+        rate_per_litre:   parseZAR(rawRate) || prev.rate_per_litre,
+        sort_order:       pending.length,
+        slip_date:        prev.slip_date,
+      })
+      continue
+    }
+    // Col 0 is the site/location; col 1 is the Date column (next to Slip# at col 2).
+    // Rows that repeat a slip+reg (the depot's other way of recording a split fill)
+    // stay as separate lines too — each is one diesel record under the same slip.
     if ((typeof siteOrDate === 'string' || siteOrDate instanceof Date) && slip) {
       const excl = parseZAR(txnVal)
       const rate = parseZAR(rawRate) || null
@@ -169,8 +229,6 @@ function isIntsimbiSheet(ws) {
 // kept in the description for reference only. Diesel is zero-rated; VAT applies
 // only to the admin fee, so the line's incl-VAT = diesel + admin fee + VAT(admin fee).
 function parseIntsimbiSheet(ws) {
-  const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100
-  const r4 = (n) => Math.round((Number(n) + Number.EPSILON) * 10000) / 10000
   const grid = XLSX.utils.sheet_to_json(ws, { header: 1, cellDates: true })
 
   const hdr = grid.findIndex(r => (r || []).some(c => String(c ?? '').trim().toUpperCase() === 'LDISPENSED'))
@@ -208,6 +266,9 @@ function parseIntsimbiSheet(ws) {
     inv.line_items.push({
       // Slip is the depot reference used everywhere else to match/link fill-ups.
       item_code:        slip,
+      // TransID uniquely identifies this one fill; a printed slip can span several,
+      // so the importer keys diesel records off it (not the shared slip).
+      trans_id:         trans,
       item_description: [driver, trans && `trans ${trans}`].filter(Boolean).join(' · '),
       unit:             reg.toUpperCase(),
       quantity:         litres,
@@ -368,7 +429,9 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
     try {
       const parsed = isIntsimbiSheet(ws) ? parseIntsimbiSheet(ws) : parseWBGSheet(ws)
       setInvoices(parsed)
-      setSelectedNums(new Set(parsed.map(inv => inv.invoice_number)))
+      // Select by row index, not invoice number — a not-yet-numbered day imports
+      // with a null number, and several could share it.
+      setSelectedNums(new Set(parsed.map((_, i) => i)))
       setExpanded({})
       setStep('preview')
     } catch (err) {
@@ -382,7 +445,7 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
       const r = await bulkImportSupplierInvoices({
         supplier_id: parseInt(supplierId),
         entity_id:   parseInt(entityId),
-        invoices:    invoices.filter(inv => selectedNums.has(inv.invoice_number)),
+        invoices:    invoices.filter((_, i) => selectedNums.has(i)),
       })
       const { created, skipped, diesel_created, diesel_linked, conflicts: cfts } = r.data
       const parts = []
@@ -466,7 +529,7 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
               </p>
               <div style={{ display:'flex', gap:6 }}>
                 <button className="btn-ghost" style={{ padding:'2px 8px', fontSize:12 }}
-                        onClick={() => setSelectedNums(new Set(invoices.map(inv => inv.invoice_number)))}>
+                        onClick={() => setSelectedNums(new Set(invoices.map((_, i) => i)))}>
                   Select All
                 </button>
                 <button className="btn-ghost" style={{ padding:'2px 8px', fontSize:12 }}
@@ -496,7 +559,7 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
                 </thead>
                 <tbody>
                   {invoices.map((inv, i) => {
-                    const isSelected = selectedNums.has(inv.invoice_number)
+                    const isSelected = selectedNums.has(i)
                     const statuses   = inv.line_items.map(li => invLineStatus(li, trucks, entityId))
                     const hasMissing = statuses.includes('missing')
                     const hasNoTruck = statuses.includes('no_truck')
@@ -510,7 +573,7 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
                             <input type="checkbox" checked={isSelected}
                                    onChange={() => setSelectedNums(prev => {
                                      const next = new Set(prev)
-                                     isSelected ? next.delete(inv.invoice_number) : next.add(inv.invoice_number)
+                                     isSelected ? next.delete(i) : next.add(i)
                                      return next
                                    })} />
                           </td>
@@ -518,7 +581,11 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
                               onClick={() => setExpanded(p => ({ ...p, [i]: !p[i] }))}>
                             {expanded[i] ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
                           </td>
-                          <td style={{ ...wbgTd, fontWeight:600 }}>{inv.invoice_number}</td>
+                          <td style={{ ...wbgTd, fontWeight:600 }}>
+                            {inv.invoice_number || (
+                              <span style={{ fontSize:10, fontWeight:700, color:'#d97706', background:'rgba(245,158,11,0.14)', padding:'2px 6px', borderRadius:3 }}>No invoice #</span>
+                            )}
+                          </td>
                           <td style={wbgTd}>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-ZA') : '—'}</td>
                           <td style={{ ...wbgTd, color:'var(--text-muted)' }}></td>
                           <td style={{...wbgTd, textAlign:'right', fontWeight:600}}>{inv.amount.toLocaleString('en-ZA', { minimumFractionDigits:2 })}</td>

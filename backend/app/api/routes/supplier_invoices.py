@@ -166,6 +166,49 @@ def _slip_eq(value: str):
     return func.upper(func.replace(DieselFillUp.depot_slip_number, ' ', '')) == _norm_slip(value)
 
 
+def _transid_eq(value: str):
+    """SQLAlchemy predicate matching a DieselFillUp's TransID (stored in slip_number
+    for Intsimbi) to `value`, space/case-insensitively DB-side.
+
+    A printed depot slip can cover several pump transactions, so only the TransID
+    uniquely identifies one fill. The Intsimbi importer keys off it so a re-import
+    updates each transaction in place instead of duplicating it."""
+    return func.upper(func.replace(DieselFillUp.slip_number, ' ', '')) == _norm_slip(value)
+
+
+def _clear_intsimbi_slip_placeholders(
+    db: Session, entity_id: int, supplier_id: int, slip: str, new_inv_id: int, user_id: int
+) -> int:
+    """Archive any pre-import "lump" fill-up captured under a printed slip.
+
+    Intsimbi statements break a printed slip into one fill-up per TransID, but the
+    user's pre-statement capture is a single lump keyed by the printed slip itself
+    (its slip_number IS the slip, or it has no TransID). Left in place, that lump
+    double-counts against the per-transaction fill-ups the import creates. Archive
+    it — and its single-line placeholder invoice — so the import's records replace
+    it. Genuine already-imported transactions (slip_number holds a real TransID that
+    differs from the printed slip) are left alone; the TransID match handles those."""
+    if not slip:
+        return 0
+    norm = _norm_slip(slip)
+    candidates = db.query(DieselFillUp).filter(
+        _slip_eq(slip),
+        DieselFillUp.entity_id == entity_id,
+        DieselFillUp.supplier_id == supplier_id,
+        DieselFillUp.is_archived != True,
+    ).all()
+    cleared = 0
+    for fu in candidates:
+        sn = _norm_slip(fu.slip_number)
+        if sn and sn != norm:
+            continue  # a real TransID → a genuine transaction, not a lump placeholder
+        old_inv_id = fu.supplier_invoice_id
+        fu.is_archived = True
+        _archive_orphaned_placeholder(db, old_inv_id, new_inv_id, user_id, slip=slip)
+        cleared += 1
+    return cleared
+
+
 def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, slip_number: str, user_id: int) -> None:
     """Re-link the DieselFillUp matching slip_number to this invoice (and copy its
     invoice_number), then archive the placeholder invoice the fill-up was previously
@@ -1783,6 +1826,11 @@ def _archive_orphaned_placeholder(db: Session, old_inv_id, new_inv_id: int, user
     # same way the slip match is, so case/spacing can't keep it from being archived.
     if number and number != slip_norm:
         return False
+    # The session runs autoflush=False, so a caller's just-assigned
+    # fillup.supplier_invoice_id is still pending — without this flush the count
+    # below reads the pre-relink row from the DB, sees the fill-up still on the
+    # placeholder, and bails, leaving it behind as a Pending duplicate.
+    db.flush()
     remaining = db.query(DieselFillUp).filter(
         DieselFillUp.supplier_invoice_id == old_inv_id,
         DieselFillUp.is_archived != True,
@@ -1863,6 +1911,9 @@ def bulk_import_invoices(
     created, skipped, skipped_numbers = 0, 0, []
     diesel_created, diesel_linked = 0, 0
     conflicts: List[DieselConflict] = []
+    # Printed slips whose lump placeholder has already been cleared this import, so a
+    # slip that spans several sheet lines only triggers the clear once (Intsimbi).
+    intsimbi_cleared_slips: set = set()
 
     # Load diesel settings once per entity for fill-up creation
     diesel_settings = DieselCalculationService.get_diesel_settings(db, payload.entity_id)
@@ -1873,14 +1924,32 @@ def bulk_import_invoices(
 
     for item in payload.invoices:
         num = (item.invoice_number or '').strip()
-        if num in existing_numbers:
-            skipped += 1
-            skipped_numbers.append(num)
-            continue
-
         inv_date = item.invoice_date
         inv_dt = datetime(inv_date.year, inv_date.month, inv_date.day)
         stmt_month, stmt_year = inv_date.month, inv_date.year
+
+        if num:
+            if num in existing_numbers:
+                skipped += 1
+                skipped_numbers.append(num)
+                continue
+        else:
+            # A day WBG hasn't consolidated yet: fills but no invoice number. Import
+            # it as a "Pending" invoice, but don't duplicate one already imported for
+            # this supplier+entity on this date — so a re-preview/re-import is safe
+            # (and, since each new invoice is flushed below, so is a repeat within
+            # this same payload).
+            already = db.query(SupplierInvoice.id).filter(
+                SupplierInvoice.supplier_id == payload.supplier_id,
+                SupplierInvoice.entity_id == payload.entity_id,
+                SupplierInvoice.invoice_date == inv_dt,
+                or_(SupplierInvoice.invoice_number.is_(None), SupplierInvoice.invoice_number == ''),
+                SupplierInvoice.is_archived != True,
+            ).first()
+            if already:
+                skipped += 1
+                skipped_numbers.append(f"(no number, {inv_date.isoformat()})")
+                continue
 
         inv = SupplierInvoice(
             supplier_id=payload.supplier_id,
@@ -1961,6 +2030,73 @@ def bulk_import_invoices(
             if li.rate_per_litre and li.rate_per_litre > 0:
                 rate_d = Decimal(str(li.rate_per_litre)).quantize(Decimal("0.0001"))
 
+            # ── Intsimbi: replace, don't merge ───────────────────────────────
+            # A printed slip can cover several pump transactions (each its own
+            # TransID), and the user's pre-import capture is a single lump under
+            # that slip. So don't reconcile line-by-line against one fill-up:
+            # clear any lump placeholder for the slip once, then take every
+            # transaction straight from the sheet, keyed uniquely by TransID
+            # (stored as slip_number; printed slip stays in depot_slip_number).
+            # A re-import matches each transaction by TransID and overwrites it.
+            if line_admin_fee is not None:
+                trans_id = (li.trans_id or '').strip()
+                if slip not in intsimbi_cleared_slips:
+                    diesel_linked += _clear_intsimbi_slip_placeholders(
+                        db, payload.entity_id, payload.supplier_id, slip, inv.id, current_user.id)
+                    intsimbi_cleared_slips.add(slip)
+
+                fee_vat = (line_admin_fee * vat_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                amounts = {
+                    "amount": line_excl,
+                    "admin_fee_amount": line_admin_fee,
+                    "admin_fee_vat": fee_vat,
+                    "total_amount": line_excl + line_admin_fee + fee_vat,
+                }
+                fill_admin_pct = (line_admin_fee / line_excl).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if line_excl > 0 else Decimal("0")
+
+                existing = None
+                if trans_id:
+                    existing = db.query(DieselFillUp).filter(
+                        _transid_eq(trans_id),
+                        DieselFillUp.truck_id == truck.id,
+                        DieselFillUp.entity_id == payload.entity_id,
+                        DieselFillUp.supplier_id == payload.supplier_id,
+                        DieselFillUp.is_archived != True,
+                    ).first()
+                if existing:
+                    old_inv_id = existing.supplier_invoice_id
+                    existing.litres = litres_d
+                    existing.rate_per_litre = rate_d
+                    existing.fillup_date = fillup_date
+                    existing.slip_number = trans_id
+                    existing.depot_slip_number = slip
+                    existing.admin_fee_pct = fill_admin_pct
+                    existing.invoice_number = num or None
+                    existing.supplier_invoice_id = inv.id
+                    for field, value in amounts.items():
+                        setattr(existing, field, value)
+                    _archive_orphaned_placeholder(db, old_inv_id, inv.id, current_user.id, slip=slip)
+                    diesel_linked += 1
+                else:
+                    db.add(DieselFillUp(
+                        entity_id=payload.entity_id,
+                        truck_id=truck.id,
+                        supplier_id=payload.supplier_id,
+                        fillup_date=fillup_date,
+                        litres=litres_d,
+                        rate_per_litre=rate_d,
+                        invoice_number=num or None,
+                        slip_number=trans_id or slip,
+                        depot_slip_number=slip,
+                        supplier_invoice_id=inv.id,
+                        admin_fee_pct=fill_admin_pct,
+                        diesel_type=diesel_type_for_supplier(supplier),
+                        created_by=current_user.id,
+                        **amounts,
+                    ))
+                    diesel_created += 1
+                continue
+
             # Match a fill-up already logged for this slip + truck, regardless of the
             # date it was captured on (a slip number uniquely identifies one fuel
             # transaction; the logged date rarely equals the Excel slip date). This
@@ -2030,25 +2166,16 @@ def bulk_import_invoices(
                     _archive_orphaned_placeholder(db, old_inv_id, inv.id, current_user.id, slip=slip)
                 continue
 
-            if line_admin_fee is not None:
-                # Intsimbi: admin fee comes from the sheet, VAT on the fee only.
-                amount_2dp = line_excl
-                fee_vat = (line_admin_fee * vat_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                amounts = {
-                    "amount": amount_2dp,
-                    "admin_fee_amount": line_admin_fee,
-                    "admin_fee_vat": fee_vat,
-                    "total_amount": amount_2dp + line_admin_fee + fee_vat,
-                }
-                fill_admin_pct = (line_admin_fee / amount_2dp).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) if amount_2dp > 0 else Decimal("0")
-            else:
-                amounts = DieselCalculationService.calculate_fillup_amounts(
-                    litres=litres_d,
-                    rate_per_litre=rate_d,
-                    admin_fee_pct=admin_fee_pct,
-                    apply_admin_fee=apply_admin_fee,
-                )
-                fill_admin_pct = admin_fee_pct
+            # Generic diesel suppliers (WBG etc.): admin fee is the entity's %.
+            # Intsimbi lines never reach here — they carry a per-line admin fee and
+            # are handled by the replace-by-TransID branch above.
+            amounts = DieselCalculationService.calculate_fillup_amounts(
+                litres=litres_d,
+                rate_per_litre=rate_d,
+                admin_fee_pct=admin_fee_pct,
+                apply_admin_fee=apply_admin_fee,
+            )
+            fill_admin_pct = admin_fee_pct
             db.add(DieselFillUp(
                 entity_id=payload.entity_id,
                 truck_id=truck.id,
