@@ -30,6 +30,28 @@ function rawApi(path, opts = {}) {
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const today = new Date().toISOString().slice(0, 10)
 
+// Fixed display order for the truck registration dropdown on this standalone
+// Diesel page (as supplied by Venessa's list, images 1–5). Trucks whose
+// registration matches sort into this order; anything not listed follows after
+// in registration order. Only affects the Diesel module — not Truck Loads.
+const DIESEL_REG_ORDER = [
+  'JTH936EC', 'JZF207EC', 'JPL694EC', 'JZS468EC', 'KGW055EC', 'KKP390EC', 'KKP393EC',
+  'KRL688EC', 'KRR116EC', 'KDS053EC', 'KGY077EC', 'KJW398EC', 'KKL390EC', 'KTK577EC', 'KPV364EC',
+  'KKY108EC', 'KMC765EC', 'KTH131EC', 'KRV199EC', 'DDM652NC', 'KTS596EC', 'KPS629EC', 'KST708EC',
+  'KSC007EC', 'KKV898EC', 'KBB933EC', '207JGXEC', 'KMP690EC', '529FHREC', '907JLTEC', 'KFJ378EC',
+  'JWM651EC', 'JXG657EC',
+]
+const _regKey = r => (r || '').toUpperCase().replace(/\s+/g, '')
+const _regRank = new Map(DIESEL_REG_ORDER.map((r, i) => [_regKey(r), i]))
+function orderDieselTrucks(list) {
+  return [...(list || [])].sort((a, b) => {
+    const ra = _regRank.has(_regKey(a.registration)) ? _regRank.get(_regKey(a.registration)) : Infinity
+    const rb = _regRank.has(_regKey(b.registration)) ? _regRank.get(_regKey(b.registration)) : Infinity
+    if (ra !== rb) return ra - rb
+    return _regKey(a.registration).localeCompare(_regKey(b.registration))
+  })
+}
+
 const BLANK = {
   entity_id: '', truck_id: '', supplier_id: '', fillup_date: today,
   litres: '', rate_per_litre: '', invoice_number: '', slip_number: '', notes: '', diesel_type: 'fillup',
@@ -81,7 +103,7 @@ export default function DieselFillUpsPage() {
   // No entity selected ("All Entities") → show all accessible trucks/suppliers.
   useEffect(() => {
     const entityQs = filterEntity ? `&entity_id=${filterEntity}` : ''
-    rawApi(`/api/fleet/trucks?limit=500${entityQs}`).then(setTrucks).catch(() => setTrucks([]))
+    rawApi(`/api/fleet/trucks?limit=500${entityQs}`).then(r => setTrucks(orderDieselTrucks(r))).catch(() => setTrucks([]))
     const supParams = { is_diesel_supplier: true, limit: 500 }
     if (filterEntity) supParams.entity_id = filterEntity
     getSuppliers(supParams).then(r => setSuppliers(r.data || [])).catch(() => setSuppliers([]))
@@ -113,7 +135,7 @@ export default function DieselFillUpsPage() {
   useEffect(() => {
     const eid = editForm.entity_id
     if (!eid) { setRowTrucks([]); setRowSuppliers([]); setDieselSettings(null); return }
-    rawApi(`/api/fleet/trucks?entity_id=${eid}&limit=200`).then(setRowTrucks).catch(() => setRowTrucks([]))
+    rawApi(`/api/fleet/trucks?entity_id=${eid}&limit=200`).then(r => setRowTrucks(orderDieselTrucks(r))).catch(() => setRowTrucks([]))
     getSuppliers({ entity_id: eid, is_diesel_supplier: true, limit: 500 }).then(r => setRowSuppliers(r.data || [])).catch(() => setRowSuppliers([]))
     getDieselSettings({ entity_id: eid }).then(r => setDieselSettings(r.data?.[0] || null)).catch(() => {})
   }, [editForm.entity_id])
