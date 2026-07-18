@@ -1196,11 +1196,20 @@ def diesel_invoice_reconciliation(
     )
 
     # ── Fill-up totals per supplier for invoices in the same period ───────────
+    # We compare the invoice against the correct fill-up figure per supplier:
+    #   • Intsimbi bills its admin fee on its own statement, so its invoice
+    #     includes fuel + fee + VAT → compare against fill-up total_amount.
+    #   • Every other diesel supplier's 1%/1.5% fee is our internal markup and is
+    #     NOT on the supplier's invoice (see _auto_link_or_create_supplier_invoice,
+    #     which sets invoice.amount = fill-up fuel `amount`) → compare against the
+    #     fuel `amount` only, otherwise every supplier shows a spurious difference
+    #     equal to their admin fee incl VAT.
     fillup_rows = (
         db.query(
             DieselFillUp.supplier_id.label("supplier_id"),
             func.count(DieselFillUp.id).label("fillup_count"),
             func.coalesce(func.sum(DieselFillUp.total_amount), 0).label("fillup_total"),
+            func.coalesce(func.sum(DieselFillUp.amount), 0).label("fillup_fuel"),
         )
         .join(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
         .filter(
@@ -1215,11 +1224,19 @@ def diesel_invoice_reconciliation(
 
     fillup_by_supplier = {r.supplier_id: r for r in fillup_rows}
 
+    def _bills_own_fee(name: str) -> bool:
+        return 'intsimbi' in (name or '').lower()
+
     result = []
     for inv in inv_rows:
         fu = fillup_by_supplier.get(inv.supplier_id)
         invoice_total = Decimal(str(inv.invoice_total))
-        fillup_total  = Decimal(str(fu.fillup_total)) if fu else Decimal("0")
+        if fu:
+            fillup_total = Decimal(str(
+                fu.fillup_total if _bills_own_fee(inv.supplier_name) else fu.fillup_fuel
+            ))
+        else:
+            fillup_total = Decimal("0")
         diff = invoice_total - fillup_total
         result.append(DieselInvoiceReconciliationRow(
             supplier_id=inv.supplier_id,

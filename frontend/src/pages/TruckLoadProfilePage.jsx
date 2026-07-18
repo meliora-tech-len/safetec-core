@@ -678,6 +678,8 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
             const subLitres = entries.reduce((s, f) => s + parseFloat(f.litres || 0), 0)
             const subAmount = entries.reduce((s, f) => s + parseFloat(f.amount || 0), 0)
             const subAdmin  = entries.reduce((s, f) => s + parseFloat(f.admin_fee_amount || 0), 0)
+            const subAdminVat  = entries.reduce((s, f) => s + parseFloat(f.admin_fee_vat || 0), 0)
+            const subAdminIncl = subAdmin + subAdminVat
             const subTotal  = entries.reduce((s, f) => s + parseFloat(f.total_amount || 0), 0)
             return (
               <div key={supplierName} className="card" style={{ marginBottom: 16, overflow: 'auto' }}>
@@ -697,7 +699,8 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
                       <th style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleDSort('litres')}>Litres{dArrow('litres')}</th>
                       <th style={{ textAlign: 'right' }}>Rate/L</th>
                       <th style={{ textAlign: 'right' }}>Amount</th>
-                      <th style={{ textAlign: 'right' }}>Admin</th>
+                      <th style={{ textAlign: 'right' }}>Admin Fee (excl)</th>
+                      <th style={{ textAlign: 'right' }}>Admin Fee (incl)</th>
                       <th style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleDSort('total_amount')}>Total{dArrow('total_amount')}</th>
                       <th>Notes</th>
                       <th></th>
@@ -739,7 +742,7 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
                               onChange={e => setEF('rate_per_litre', e.target.value)} placeholder="0.00"
                               style={{ ...dEditInput, textAlign: 'right' }} />
                           </td>
-                          <td /><td /><td />
+                          <td /><td /><td /><td />
                           <td style={dEditCell}>
                             <input className="form-input" value={editFillupForm.notes}
                               onChange={e => setEF('notes', e.target.value)} placeholder="Notes"
@@ -778,6 +781,11 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
                           <td style={{ textAlign: 'right', fontSize: 12 }}>R&nbsp;{parseFloat(f.rate_per_litre).toFixed(2)}</td>
                           <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(f.amount)}</td>
                           <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(f.admin_fee_amount)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+                            {parseFloat(f.admin_fee_amount || 0) > 0
+                              ? fmt(parseFloat(f.admin_fee_amount || 0) + parseFloat(f.admin_fee_vat || 0))
+                              : fmt(f.admin_fee_amount)}
+                          </td>
                           <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(f.total_amount)}</td>
                           <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.notes || '—'}</td>
                           <td onClick={e => e.stopPropagation()}>
@@ -800,6 +808,7 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
                       <td />
                       <td style={{ textAlign: 'right', padding: '8px 12px' }}>{fmt(subAmount)}</td>
                       <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--text-muted)' }}>{fmt(subAdmin)}</td>
+                      <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--text-muted)' }}>{fmt(subAdminIncl)}</td>
                       <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(subTotal)}</td>
                       <td colSpan={2} />
                     </tr>
