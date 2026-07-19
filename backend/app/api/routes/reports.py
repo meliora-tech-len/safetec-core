@@ -1070,24 +1070,38 @@ def po_load_reconciliation_report(
         .filter(TruckLoad.entity_id == entity_id, TruckLoad.is_archived == False)
         .all()
     )
+    # Keyed case-insensitively: a slip captured "DN1234" on the invoice and "dn1234"
+    # on the load is the same weighbridge slip and must still match.
     loads_by_slip: dict[str, list] = {}
     for row in load_rows:
         slip = (row[0].slip_number or '').strip()
         if slip:
-            loads_by_slip.setdefault(slip, []).append(row)
+            loads_by_slip.setdefault(slip.upper(), []).append(row)
 
     # Registration → canonical truck. A truck reissued with a new plate keeps the old
     # one in temp_registration, and invoices raised before the change still carry it,
     # so both resolve to the same truck rather than reading as a wrong-truck error.
+    # sub_by_truck maps a truck to the subcontractor that operates it (linked row name
+    # first, then the free-text subcontractor_name); own-fleet trucks are absent.
     truck_by_reg: dict[str, tuple] = {}
-    for t_id, reg, temp, fleet in db.query(
-        Truck.id, Truck.registration, Truck.temp_registration, Truck.fleet_number
-    ).filter(Truck.entity_id == entity_id).all():
+    sub_by_truck: dict[int, str] = {}
+    for t_id, reg, temp, fleet, sub_name_col, sub_name in (
+        db.query(
+            Truck.id, Truck.registration, Truck.temp_registration, Truck.fleet_number,
+            Truck.subcontractor_name, Subcontractor.name,
+        )
+        .outerjoin(Subcontractor, Subcontractor.id == Truck.subcontractor_id)
+        .filter(Truck.entity_id == entity_id)
+        .all()
+    ):
         canon = (t_id, (reg or '').upper(), fleet)
         if reg:
             truck_by_reg[reg.upper()] = canon
         if temp and temp.upper() not in truck_by_reg:
             truck_by_reg[temp.upper()] = canon
+        label = (sub_name or sub_name_col or '').strip()
+        if label:
+            sub_by_truck[t_id] = label
 
     pos: dict[str, dict] = {}
     trucks: dict[tuple, dict] = {}
@@ -1122,7 +1136,7 @@ def po_load_reconciliation_report(
 
             slip_a = (li.loading_number or '').strip()
             slip_b = (li.offloading_number or '').strip()
-            cands = loads_by_slip.get(slip_a) or loads_by_slip.get(slip_b) or []
+            cands = loads_by_slip.get(slip_a.upper()) or loads_by_slip.get(slip_b.upper()) or []
             # A slip captured twice yields more than one load; take the first not already
             # claimed by an earlier line so two invoice lines can't both point at one load.
             match = next((c for c in cands if c[0].id not in matched_load_ids), None)
@@ -1212,9 +1226,9 @@ def po_load_reconciliation_report(
         InvoiceLineItem.line_type == 'item',
     ).all():
         if a and a.strip():
-            all_invoiced_slips.add(a.strip())
+            all_invoiced_slips.add(a.strip().upper())
         if b and b.strip():
-            all_invoiced_slips.add(b.strip())
+            all_invoiced_slips.add(b.strip().upper())
 
     uninvoiced: dict[int, dict] = {}
     uninvoiced_totals = _zero_recon_totals()
@@ -1224,7 +1238,7 @@ def po_load_reconciliation_report(
         if (lm, ly) != (month, year):
             continue
         slip = (load.slip_number or '').strip()
-        if slip and slip in all_invoiced_slips:
+        if slip and slip.upper() in all_invoiced_slips:
             continue
         if load.id in matched_load_ids:
             continue
@@ -1252,6 +1266,40 @@ def po_load_reconciliation_report(
             t['load_tonnes'] += tonnes
             t['load_amount'] += amount
 
+    # ── By-registration view ───────────────────────────────────────────────────
+    # The same matched lines, regrouped registration → PO instead of PO → truck,
+    # so a single truck can be reconciled across every PO it appears on. Built from
+    # the raw per-(po, reg) truck totals before the grand loop below diffs them.
+    by_reg: dict[str, dict] = {}
+    for entry in pos.values():
+        for truck in entry['trucks']:
+            reg = truck['registration']
+            rg = by_reg.get(reg)
+            if rg is None:
+                rg = by_reg[reg] = {
+                    'registration': reg,
+                    'truck_id': truck['truck_id'],
+                    'fleet_number': truck['fleet_number'],
+                    'known_truck': truck['known_truck'],
+                    'subcontractor': sub_by_truck.get(truck['truck_id']) if truck['truck_id'] else None,
+                    'pos': [],
+                    'totals': _zero_recon_totals(),
+                }
+            for k in rg['totals']:
+                rg['totals'][k] += truck['totals'][k]
+            inv_nums = list(dict.fromkeys(l['invoice_number'] for l in truck['lines']))
+            rg['pos'].append({
+                'po_number': entry['po_number'],
+                'customer_name': entry['customer_name'],
+                'invoice_numbers': inv_nums,
+                'lines': truck['lines'],
+                'issue_count': sum(1 for l in truck['lines'] if l['issues']),
+                'totals': _recon_with_diff(truck['totals']),
+            })
+    for rg in by_reg.values():
+        rg['issue_count'] = sum(p['issue_count'] for p in rg['pos'])
+        rg['totals'] = _recon_with_diff(rg['totals'])
+
     grand = _zero_recon_totals()
     for entry in pos.values():
         for k in grand:
@@ -1271,8 +1319,87 @@ def po_load_reconciliation_report(
         'month': month,
         'month_name': MONTH_NAMES[month - 1],
         'pos': list(pos.values()),
+        # Own-fleet trucks (no subcontractor) sort last, then by reg within each group.
+        'by_reg': sorted(
+            by_reg.values(),
+            key=lambda r: ((r['subcontractor'] or '').upper() or '￿', r['registration']),
+        ),
         'uninvoiced': list(uninvoiced.values()),
         'uninvoiced_totals': _recon_with_diff(uninvoiced_totals),
         'totals': _recon_with_diff(grand),
         'issue_count': sum(e['issue_count'] for e in pos.values()),
     }
+
+
+@router.get("/po-load-slip-lookup")
+def po_load_slip_lookup(
+    entity_id: int = Query(...),
+    slip: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Find a weighbridge slip anywhere in the entity's invoices and truck loads.
+
+    Answers "is this slip on any PO?" across every month, not just the report's,
+    matching the slip case-insensitively (a load slip 'dn123' and an invoice
+    waybill 'DN123' are the same slip). Both invoice waybill columns are searched.
+    """
+    _check_entity_access(entity_id, current_user)
+    q = slip.strip().upper()
+
+    invoiced = []
+    for li, inv in (
+        db.query(InvoiceLineItem, Invoice)
+        .join(Invoice, Invoice.id == InvoiceLineItem.invoice_id)
+        .filter(
+            Invoice.entity_id == entity_id,
+            Invoice.document_type == DocumentType.invoice,
+            Invoice.status != InvoiceStatus.cancelled,
+            InvoiceLineItem.line_type == 'item',
+            or_(
+                func.upper(func.trim(InvoiceLineItem.loading_number)) == q,
+                func.upper(func.trim(InvoiceLineItem.offloading_number)) == q,
+            ),
+        )
+        .order_by(Invoice.issue_date, Invoice.invoice_number)
+        .all()
+    ):
+        invoiced.append({
+            'invoice_number': inv.invoice_number,
+            'po_number': inv.po_number,
+            'issue_date': inv.issue_date,
+            'status': inv.status.value if inv.status else None,
+            'registration': _line_reg(li.description),
+            'description': li.description,
+            'loading_number': li.loading_number,
+            'offloading_number': li.offloading_number,
+            'tonnes': round(_line_tonnes(li.quantity), 3),
+            'amount': round(float(li.amount or 0), 2),
+        })
+
+    loads = []
+    for load, reg, fleet in (
+        db.query(TruckLoad, Truck.registration, Truck.fleet_number)
+        .outerjoin(Truck, Truck.id == TruckLoad.truck_id)
+        .filter(
+            TruckLoad.entity_id == entity_id,
+            func.upper(func.trim(TruckLoad.slip_number)) == q,
+        )
+        .order_by(TruckLoad.load_date)
+        .all()
+    ):
+        lm = load.statement_month or (load.load_date.month if load.load_date else None)
+        ly = load.statement_year or (load.load_date.year if load.load_date else None)
+        loads.append({
+            'load_id': load.id,
+            'registration': reg,
+            'fleet_number': fleet,
+            'slip_number': load.slip_number,
+            'load_date': load.load_date,
+            'tonnes': round(float(load.tonnes or 0), 3),
+            'period': f"{MONTH_NAMES[lm - 1]} {ly}" if lm and ly else None,
+            'is_archived': bool(load.is_archived),
+            'is_projection': bool(load.is_projection),
+        })
+
+    return {'slip': slip.strip(), 'invoiced': invoiced, 'loads': loads}

@@ -5,7 +5,7 @@ import { useSessionState } from '../hooks/useSessionState'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
-  getSubcontractorLoadsReport, getPoLoadReconciliationReport,
+  getSubcontractorLoadsReport, getPoLoadReconciliationReport, lookupPoLoadSlip,
   createReportExclusion, deleteReportExclusion,
 } from '../services/api'
 import { errorMessage } from '../utils/helpers'
@@ -1800,15 +1800,78 @@ function Diff({ value, format }) {
 }
 
 function PoLoadReconciliationReport({ data, year, issueLabels }) {
-  const { month_name, pos, uninvoiced, totals, uninvoiced_totals, issue_count } = data
+  const { month_name, pos, by_reg = [], uninvoiced, totals, uninvoiced_totals, issue_count } = data
   const [collapsed, setCollapsed] = useState({})
   const [onlyIssues, setOnlyIssues] = useState(false)
+  const [groupBy, setGroupBy] = useState('po') // 'po' | 'reg'
 
-  const toggle = (po) => setCollapsed(c => ({ ...c, [po]: !c[po] }))
-  const visiblePos = onlyIssues ? pos.filter(p => p.issue_count > 0) : pos
-  const allCollapsed = visiblePos.length > 0 && visiblePos.every(p => collapsed[p.po_number])
+  // Slip lookup — searches every month's invoices + loads, not just this report's.
+  const [slipQuery, setSlipQuery] = useState('')
+  const [slipResult, setSlipResult] = useState(null)
+  const [slipBusy, setSlipBusy] = useState(false)
+  const runSlipSearch = async (e) => {
+    e?.preventDefault()
+    const q = slipQuery.trim()
+    if (!q) { setSlipResult(null); return }
+    setSlipBusy(true)
+    try {
+      const res = await lookupPoLoadSlip({ entity_id: data.entity_id, slip: q })
+      setSlipResult(res.data)
+    } catch (err) {
+      setSlipResult({ slip: q, error: errorMessage(err), invoiced: [], loads: [] })
+    } finally {
+      setSlipBusy(false)
+    }
+  }
+  const clearSlipSearch = () => { setSlipQuery(''); setSlipResult(null) }
+
+  // Both views render the same matched lines; only the grouping differs. Normalise
+  // each into { key, title, meta, totals, issue_count, sub: [{ label, meta, lines, ... }] }
+  // so a single render path serves both.
+  const groups = groupBy === 'reg'
+    ? by_reg.map(r => ({
+        key: r.registration,
+        title: `${r.fleet_number ? `${r.fleet_number} — ` : ''}${r.registration}`,
+        meta: `${r.pos.length} PO${r.pos.length === 1 ? '' : 's'}`,
+        subcontractor: r.subcontractor || null,
+        notFleet: !r.known_truck,
+        issue_count: r.issue_count,
+        totals: r.totals,
+        sub: r.pos.map(p => ({
+          key: p.po_number,
+          label: p.po_number,
+          meta: `${p.invoice_numbers.join(', ')}${p.customer_name ? ` · ${p.customer_name}` : ''}`,
+          notFleet: false,
+          lines: p.lines,
+          totals: p.totals,
+          issue_count: p.issue_count,
+          footerLabel: `${p.po_number} total`,
+        })),
+      }))
+    : pos.map(p => ({
+        key: p.po_number,
+        title: p.po_number,
+        meta: `${p.invoices.map(i => i.invoice_number).join(', ')}${p.customer_name ? ` · ${p.customer_name}` : ''} · ${p.trucks.length} truck${p.trucks.length === 1 ? '' : 's'}`,
+        notFleet: false,
+        issue_count: p.issue_count,
+        totals: p.totals,
+        sub: p.trucks.map(t => ({
+          key: t.registration,
+          label: `${t.fleet_number ? `${t.fleet_number} — ` : ''}${t.registration}`,
+          meta: `${t.totals.invoiced_loads} invoiced · ${t.totals.load_loads} matched`,
+          notFleet: !t.known_truck,
+          lines: t.lines,
+          totals: t.totals,
+          issue_count: t.issue_count,
+          footerLabel: `${t.registration} total`,
+        })),
+      }))
+
+  const toggle = (key) => setCollapsed(c => ({ ...c, [key]: !c[key] }))
+  const visibleGroups = onlyIssues ? groups.filter(g => g.issue_count > 0) : groups
+  const allCollapsed = visibleGroups.length > 0 && visibleGroups.every(g => collapsed[g.key])
   const toggleAll = () =>
-    setCollapsed(allCollapsed ? {} : Object.fromEntries(visiblePos.map(p => [p.po_number, true])))
+    setCollapsed(allCollapsed ? {} : Object.fromEntries(visibleGroups.map(g => [g.key, true])))
 
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' }) : '—'
 
@@ -1820,7 +1883,16 @@ function PoLoadReconciliationReport({ data, year, issueLabels }) {
           <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
             Invoiced PO vs Truck Loads — {month_name} {year}
           </span>
-          <span style={{ display: 'flex', gap: 8 }}>
+          <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+              {[['po', 'By PO'], ['reg', 'By Reg']].map(([val, label]) => (
+                <button key={val} onClick={() => setGroupBy(val)} style={{
+                  padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
+                  background: groupBy === val ? 'var(--accent, #2563eb)' : 'var(--bg-hover)',
+                  color: groupBy === val ? '#fff' : 'var(--text-primary)',
+                }}>{label}</button>
+              ))}
+            </span>
             <button onClick={() => setOnlyIssues(v => !v)} style={{
               padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
               background: onlyIssues ? '#b91c1c' : 'var(--bg-hover)',
@@ -1840,7 +1912,7 @@ function PoLoadReconciliationReport({ data, year, issueLabels }) {
         </div>
         <div style={{ display: 'flex', gap: 32, padding: '12px 20px', background: 'var(--bg-surface)', flexWrap: 'wrap' }}>
           {[
-            { label: 'POs',             value: String(pos.length) },
+            { label: groupBy === 'reg' ? 'Trucks' : 'POs', value: String(groupBy === 'reg' ? by_reg.length : pos.length) },
             { label: 'Invoiced Loads',  value: String(totals.invoiced_loads) },
             { label: 'Matched Loads',   value: String(totals.load_loads) },
             { label: 'Invoiced Tonnes', value: fmtT(totals.invoiced_tonnes) },
@@ -1858,20 +1930,154 @@ function PoLoadReconciliationReport({ data, year, issueLabels }) {
         </div>
       </div>
 
-      {onlyIssues && visiblePos.length === 0 && (
+      {/* Slip lookup */}
+      <div style={{ ...styles.card, marginBottom: 16, padding: '14px 20px' }}>
+        <form onSubmit={runSlipSearch} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginRight: 4 }}>Find a slip</span>
+          <input
+            value={slipQuery}
+            onChange={e => setSlipQuery(e.target.value)}
+            placeholder="e.g. 931502"
+            style={{
+              padding: '6px 10px', fontSize: 13, minWidth: 180,
+              border: '1px solid var(--border)', borderRadius: 6,
+              background: 'var(--bg-input, var(--bg-surface))', color: 'var(--text-primary)',
+            }}
+          />
+          <button type="submit" disabled={slipBusy || !slipQuery.trim()} style={{
+            padding: '6px 14px', fontSize: 12, fontWeight: 600,
+            cursor: slipBusy ? 'default' : 'pointer', opacity: slipBusy ? 0.6 : 1,
+            background: 'var(--accent, #2563eb)', color: '#fff', border: 'none', borderRadius: 6,
+          }}>{slipBusy ? 'Searching…' : 'Search'}</button>
+          {slipResult && (
+            <button type="button" onClick={clearSlipSearch} style={{
+              padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              background: 'var(--bg-hover)', color: 'var(--text-primary)',
+              border: '1px solid var(--border)', borderRadius: 6,
+            }}>Clear</button>
+          )}
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            Searches all months for this entity — invoices and loads.
+          </span>
+        </form>
+
+        {slipResult && (
+          <div style={{ marginTop: 14 }}>
+            {slipResult.error ? (
+              <div style={{ color: '#b91c1c', fontSize: 13 }}>{slipResult.error}</div>
+            ) : (
+              <>
+                {/* Verdict */}
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
+                  {slipResult.invoiced.length > 0 ? (
+                    <span style={{ color: '#16a34a' }}>
+                      ✓ Slip {slipResult.slip} is on {slipResult.invoiced.length} invoice line{slipResult.invoiced.length === 1 ? '' : 's'}
+                    </span>
+                  ) : slipResult.loads.length > 0 ? (
+                    <span style={{ color: '#b45309' }}>
+                      ⚠ Slip {slipResult.slip} is recorded as a load but is NOT on any PO invoice
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Slip {slipResult.slip} isn’t on any invoice or truck load for this entity
+                    </span>
+                  )}
+                </div>
+
+                {slipResult.invoiced.length > 0 && (
+                  <div style={{ overflowX: 'auto', marginBottom: slipResult.loads.length ? 12 : 0 }}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}>Invoice</th>
+                          <th style={styles.th}>PO</th>
+                          <th style={styles.th}>Status</th>
+                          <th style={styles.th}>Reg</th>
+                          <th style={styles.th}>Waybill (load / offload)</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Tonnes</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {slipResult.invoiced.map((r, i) => (
+                          <tr key={i}>
+                            <td style={styles.td}>{r.invoice_number}</td>
+                            <td style={styles.td}>{r.po_number || '—'}</td>
+                            <td style={styles.td}>{r.status || '—'}</td>
+                            <td style={styles.td}>{r.registration || '—'}</td>
+                            <td style={styles.td}>{r.loading_number || '—'} / {r.offloading_number || '—'}</td>
+                            <td style={{ ...styles.td, textAlign: 'right' }}>{fmtT(r.tonnes)}</td>
+                            <td style={{ ...styles.td, textAlign: 'right' }}>{fmtR(r.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {slipResult.loads.length > 0 && (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr>
+                          <th style={styles.th}>Load Reg</th>
+                          <th style={styles.th}>Date</th>
+                          <th style={styles.th}>Period</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Tonnes</th>
+                          <th style={styles.th}>Slip</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {slipResult.loads.map(l => (
+                          <tr key={l.load_id}>
+                            <td style={styles.td}>{l.fleet_number ? `${l.fleet_number} — ` : ''}{l.registration || '—'}</td>
+                            <td style={styles.td}>{fmtDate(l.load_date)}</td>
+                            <td style={styles.td}>{l.period || '—'}</td>
+                            <td style={{ ...styles.td, textAlign: 'right' }}>{fmtT(l.tonnes)}</td>
+                            <td style={styles.td}>
+                              {l.slip_number || '—'}
+                              {l.is_projection && <span style={badge}>PROJ</span>}
+                              {l.is_archived && <span style={{ ...badge, background: '#e5e7eb', color: '#6b7280' }}>ARCHIVED</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {onlyIssues && visibleGroups.length === 0 && (
         <div style={{ ...styles.card, ...styles.empty, marginBottom: 16 }}>
           Every invoiced line matches its truck load for this period.
         </div>
       )}
 
-      {/* One card per PO */}
-      {visiblePos.map(p => {
-        const isCollapsed = !!collapsed[p.po_number]
-        const trucks = onlyIssues ? p.trucks.filter(t => t.issue_count > 0) : p.trucks
+      {/* One card per PO (By PO) or per truck (By Reg). In By Reg the cards are
+          clustered under a subcontractor heading (own-fleet trucks last). */}
+      {visibleGroups.map((g, gi) => {
+        const isCollapsed = !!collapsed[g.key]
+        const sub = onlyIssues ? g.sub.filter(s => s.issue_count > 0) : g.sub
+        const showSubHeading = groupBy === 'reg' &&
+          (gi === 0 || visibleGroups[gi - 1].subcontractor !== g.subcontractor)
         return (
-          <div key={p.po_number} style={{ ...styles.card, marginBottom: 16 }}>
+          <Fragment key={g.key}>
+          {showSubHeading && (
+            <div style={{
+              margin: '4px 2px 10px', padding: '4px 2px',
+              fontSize: 13, fontWeight: 800, letterSpacing: '0.02em',
+              color: 'var(--text-primary)', borderBottom: '2px solid var(--border)',
+            }}>
+              {g.subcontractor || 'Own Fleet'}
+            </div>
+          )}
+          <div style={{ ...styles.card, marginBottom: 16 }}>
             <div
-              onClick={() => toggle(p.po_number)}
+              onClick={() => toggle(g.key)}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 gap: 16, padding: '12px 20px', cursor: 'pointer', flexWrap: 'wrap',
@@ -1880,22 +2086,23 @@ function PoLoadReconciliationReport({ data, year, issueLabels }) {
             >
               <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
                 <span style={{ display: 'inline-block', width: 14, color: 'var(--text-muted)' }}>{isCollapsed ? '▸' : '▾'}</span>
-                {p.po_number}
+                {g.title}
                 <span style={{ marginLeft: 8, fontWeight: 500, fontSize: 12, color: 'var(--text-muted)' }}>
-                  {p.invoices.map(i => i.invoice_number).join(', ')}
-                  {p.customer_name ? ` · ${p.customer_name}` : ''}
-                  {' · '}{p.trucks.length} truck{p.trucks.length === 1 ? '' : 's'}
+                  {g.meta}
                 </span>
-                {p.issue_count > 0 && (
+                {g.notFleet && (
+                  <span style={{ ...badge, background: '#fee2e2', color: '#b91c1c' }}>NOT A FLEET TRUCK</span>
+                )}
+                {g.issue_count > 0 && (
                   <span style={{ ...badge, background: '#fee2e2', color: '#b91c1c' }}>
-                    {p.issue_count} TO CHECK
+                    {g.issue_count} TO CHECK
                   </span>
                 )}
               </span>
               <span style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12 }}>
-                <span><span style={{ color: 'var(--text-muted)' }}>Invoiced: </span><b>{fmtR(p.totals.invoiced_amount)}</b></span>
-                <span><span style={{ color: 'var(--text-muted)' }}>Loads: </span><b>{fmtR(p.totals.load_amount)}</b></span>
-                <span><span style={{ color: 'var(--text-muted)' }}>Diff: </span><Diff value={p.totals.diff_amount} format={fmtR} /></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Invoiced: </span><b>{fmtR(g.totals.invoiced_amount)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Loads: </span><b>{fmtR(g.totals.load_amount)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Diff: </span><Diff value={g.totals.diff_amount} format={fmtR} /></span>
               </span>
             </div>
 
@@ -1918,21 +2125,21 @@ function PoLoadReconciliationReport({ data, year, issueLabels }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {trucks.map(t => {
+                    {sub.map(t => {
                       const lines = onlyIssues ? t.lines.filter(l => l.issues.length) : t.lines
                       return (
-                        <Fragment key={t.registration}>
+                        <Fragment key={t.key}>
                           <tr>
                             <td colSpan={11} style={{
                               padding: '8px 12px', background: 'var(--bg-surface)',
                               fontSize: 12, fontWeight: 700, color: 'var(--text-primary)',
                               borderTop: '1px solid var(--border)',
                             }}>
-                              {t.fleet_number ? `${t.fleet_number} — ` : ''}{t.registration}
+                              {t.label}
                               <span style={{ marginLeft: 8, fontWeight: 500, color: 'var(--text-muted)' }}>
-                                {t.totals.invoiced_loads} invoiced · {t.totals.load_loads} matched
+                                {t.meta}
                               </span>
-                              {!t.known_truck && (
+                              {t.notFleet && (
                                 <span style={{ ...badge, background: '#fee2e2', color: '#b91c1c' }}>NOT A FLEET TRUCK</span>
                               )}
                             </td>
@@ -1975,7 +2182,7 @@ function PoLoadReconciliationReport({ data, year, issueLabels }) {
                             )
                           })}
                           <tr>
-                            <td style={{ ...styles.td, fontWeight: 700 }}>{t.registration} total</td>
+                            <td style={{ ...styles.td, fontWeight: 700 }}>{t.footerLabel}</td>
                             <td style={styles.td} />
                             <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtT(t.totals.invoiced_tonnes)}</td>
                             <td style={styles.td} />
@@ -1997,6 +2204,7 @@ function PoLoadReconciliationReport({ data, year, issueLabels }) {
               </div>
             )}
           </div>
+          </Fragment>
         )
       })}
 

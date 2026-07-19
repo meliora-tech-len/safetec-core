@@ -344,6 +344,7 @@ export const getSarsVatDetail = (params) => api.get('/reports/sars-vat-detail', 
 export const getSarsVatDetailAnnual = (params) => api.get('/reports/sars-vat-detail-annual', { params })
 export const getSubcontractorLoadsReport = (params) => api.get('/reports/subcontractor-loads', { params })
 export const getPoLoadReconciliationReport = (params) => api.get('/reports/po-load-reconciliation', { params })
+export const lookupPoLoadSlip = (params) => api.get('/reports/po-load-slip-lookup', { params })
 export const createReportExclusion = (data) => api.post('/reports/exclusions', data)
 export const deleteReportExclusion = (recordType, recordId) => api.delete(`/reports/exclusions/${recordType}/${recordId}`)
 export const getPayrollEntries = (params = {}) => api.get('/payroll-entries/', { params })
