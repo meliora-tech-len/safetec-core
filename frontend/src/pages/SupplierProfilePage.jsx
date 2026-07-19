@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   getSupplier, getSuppliers, getEntities,
   getSupplierInvoices, createSupplierInvoice,
-  updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
+  updateSupplierInvoice, updateSupplierInvoicePeriods, deleteSupplierInvoice, archiveSupplierInvoice, markStatementPaid,
   verifySupplierInvoice, getCurrentDieselRate, getTruckLoads, getFleetTrucks,
   addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
   getSubcontractors, getDieselFillUpSlips,
@@ -14,7 +14,7 @@ import {
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock, Calendar } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
@@ -657,6 +657,189 @@ const wbgTh = { padding:'6px 10px', textAlign:'left', fontWeight:600, fontSize:1
                 borderBottom:'1px solid var(--border)', whiteSpace:'nowrap' }
 const wbgTd = { padding:'5px 10px', verticalAlign:'middle' }
 
+// Best-effort client preview of the automatic costing month (natural period):
+// cash suppliers cost one month before their statement; Safetec and custom
+// (no-supplier) expenses use the statement month as-is. The sent-costing
+// roll-forward isn't reflected here — this is only the "Auto (…)" hint.
+function computeCostingAuto(inv, supplier, isSafetec) {
+  if (!inv.statement_month || !inv.statement_year) return null
+  let y = inv.statement_year, m = inv.statement_month
+  const isCash = supplier?.payment_term === 'current'
+  if (!isSafetec && inv.supplier_id && isCash) {
+    m -= 1
+    if (m === 0) { m = 12; y -= 1 }
+  }
+  return { month: m, year: y }
+}
+
+const periodOverrideTooltip = (inv) => {
+  const parts = []
+  if (inv.costing_period_month)
+    parts.push(`Costing → ${MONTH_NAMES[inv.costing_period_month]?.slice(0, 3)} ${inv.costing_period_year}`)
+  if (inv.report_period_month)
+    parts.push(`SARS report → ${MONTH_NAMES[inv.report_period_month]?.slice(0, 3)} ${inv.report_period_year}`)
+  return parts.join('  •  ')
+}
+
+// "Manage → Move": shift one invoice between months across the three independent
+// buckets (costing, SARS/Income-vs-Expenses report, supplier-invoices listing).
+function ManagePeriodsModal({ invoices, supplier, isSafetec, onClose, onSaved }) {
+  const [selectedId, setSelectedId] = useState(invoices[0]?.id ?? null)
+  const [search, setSearch]   = useState('')
+  const [saving, setSaving]   = useState(false)
+  const [costing, setCosting] = useState({ month:'', year:'' })
+  const [report, setReport]   = useState({ month:'', year:'' })
+  const [listing, setListing] = useState({ month:'', year:'' })
+
+  const inv = invoices.find(i => i.id === selectedId) || null
+
+  // Prefill each bucket from the invoice whenever the selection changes.
+  useEffect(() => {
+    if (!inv) return
+    setCosting({ month: inv.costing_period_month || '', year: inv.costing_period_year || '' })
+    setReport({ month: inv.report_period_month || '', year: inv.report_period_year || '' })
+    setListing({ month: inv.statement_month || '', year: inv.statement_year || '' })
+  }, [selectedId])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const costingAuto = inv ? computeCostingAuto(inv, supplier, isSafetec) : null
+  const reportAuto  = inv && inv.invoice_date
+    ? { month: new Date(inv.invoice_date).getMonth() + 1, year: new Date(inv.invoice_date).getFullYear() }
+    : null
+
+  const filtered = invoices.filter(i => {
+    if (!search.trim()) return true
+    const s = search.toLowerCase()
+    return (i.invoice_number || '').toLowerCase().includes(s)
+        || (i.description || '').toLowerCase().includes(s)
+        || (i.vehicle_reg || '').toLowerCase().includes(s)
+  })
+
+  const save = async () => {
+    if (!inv) return
+    if (costing.month !== '' && !costing.year) { toast.error('Pick a year for the costing month'); return }
+    if (report.month !== '' && !report.year)   { toast.error('Pick a year for the SARS report month'); return }
+    if (!listing.month || !listing.year)       { toast.error('Supplier-invoices month and year are required'); return }
+    setSaving(true)
+    try {
+      await updateSupplierInvoicePeriods(inv.id, {
+        costing_month: costing.month === '' ? null : parseInt(costing.month),
+        costing_year:  costing.month === '' ? null : parseInt(costing.year),
+        report_month:  report.month === '' ? null : parseInt(report.month),
+        report_year:   report.month === '' ? null : parseInt(report.year),
+        statement_month: parseInt(listing.month),
+        statement_year:  parseInt(listing.year),
+      })
+      toast.success('Invoice periods updated')
+      onSaved()
+      onClose()
+    } catch (e) {
+      toast.error(errorMessage(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const bucketRow = (label, help, bucket, setBucket, allowAuto, autoHint) => (
+    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, padding:'11px 0', borderBottom:'1px solid var(--border)' }}>
+      <div style={{ maxWidth: 300 }}>
+        <div style={{ fontSize:13, fontWeight:600 }}>{label}</div>
+        <div style={{ fontSize:11, color:'var(--text-muted)', marginTop:2, lineHeight:1.4 }}>{help}</div>
+      </div>
+      <div style={{ display:'flex', gap:6, alignItems:'center', flexShrink:0 }}>
+        <select
+          value={bucket.month}
+          onChange={e => {
+            const mo = e.target.value
+            setBucket(b => ({ month: mo, year: mo === '' ? '' : (b.year || (autoHint?.year ?? currentYear())) }))
+          }}
+          style={{ padding:'5px 6px', borderRadius:4, border:'1px solid var(--border)', fontSize:13 }}
+        >
+          {allowAuto && (
+            <option value="">Auto{autoHint ? ` (${MONTH_NAMES[autoHint.month]?.slice(0, 3)} ${autoHint.year})` : ''}</option>
+          )}
+          {MONTH_NAMES.slice(1).map((m, i) => (
+            <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>
+          ))}
+        </select>
+        <input
+          type="number" min="2020" max="2099"
+          value={bucket.year}
+          disabled={bucket.month === ''}
+          onChange={e => setBucket(b => ({ ...b, year: e.target.value }))}
+          style={{ width:64, padding:'5px 6px', borderRadius:4, border:'1px solid var(--border)', fontSize:13, opacity: bucket.month === '' ? 0.5 : 1 }}
+        />
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={wbgModalOverlay} onClick={onClose}>
+      <div style={{ ...wbgModalBox, width: 620 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+          <h3 style={{ margin:0, fontSize:16 }}>Manage invoice periods</h3>
+          <button className="btn-ghost" onClick={onClose} style={{ padding:'2px 6px' }}><X size={14}/></button>
+        </div>
+
+        <p style={{ margin:'0 0 12px', fontSize:12, color:'var(--text-muted)', lineHeight:1.5 }}>
+          Move a single invoice between months for costing, the SARS report and the
+          supplier-invoices listing — independently. Leave a bucket on <strong>Auto</strong> to
+          keep the normal rule.
+        </p>
+
+        {/* Invoice picker */}
+        <div style={{ marginBottom:14 }}>
+          <label style={{ display:'block', marginBottom:4, fontSize:13, fontWeight:600 }}>Invoice</label>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by number, description or reg…"
+            style={{ width:'100%', padding:'6px 8px', borderRadius:4, border:'1px solid var(--border)', fontSize:13, marginBottom:6 }}
+          />
+          <select
+            value={selectedId ?? ''}
+            onChange={e => setSelectedId(parseInt(e.target.value))}
+            size={Math.min(6, Math.max(3, filtered.length))}
+            style={{ width:'100%', padding:'4px', borderRadius:4, border:'1px solid var(--border)', fontSize:13 }}
+          >
+            {filtered.map(i => (
+              <option key={i.id} value={i.id}>
+                {formatDate(i.invoice_date)} · {i.invoice_number || 'Pending'} · {formatCurrency(i.amount)}{(i.costing_period_month || i.report_period_month) ? '  • moved' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {inv && (
+          <div>
+            {bucketRow(
+              'Costing month',
+              'Subcontractor-costing month. Overriding ignores the cash “previous month” rule and any sent-costing lock.',
+              costing, setCosting, true, costingAuto,
+            )}
+            {bucketRow(
+              'SARS report month',
+              'Month used by the SARS VAT report and the Income vs Expenses report.',
+              report, setReport, true, reportAuto,
+            )}
+            {bucketRow(
+              'Supplier-invoices month',
+              'Statement month this invoice is listed and paid under.',
+              listing, setListing, false, null,
+            )}
+          </div>
+        )}
+
+        <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:18 }}>
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={save} disabled={saving || !inv}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PaymentTermBadge({ term }) {
   const is30 = term === '30_days'
   return (
@@ -698,6 +881,7 @@ export default function SupplierProfilePage() {
   const [newForm, setNewForm] = useState(blankForm(''))
   const [saving, setSaving] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [showManage, setShowManage] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)  // invoice pending deletion
   const [openInvoiceIds, setOpenInvoiceIds] = useState(new Set())
   const [selectedIds, setSelectedIds] = useState(new Set())  // invoices ticked for bulk verify / pay
@@ -1407,6 +1591,13 @@ export default function SupplierProfilePage() {
               <Upload size={15} /> Import Excel
             </button>
           )}
+          {allInvoices.length > 0 && (
+            <button className="btn-ghost" onClick={() => setShowManage(true)}
+              title="Move an invoice between months for costing / SARS report / listing"
+              style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <Calendar size={15} /> Manage
+            </button>
+          )}
           <button className="btn-primary" onClick={handleAddClick} disabled={showNew}>
             <Plus size={15} /> Add Invoice
           </button>
@@ -1600,6 +1791,16 @@ export default function SupplierProfilePage() {
           trucks={trucks}
           onClose={() => setShowImport(false)}
           onImported={() => { loadInvoices() }}
+        />
+      )}
+
+      {showManage && (
+        <ManagePeriodsModal
+          invoices={allInvoices}
+          supplier={supplier}
+          isSafetec={supplierEntityCode === 'SFT'}
+          onClose={() => setShowManage(false)}
+          onSaved={() => { loadInvoices() }}
         />
       )}
 
@@ -1836,8 +2037,18 @@ export default function SupplierProfilePage() {
                                   />
                                 </div>
                               ) : (
-                                <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                                  {MONTH_NAMES[inv.statement_month]?.slice(0, 3)} {inv.statement_year}
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                    {MONTH_NAMES[inv.statement_month]?.slice(0, 3)} {inv.statement_year}
+                                  </span>
+                                  {(inv.costing_period_month || inv.report_period_month) ? (
+                                    <span
+                                      title={periodOverrideTooltip(inv)}
+                                      style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed', background: 'rgba(124,58,237,0.12)', padding: '1px 5px', borderRadius: 3, cursor: 'help', whiteSpace: 'nowrap' }}
+                                    >
+                                      Moved
+                                    </span>
+                                  ) : null}
                                 </span>
                               )}
                             </td>

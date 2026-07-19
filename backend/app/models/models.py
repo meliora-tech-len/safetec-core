@@ -413,6 +413,21 @@ class SupplierInvoice(Base):
     statement_month = Column(Integer)
     statement_year = Column(Integer)
 
+    # Manual period overrides ("Manage → Move"). Each nullable pair, when set,
+    # pins the invoice to an explicit month for one reporting "bucket",
+    # independent of the statement period and the automatic rules:
+    #   costing_period_* — the subcontractor-costing month. Overriding it
+    #     bypasses BOTH the cash-supplier "previous month" shift AND the
+    #     sent-costing roll-forward (the user's choice is final).
+    #   report_period_*  — the SARS VAT / Income-vs-Expenses month (those
+    #     reports otherwise group by invoice_date).
+    # NULL = "Auto" (fall back to the computed default). The supplier-invoice
+    # listing bucket stays on statement_month/statement_year above.
+    costing_period_month = Column(Integer)
+    costing_period_year = Column(Integer)
+    report_period_month = Column(Integer)
+    report_period_year = Column(Integer)
+
     is_verified  = Column(Boolean, default=False)
     verified_by  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     verified_at  = Column(DateTime(timezone=True))

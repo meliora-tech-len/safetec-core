@@ -20,7 +20,7 @@ from app.schemas.schemas import (
     TruckCostingIncomeOut, TruckCostingIncomeCreate,
 )
 from app.services.audit import log_action
-from app.services.costing_sent import build_sent_map, natural_invoice_period, period_add, roll_past_sent
+from app.services.costing_sent import build_sent_map, natural_invoice_period, period_add, roll_past_sent, costing_override_period
 from app.services.verification import get_verification_display
 
 router = APIRouter(prefix="/api/subcontractors", tags=["subcontractors"])
@@ -534,6 +534,10 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     # one) up to next month (cash invoices whose natural period is this month).
     period_idx = year * 12 + (month - 1)
     stmt_idx = SupplierInvoice.statement_year * 12 + (SupplierInvoice.statement_month - 1)
+    # A manual costing override pins the invoice to an explicit month regardless
+    # of its statement period, so also fetch any invoice whose override lands on
+    # this month (its statement may sit outside the window below).
+    override_idx = SupplierInvoice.costing_period_year * 12 + (SupplierInvoice.costing_period_month - 1)
 
     # All candidate non-diesel invoices for this entity, fetched once.
     # Per-truck matching (main-line reg vs. per-sub-line reg) happens in Python
@@ -548,7 +552,10 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             SupplierInvoice.entity_id == sub.entity_id,
             SupplierInvoice.is_archived == False,
             or_(Supplier.is_diesel_supplier == False, SupplierInvoice.supplier_id.is_(None)),
-            stmt_idx.between(period_idx - 3, period_idx + 1),
+            or_(
+                stmt_idx.between(period_idx - 3, period_idx + 1),
+                override_idx == period_idx,
+            ),
         )
         .all()
     )
@@ -563,7 +570,9 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         natural = natural_by_inv.get(inv.id)
         if natural is None:
             return False
-        if inv.is_fixed_expense:
+        # Fixed general expenses are pinned to their period, and a manual costing
+        # override pins the month outright — neither rolls past sent costings.
+        if inv.is_fixed_expense or costing_override_period(inv) is not None:
             return natural == (year, month)
         return roll_past_sent(natural, truck_id, inv.created_at, sent_map) == (year, month)
 
@@ -653,6 +662,12 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             func.coalesce(SupplierInvoice.statement_year, extract("year", DieselFillUp.fillup_date)) * 12
             + func.coalesce(SupplierInvoice.statement_month, extract("month", DieselFillUp.fillup_date)) - 1
         )
+        # A manual costing override on the linked supplier invoice pins the
+        # fill-up to an explicit month (same as non-diesel invoices above).
+        diesel_override_idx = (
+            SupplierInvoice.costing_period_year * 12
+            + (SupplierInvoice.costing_period_month - 1)
+        )
         candidate_fillups = (
             db.query(DieselFillUp)
             .join(Supplier, Supplier.id == DieselFillUp.supplier_id)
@@ -661,7 +676,10 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             .filter(
                 DieselFillUp.truck_id == truck.id,
                 DieselFillUp.is_archived == False,
-                diesel_stmt_idx.between(period_idx - 3, period_idx + 1),
+                or_(
+                    diesel_stmt_idx.between(period_idx - 3, period_idx + 1),
+                    diesel_override_idx == period_idx,
+                ),
             )
             .order_by(DieselFillUp.fillup_date)
             .all()
@@ -669,6 +687,12 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         fillups = []
         for f in candidate_fillups:
             si = f.supplier_invoice
+            override = costing_override_period(si)
+            if override is not None:
+                # Pinned outright — no cash shift, no roll-forward.
+                if override == (year, month):
+                    fillups.append(f)
+                continue
             stmt_y = si.statement_year if (si and si.statement_year) else f.fillup_date.year
             stmt_m = si.statement_month if (si and si.statement_month) else f.fillup_date.month
             natural = (stmt_y, stmt_m)

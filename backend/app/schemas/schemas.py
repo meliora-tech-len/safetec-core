@@ -1732,6 +1732,19 @@ class SupplierInvoiceUpdate(BaseModel):
     statement_year: Optional[int] = None
 
 
+class SupplierInvoicePeriodUpdate(BaseModel):
+    """"Manage → Move" payload — the full desired period state for one invoice.
+    The modal always sends every field, so a null costing/report value means
+    "reset that bucket to Auto". statement_* only moves the listing when both
+    parts are supplied (it should never be nulled out)."""
+    costing_month: Optional[int] = None
+    costing_year: Optional[int] = None
+    report_month: Optional[int] = None
+    report_year: Optional[int] = None
+    statement_month: Optional[int] = None
+    statement_year: Optional[int] = None
+
+
 class SupplierInvoiceOut(BaseModel):
     id: int
     supplier_id: Optional[int] = None
@@ -1753,6 +1766,11 @@ class SupplierInvoiceOut(BaseModel):
     description: Optional[str] = None
     statement_month: Optional[int] = None
     statement_year: Optional[int] = None
+    # Manual period overrides ("Manage → Move"); null = Auto (computed default).
+    costing_period_month: Optional[int] = None
+    costing_period_year: Optional[int] = None
+    report_period_month: Optional[int] = None
+    report_period_year: Optional[int] = None
     is_verified: bool
     verified_at: Optional[datetime] = None
     payment_due_date: Optional[datetime] = None

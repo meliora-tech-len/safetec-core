@@ -17,6 +17,7 @@ from app.core.security import get_current_user
 from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, PaymentTermType, Truck, DieselFillUp, BusinessEntity
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
+    SupplierInvoicePeriodUpdate,
     SupplierInvoiceLineItemCreate, SupplierInvoiceLineItemOut,
     SupplierStatementGroup, SupplierPayablesDashboard, PendingVerificationInvoice,
     SupplierCurrentPayable, Supplier30DaysPayable, SupplierInvoiceLineSummary,
@@ -1286,6 +1287,68 @@ def update_supplier_invoice(
                     user_id=current_user.id,
                 )
 
+    return inv
+
+
+# ── Period overrides ("Manage → Move") ─────────────────────────────────────────
+
+@router.patch("/{invoice_id}/periods", response_model=SupplierInvoiceOut)
+def move_supplier_invoice_periods(
+    invoice_id: int,
+    payload: SupplierInvoicePeriodUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Shift one invoice between months across three independent buckets —
+    costing, the SARS / Income-vs-Expenses report, and the supplier-invoice
+    listing (statement period). Setting a costing override bypasses the
+    cash-supplier "previous month" shift AND the sent-costing roll-forward, so
+    the chosen month is final; null = reset that bucket to Auto.
+
+    This is a period-only change, deliberately allowed even on verified/locked or
+    sent-costing invoices (pulling a late invoice OFF an already-sent costing is
+    the whole point), and always audit-logged.
+    """
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _check_invoice_access(inv, current_user)
+
+    def _validate_pair(m, y, label):
+        if (m is None) != (y is None):
+            raise HTTPException(status_code=400, detail=f"{label} month and year must be set together")
+        if m is not None and not (1 <= m <= 12):
+            raise HTTPException(status_code=400, detail=f"{label} month must be between 1 and 12")
+
+    _validate_pair(payload.costing_month, payload.costing_year, "Costing")
+    _validate_pair(payload.report_month, payload.report_year, "Report")
+    _validate_pair(payload.statement_month, payload.statement_year, "Statement")
+
+    updates = {
+        "costing_period_month": payload.costing_month,
+        "costing_period_year": payload.costing_year,
+        "report_period_month": payload.report_month,
+        "report_period_year": payload.report_year,
+    }
+    # Listing bucket = statement period; only move it when a full pair is given
+    # (never null it out — other modules group on it).
+    if payload.statement_month is not None and payload.statement_year is not None:
+        updates["statement_month"] = payload.statement_month
+        updates["statement_year"] = payload.statement_year
+
+    old_values, new_values = _changed_values(inv, updates)
+    for field, value in updates.items():
+        setattr(inv, field, value)
+
+    log_action(
+        db, "supplier_invoice.periods_moved", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice",
+        resource_id=invoice_id,
+        description=f"Moved periods on invoice {inv.invoice_number or inv.id}",
+        old_values=old_values or None, new_values=new_values or None,
+    )
+    db.commit()
+    db.refresh(inv)
     return inv
 
 

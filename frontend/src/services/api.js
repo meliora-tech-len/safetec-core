@@ -364,6 +364,9 @@ export const getSupplierInvoicesByVehicle = (params = {}) => api.get('/supplier-
 export const getSupplierInvoice = (id) => api.get(`/supplier-invoices/${id}`)
 export const createSupplierInvoice = (data) => api.post('/supplier-invoices/', data)
 export const updateSupplierInvoice = (id, data) => api.put(`/supplier-invoices/${id}`, data)
+// "Manage → Move": shift an invoice's costing / SARS-report / listing months.
+// Send the full desired state; null costing/report values reset that bucket to Auto.
+export const updateSupplierInvoicePeriods = (id, data) => api.patch(`/supplier-invoices/${id}/periods`, data)
 export const deleteSupplierInvoice = (id) => api.delete(`/supplier-invoices/${id}`)
 // scope: 'forward' (stop from this month onward) | 'all' (remove every month)
 export const removeFixedExpense = (id, scope = 'forward') =>

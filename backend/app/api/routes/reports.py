@@ -268,15 +268,20 @@ def income_expenses_report(
         if 'intsimbi' not in (sup_name or '').lower():
             diesel_input_vat[cm] = diesel_input_vat.get(cm, 0.0) + float(vat or 0)
 
-    # ── Supplier invoice expenses grouped by actual invoice date ────────────────
+    # ── Supplier invoice expenses grouped by report period ──────────────────────
     # Unlike costing (which uses statement_month/statement_year so a late-arriving
     # invoice costs in the statement it was captured against), this report reflects
-    # the real SARS-deductible period, so it groups by the invoice's own date.
+    # the real SARS-deductible period, so it groups by the invoice's own date —
+    # unless a manual "Manage → Move" report override (report_period_*) pins it to
+    # a different month (coalesced below).
     all_supplier_invoices = (
         db.query(SupplierInvoice)
         .filter(
             SupplierInvoice.entity_id == entity_id,
-            func.extract('year', SupplierInvoice.invoice_date) == year,
+            func.coalesce(
+                SupplierInvoice.report_period_year,
+                func.extract('year', SupplierInvoice.invoice_date),
+            ) == year,
             SupplierInvoice.is_archived != True,
         )
         .all()
@@ -303,9 +308,10 @@ def income_expenses_report(
     supplier_incl_by_month: dict[int, float] = {}
     supplier_excl_by_month: dict[int, float] = {}
     for inv in all_supplier_invoices:
-        if inv.invoice_date is None:
+        # Report month: manual override wins, else the invoice's own date.
+        m = inv.report_period_month or (inv.invoice_date.month if inv.invoice_date else None)
+        if m is None:
             continue
-        m = inv.invoice_date.month
         incl = float(inv.amount)
         if _is_intsimbi_diesel(inv):
             excl = round(incl, 2) - round(fee_vat_by_inv.get(inv.id, 0.0), 2)
@@ -524,13 +530,21 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
 
     # Grouped by the invoice's actual date, not statement_month/statement_year —
     # costing uses the statement period, but SARS deductibility follows the real
-    # invoice date regardless of which statement it was captured against.
+    # invoice date regardless of which statement it was captured against. A manual
+    # "Manage → Move" report override (report_period_*) pins the row to a chosen
+    # month when set (coalesced here so it stays in sync with Income vs Expenses).
     sup_invoices = (
         db.query(SupplierInvoice)
         .filter(
             SupplierInvoice.entity_id == entity_id,
-            func.extract('year', SupplierInvoice.invoice_date) == year,
-            func.extract('month', SupplierInvoice.invoice_date) == month,
+            func.coalesce(
+                SupplierInvoice.report_period_year,
+                func.extract('year', SupplierInvoice.invoice_date),
+            ) == year,
+            func.coalesce(
+                SupplierInvoice.report_period_month,
+                func.extract('month', SupplierInvoice.invoice_date),
+            ) == month,
             SupplierInvoice.is_archived != True,
         )
         .order_by(SupplierInvoice.invoice_date)

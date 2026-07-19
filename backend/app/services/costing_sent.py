@@ -69,12 +69,29 @@ def roll_past_sent(period: tuple, truck_id: int, created_at, sent_map: dict) -> 
     return period
 
 
+def costing_override_period(inv) -> Optional[tuple]:
+    """Manual "Manage → Move" costing override, or None. When set, the invoice
+    costs in exactly this (year, month) — bypassing both the cash-supplier shift
+    and the sent-costing roll-forward."""
+    if inv is None:
+        return None
+    y = getattr(inv, "costing_period_year", None)
+    m = getattr(inv, "costing_period_month", None)
+    if y and m:
+        return (y, m)
+    return None
+
+
 def natural_invoice_period(inv: SupplierInvoice, is_safetec: bool) -> Optional[tuple]:
     """The costing (year, month) a supplier invoice naturally belongs to:
-    30-day suppliers and custom (no-supplier) expenses cost in their statement
-    period; cash/current suppliers cost one month BEFORE their statement period
-    (a June cash invoice belongs to May's costing). Safetec ignores the
-    cash-vs-30-day timing rule entirely."""
+    a manual costing override wins outright; otherwise 30-day suppliers and
+    custom (no-supplier) expenses cost in their statement period, while
+    cash/current suppliers cost one month BEFORE their statement period (a June
+    cash invoice belongs to May's costing). Safetec ignores the cash-vs-30-day
+    timing rule entirely."""
+    override = costing_override_period(inv)
+    if override is not None:
+        return override
     if inv.statement_year is None or inv.statement_month is None:
         return None
     stmt = (inv.statement_year, inv.statement_month)
@@ -129,10 +146,12 @@ def invoice_sent_lock_message(db: Session, inv: SupplierInvoice,
     if not sent_map:
         return None
 
+    pinned = inv.is_fixed_expense or costing_override_period(inv) is not None
     for t in matched:
-        # Fixed general expenses are per-month clones pinned to their period;
-        # everything else may have rolled forward past sent months.
-        eff = natural if inv.is_fixed_expense else roll_past_sent(natural, t.id, inv.created_at, sent_map)
+        # Fixed general expenses are per-month clones pinned to their period, and
+        # a manual costing override pins the month outright; everything else may
+        # have rolled forward past sent months.
+        eff = natural if pinned else roll_past_sent(natural, t.id, inv.created_at, sent_map)
         if (t.id, eff[0], eff[1]) in sent_map:
             return (
                 f"This expense is part of the {eff[1]:02d}/{eff[0]} costing for {t.registration}, "
