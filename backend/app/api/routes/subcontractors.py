@@ -1,5 +1,7 @@
 import calendar
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, extract, func
@@ -1179,6 +1181,106 @@ def export_costing_excel(
         io.BytesIO(xl_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _bundle_safe_filename(name: str) -> str:
+    """Strip characters unsafe in a ZIP entry / download filename."""
+    return re.sub(r'[^A-Za-z0-9._-]', '_', (name or 'invoice').strip()) or 'invoice'
+
+
+@router.get("/{subcontractor_id}/costing/export/bundle")
+def export_costing_bundle(
+    subcontractor_id: int,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    fmt: str = Query("pdf", pattern="^(pdf|excel)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """ZIP the costing document (PDF or Excel) together with the physical supplier
+    invoice attachments that appear in that costing — so the user can send the
+    costing and its backing invoices to the subcontractor in one download."""
+    import io
+    import zipfile
+    import logging
+    from fastapi.responses import Response
+    from app.services.costing_exports import generate_costing_pdf, generate_costing_excel
+    from app.services.supplier_invoice_attachments import read_attachment
+
+    logger = logging.getLogger(__name__)
+
+    costing = _build_subcontractor_costing(subcontractor_id, month, year, db, current_user)
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == sub.entity_id).first()
+
+    name = sub.name.replace(" ", "-").lower()
+    if fmt == "excel":
+        doc_bytes = generate_costing_excel(costing, entity)
+        doc_name = f"costing-{name}-{year}-{month:02d}.xlsx"
+    else:
+        doc_bytes = generate_costing_pdf(costing, entity)
+        doc_name = f"costing-{name}-{year}-{month:02d}.pdf"
+
+    # The invoices shown in the costing (deduped — a split invoice appears on
+    # several trucks). Only those with an attachment are worth bundling.
+    inv_ids = {
+        si.id
+        for t in costing.trucks
+        for si in t.supplier_invoices
+        if si.has_attachment
+    }
+    invoices = (
+        db.query(SupplierInvoice).filter(SupplierInvoice.id.in_(inv_ids)).all()
+        if inv_ids else []
+    )
+
+    buf = io.BytesIO()
+    used: dict = {}
+    added = 0
+    failed = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(doc_name, doc_bytes)
+        for inv in invoices:
+            if not inv.attachment_key:
+                continue
+            try:
+                file_bytes = read_attachment(inv.attachment_key)
+            except Exception:
+                failed += 1
+                logger.warning(
+                    "Skipping supplier invoice %s in costing bundle — attachment read failed (key %s)",
+                    inv.id, inv.attachment_key,
+                )
+                continue
+            fallback = f"{inv.invoice_number or inv.id}{Path(inv.attachment_key).suffix}"
+            base = _bundle_safe_filename(inv.attachment_filename or fallback)
+            # Disambiguate duplicate filenames, keeping the extension intact.
+            stem, dot, ext = base.rpartition(".")
+            used[base] = used.get(base, 0) + 1
+            if used[base] == 1:
+                entry = base
+            elif dot:
+                entry = f"{stem}_{used[base]}.{ext}"
+            else:
+                entry = f"{base}_{used[base]}"
+            zf.writestr(entry, file_bytes)
+            added += 1
+
+    # We expected attachments but couldn't fetch a single one — don't hand back a
+    # misleading costing-only ZIP. Surface it instead (usually a storage/config
+    # problem, e.g. Supabase credentials not set in this environment).
+    if invoices and added == 0:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not retrieve any of the {failed} supplier-invoice attachment(s) "
+                   "for this costing. The invoice files could not be read from storage.",
+        )
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="costing-{name}-{year}-{month:02d}.zip"'},
     )
 
 

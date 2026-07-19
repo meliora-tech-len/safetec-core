@@ -222,6 +222,7 @@ export const deleteTruckCostingIncome       = (id, incomeId) => api.delete(`/sub
 export const setSubcontractorCostingSent    = (id, params = {}, data = {}) => api.put(`/subcontractors/${id}/costing/sent`, data, { params })
 export const downloadSubcontractorCostingPdf   = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/pdf`,   { params, responseType: 'blob' })
 export const downloadSubcontractorCostingExcel = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/excel`, { params, responseType: 'blob' })
+export const downloadSubcontractorCostingBundle = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/bundle`, { params, responseType: 'blob' })
 
 // ── Fleet (single truck) ──────────────────────────────────────────────────────
 export const getTruck = (id) => api.get(`/fleet/trucks/${id}`)

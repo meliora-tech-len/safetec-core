@@ -10,6 +10,7 @@ import {
   saveSubcontractorCostingNetOverride, setSubcontractorCostingSent,
   createTruckCostingIncome, deleteTruckCostingIncome,
   downloadSubcontractorCostingPdf, downloadSubcontractorCostingExcel,
+  downloadSubcontractorCostingBundle,
   getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
@@ -101,6 +102,7 @@ export default function SubcontractorProfilePage() {
   const [costing, setCosting]             = useState(null)
   const [costingLoading, setCostingLoading] = useState(false)
   const [exportLoading, setExportLoading] = useState(null)  // 'pdf' | 'excel' | null
+  const [bundleInvoices, setBundleInvoices] = useState(false)  // include supplier invoices in export
   const [showExpenseModal, setShowExpenseModal] = useState(false)
   const [expenseForm, setExpenseForm]     = useState(blankExpenseForm())
   const [expenseSaving, setExpenseSaving] = useState(false)
@@ -279,16 +281,25 @@ export default function SubcontractorProfilePage() {
   const handleExport = async (type) => {
     setExportLoading(type)
     try {
-      const fn = type === 'pdf' ? downloadSubcontractorCostingPdf : downloadSubcontractorCostingExcel
-      const r  = await fn(id, { month, year })
-      const ext  = type === 'pdf' ? 'pdf' : 'xlsx'
-      const mime = type === 'pdf'
-        ? 'application/pdf'
-        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      const url  = URL.createObjectURL(new Blob([r.data], { type: mime }))
-      const a    = document.createElement('a')
+      const base = `costing-${subcontractor?.name?.replace(/\s+/g, '-').toLowerCase() || id}-${year}-${String(month).padStart(2, '0')}`
+      let r, ext, mime
+      if (bundleInvoices) {
+        // ZIP of the costing doc + the supplier invoices shown in the costing.
+        r    = await downloadSubcontractorCostingBundle(id, { month, year, fmt: type })
+        ext  = 'zip'
+        mime = 'application/zip'
+      } else {
+        const fn = type === 'pdf' ? downloadSubcontractorCostingPdf : downloadSubcontractorCostingExcel
+        r    = await fn(id, { month, year })
+        ext  = type === 'pdf' ? 'pdf' : 'xlsx'
+        mime = type === 'pdf'
+          ? 'application/pdf'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      }
+      const url = URL.createObjectURL(new Blob([r.data], { type: mime }))
+      const a   = document.createElement('a')
       a.href     = url
-      a.download = `costing-${subcontractor?.name?.replace(/\s+/g, '-').toLowerCase() || id}-${year}-${String(month).padStart(2, '0')}.${ext}`
+      a.download = `${base}.${ext}`
       a.click()
       URL.revokeObjectURL(url)
     } catch {
@@ -976,7 +987,35 @@ export default function SubcontractorProfilePage() {
             </span>
             <button className="btn-ghost btn-sm" onClick={nextMonth}><ChevronRight size={15} /></button>
             {costing && costing.trucks.length > 0 && (
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 7,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    padding: '5px 11px',
+                    borderRadius: 7,
+                    border: `1px solid ${bundleInvoices ? 'var(--border-accent)' : 'var(--border)'}`,
+                    background: bundleInvoices ? 'var(--accent-subtle)' : 'var(--bg-surface)',
+                    color: bundleInvoices ? 'var(--accent)' : 'var(--text-muted)',
+                    cursor: exportLoading ? 'default' : 'pointer',
+                    opacity: exportLoading ? 0.6 : 1,
+                    userSelect: 'none',
+                    transition: 'background .12s, border-color .12s, color .12s',
+                  }}
+                  title="Bundle the supplier invoices shown in this costing into the export (downloads a ZIP)"
+                >
+                  <input
+                    type="checkbox"
+                    checked={bundleInvoices}
+                    onChange={(e) => setBundleInvoices(e.target.checked)}
+                    disabled={!!exportLoading}
+                    style={{ width: 14, height: 14, margin: 0, accentColor: 'var(--accent)', cursor: 'inherit' }}
+                  />
+                  Include supplier invoices
+                </label>
                 <button
                   className="btn-ghost btn-sm"
                   onClick={() => handleExport('excel')}
