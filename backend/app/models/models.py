@@ -817,13 +817,13 @@ class DriverPayCycle(Base):
     # company contributions (provident + NBCRFLI + wellness).
     ctc_override          = Column(Numeric(12, 2), nullable=True)
 
-    subsistence_advance_paid     = Column(Numeric(12, 2), default=0)
-    subsistence_advance_verified = Column(Boolean, default=False)
+    subsistence_advance_paid     = Column(Numeric(12, 2), nullable=False, default=0)
+    subsistence_advance_verified = Column(Boolean, nullable=False, default=False)
 
-    staff_loan_balance    = Column(Numeric(12, 2), default=0)
-    staff_loan_deduction  = Column(Numeric(12, 2), default=0)
-    cash_advance_balance  = Column(Numeric(12, 2), default=0)
-    cash_advance_deduction = Column(Numeric(12, 2), default=0)
+    staff_loan_balance    = Column(Numeric(12, 2), nullable=False, default=0)
+    staff_loan_deduction  = Column(Numeric(12, 2), nullable=False, default=0)
+    cash_advance_balance  = Column(Numeric(12, 2), nullable=False, default=0)
+    cash_advance_deduction = Column(Numeric(12, 2), nullable=False, default=0)
 
     comments = Column(Text, nullable=True)
 
