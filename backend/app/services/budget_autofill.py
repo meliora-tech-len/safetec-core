@@ -14,9 +14,9 @@ Sources (each lands in its own section):
   - WAGES                     → payroll gross per period
 
 INCOME is deliberately NOT one of them. Income is chosen, not pulled: the user
-opens a modal, sees one candidate row per PO plus an "All Invoices Paid" bucket
-for everything without one, and ticks what belongs in the budget. See
-income_candidates() — the budgets route materialises exactly the ticked set.
+opens a modal, sees one candidate row per PO plus one row per invoice that has no
+PO (each labelled by its invoice number), and ticks what belongs in the budget.
+See income_candidates() — the budgets route materialises exactly the ticked set.
 
 Robustness: every source runs in its OWN throwaway read session (never the caller's
 write transaction). So a slow/heavy read or a dropped pooled connection can neither
@@ -126,11 +126,6 @@ def compute_autofill(entity_id: int, months: List[Tuple[int, int]], current_user
 
 # ── Income (customer invoices, grouped by PO) ─────────────────────────────────
 
-# The bucket every invoice without a PO number falls into. Hand-keyed invoices
-# never carry a POH, so this is where they land.
-INCOME_OTHER_KEY = "income:other"
-INCOME_OTHER_NAME = "All Invoices Paid"
-
 
 def _income_window(m: int, y: int, extended: bool):
     """The issue-date filter for a month's income.
@@ -158,12 +153,16 @@ def _income_window(m: int, y: int, extended: bool):
 def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dict]:
     """Selectable income rows for the budget's Income modal.
 
-    One spec per PO number (source_key "income:po:<POH…>"), plus a single
-    "All Invoices Paid" spec (source_key "income:other") totalling every invoice
-    with no PO. Same spec shape as the autofill sources, so the route can
+    One spec per PO number (source_key "income:po:<POH…>"), plus one spec per
+    invoice that has NO PO (source_key "income:inv:<invoice_id>", labelled by its
+    invoice number). Same spec shape as the autofill sources, so the route can
     materialise a ticked candidate through exactly the same path.
 
-    POs sort first by name; the catch-all bucket sorts last.
+    Every spec carries an "invoice_number" for the modal to flag: the single
+    number on a per-invoice row, and the comma-joined list of the underlying
+    invoice numbers on a PO row (a PO may bundle several invoices).
+
+    PO rows sort first by name; the individual invoice rows sort after them.
     """
     db = SessionLocal()
     try:
@@ -173,7 +172,7 @@ def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dic
         grouped: Dict[str, dict] = {}
         for (m, y) in months:
             rows = (
-                db.query(Invoice.po_number, Customer.name, Invoice.total)
+                db.query(Invoice.id, Invoice.invoice_number, Invoice.po_number, Customer.name, Invoice.total)
                 .outerjoin(Customer, Invoice.customer_id == Customer.id)
                 .filter(
                     Invoice.entity_id == entity_id,
@@ -183,26 +182,39 @@ def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dic
                 )
                 .all()
             )
-            for po, customer_name, total in rows:
+            for inv_id, inv_number, po, customer_name, total in rows:
                 if po:
+                    # A PO groups all its invoices into one row — labelled by the
+                    # PO, plus every invoice number that falls under it.
                     key = f"income:po:{po}"
                     name = f"{po} — {customer_name}" if customer_name else po
                 else:
-                    key = INCOME_OTHER_KEY
-                    name = INCOME_OTHER_NAME
+                    # No PO (hand-keyed invoices never carry a POH) — one row per
+                    # invoice, labelled by its number so the user knows which it is.
+                    key = f"income:inv:{inv_id}"
+                    name = f"{inv_number} — {customer_name}" if customer_name else inv_number
                 spec = grouped.get(key)
                 if spec is None:
                     spec = {
                         "section_name": SEC_INCOME[0], "section_type": SEC_INCOME[1],
-                        "source_key": key, "line_name": name, "values": {},
+                        "source_key": key, "line_name": name,
+                        "_inv_numbers": set(), "values": {},
                     }
                     grouped[key] = spec
+                if inv_number:
+                    # Windows overlap (an invoice can land in two months) — the set
+                    # dedupes so a number is never listed twice.
+                    spec["_inv_numbers"].add(inv_number)
                 cell = spec["values"].setdefault((m, y), {"due": Decimal("0"), "paid": None})
                 cell["due"] += _d(total)
 
+        for spec in grouped.values():
+            nums = spec.pop("_inv_numbers")
+            spec["invoice_number"] = ", ".join(sorted(nums)) if nums else None
+
         return sorted(
             grouped.values(),
-            key=lambda s: (s["source_key"] == INCOME_OTHER_KEY, s["line_name"]),
+            key=lambda s: (not s["source_key"].startswith("income:po:"), s["line_name"]),
         )
     finally:
         db.close()

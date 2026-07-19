@@ -686,7 +686,7 @@ export default function BudgetsPage() {
                     </button>
 
                     {/* Income is chosen, not pulled — the modal lists one row per
-                        PO plus an "All Invoices Paid" bucket to tick. */}
+                        PO plus one row per invoice that has no PO, to tick. */}
                     {isIncomeSection && (
                       <button className="btn-ghost btn-sm" onClick={openIncomeModal}
                         title="Choose which income on the system belongs in this budget">
@@ -1023,7 +1023,7 @@ export default function BudgetsPage() {
                   <Search size={14} />
                   <input
                     autoFocus
-                    placeholder="Search PO number…"
+                    placeholder="Search PO or invoice number…"
                     value={incomeSearch}
                     onChange={e => setIncomeSearch(e.target.value)}
                   />
@@ -1034,7 +1034,9 @@ export default function BudgetsPage() {
               {!incomeModal.loading && (() => {
                 const q = incomeSearch.trim().toLowerCase()
                 const shown = q
-                  ? incomeModal.candidates.filter(c => c.line_name.toLowerCase().includes(q))
+                  ? incomeModal.candidates.filter(c =>
+                      c.line_name.toLowerCase().includes(q) ||
+                      (c.invoice_number || '').toLowerCase().includes(q))
                   : incomeModal.candidates
                 const shownKeys = shown.map(c => c.source_key)
                 const allOn = shown.length > 0 && shownKeys.every(k => incomeModal.picked.has(k))
@@ -1081,7 +1083,14 @@ export default function BudgetsPage() {
                               style={{ width: 15, height: 15, flexShrink: 0, cursor: 'pointer' }}
                             />
                             <span style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.line_name}>
-                              {c.line_name}
+                              {c.invoice_number ? (
+                                <>
+                                  <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{c.invoice_number}</span>
+                                  {c.line_name.startsWith(c.invoice_number)
+                                    ? c.line_name.slice(c.invoice_number.length)
+                                    : ` — ${c.line_name}`}
+                                </>
+                              ) : c.line_name}
                             </span>
                             <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0, whiteSpace: 'nowrap' }}>
                               {c.values.map(v => MONTHS[v.month - 1]).join(', ')}

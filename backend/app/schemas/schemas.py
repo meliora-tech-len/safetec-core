@@ -2505,9 +2505,9 @@ class BudgetDetailOut(BudgetOut):
 
 
 # ── Income selection ──────────────────────────────────────────────────────────
-# Income is chosen, not pulled: the modal lists one candidate per PO plus an
-# "All Invoices Paid" bucket for invoices without one, and the user ticks what
-# belongs in the budget.
+# Income is chosen, not pulled: the modal lists one candidate per PO plus one row
+# per invoice that has no PO (labelled by its invoice number), and the user ticks
+# what belongs in the budget.
 
 class BudgetIncomeCandidateValue(BaseModel):
     month: int
@@ -2518,6 +2518,7 @@ class BudgetIncomeCandidateValue(BaseModel):
 class BudgetIncomeCandidateOut(BaseModel):
     source_key: str
     line_name: str
+    invoice_number: Optional[str] = None   # invoice number(s) to flag — comma-joined on a PO row
     values: List[BudgetIncomeCandidateValue] = []
     total: Decimal                 # sum across the budget's whole window
     selected: bool = False         # already a line in this budget

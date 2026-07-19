@@ -531,9 +531,9 @@ def list_income_candidates(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Every income row the system can offer this budget: one per PO, plus an
-    "All Invoices Paid" bucket for invoices without one. `selected` marks the
-    ones already in the budget so the modal opens with them ticked."""
+    """Every income row the system can offer this budget: one per PO, plus one
+    per invoice that has no PO (labelled by its invoice number). `selected` marks
+    the ones already in the budget so the modal opens with them ticked."""
     budget = _get_budget_checked(budget_id, current_user, db)
     code = (budget.entity.code or "").upper()
     months = _budget_window(code, budget.period_month, budget.period_year)
@@ -558,6 +558,7 @@ def list_income_candidates(
         out.append(BudgetIncomeCandidateOut(
             source_key=c["source_key"],
             line_name=c["line_name"],
+            invoice_number=c.get("invoice_number"),
             values=[{"month": m, "year": y, "amount_due": v["due"]} for (m, y), v in values],
             total=sum((v["due"] for v in c["values"].values()), Decimal("0")),
             selected=c["source_key"] in existing,

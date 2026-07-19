@@ -9,7 +9,7 @@ This adds invoices.po_number and backfills it from the existing free text using
 the same rule as services/po_number.py (POH followed by digits, tolerating a
 space, notes taking precedence over the header line item). Invoices with no POH
 anywhere — anything hand-keyed rather than PO-imported — stay NULL, which is a
-normal state the budget's "All Invoices Paid" bucket relies on.
+normal state (the budget's income modal lists those as their own per-invoice rows).
 """
 from sqlalchemy import text
 

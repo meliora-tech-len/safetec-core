@@ -443,9 +443,9 @@ export const upsertBudgetLineValue = (lineId, data) => api.put(`/budgets/lines/$
 export const pullBudgetSection = (budgetId, sectionId) =>
   api.post(`/budgets/${budgetId}/sections/${sectionId}/pull`)
 
-// Income is chosen, not pulled: list the candidates (one per PO, plus an
-// "All Invoices Paid" bucket for invoices without one), then set the budget's
-// income lines to exactly the ticked source_keys.
+// Income is chosen, not pulled: list the candidates (one per PO, plus one per
+// invoice that has no PO), then set the budget's income lines to exactly the
+// ticked source_keys.
 export const getBudgetIncomeCandidates = (budgetId) =>
   api.get(`/budgets/${budgetId}/income-candidates`)
 export const setBudgetIncomeLines = (budgetId, sourceKeys) =>
