@@ -54,7 +54,7 @@ function orderDieselTrucks(list) {
 
 const BLANK = {
   entity_id: '', truck_id: '', supplier_id: '', fillup_date: today,
-  litres: '', rate_per_litre: '', invoice_number: '', slip_number: '', notes: '', diesel_type: 'fillup',
+  litres: '', rate_per_litre: '', invoice_number: '', slip_number: '', notes: '', diesel_type: 'fillup', rate_pending: false,
 }
 
 export default function DieselFillUpsPage() {
@@ -234,7 +234,7 @@ export default function DieselFillUpsPage() {
     if (!f.supplier_id)  return toast.error('Select a supplier')
     if (!f.fillup_date)  return toast.error('Date required')
     if (!f.litres || isNaN(f.litres))           return toast.error('Enter valid litres')
-    if (!f.rate_per_litre || isNaN(f.rate_per_litre)) return toast.error('Enter valid rate')
+    if (!f.rate_pending && (!f.rate_per_litre || isNaN(f.rate_per_litre))) return toast.error('Enter valid rate')
     setSaving(true)
     const payload = {
       entity_id:     parseInt(f.entity_id),
@@ -242,7 +242,8 @@ export default function DieselFillUpsPage() {
       supplier_id:   parseInt(f.supplier_id),
       fillup_date:   f.fillup_date,
       litres:        parseFloat(f.litres),
-      rate_per_litre: parseFloat(f.rate_per_litre),
+      rate_per_litre: f.rate_pending ? 0 : parseFloat(f.rate_per_litre),
+      rate_pending:  !!f.rate_pending,
       invoice_number: f.invoice_number || null,
       slip_number:   f.slip_number    || null,
       diesel_type:   f.diesel_type    || 'fillup',
@@ -308,6 +309,23 @@ export default function DieselFillUpsPage() {
       : fillups
     return applySort(base, sort)
   }, [fillups, search, sort])
+
+  // When a free-text search is active it only filters client-side (into
+  // `visible`), so the server-computed `summary` no longer matches what's on
+  // screen. Recompute the totals from the visible rows in that case.
+  const displaySummary = useMemo(() => {
+    if (!summary || !search) return summary
+    const sum = pick => visible.reduce((acc, f) => acc + (parseFloat(pick(f)) || 0), 0)
+    return {
+      ...summary,
+      total_fillups:       visible.length,
+      total_litres:        sum(f => f.litres),
+      total_amount:        sum(f => f.amount),
+      total_admin_fee:     sum(f => f.admin_fee_amount),
+      total_admin_fee_vat: sum(f => f.admin_fee_vat),
+      grand_total:         sum(f => f.total_amount),
+    }
+  }, [summary, search, visible])
 
   const multiEntity = entities.length > 1
   const COLS = multiEntity ? 15 : 14
@@ -442,12 +460,12 @@ export default function DieselFillUpsPage() {
       </div>
 
       {/* Summary cards */}
-      {summary && (
+      {displaySummary && (
         <div className="grid-4" style={{ marginBottom: 16 }}>
-          <SummaryCard label="Logs" value={summary.total_fillups} />
-          <SummaryCard label="Total Litres" value={`${parseFloat(summary.total_litres).toLocaleString('en-ZA', { minimumFractionDigits: 2 })} L`} />
-          <SummaryCard label="Admin Fee (incl VAT)" value={formatCurrency(parseFloat(summary.total_admin_fee) + parseFloat(summary.total_admin_fee_vat || 0))} />
-          <SummaryCard label="Grand Total (incl. fee + VAT)" value={formatCurrency(summary.grand_total)} accent />
+          <SummaryCard label="Logs" value={displaySummary.total_fillups} />
+          <SummaryCard label="Total Litres" value={`${parseFloat(displaySummary.total_litres).toLocaleString('en-ZA', { minimumFractionDigits: 2 })} L`} />
+          <SummaryCard label="Admin Fee (incl VAT)" value={formatCurrency(parseFloat(displaySummary.total_admin_fee) + parseFloat(displaySummary.total_admin_fee_vat || 0))} />
+          <SummaryCard label="Grand Total (incl. fee + VAT)" value={formatCurrency(displaySummary.grand_total)} accent />
         </div>
       )}
 
@@ -526,8 +544,13 @@ export default function DieselFillUpsPage() {
                     <div style={{ fontSize: 13 }}>{f.supplier_name}</div>
                   </td>
                   <td className="text-right" style={{ fontSize: 13 }}>{parseFloat(f.litres).toFixed(2)}</td>
-                  <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>R&nbsp;{parseFloat(f.rate_per_litre).toFixed(2)}</td>
-                  <td className="text-right">{formatCurrency(f.amount)}</td>
+                  <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {f.rate_pending ? (
+                      <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                        background: 'rgba(245,158,11,0.15)', color: '#d97706' }}>Rate pending</span>
+                    ) : <>R&nbsp;{parseFloat(f.rate_per_litre).toFixed(2)}</>}
+                  </td>
+                  <td className="text-right">{f.rate_pending ? '—' : formatCurrency(f.amount)}</td>
                   <td className="text-right" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {parseFloat(f.admin_fee_amount) > 0 ? formatCurrency(f.admin_fee_amount) : '—'}
                   </td>
@@ -598,18 +621,18 @@ export default function DieselFillUpsPage() {
             })}
           </tbody>
 
-          {visible.length > 0 && summary && (
+          {visible.length > 0 && displaySummary && (
             <tfoot>
               <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
                 <td colSpan={multiEntity ? 4 : 3} style={{ padding: '10px 12px', textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>Totals:</td>
-                <td className="text-right" style={{ padding: '10px 12px' }}>{parseFloat(summary.total_litres).toFixed(2)}</td>
+                <td className="text-right" style={{ padding: '10px 12px' }}>{parseFloat(displaySummary.total_litres).toFixed(2)}</td>
                 <td />
-                <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(summary.total_amount)}</td>
-                <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(summary.total_admin_fee)}</td>
+                <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(displaySummary.total_amount)}</td>
+                <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(displaySummary.total_admin_fee)}</td>
                 <td className="text-right" style={{ padding: '10px 12px' }}>
-                  {formatCurrency((parseFloat(summary.total_admin_fee) + parseFloat(summary.total_admin_fee_vat || 0)))}
+                  {formatCurrency((parseFloat(displaySummary.total_admin_fee) + parseFloat(displaySummary.total_admin_fee_vat || 0)))}
                 </td>
-                <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(summary.grand_total)}</td>
+                <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(displaySummary.grand_total)}</td>
                 <td colSpan={5} />
               </tr>
             </tfoot>
@@ -641,6 +664,7 @@ export default function DieselFillUpsPage() {
 function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew,
   autoRate, rateEdited, setRateEdited, preview, saving,
   onSave, onCancel, onKeyDown, firstInputRef }) {
+  const isBokamosho = entities.find(e => String(e.id) === String(form.entity_id))?.code === 'BKMO'
   return (
     <tr style={{ background: 'var(--accent-subtle)', outline: '2px solid var(--accent)', outlineOffset: -1 }}
       onClick={e => e.stopPropagation()}>
@@ -704,9 +728,19 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
             color: rateEdited && autoRate ? '#d97706' : '#16a34a' }}>
             {autoRate && !rateEdited ? 'auto' : rateEdited && autoRate ? 'manual' : ''}
           </span>
-          <input type="number" step="0.01" min="0.01" placeholder="0.00" value={form.rate_per_litre}
+          <input type="number" step="0.01" min="0.01" placeholder={form.rate_pending ? 'On import' : '0.00'}
+            value={form.rate_pending ? '' : form.rate_per_litre} disabled={form.rate_pending}
             onChange={e => { set('rate_per_litre', e.target.value); setRateEdited(true) }} onKeyDown={onKeyDown}
             style={{ ...S.input, width: 78, textAlign: 'right' }} />
+          {isBokamosho && (
+            <label title="Log the slip now; the Tradekor import fills the rate in (matched by slip, import litres win)"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={!!form.rate_pending}
+                onChange={e => { set('rate_pending', e.target.checked); if (e.target.checked) { set('rate_per_litre', ''); setRateEdited(false) } }}
+                style={{ width: 11, height: 11 }} />
+              rate on import
+            </label>
+          )}
         </div>
       </td>
 
