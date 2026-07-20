@@ -516,19 +516,52 @@ export default function BudgetsPage() {
     if (!budget) return null
     // Only count cells inside the visible window so a different window (e.g. an
     // OBHI statement period vs an old rolling one) never carries stale figures in.
-    const monthSet = new Set(months.map(({ month: m, year: y }) => `${m}:${y}`))
+    const key = (m, y) => `${m}:${y}`
+    const monthList = months.map(({ month: m, year: y }) => key(m, y))
+    const monthSet = new Set(monthList)
     let income = 0, expensesDue = 0, expensesPaid = 0
+    // Per-month breakdowns feed the OBHI split totals below. Expense-per-month is
+    // To Pay + Paid combined, matching the OBHI budget sheet's EXPENSES row.
+    const incomeByKey = Object.fromEntries(monthList.map(k => [k, 0]))
+    const expenseByKey = Object.fromEntries(monthList.map(k => [k, 0]))
     for (const s of budget.sections) {
       for (const l of s.lines) {
         for (const v of l.values || []) {
-          if (!monthSet.has(`${v.month}:${v.year}`)) continue
-          if (s.section_type === 'income') income += num(v.amount_due)
-          else { expensesDue += num(v.amount_due); expensesPaid += num(v.amount_paid) }
+          const k = key(v.month, v.year)
+          if (!monthSet.has(k)) continue
+          if (s.section_type === 'income') {
+            income += num(v.amount_due)
+            incomeByKey[k] += num(v.amount_due)
+          } else {
+            expensesDue += num(v.amount_due); expensesPaid += num(v.amount_paid)
+            expenseByKey[k] += num(v.amount_due) + num(v.amount_paid)
+          }
         }
       }
     }
-    return { income, expensesDue, expensesPaid, leftOver: income - expensesDue - expensesPaid }
+    return { income, expensesDue, expensesPaid, leftOver: income - expensesDue - expensesPaid, incomeByKey, expenseByKey }
   }, [budget, months])
+
+  // OBHI reconciles month by month, not across the whole window: the base month's
+  // income covers only its own expenses, while the next month's income covers that
+  // month AND the one after it (mirrors the OBHI budget sheet's APRIL / MAY columns).
+  const isObhi = (selectedEntityCode || '').toUpperCase() === 'OBHI'
+  const obhiSplit = useMemo(() => {
+    if (!totals || !isObhi || months.length < 3) return null
+    const key = (o) => `${o.month}:${o.year}`
+    const [m0, m1, m2] = months
+    const nm = (o) => `${MONTHS[o.month - 1]} ${o.year}`
+    const g1Income = totals.incomeByKey[key(m0)] || 0
+    const g1Exp = totals.expenseByKey[key(m0)] || 0
+    const g2Income = totals.incomeByKey[key(m1)] || 0
+    const g2Exp = (totals.expenseByKey[key(m1)] || 0) + (totals.expenseByKey[key(m2)] || 0)
+    return {
+      g1: { title: nm(m0), sub: `${MONTHS[m0.month - 1]} income − ${MONTHS[m0.month - 1]} expenses`,
+            income: g1Income, expenses: g1Exp, leftOver: g1Income - g1Exp },
+      g2: { title: nm(m1), sub: `${MONTHS[m1.month - 1]} income − ${MONTHS[m1.month - 1]} & ${MONTHS[m2.month - 1]} expenses`,
+            income: g2Income, expenses: g2Exp, leftOver: g2Income - g2Exp },
+    }
+  }, [totals, isObhi, months])
 
   const selectedEntity = budgetEntities.find(e => String(e.id) === String(entityId))
 
@@ -630,20 +663,48 @@ export default function BudgetsPage() {
       {/* Budget grid */}
       {entityId && !noAccess && !loading && budget && (
         <>
-          {/* Summary */}
-          <div className="grid-4" style={{ marginBottom: 24 }}>
-            {[
-              { label: 'Income', value: totals.income },
-              { label: 'Expenses — To Pay', value: totals.expensesDue },
-              { label: 'Expenses — Paid', value: totals.expensesPaid },
-              { label: 'Left Over', value: totals.leftOver, cls: totals.leftOver < 0 ? ' text-danger' : ' text-success' },
-            ].map(c => (
-              <div key={c.label} className="stat-card">
-                <div className="stat-card-label">{c.label}</div>
-                <div className={`stat-card-value${c.cls || ''}`} style={{ fontSize: 24 }}>{formatCurrency(c.value)}</div>
-              </div>
-            ))}
-          </div>
+          {/* Summary — OBHI reconciles per month-group (income vs the expenses that
+              income has to cover); every other entity uses the single window total. */}
+          {isObhi && obhiSplit ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 24 }}>
+              {[obhiSplit.g1, obhiSplit.g2].map(g => (
+                <div key={g.title} className="stat-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div>
+                    <div className="stat-card-label" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{g.title}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{g.sub}</div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Income</span>
+                    <span style={{ fontWeight: 600 }}>{formatCurrency(g.income)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Expenses</span>
+                    <span style={{ fontWeight: 600 }}>{formatCurrency(g.expenses)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+                    <span style={{ fontWeight: 700 }}>Left Over</span>
+                    <span className={g.leftOver < 0 ? 'text-danger' : 'text-success'} style={{ fontWeight: 700, fontSize: 22 }}>
+                      {formatCurrency(g.leftOver)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid-4" style={{ marginBottom: 24 }}>
+              {[
+                { label: 'Income', value: totals.income },
+                { label: 'Expenses — To Pay', value: totals.expensesDue },
+                { label: 'Expenses — Paid', value: totals.expensesPaid },
+                { label: 'Left Over', value: totals.leftOver, cls: totals.leftOver < 0 ? ' text-danger' : ' text-success' },
+              ].map(c => (
+                <div key={c.label} className="stat-card">
+                  <div className="stat-card-label">{c.label}</div>
+                  <div className={`stat-card-value${c.cls || ''}`} style={{ fontSize: 24 }}>{formatCurrency(c.value)}</div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Toolbar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
