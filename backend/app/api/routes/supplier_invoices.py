@@ -1199,9 +1199,11 @@ def move_supplier_invoice_periods(
 ):
     """Shift one invoice between months across three independent buckets —
     costing, the SARS / Income-vs-Expenses report, and the supplier-invoice
-    listing (statement period). Setting a costing override bypasses the
-    cash-supplier "previous month" shift AND the sent-costing roll-forward, so
-    the chosen month is final; null = reset that bucket to Auto.
+    listing (statement period). Every bucket is PINNED to exactly the month the
+    user specifies: costing bypasses the cash-supplier "previous month" shift and
+    the sent-costing roll-forward, so the chosen month is final and no automatic
+    rule ever applies. The frontend flags each bucket's current month and sends
+    concrete values; a null bucket falls back to the current month (no cash shift).
 
     This is a period-only change, deliberately allowed even on verified/locked or
     sent-costing invoices (pulling a late invoice OFF an already-sent costing is
@@ -1222,14 +1224,32 @@ def move_supplier_invoice_periods(
     _validate_pair(payload.report_month, payload.report_year, "Report")
     _validate_pair(payload.statement_month, payload.statement_year, "Statement")
 
+    # The Manage tool pins exactly what the user specifies — no auto/cash rule.
+    # The frontend always sends concrete months; if a bucket ever arrives null,
+    # fall back to the invoice's current month (existing pin wins) WITHOUT the
+    # cash "previous month" shift: costing → statement month, report → invoice date.
+    costing_m, costing_y = payload.costing_month, payload.costing_year
+    if costing_m is None:
+        if inv.costing_period_month and inv.costing_period_year:
+            costing_m, costing_y = inv.costing_period_month, inv.costing_period_year
+        elif inv.statement_month and inv.statement_year:
+            costing_m, costing_y = inv.statement_month, inv.statement_year
+
+    report_m, report_y = payload.report_month, payload.report_year
+    if report_m is None:
+        if inv.report_period_month and inv.report_period_year:
+            report_m, report_y = inv.report_period_month, inv.report_period_year
+        elif inv.invoice_date:
+            report_m, report_y = inv.invoice_date.month, inv.invoice_date.year
+
     updates = {
-        "costing_period_month": payload.costing_month,
-        "costing_period_year": payload.costing_year,
-        "report_period_month": payload.report_month,
-        "report_period_year": payload.report_year,
+        "costing_period_month": costing_m,
+        "costing_period_year": costing_y,
+        "report_period_month": report_m,
+        "report_period_year": report_y,
     }
-    # Listing bucket = statement period; only move it when a full pair is given
-    # (never null it out — other modules group on it).
+    # Listing bucket = statement period. Original keeps the current concrete
+    # statement (nothing to recompute); a full pair moves it.
     if payload.statement_month is not None and payload.statement_year is not None:
         updates["statement_month"] = payload.statement_month
         updates["statement_year"] = payload.statement_year
