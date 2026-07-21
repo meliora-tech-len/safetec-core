@@ -1663,19 +1663,6 @@ const EXPENSE_ROWS = [
   { key: 'other_suppliers',      label: 'Other Suppliers' },
 ]
 
-const DEFAULT_PRESET_LINES = [
-  { description: 'Casual Wages' },
-  { description: 'Insurance Truck' },
-  { description: 'Contract' },
-  { description: 'Theft Truck' },
-  { description: 'Theft Trailer' },
-  { description: '5% of Sum Insured' },
-  { description: 'Trailer Maintenance' },
-  { description: 'Truck Monthly Payment' },
-  { description: 'Trailers Monthly Payment' },
-  { description: 'Sasfin' },
-]
-
 const psInput = {
   width: '100%', textAlign: 'right', padding: '4px 8px',
   borderRadius: 4, border: '1px solid var(--border)',
@@ -1705,22 +1692,19 @@ function ProfitSheetSection({ truck, year, month, summary }) {
         truck.registration ? getSupplierInvoicesByVehicle({ vehicle_reg: truck.registration, month, year }) : Promise.resolve({ data: [] }),
       ])
       const expData = expRes.data
-      // Unify every expense into a single editable list (custom_lines): the named
-      // standard-expense columns become rows (carrying any saved value), merged with
-      // existing custom lines. A new month opens pre-filled with the PREVIOUS month's
-      // expense lines + amounts (carried forward server-side) so the user only edits
-      // what changed. Only a brand-new truck's first sheet is empty — there we seed
-      // the standard template lines (blank) as a starting point.
+      // Everything lives in the unified custom_lines list. The server decides which
+      // lines a fresh month opens with — only the fixed insurance/finance lines
+      // carry forward from the previous month (with amounts); the rest are entered
+      // fresh. We show exactly what it returns and inject nothing extra.
       const existing = expData.custom_lines || []
-      const isFresh = existing.length === 0
       const existingDescs = new Set(existing.map(l => (l.description || '').trim().toLowerCase()))
+      // Legacy support only: fold any named-column value that still holds an amount
+      // into a row. New-format records store everything in custom_lines (columns
+      // null), so this adds nothing and no blank standard rows are injected.
       const stdRows = EXPENSE_ROWS
-        .filter(r => !existingDescs.has(r.label.toLowerCase()))
-        .map(r => ({ id: crypto.randomUUID(), description: r.label, amount: expData[r.key] ?? null }))
-      let lines = [...stdRows, ...existing]
-      if (isFresh) {
-        lines = [...lines, ...DEFAULT_PRESET_LINES.map(d => ({ id: crypto.randomUUID(), description: d.description, amount: null }))]
-      }
+        .filter(r => expData[r.key] != null && !existingDescs.has(r.label.toLowerCase()))
+        .map(r => ({ id: crypto.randomUUID(), description: r.label, amount: expData[r.key] }))
+      const lines = [...stdRows, ...existing]
       // Clear the named columns locally so totals come solely from the unified list.
       const cleared = {}
       EXPENSE_ROWS.forEach(r => { cleared[r.key] = null })
