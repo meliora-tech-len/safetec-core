@@ -733,6 +733,15 @@ function ManagePeriodsModal({ invoices, onClose, onSaved }) {
         || (i.vehicle_reg || '').toLowerCase().includes(s)
   })
 
+  // Anchor the selection to what's visible: if the current pick falls outside
+  // the filtered list (e.g. after typing a search), select the first match. This
+  // stops a save ever targeting a hidden/previously-selected invoice.
+  useEffect(() => {
+    if (filtered.length && !filtered.some(i => i.id === selectedId)) {
+      setSelectedId(filtered[0].id)
+    }
+  }, [search])   // eslint-disable-line react-hooks/exhaustive-deps
+
   const save = async () => {
     if (!inv) return
     if (!costing.month || !costing.year) { toast.error('Pick a costing month and year'); return }
@@ -832,6 +841,11 @@ function ManagePeriodsModal({ invoices, onClose, onSaved }) {
 
         {inv && (
           <div>
+            {/* Make the target unmistakable — changes apply ONLY to this invoice. */}
+            <div style={{ margin:'4px 0 10px', padding:'8px 10px', borderRadius:6, background:'rgba(124,58,237,0.10)', border:'1px solid rgba(124,58,237,0.30)', fontSize:13 }}>
+              Editing <strong>{inv.invoice_number || 'Pending'}</strong>
+              <span style={{ color:'var(--text-muted)' }}> · {formatDate(inv.invoice_date)} · {formatCurrency(inv.amount)}{inv.vehicle_reg ? ` · ${inv.vehicle_reg}` : ''}</span>
+            </div>
             {bucketRow(
               'Costing month',
               'Subcontractor-costing month. The month you pick is used exactly — no cash “previous month” rule and no sent-costing lock.',
@@ -853,7 +867,7 @@ function ManagePeriodsModal({ invoices, onClose, onSaved }) {
         <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:18 }}>
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn-primary" onClick={save} disabled={saving || !inv}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Saving…' : (inv ? `Save ${inv.invoice_number || 'invoice'}` : 'Save')}
           </button>
         </div>
       </div>
