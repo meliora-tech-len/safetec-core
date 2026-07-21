@@ -199,7 +199,15 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   const handleViewAttachment = async (e, inv) => {
     e.stopPropagation()
     try { await viewInvoiceAttachment(inv.id) }
-    catch (err) { toast.error(errorMessage(err)) }
+    catch (err) {
+      // Only the stored PO document is unreachable; a blob 404 body can't be read
+      // by errorMessage(), so say it plainly.
+      if (err?.response?.status === 404) {
+        toast.error('This PO document is no longer in storage — re-upload it to restore the file.')
+      } else {
+        toast.error(errorMessage(err))
+      }
+    }
   }
 
   const handleRemoveAttachment = async (e, inv) => {

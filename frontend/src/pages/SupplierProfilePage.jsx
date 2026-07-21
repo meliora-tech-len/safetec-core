@@ -1278,7 +1278,16 @@ export default function SupplierProfilePage() {
     try {
       await viewSupplierInvoiceAttachment(inv.id)
     } catch (err) {
-      toast.error(errorMessage(err))
+      // The invoice record still loaded fine — only the stored document is
+      // unreachable (never uploaded, or lost from storage). Don't surface a raw
+      // 404: tell the user plainly so the rest of the row keeps working and they
+      // know a re-upload will restore it. (The error body here is a Blob, so
+      // errorMessage() can't read the detail anyway.)
+      if (err?.response?.status === 404) {
+        toast.error('This invoice document is no longer in storage — re-upload it to restore the file.')
+      } else {
+        toast.error(errorMessage(err))
+      }
     }
   }
 
