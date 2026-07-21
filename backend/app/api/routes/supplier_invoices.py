@@ -108,22 +108,63 @@ def _clear_intsimbi_slip_placeholders(
     return cleared
 
 
-def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, slip_number: str, user_id: int) -> None:
-    """Re-link the DieselFillUp matching slip_number to this invoice (and copy its
+def _is_placeholder_invoice(db: Session, inv_id: Optional[int], slip: Optional[str]) -> bool:
+    """True if inv_id is an auto-created diesel placeholder (single-line, no line
+    items, and either no number or the depot slip standing in as the number) — the
+    same test _archive_orphaned_placeholder uses to decide what it may archive.
+    A recycled slip may absorb one of these; it must never re-point a real invoice."""
+    if not inv_id:
+        return False
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == inv_id).first()
+    if not inv or inv.is_multi_line or inv.line_items:
+        return False
+    number = _norm_slip(inv.invoice_number)
+    return (not number) or number == _norm_slip(slip)
+
+
+def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, li: SupplierInvoiceLineItem, user_id: int) -> None:
+    """Re-link the DieselFillUp matching this line's slip to this invoice (and copy its
     invoice_number), then archive the placeholder invoice the fill-up was previously
     auto-created under.
 
     Without the archive step a manually-captured multi-line invoice (e.g. a Merino/
     Oukop statement) re-points the fill-up but leaves its old single-line placeholder
     behind, so it lingers as a "Pending" duplicate on the Supplier Profile — exactly
-    the symptom the bulk import already guards against."""
+    the symptom the bulk import already guards against.
+
+    A slip number does NOT uniquely identify a fill-up: depots (WBG especially)
+    recycle slip numbers across different trucks and dates. So scope the match to the
+    line's truck and prefer the fill-up logged on the line's date — otherwise a reused
+    slip would re-point (and steal) the wrong truck/date's fill-up. Fall back to any
+    date only within the same truck, so a top-up (Merino/Oukop) pre-log captured on a
+    nearby date is still absorbed."""
+    slip_number = (li.item_code or "").strip()
     if not slip_number:
         return
-    fillup = db.query(DieselFillUp).filter(
+    truck = _resolve_truck_by_reg(db, invoice.entity_id, (li.unit or "").strip())
+    inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
+    line_date = li.line_date or inv_date
+
+    base = db.query(DieselFillUp).filter(
         _slip_eq(slip_number),
         DieselFillUp.entity_id == invoice.entity_id,
         DieselFillUp.is_archived != True,
-    ).first()
+    )
+    if truck:
+        base = base.filter(DieselFillUp.truck_id == truck.id)
+    # Same truck + slip + date is the same fuel transaction — link it straight away.
+    fillup = base.filter(DieselFillUp.fillup_date == line_date).first()
+    if fillup is None:
+        # No exact-date match. Fall back to a same-truck pre-log captured on another
+        # date (top-up suppliers log before the statement, often on a nearby date) —
+        # but ONLY if it isn't already reconciled onto a different real statement.
+        # Without that guard a recycled slip would steal another invoice's fill-up.
+        cand = base.order_by(DieselFillUp.fillup_date.desc()).first()
+        if cand and (
+            cand.supplier_invoice_id in (None, invoice.id)
+            or _is_placeholder_invoice(db, cand.supplier_invoice_id, slip_number)
+        ):
+            fillup = cand
     if not fillup:
         return
     old_inv_id = fillup.supplier_invoice_id
@@ -139,7 +180,7 @@ def _propagate_invoice_number_to_fillups(db: Session, invoice: SupplierInvoice, 
     if not invoice.invoice_number:
         return
     for li in invoice.line_items:
-        _link_fillup_from_slip(db, invoice, li.item_code, user_id)
+        _link_fillup_from_slip(db, invoice, li, user_id)
 
 
 def _maybe_create_line_fillup(
@@ -173,9 +214,16 @@ def _maybe_create_line_fillup(
     if not truck:
         return
 
+    inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
+    fillup_date = li.line_date or inv_date
+
     # Already a fill-up for this slip on this truck (created earlier, or linked
     # just now by _link_fillup_from_slip)? Then only ensure it points at this
-    # invoice — never duplicate.
+    # invoice — never duplicate. A slip number is NOT unique (depots recycle them),
+    # so the same slip on a *different date* is a genuinely different fill-up and
+    # must not collapse into this one — hence the date match. The second clause
+    # still catches a fill-up _link_fillup_from_slip just re-pointed to this
+    # invoice (which may sit on a nearby date), so we don't duplicate it.
     existing = (
         db.query(DieselFillUp)
         .filter(
@@ -183,6 +231,10 @@ def _maybe_create_line_fillup(
             DieselFillUp.truck_id == truck.id,
             DieselFillUp.entity_id == invoice.entity_id,
             DieselFillUp.is_archived != True,
+            or_(
+                DieselFillUp.fillup_date == fillup_date,
+                DieselFillUp.supplier_invoice_id == invoice.id,
+            ),
         )
         .first()
     )
@@ -194,8 +246,6 @@ def _maybe_create_line_fillup(
     litres_d = Decimal(str(li.quantity))
     excl_d = Decimal(str(li.amount_excl_vat))
     rate_d = (excl_d / litres_d).quantize(Decimal("0.0001"))
-    inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
-    fillup_date = li.line_date or inv_date
 
     settings = DieselCalculationService.get_diesel_settings(db, invoice.entity_id)
     admin_fee_pct = Decimal(str(settings.admin_fee_pct)) if settings else Decimal("0")
@@ -1546,7 +1596,7 @@ def add_line_item(
     db.add(li)
     db.flush()
     if data.item_code:
-        _link_fillup_from_slip(db, inv, data.item_code, current_user.id)
+        _link_fillup_from_slip(db, inv, li, current_user.id)
     _maybe_create_line_fillup(db, inv, li, current_user.id)
     _recalc_invoice_total(db, inv)
     log_action(
@@ -1595,7 +1645,7 @@ def update_line_item(
         setattr(li, k, v)
     db.flush()
     if data.item_code:
-        _link_fillup_from_slip(db, inv, data.item_code, current_user.id)
+        _link_fillup_from_slip(db, inv, li, current_user.id)
     _maybe_create_line_fillup(db, inv, li, current_user.id)
     _recalc_invoice_total(db, inv)
     # The edit form re-PUTs every line with re-indexed sort_order on each save —
@@ -2078,15 +2128,20 @@ def bulk_import_invoices(
                     diesel_created += 1
                 continue
 
-            # Match a fill-up already logged for this slip + truck, regardless of the
-            # date it was captured on (a slip number uniquely identifies one fuel
-            # transaction; the logged date rarely equals the Excel slip date). This
-            # lets the import absorb a pre-logged slip — re-linking it to the imported
-            # invoice and archiving its pending placeholder — instead of duplicating it.
+            # Match a fill-up already logged for this slip + truck + date. The date is
+            # part of the key because a slip number does NOT uniquely identify a fuel
+            # transaction: depots (WBG especially) recycle slip numbers across dates
+            # and trucks. Matching on slip + truck alone let a recycled slip re-point
+            # the *previous* date's fill-up here — surfacing a false litres conflict
+            # and, on resolution, stealing that fill-up off its real invoice. Keying on
+            # the date makes a same-slip line on a new date a genuinely new fill-up
+            # (created below), mirroring the diesel-sheet import's (truck, supplier,
+            # slip, date) duplicate key.
             existing_fillup = db.query(DieselFillUp).filter(
                 _slip_eq(slip),
                 DieselFillUp.truck_id == truck.id,
                 DieselFillUp.entity_id == payload.entity_id,
+                DieselFillUp.fillup_date == fillup_date,
                 DieselFillUp.is_archived != True,
             ).order_by(DieselFillUp.fillup_date.desc()).first()
 
