@@ -235,7 +235,7 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
 
     ded = []
     if paye     > 0: ded.append(("Tax",              _fmt(paye)))
-    if tax_sars > 0: ded.append(("Tax (SARS)",       _fmt(tax_sars)))
+    if tax_sars > 0: ded.append(("UIF",              _fmt(tax_sars)))
     if uif      > 0: ded.append(("UIF",              _fmt(uif)))
     if provident> 0: ded.append(("Provident Fund",   _fmt(provident)))
     if sick     > 0: ded.append(("Sick Fund",        _fmt(sick)))

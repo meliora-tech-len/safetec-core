@@ -873,10 +873,10 @@ export default function DriverDetailPage() {
                     <OverrideRow label="Sick fund" field="sick_fund_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.sickFund} />
                     <OverrideRow label="Holiday fund" field="holiday_fund_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.holidayFund} />
                     <OverrideRow label="Leave pay" field="leave_pay_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.leavePay} />
-                    <OverrideRow label="PAYE" field="paye_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.paye} />
-                    {/* Tax (SARS) — manual per-cycle amount, no computed default */}
+                    <OverrideRow label="PAYE (TAX)" field="paye_override" overrides={overrides} setOverrides={setOverrides} computed={statComputed.paye} />
+                    {/* UIF — manual per-cycle amount, no computed default (stored in tax_sars col) */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', borderBottom: '1px solid var(--border)', gap: 8, fontSize: 13 }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Tax (SARS)</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>UIF</span>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <input className="form-input" type="number" step="0.01" value={taxSars}
                           onChange={e => setTaxSars(e.target.value)}

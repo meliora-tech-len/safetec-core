@@ -770,11 +770,12 @@ def get_monthly_expenses(
     if record:
         return record
 
-    # No sheet captured for this month yet — carry the expense lines forward from
-    # the most recent earlier month, so each month opens as a copy of the previous
-    # one and the user only edits what changed. Returned as an unsaved template
-    # (it persists when she saves); income is intentionally left blank so a stale
-    # figure can't carry over — it auto-fills from this month's loads instead.
+    # No sheet captured for this month yet — duplicate the most recent earlier
+    # month (every expense line and notes), so each month opens as a copy of the
+    # previous one and the user only edits/adds/deletes what changed. Returned as
+    # an unsaved template (it persists when she saves). Income is deliberately NOT
+    # carried — it's calculated from this month's own loads, so a stale figure can
+    # never roll over; it auto-fills from the loads instead.
     prior = (
         db.query(TruckMonthlyExpenses)
         .filter(
@@ -787,9 +788,12 @@ def get_monthly_expenses(
         .order_by(TruckMonthlyExpenses.year.desc(), TruckMonthlyExpenses.month.desc())
         .first()
     )
-    carried = None
-    if prior and prior.custom_lines:
-        carried = [
+    if not prior:
+        return TruckMonthlyExpensesOut(truck_id=truck_id, year=year, month=month)
+
+    carried_lines = None
+    if prior.custom_lines:
+        carried_lines = [
             {
                 "id": (l.get("id") or uuid.uuid4().hex),
                 "description": l.get("description"),
@@ -797,7 +801,14 @@ def get_monthly_expenses(
             }
             for l in prior.custom_lines
         ]
-    return TruckMonthlyExpensesOut(truck_id=truck_id, year=year, month=month, custom_lines=carried)
+    # Fresh id/year/month; expenses + notes copied from the prior month. Income
+    # is left blank so it auto-fills from this month's loads (never carried).
+    template = TruckMonthlyExpensesBase.model_validate(prior, from_attributes=True)
+    return TruckMonthlyExpensesOut(
+        truck_id=truck_id, year=year, month=month,
+        **template.model_dump(exclude={"custom_lines", "income_excl_vat", "income_incl_vat"}),
+        custom_lines=carried_lines,
+    )
 
 
 @router.put("/trucks/{truck_id}/monthly-expenses", response_model=TruckMonthlyExpensesOut)
