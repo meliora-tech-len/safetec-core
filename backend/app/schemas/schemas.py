@@ -1973,7 +1973,7 @@ class DieselFillUpCreate(BaseModel):
     supplier_id: int
     fillup_date: date_type
     litres: Decimal
-    rate_per_litre: Decimal
+    rate_per_litre: Decimal = Decimal("0")
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
     depot_slip_number: Optional[str] = None
@@ -1981,6 +1981,8 @@ class DieselFillUpCreate(BaseModel):
     supplier_invoice_id: Optional[int] = None
     diesel_type: str = 'fillup'
     notes: Optional[str] = None
+    # BKMO only: log the slip now, let the Tradekor import fill R/L in later.
+    rate_pending: bool = False
     # driver_name: Optional[str] = None  # reserved for TruckLoad
 
 
@@ -1998,6 +2000,7 @@ class DieselFillUpUpdate(BaseModel):
     diesel_type: Optional[str] = None
     verified: Optional[bool] = None
     notes: Optional[str] = None
+    rate_pending: Optional[bool] = None
     # driver_name: Optional[str] = None  # reserved for TruckLoad
 
 
@@ -2020,6 +2023,7 @@ class DieselFillUpOut(BaseModel):
     truckload_id: Optional[int] = None
     supplier_invoice_id: Optional[int] = None
     diesel_type: str = 'fillup'
+    rate_pending: bool = False
     verified: bool
     verified_by: Optional[int] = None
     verified_at: Optional[datetime] = None
@@ -2138,6 +2142,7 @@ class DieselImportResult(BaseModel):
     total: int = 0
     matched: int = 0
     created: int = 0
+    updated: int = 0        # rate-pending placeholders resolved by this import
     duplicates: int = 0
     unmatched: int = 0
     invalid: int = 0

@@ -625,10 +625,24 @@ def create_fillup(
 ):
     _check_entity_access(payload.entity_id, current_user)
 
+    entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
+    is_bkmo = bool(entity_obj) and entity_obj.code == "BKMO"
+
     if payload.litres <= 0:
         raise HTTPException(status_code=400, detail="Litres must be greater than 0")
-    if payload.rate_per_litre <= 0:
-        raise HTTPException(status_code=400, detail="Rate per litre must be greater than 0")
+
+    # BKMO can log a slip before its rate-per-litre is known (litres come off the
+    # printed slip; R/L is filled in later by the Tradekor diesel import). The
+    # placeholder is stored with rate 0 and rate_pending = True. Every other
+    # entity must supply a rate up front.
+    rate_pending = bool(payload.rate_pending) and is_bkmo
+    if rate_pending:
+        rate_per_litre = Decimal("0")
+    else:
+        rate_per_litre = payload.rate_per_litre
+        if rate_per_litre <= 0:
+            raise HTTPException(status_code=400, detail="Rate per litre must be greater than 0")
+
     if payload.fillup_date > date.today():
         raise HTTPException(status_code=400, detail="Fill-up date cannot be in the future")
 
@@ -662,12 +676,11 @@ def create_fillup(
     admin_fee_pct = Decimal(str(settings.admin_fee_pct)) if settings else Decimal("0")
     apply_admin_fee = settings.apply_admin_fee if settings else False
 
-    entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
     vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
 
     amounts = DieselCalculationService.calculate_fillup_amounts(
         litres=payload.litres,
-        rate_per_litre=payload.rate_per_litre,
+        rate_per_litre=rate_per_litre,
         admin_fee_pct=admin_fee_pct,
         apply_admin_fee=apply_admin_fee,
         vat_rate=vat_rate,
@@ -679,7 +692,8 @@ def create_fillup(
         supplier_id=payload.supplier_id,
         fillup_date=payload.fillup_date,
         litres=payload.litres,
-        rate_per_litre=payload.rate_per_litre,
+        rate_per_litre=rate_per_litre,
+        rate_pending=rate_pending,
         invoice_number=payload.invoice_number,
         slip_number=payload.slip_number,
         depot_slip_number=payload.depot_slip_number or payload.slip_number,
@@ -699,17 +713,21 @@ def create_fillup(
     db.commit()
     db.refresh(f)
 
-    if f.truckload_id:
-        _sync_truckload_diesel(db, f.truckload_id, f)
+    # A rate-pending placeholder has no known amount yet, so hold off on syncing
+    # its (zero) rate onto the load and on creating a supplier invoice — both run
+    # when the Tradekor import fills the rate in.
+    if not rate_pending:
+        if f.truckload_id:
+            _sync_truckload_diesel(db, f.truckload_id, f)
 
-    if (f.invoice_number or f.slip_number) and not f.supplier_invoice_id and f.supplier_id:
-        try:
-            _auto_link_or_create_supplier_invoice(db, f, current_user.id)
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error(
-                f"Auto-link supplier invoice failed for fill-up #{f.id}: {exc}", exc_info=True
-            )
+        if (f.invoice_number or f.slip_number) and not f.supplier_invoice_id and f.supplier_id:
+            try:
+                _auto_link_or_create_supplier_invoice(db, f, current_user.id)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Auto-link supplier invoice failed for fill-up #{f.id}: {exc}", exc_info=True
+                )
 
     return _enrich_fillup(f)
 
@@ -805,11 +823,63 @@ def import_diesel(
         rr.truck_registration = truck.registration
         rr.matched_by_temp = by_temp
 
+        slip = (row.slip_number or "").strip()
+
+        # Rate-pending placeholder resolution (BKMO): a slip was logged before its
+        # R/L was known. Match it on truck + slip alone (case/space-insensitive,
+        # ignoring the captured date/supplier — the import's values win) and fill
+        # the rate in, rather than treating this row as a new fill-up or a dup.
+        pending = None
+        if slip:
+            norm_slip = slip.replace(" ", "").upper()
+            pending = (
+                db.query(DieselFillUp)
+                .filter(
+                    DieselFillUp.truck_id == truck.id,
+                    DieselFillUp.rate_pending == True,  # noqa: E712
+                    DieselFillUp.is_archived == False,
+                    or_(
+                        func.upper(func.replace(DieselFillUp.depot_slip_number, " ", "")) == norm_slip,
+                        func.upper(func.replace(DieselFillUp.slip_number, " ", "")) == norm_slip,
+                    ),
+                )
+                .order_by(DieselFillUp.fillup_date.desc())
+                .first()
+            )
+        if pending is not None:
+            result.updated += 1
+            rr.status = "updated"
+            rr.message = "Filled rate into a pending slip; litres taken from the import"
+            if payload.commit:
+                amounts = DieselCalculationService.calculate_fillup_amounts(
+                    litres=litres, rate_per_litre=rate,
+                    admin_fee_pct=admin_fee_pct, apply_admin_fee=apply_admin_fee, vat_rate=vat_rate,
+                )
+                pending.supplier_id     = supplier_id
+                pending.fillup_date     = row.fillup_date
+                pending.litres          = litres          # import litres always win
+                pending.rate_per_litre  = rate
+                pending.admin_fee_pct   = admin_fee_pct
+                pending.diesel_type     = diesel_type_for_supplier(supplier_objs.get(supplier_id))
+                if not pending.depot_slip_number:
+                    pending.depot_slip_number = slip or None
+                for k, v in amounts.items():
+                    setattr(pending, k, v)
+                pending.rate_pending = False
+                db.flush()
+                # Now that the amount is known, create/link the supplier invoice
+                # and push the diesel snapshot onto any linked load.
+                if (pending.invoice_number or pending.slip_number) and not pending.supplier_invoice_id:
+                    _auto_link_or_create_supplier_invoice(db, pending, current_user.id, commit=False)
+                if pending.truckload_id:
+                    _sync_truckload_diesel(db, pending.truckload_id, pending)
+            result.rows.append(rr)
+            continue
+
         # Duplicate = same truck + supplier + slip ON THE SAME DATE. The date
         # must be part of the key: depots recycle slip numbers, and a truck's
         # old- and new-reg rows resolve to the same truck — without the date a
         # legitimate second fill-up would be silently dropped.
-        slip = (row.slip_number or "").strip()
         batch_key = (truck.id, supplier_id, slip, row.fillup_date)
         dup = False
         if slip:
@@ -861,11 +931,14 @@ def import_diesel(
     # lists trucks alphabetically rather than in raw file order.
     result.rows.sort(key=lambda r: (r.registration or "").strip().upper())
 
-    if payload.commit and result.created:
+    if payload.commit and (result.created or result.updated):
         log_action(
             db, "diesel_fillup.imported", user_id=current_user.id,
             entity_id=payload.entity_id, resource_type="diesel_fillup",
-            description=f"Imported {result.created} diesel fill-up(s)",
+            description=(
+                f"Imported {result.created} diesel fill-up(s)"
+                + (f", filled rate into {result.updated} pending slip(s)" if result.updated else "")
+            ),
         )
         db.commit()
 
@@ -901,6 +974,9 @@ def update_fillup(
         vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
         amounts = DieselCalculationService.calculate_fillup_amounts(litres, rate, admin_fee_pct, apply_admin_fee, vat_rate)
         updates.update(amounts)
+        # A real rate typed in by hand resolves a pending placeholder.
+        if rate > 0 and f.rate_pending and "rate_pending" not in updates:
+            updates["rate_pending"] = False
 
     for field, value in updates.items():
         setattr(f, field, value)

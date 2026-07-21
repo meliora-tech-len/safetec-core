@@ -71,6 +71,7 @@ function parseDieselSheet(arrayBuffer) {
 const STATUS_STYLE = {
   matched:   { color: '#16a34a', bg: 'rgba(34,197,94,0.12)',  label: 'Match' },
   created:   { color: '#16a34a', bg: 'rgba(34,197,94,0.12)',  label: 'Created' },
+  updated:   { color: '#2563eb', bg: 'rgba(37,99,235,0.12)',  label: 'Rate filled' },
   duplicate: { color: '#d97706', bg: 'rgba(217,119,6,0.14)',  label: 'Duplicate' },
   unmatched: { color: '#dc2626', bg: 'rgba(220,38,38,0.12)',  label: 'No truck' },
   invalid:   { color: '#dc2626', bg: 'rgba(220,38,38,0.12)',  label: 'Invalid' },
@@ -152,7 +153,11 @@ export default function ImportDieselModal({ entityId, onClose, onImported }) {
     try {
       const res = await importDiesel({ entity_id: Number(entityId), depot_suppliers: depotSupplierMap(), commit: true, rows })
       const c = res.data.created
-      toast.success(`Imported ${c} fill-up${c !== 1 ? 's' : ''}`)
+      const u = res.data.updated || 0
+      toast.success(
+        `Imported ${c} fill-up${c !== 1 ? 's' : ''}` +
+        (u > 0 ? ` · filled rate into ${u} pending slip${u !== 1 ? 's' : ''}` : '')
+      )
       onImported?.()
       onClose()
     } catch (e) { toast.error(errorMessage(e, 'Import failed')) }
@@ -227,6 +232,7 @@ export default function ImportDieselModal({ entityId, onClose, onImported }) {
             <>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
                 <Chip color="#16a34a" label="Will import" value={preview.matched} />
+                {preview.updated > 0 && <Chip color="#2563eb" label="Rate fills (pending)" value={preview.updated} />}
                 <Chip color="#d97706" label="Duplicates (skip)" value={preview.duplicates} />
                 <Chip color="#dc2626" label="No truck (skip)" value={preview.unmatched} />
                 {preview.invalid > 0 && <Chip color="#dc2626" label="Invalid" value={preview.invalid} />}
@@ -287,12 +293,12 @@ export default function ImportDieselModal({ entityId, onClose, onImported }) {
         {/* Footer */}
         <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            {preview ? `${preview.matched} of ${preview.total} rows will be imported` : ''}
+            {preview ? `${preview.matched + (preview.updated || 0)} of ${preview.total} rows will be imported` : ''}
           </span>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn-ghost btn-sm" onClick={onClose}>Cancel</button>
-            <button className="btn-primary btn-sm" onClick={runImport} disabled={busy || !preview || preview.matched === 0}>
-              {busy ? 'Importing…' : preview ? `Import ${preview.matched}` : 'Import'}
+            <button className="btn-primary btn-sm" onClick={runImport} disabled={busy || !preview || (preview.matched + (preview.updated || 0)) === 0}>
+              {busy ? 'Importing…' : preview ? `Import ${preview.matched + (preview.updated || 0)}` : 'Import'}
             </button>
           </div>
         </div>

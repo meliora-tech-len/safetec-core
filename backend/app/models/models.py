@@ -1278,6 +1278,9 @@ class DieselFillUp(Base):
     truckload_id = Column(Integer, ForeignKey("truck_loads.id", ondelete="SET NULL"), nullable=True)
     supplier_invoice_id = Column(Integer, ForeignKey("supplier_invoices.id", ondelete="SET NULL"), nullable=True)
     is_archived  = Column(Boolean, nullable=False, default=False)
+    # BKMO placeholder: slip logged before its R/L is known (rate_per_litre = 0).
+    # Cleared when the Tradekor diesel import matches the slip and fills the rate.
+    rate_pending = Column(Boolean, nullable=False, default=False, server_default='false')
 
     verified     = Column(Boolean, nullable=False, default=False)
     verified_by  = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

@@ -160,7 +160,7 @@ const EMPTY_PROJ = {
   statement_month: null, statement_year: null,
 }
 const EMPTY_DIESEL = {
-  fillup_date: '', supplier_id: '', invoice_number: '', slip_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup',
+  fillup_date: '', supplier_id: '', invoice_number: '', slip_number: '', litres: '', rate_per_litre: '', notes: '', diesel_type: 'fillup', rate_pending: false,
 }
 const EMPTY_FOOD = { driver_id: '', amount: '', payment_date: '', notes: '' }
 
@@ -515,7 +515,8 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
         supplier_id:    parseInt(form.supplier_id),
         fillup_date:    form.fillup_date,
         litres:         litresNum,
-        rate_per_litre: rateNum,
+        rate_per_litre: form.rate_pending ? 0 : rateNum,
+        rate_pending:   !!form.rate_pending,
         invoice_number: form.invoice_number || null,
         slip_number:    form.slip_number || null,
         notes:          form.notes || null,
@@ -534,7 +535,7 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
     if (!form.supplier_id)  return toast.error('Select a supplier')
     if (!form.fillup_date)  return toast.error('Date required')
     if (litresNum <= 0)     return toast.error('Enter litres')
-    if (rateNum <= 0)       return toast.error('Enter rate per litre')
+    if (!form.rate_pending && rateNum <= 0) return toast.error('Enter rate per litre')
     doAdd()
   }
 
@@ -633,7 +634,7 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
             </div>
             <div>
               <label className="form-label">
-                Rate/L *{autoRate && (
+                Rate/L {form.rate_pending ? '' : '*'}{autoRate && !form.rate_pending && (
                   <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700,
                     color: rateEdited ? '#d97706' : '#16a34a' }}>
                     {rateEdited ? 'manual' : 'auto'}
@@ -641,17 +642,27 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
                 )}
               </label>
               <input className="form-input" type="number" step="0.01" min="0"
-                value={form.rate_per_litre}
+                value={form.rate_pending ? '' : form.rate_per_litre}
+                disabled={form.rate_pending}
                 onChange={e => { set('rate_per_litre', e.target.value); setRateEdited(true) }}
-                placeholder="0.00" onKeyDown={dieselKey} />
+                placeholder={form.rate_pending ? 'On import' : '0.00'} onKeyDown={dieselKey} />
             </div>
             <div>
               <label className="form-label">Amount</label>
               <div style={{ padding: '8px 10px', background: 'var(--bg-surface)', borderRadius: 6, fontSize: 13, fontWeight: 700 }}>
-                {calcAmt ? fmt(calcAmt) : '—'}
+                {form.rate_pending ? 'Pending' : (calcAmt ? fmt(calcAmt) : '—')}
               </div>
             </div>
           </div>
+          {isBokamosho && (
+            <div style={{ marginTop: 12 }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!form.rate_pending}
+                  onChange={e => { set('rate_pending', e.target.checked); if (e.target.checked) { set('rate_per_litre', ''); setRateEdited(false) } }} />
+                Rate unknown — fill in on Tradekor import (matched by slip; import litres win)
+              </label>
+            </div>
+          )}
           <div style={{ marginTop: 12 }}>
             <label className="form-label">Mine / Notes</label>
             <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" onKeyDown={dieselKey} />
@@ -778,8 +789,13 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
                             {f.supplier_invoice_number || f.invoice_number || '⚠ missing'}
                           </td>
                           <td style={{ textAlign: 'right' }}>{parseFloat(f.litres).toFixed(1)}</td>
-                          <td style={{ textAlign: 'right', fontSize: 12 }}>R&nbsp;{parseFloat(f.rate_per_litre).toFixed(2)}</td>
-                          <td style={{ textAlign: 'right', fontSize: 12 }}>{fmt(f.amount)}</td>
+                          <td style={{ textAlign: 'right', fontSize: 12 }}>
+                            {f.rate_pending ? (
+                              <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                                background: 'rgba(245,158,11,0.15)', color: '#d97706' }}>Rate pending</span>
+                            ) : <>R&nbsp;{parseFloat(f.rate_per_litre).toFixed(2)}</>}
+                          </td>
+                          <td style={{ textAlign: 'right', fontSize: 12 }}>{f.rate_pending ? '—' : fmt(f.amount)}</td>
                           <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmt(f.admin_fee_amount)}</td>
                           <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
                             {parseFloat(f.admin_fee_amount || 0) > 0
