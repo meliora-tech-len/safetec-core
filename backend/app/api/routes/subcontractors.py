@@ -347,10 +347,17 @@ def _truck_invoice_contribution(inv: SupplierInvoice, truck_regs: set):
       invoice can now mix VAT and non-VAT lines.
     - Single-line invoices (and legacy multi-line invoices with no per-line reg)
       fall back to the main-line ``vehicle_reg`` and the invoice-level VAT flag.
+
+    Diesel-supplier invoices are included so that their NON-fuel lines (parking,
+    maintenance — no slip in ``item_code``) still cost against the truck. Their
+    fuel lines carry a slip and are already costed via the truck's DieselFillUp
+    rows, so we skip any line with a slip here to avoid double-counting; a diesel
+    single-line invoice is fuel by nature, so it contributes nothing on this path.
     """
     D0 = Decimal("0")
     if not truck_regs:
         return False, D0, D0
+    is_diesel = bool(inv.supplier and inv.supplier.is_diesel_supplier)
 
     if inv.is_multi_line and inv.line_items:
         has_line_reg = any((li.unit or "").strip() for li in inv.line_items)
@@ -359,6 +366,10 @@ def _truck_invoice_contribution(inv: SupplierInvoice, truck_regs: set):
             matched = False
             for li in inv.line_items:
                 if _norm_reg(li.unit) not in truck_regs:
+                    continue
+                # A slipped line on a diesel statement is fuel — costed via its
+                # DieselFillUp, not here. Non-fuel lines (no slip) fall through.
+                if is_diesel and (li.item_code or "").strip():
                     continue
                 e = Decimal(str(li.amount_excl_vat or 0))
                 i = Decimal(str(li.amount_incl_vat or 0))
@@ -370,6 +381,10 @@ def _truck_invoice_contribution(inv: SupplierInvoice, truck_regs: set):
                 else:              # zero-rated / non-VAT line (incl == excl)
                     excl_nonvat += e
             return matched, excl_nonvat, incl_vat
+
+    if is_diesel:
+        # Single-line / legacy diesel invoice: fuel, already costed via fill-ups.
+        return False, D0, D0
 
     if _norm_reg(inv.vehicle_reg) in truck_regs:
         amt = Decimal(str(inv.amount))
@@ -541,7 +556,10 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     # this month (its statement may sit outside the window below).
     override_idx = SupplierInvoice.costing_period_year * 12 + (SupplierInvoice.costing_period_month - 1)
 
-    # All candidate non-diesel invoices for this entity, fetched once.
+    # All candidate invoices for this entity, fetched once. Diesel suppliers ARE
+    # included: `_truck_invoice_contribution` keeps only their non-fuel lines (the
+    # fuel lines are costed via DieselFillUp instead), so a diesel statement's
+    # parking/maintenance charges still show without double-counting the fuel.
     # Per-truck matching (main-line reg vs. per-sub-line reg) happens in Python
     # via `_truck_invoice_contribution`, so a multi-line/split invoice can pull
     # through to several trucks with each picking up just its own sub-lines.
@@ -553,7 +571,6 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         .filter(
             SupplierInvoice.entity_id == sub.entity_id,
             SupplierInvoice.is_archived == False,
-            or_(Supplier.is_diesel_supplier == False, SupplierInvoice.supplier_id.is_(None)),
             or_(
                 stmt_idx.between(period_idx - 3, period_idx + 1),
                 override_idx == period_idx,
