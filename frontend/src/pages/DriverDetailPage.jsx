@@ -9,6 +9,7 @@ import VerifiableAmount from '../components/VerifiableAmount'
 import DateInput from '../components/DateInput'
 import { errorMessage } from '../utils/helpers'
 import { getVerifications, verifyValue, finalizeValue } from '../services/api'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -365,6 +366,7 @@ export default function DriverDetailPage() {
   // Real SARS income tax for the cycle (manual, default 0)
   const [taxSars, setTaxSars] = useState(0)
   const [savingLoads, setSavingLoads] = useState(false)
+  const { sort: tripSort, onSort: onTripSort } = useSort('trip_date', 'asc')
 
   // Load driver + settings once
   useEffect(() => {
@@ -589,6 +591,7 @@ export default function DriverDetailPage() {
 
   const isPermanent = driver.driver_type === 'permanent'
   const tripLogEffectiveCount = (cycle?.trip_log || []).reduce((sum, t) => sum + tripCountValue(t), 0)
+  const sortedTripLog = applySort(cycle?.trip_log || [], tripSort)
 
   return (
     <div style={{ padding: 'var(--page-pad)', flex: 1, maxWidth: 1400 }}>
@@ -1080,9 +1083,16 @@ export default function DriverDetailPage() {
               {cycle?.trip_log?.length > 0 ? (
                 <div className="table-wrapper">
                   <table>
-                    <thead><tr><th>#</th><th>Date</th><th>Mine</th><th>Truck</th><th>Notes</th><th style={{ width: 40 }}></th></tr></thead>
+                    <thead><tr>
+                      <th>#</th>
+                      <SortableHeader label="Date" col="trip_date" sort={tripSort} onSort={onTripSort} />
+                      <SortableHeader label="Mine" col="mine_name" sort={tripSort} onSort={onTripSort} />
+                      <SortableHeader label="Truck" col="vehicle_reg" sort={tripSort} onSort={onTripSort} />
+                      <th>Notes</th>
+                      <th style={{ width: 40 }}></th>
+                    </tr></thead>
                     <tbody>
-                      {cycle.trip_log.map((t, i) => (
+                      {sortedTripLog.map((t, i) => (
                         <tr key={t.id}>
                           <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{i + 1}</td>
                           <td style={{ fontSize: 12 }}>{fmtDate(t.trip_date)}</td>

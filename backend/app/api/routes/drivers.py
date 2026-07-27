@@ -1015,7 +1015,15 @@ def add_food_payment(
         raise HTTPException(status_code=404, detail="Driver not found")
     _check_access(driver.entity_id, current_user)
     cycle = _get_or_create_cycle(driver_id, year, month, db)
-    entry = DriverFoodPayment(pay_cycle_id=cycle.id, **payload.model_dump())
+    data = payload.model_dump()
+    # Attribute the payment to a truck so it shows under exactly one truck's Food
+    # Allowance tab. The truck-profile tab sends truck_id explicitly; the driver
+    # payslip page doesn't, so default to the driver's assigned truck. Without this
+    # the row is truck-less and the legacy fallback leaks it onto every truck the
+    # (casual) driver is merely named on a load for.
+    if data.get("truck_id") is None and driver.truck_id is not None:
+        data["truck_id"] = driver.truck_id
+    entry = DriverFoodPayment(pay_cycle_id=cycle.id, **data)
     db.add(entry)
     db.flush()
     log_action(db, "food_payment.created", user_id=current_user.id,
