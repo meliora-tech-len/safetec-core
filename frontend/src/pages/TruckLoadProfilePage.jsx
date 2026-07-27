@@ -21,6 +21,7 @@ import {
   getTruckMonthlyExpenses, upsertTruckMonthlyExpenses,
   getSupplierInvoicesByVehicle,
   verifyDieselFillUp, finalizeDieselFillUp,
+  verifyFoodPayment, finalizeFoodPayment,
   getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
 import toast from 'react-hot-toast'
@@ -1455,6 +1456,7 @@ function WashesSection({ truck, year, month }) {
 
 // ── Food Allowance section ─────────────────────────────────────────────────────
 function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId }) {
+  const { user: foodUser, isAdmin: foodIsAdmin } = useAuth()
   const [entries, setEntries]     = useState([])
   const [loading, setLoading]     = useState(true)
   const [form, setForm]           = useState({ ...EMPTY_FOOD })
@@ -1491,6 +1493,19 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
   }, [truck.id, year, month])
 
   useEffect(() => { fetchEntries() }, [fetchEntries])
+
+  // 3-step verification, mirroring the driver payslip page. The verify/finalize
+  // endpoints return the full row (incl. initials/dates) — merge it into the entry,
+  // preserving the list-only fields (driver_name/pay_year/pay_month) not in the response.
+  const patchEntry = (data) => setEntries(prev => prev.map(x => x.id === data.id ? { ...x, ...data } : x))
+  const handleVerifyFood = async (item, intent) => {
+    try { const { data } = await verifyFoodPayment(item.driver_id, item.pay_year, item.pay_month, item.id, intent); patchEntry(data) }
+    catch (e) { toast.error(errorMessage(e, 'Verification failed')) }
+  }
+  const handleFinalizeFood = async (item, intent) => {
+    try { const { data } = await finalizeFoodPayment(item.driver_id, item.pay_year, item.pay_month, item.id, intent); patchEntry(data) }
+    catch (e) { toast.error(errorMessage(e, 'Lock failed')) }
+  }
 
   const handleOpenAdd = () => {
     setForm({ ...EMPTY_FOOD, driver_id: selectedDriverId || '' })
@@ -1598,6 +1613,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
                 <SortableHeader label="Date" col="payment_date" sort={foodSort} onSort={onFoodSort} />
                 <th>Notes</th>
                 <SortableHeader label="Amount" col="amount" sort={foodSort} onSort={onFoodSort} style={{ textAlign: 'right' }} />
+                <th>Verification</th>
                 <th></th>
               </tr>
             </thead>
@@ -1607,7 +1623,14 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
                   <td style={{ fontWeight: 600 }}>{e.driver_name}</td>
                   <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.payment_date)}</td>
                   <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--accent)' }}>{fmt(e.amount)}</td>
+                  <td style={{
+                    textAlign: 'right', fontWeight: 700, color: 'var(--accent)',
+                    ...(e.verified2_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
+                  }}>{fmt(e.amount)}</td>
+                  <td>
+                    <VerifyBadge item={e} onVerify={handleVerifyFood} onFinalize={handleFinalizeFood}
+                      currentUserId={foodUser?.id} isAdmin={foodIsAdmin} adminFinalizeAnytime />
+                  </td>
                   <td>
                     <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
                       onClick={() => setDeleteTarget(e)}>
@@ -1622,6 +1645,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
                   <td colSpan={3} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
                   <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(total)}</td>
+                  <td />
                   <td />
                 </tr>
               </tfoot>

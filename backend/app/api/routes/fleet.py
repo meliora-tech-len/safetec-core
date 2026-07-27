@@ -15,6 +15,7 @@ from app.schemas.schemas import (
     TruckWashCreate, TruckWashUpdate, TruckWashOut,
 )
 from app.services.audit import log_action
+from app.services.verification import build_initials_cache, get_verification_display
 
 router = APIRouter(prefix="/api/fleet", tags=["fleet"])
 
@@ -511,6 +512,7 @@ def list_truck_food_payments(
         .all()
     )
 
+    vcache = build_initials_cache(db)
     result = []
     for fp, driver in rows:
         d = {c.name: getattr(fp, c.name) for c in fp.__table__.columns}
@@ -518,6 +520,9 @@ def list_truck_food_payments(
         d["driver_name"] = f"{driver.first_name} {driver.last_name}".strip()
         d["pay_year"]    = year
         d["pay_month"]   = month
+        # Verification display (initials/dates) so the Food Allowance tab shows the
+        # same 3-step badges as the driver payslip page.
+        d.update(get_verification_display(db, fp, vcache))
         result.append(d)
     return result
 
