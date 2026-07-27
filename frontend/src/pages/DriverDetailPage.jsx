@@ -25,7 +25,14 @@ function useApi() {
   const get   = (p)    => fetch(`${API}${p}`, { headers: h() }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
   const post  = (p, b) => fetch(`${API}${p}`, { method: 'POST',   headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
   const put   = (p, b) => fetch(`${API}${p}`, { method: 'PUT',    headers: h(), body: JSON.stringify(b) }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
-  const patch = (p)    => fetch(`${API}${p}`, { method: 'PATCH',  headers: h() }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+  // Axios-style: call as patch(url, body, { params }). Returns { data } so callers
+  // can destructure the row. The query params carry the verify/unverify `action`.
+  const patch = (p, _body, opts) => {
+    const qs = opts?.params ? new URLSearchParams(opts.params).toString() : ''
+    return fetch(`${API}${p}${qs ? `?${qs}` : ''}`, { method: 'PATCH', headers: h() })
+      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+      .then(data => ({ data }))
+  }
   const del   = (p)    => fetch(`${API}${p}`, { method: 'DELETE', headers: h() }).then(r => { if (!r.ok) return r.json().then(e => Promise.reject(e)) })
   return { get, post, put, patch, del }
 }
