@@ -1597,7 +1597,12 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
   const total = entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
 
   const { sort: foodSort, onSort: onFoodSort } = useSort('payment_date', 'asc')
-  const sortedFood = useMemo(() => applySort(entries, foodSort), [entries, foodSort])
+  const sortedFood = useMemo(() => applySort(entries, foodSort, (row, col) => {
+    if (col === 'amount') return parseFloat(row.amount || 0)
+    // Verification sorts by how far the row has progressed through the 3 steps
+    if (col === 'verification') return ((row.verified || row.is_verified) ? 1 : 0) + (row.verified2_by ? 1 : 0) + (row.verified3_by ? 1 : 0)
+    return row[col]
+  }), [entries, foodSort])
 
   return (
     <div>
@@ -1665,9 +1670,9 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
               <tr>
                 <SortableHeader label="Driver" col="driver_name" sort={foodSort} onSort={onFoodSort} />
                 <SortableHeader label="Date" col="payment_date" sort={foodSort} onSort={onFoodSort} />
-                <th>Notes</th>
+                <SortableHeader label="Notes" col="notes" sort={foodSort} onSort={onFoodSort} />
                 <SortableHeader label="Amount" col="amount" sort={foodSort} onSort={onFoodSort} style={{ textAlign: 'right' }} />
-                <th>Verification</th>
+                <SortableHeader label="Verification" col="verification" sort={foodSort} onSort={onFoodSort} />
                 <th></th>
               </tr>
             </thead>

@@ -367,6 +367,7 @@ export default function DriverDetailPage() {
   const [taxSars, setTaxSars] = useState(0)
   const [savingLoads, setSavingLoads] = useState(false)
   const { sort: tripSort, onSort: onTripSort } = useSort('trip_date', 'asc')
+  const { sort: foodSort, onSort: onFoodSort } = useSort('payment_date', 'asc')
 
   // Load driver + settings once
   useEffect(() => {
@@ -592,6 +593,8 @@ export default function DriverDetailPage() {
   const isPermanent = driver.driver_type === 'permanent'
   const tripLogEffectiveCount = (cycle?.trip_log || []).reduce((sum, t) => sum + tripCountValue(t), 0)
   const sortedTripLog = applySort(cycle?.trip_log || [], tripSort)
+  const sortedFoodPayments = applySort(cycle?.food_payments || [], foodSort,
+    (row, col) => col === 'amount' ? parseFloat(row.amount || 0) : row[col])
 
   return (
     <div style={{ padding: 'var(--page-pad)', flex: 1, maxWidth: 1400 }}>
@@ -1031,9 +1034,15 @@ export default function DriverDetailPage() {
               {cycle?.food_payments?.length > 0 ? (
                 <div className="table-wrapper">
                   <table>
-                    <thead><tr><th>Date</th><th>Paid By</th><th>Amount</th><th style={{ width: 60 }}>✓</th><th style={{ width: 60 }}></th></tr></thead>
+                    <thead><tr>
+                      <SortableHeader label="Date" col="payment_date" sort={foodSort} onSort={onFoodSort} />
+                      <SortableHeader label="Paid By" col="paid_by" sort={foodSort} onSort={onFoodSort} />
+                      <SortableHeader label="Amount" col="amount" sort={foodSort} onSort={onFoodSort} />
+                      <th style={{ width: 60 }}>✓</th>
+                      <th style={{ width: 60 }}></th>
+                    </tr></thead>
                     <tbody>
-                      {cycle.food_payments.map(fp => (
+                      {sortedFoodPayments.map(fp => (
                         <tr key={fp.id}>
                           <td style={{ fontSize: 12 }}>{fmtDate(fp.payment_date)}</td>
                           <td style={{ fontSize: 12 }}>{fp.paid_by || '—'}</td>
