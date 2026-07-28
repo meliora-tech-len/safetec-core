@@ -275,6 +275,8 @@ export const updateTruckWash = (truckId, washId, data) =>
   api.put(`/fleet/trucks/${truckId}/washes/${washId}`, data)
 export const deleteTruckWash = (truckId, washId) =>
   api.delete(`/fleet/trucks/${truckId}/washes/${washId}`)
+export const updateDriverFoodPayment = (driverId, year, month, paymentId, data) =>
+  api.put(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}`, data)
 export const deleteDriverFoodPayment = (driverId, year, month, paymentId) =>
   api.delete(`/drivers/${driverId}/cycles/${year}/${month}/food-payments/${paymentId}`)
 

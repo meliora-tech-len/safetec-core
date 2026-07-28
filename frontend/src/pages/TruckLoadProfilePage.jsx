@@ -16,7 +16,8 @@ import {
   getDieselFillUps, createDieselFillUp, updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, getCurrentDieselRate,
   addDriverAdditionalLoad, updateDriverAdditionalLoad, deleteDriverAdditionalLoad, archiveDriverAdditionalLoad,
   getAdditionalLoadRates,
-  addDriverFoodPayment, getTruckAdditionalLoads, getTruckFoodPayments, deleteDriverFoodPayment,
+  addDriverFoodPayment, getTruckAdditionalLoads, getTruckFoodPayments,
+  updateDriverFoodPayment, deleteDriverFoodPayment,
   getTruckWashes, addTruckWash, updateTruckWash, deleteTruckWash,
   getTruckMonthlyExpenses, upsertTruckMonthlyExpenses,
   getSupplierInvoicesByVehicle,
@@ -1465,6 +1466,13 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
   const [deleteTarget, setDeleteTarget] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
+  // Inline row editing (date / amount / notes). Driver can't be reassigned here —
+  // the update endpoint doesn't move a payment between pay cycles.
+  const [editingId, setEditingId]   = useState(null)
+  const [editForm, setEditForm]     = useState({})
+  const [editSaving, setEditSaving] = useState(false)
+  const setEF = (k, v) => setEditForm(f => ({ ...f, [k]: v }))
+
   const formDriver = drivers.find(d => String(d.id) === String(form.driver_id))
 
   const foodFormRef = useRef(null)
@@ -1509,6 +1517,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
 
   const handleOpenAdd = () => {
     setForm({ ...EMPTY_FOOD, driver_id: selectedDriverId || '' })
+    setEditingId(null)
     setAddingNew(true)
   }
 
@@ -1538,6 +1547,51 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
     } catch (e) {
       toast.error(errorMessage(e, 'Failed to save food allowance'))
     } finally { setSaving(false) }
+  }
+
+  const startEdit = (e) => {
+    if (editingId !== null || addingNew) return
+    setEditForm({
+      payment_date: e.payment_date ? e.payment_date.slice(0, 10) : today,
+      amount:       e.amount != null ? String(e.amount) : '',
+      notes:        e.notes || '',
+      locked:       !!e.verified3_by,
+    })
+    setEditingId(e.id)
+  }
+
+  const doUpdate = async () => {
+    const entry = entries.find(x => x.id === editingId)
+    if (!entry) return
+    // Final verification lock: the note is the only field the backend still accepts,
+    // and it must be sent on its own or the whole update is rejected.
+    let payload
+    if (editForm.locked) {
+      payload = { notes: editForm.notes.trim() }
+    } else {
+      if (!editForm.payment_date) return toast.error('Date required')
+      const amount = parseFloat(editForm.amount) || 0
+      if (amount <= 0) return toast.error('Enter an amount')
+      payload = {
+        payment_date: new Date(editForm.payment_date + 'T12:00:00').toISOString(),
+        amount,
+        notes: editForm.notes.trim(),
+      }
+    }
+    setEditSaving(true)
+    try {
+      await updateDriverFoodPayment(entry.driver_id, entry.pay_year, entry.pay_month, entry.id, payload)
+      toast.success('Food allowance updated')
+      setEditingId(null)
+      fetchEntries()
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to update food allowance'))
+    } finally { setEditSaving(false) }
+  }
+
+  const editKey = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doUpdate() }
+    if (e.key === 'Escape') { e.preventDefault(); setEditingId(null) }
   }
 
   const total = entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
@@ -1619,25 +1673,69 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
             </thead>
             <tbody>
               {sortedFood.map(e => (
-                <tr key={e.id}>
-                  <td style={{ fontWeight: 600 }}>{e.driver_name}</td>
-                  <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.payment_date)}</td>
-                  <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
-                  <td style={{
-                    textAlign: 'right', fontWeight: 700, color: 'var(--accent)',
-                    ...(e.verified2_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
-                  }}>{fmt(e.amount)}</td>
-                  <td>
-                    <VerifyBadge item={e} onVerify={handleVerifyFood} onFinalize={handleFinalizeFood}
-                      currentUserId={foodUser?.id} isAdmin={foodIsAdmin} adminFinalizeAnytime />
-                  </td>
-                  <td>
-                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
-                      onClick={() => setDeleteTarget(e)}>
-                      <Trash2 size={13} />
-                    </button>
-                  </td>
-                </tr>
+                editingId === e.id ? (
+                  <tr key={e.id} onClick={ev => ev.stopPropagation()}
+                    style={{ background: 'var(--accent-subtle)', outline: '2px solid var(--accent)', outlineOffset: -1 }}>
+                    <td style={{ fontWeight: 600 }}>
+                      {e.driver_name}
+                      {editForm.locked && (
+                        <div style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>
+                          Locked by final verification — note only
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ padding: '4px 6px' }}>
+                      <DateInput className="form-input" value={editForm.payment_date}
+                        onChange={ev => setEF('payment_date', ev.target.value)} onKeyDown={editKey}
+                        disabled={editForm.locked} style={{ width: 130 }} />
+                    </td>
+                    <td style={{ padding: '4px 6px' }}>
+                      <input className="form-input" value={editForm.notes}
+                        onChange={ev => setEF('notes', ev.target.value)} onKeyDown={editKey}
+                        placeholder="Notes" style={{ minWidth: 100 }} />
+                    </td>
+                    <td style={{ padding: '4px 6px' }}>
+                      <input className="form-input" type="number" step="0.01" min="0" value={editForm.amount}
+                        onChange={ev => setEF('amount', ev.target.value)} onKeyDown={editKey}
+                        placeholder="0.00" disabled={editForm.locked}
+                        style={{ width: 100, textAlign: 'right' }} />
+                    </td>
+                    <td />
+                    <td style={{ whiteSpace: 'nowrap', padding: '4px 6px' }}>
+                      <button className="btn btn-icon btn-primary" onClick={doUpdate}
+                        disabled={editSaving} title="Save" style={{ marginRight: 4 }}>
+                        <Save size={13} />
+                      </button>
+                      <button className="btn btn-icon btn-ghost" onClick={() => setEditingId(null)} title="Cancel">
+                        <X size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => startEdit(e)}
+                    title={e.verified3_by ? 'Locked — click to edit the note' : 'Click to edit'}>
+                    <td style={{ fontWeight: 600 }}>{e.driver_name}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.payment_date)}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
+                    <td style={{
+                      textAlign: 'right', fontWeight: 700, color: 'var(--accent)',
+                      ...(e.verified2_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
+                    }}>{fmt(e.amount)}</td>
+                    <td onClick={ev => ev.stopPropagation()}>
+                      <VerifyBadge item={e} onVerify={handleVerifyFood} onFinalize={handleFinalizeFood}
+                        currentUserId={foodUser?.id} isAdmin={foodIsAdmin} adminFinalizeAnytime />
+                    </td>
+                    <td onClick={ev => ev.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => startEdit(e)} title="Edit">
+                        <Pencil size={13} />
+                      </button>
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                        onClick={() => setDeleteTarget(e)}>
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                )
               ))}
             </tbody>
             {entries.length > 0 && (
