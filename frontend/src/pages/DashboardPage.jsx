@@ -96,10 +96,13 @@ export default function DashboardPage() {
     if (dateField === 'pay_30') return days30PayDate(r.statement_month, r.statement_year)
     return formatDate(r[dateField])
   }
-  const creditorColumns = (dateLabel, dateField, amountField) => [
+  const creditorColumns = (dateLabel, dateField, amountField, showInvoiceDate = false) => [
     { label: 'Invoice #', render: r => r.invoice_number || '—' },
     { label: 'Supplier', render: r => r.supplier_name },
     { label: 'Entity', render: r => r.entity_code || '—' },
+    // The invoice date often falls outside the statement period it's billed in, so
+    // show both when drilling into what's still owed.
+    ...(showInvoiceDate ? [{ label: 'Invoice date', render: r => formatDate(r.invoice_date) }] : []),
     { label: dateLabel, render: r => creditorDate(r, dateField) },
     { label: 'Amount', align: 'right', render: r => formatCurrency(r[amountField]) },
   ]
@@ -119,12 +122,12 @@ export default function DashboardPage() {
   const openOutstandingCashCreditors = () => setDrilldown({
     title: 'Outstanding Cash Creditors', subtitle: `Statement ${periodLabel}`,
     rows: payables.outstanding_current_invoices, total: payables.total_current,
-    columns: creditorColumns('Statement', 'statement', 'outstanding_amount'), onRowClick: goToSupplier,
+    columns: creditorColumns('Statement', 'statement', 'outstanding_amount', true), onRowClick: goToSupplier,
   })
   const openOutstanding30DayCreditors = () => setDrilldown({
     title: 'Outstanding 30-Day Creditors', subtitle: `Statement ${periodLabel}`,
     rows: payables.outstanding_days_30_invoices, total: payables.total_30_days,
-    columns: creditorColumns('Due', 'pay_30', 'outstanding_amount'), onRowClick: goToSupplier,
+    columns: creditorColumns('Due', 'pay_30', 'outstanding_amount', true), onRowClick: goToSupplier,
   })
   const openPaidCashCreditors = () => setDrilldown({
     title: 'Paid Cash Creditors', subtitle: `Paid in ${periodLabel}`,
