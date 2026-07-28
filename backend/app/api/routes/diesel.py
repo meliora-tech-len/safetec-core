@@ -238,6 +238,11 @@ def update_diesel_settings(
         settings = DieselSettings(entity_id=entity_id)
         db.add(settings)
 
+    # The fee % each existing fill-up was captured under, before this change.
+    old_effective_pct = (
+        Decimal(str(settings.admin_fee_pct or 0)) if settings.apply_admin_fee else Decimal("0")
+    )
+
     settings.admin_fee_pct = payload.admin_fee_pct
     settings.apply_admin_fee = payload.apply_admin_fee
     settings.additional_charge_per_ton = payload.additional_charge_per_ton
@@ -272,6 +277,49 @@ def update_diesel_settings(
             _entity_vat[truck.entity_id] = te.vat_registered if te else True
         return _entity_vat[truck.entity_id]
 
+    # Re-snapshot the admin fee onto existing fill-ups. Every creation path stores
+    # the entity's fee % on the fill-up at capture time, so without this a change
+    # here only takes effect on fill-ups logged from now on — which is how Safetec's
+    # May/June 2026 admin fees ended up blank after the fee was switched off and
+    # back on again (migration 119 repaired that batch).
+    #
+    # Only rows that were following the entity setting are touched, i.e. still
+    # carrying the pre-change %. A fill-up on a different % holds a fee the supplier
+    # itself billed per line (Intsimbi's 1.5%, back-computed from their statement) —
+    # that is a real invoiced amount, not our markup, and must survive. Archived and
+    # finally-verified rows are skipped too: the lock is what freezes a reconciled
+    # month against a later fee change.
+    new_pct = Decimal(str(payload.admin_fee_pct))
+    apply_fee = bool(payload.apply_admin_fee)
+    new_effective_pct = new_pct if apply_fee else Decimal("0")
+    entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+    entity_vat = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
+
+    fillups_updated = 0
+    if new_effective_pct != old_effective_pct:
+        stale_fillups = (
+            db.query(DieselFillUp)
+            .filter(
+                DieselFillUp.entity_id == entity_id,
+                DieselFillUp.is_archived.is_(False),
+                DieselFillUp.verified3_by.is_(None),
+                func.coalesce(DieselFillUp.admin_fee_pct, 0) == old_effective_pct,
+            )
+            .all()
+        )
+        for f in stale_fillups:
+            amounts = DieselCalculationService.calculate_fillup_amounts(
+                litres=Decimal(str(f.litres or 0)),
+                rate_per_litre=Decimal(str(f.rate_per_litre or 0)),
+                admin_fee_pct=new_pct,
+                apply_admin_fee=apply_fee,
+                vat_rate=entity_vat,
+            )
+            f.admin_fee_pct = new_effective_pct
+            for field, value in amounts.items():
+                setattr(f, field, value)
+            fillups_updated += 1
+
     loads_updated = 0
     for load in sub_loads:
         load.subcontractor_admin_fee_per_ton = new_fee
@@ -290,7 +338,8 @@ def update_diesel_settings(
         entity_id=entity_id, resource_type="diesel_settings",
         description=(
             f"Updated diesel admin fee to {payload.admin_fee_pct}% for entity {entity_id}; "
-            f"{loads_updated} unpaid subcontractor loads recalculated"
+            f"{loads_updated} unpaid subcontractor loads recalculated; "
+            f"{fillups_updated} unlocked fill-ups re-costed"
         ),
     )
     db.commit()
@@ -298,6 +347,7 @@ def update_diesel_settings(
 
     out = DieselSettingsOut.model_validate(settings)
     out.loads_updated = loads_updated
+    out.fillups_updated = fillups_updated
     return out
 
 

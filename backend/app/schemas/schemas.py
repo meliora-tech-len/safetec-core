@@ -1927,6 +1927,7 @@ class DieselSettingsOut(BaseModel):
     updated_by: Optional[int] = None
     updated_at: Optional[datetime] = None
     loads_updated: int = 0
+    fillups_updated: int = 0
 
     class Config:
         from_attributes = True

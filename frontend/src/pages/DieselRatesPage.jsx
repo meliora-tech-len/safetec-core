@@ -218,8 +218,14 @@ export default function DieselRatesPage() {
         subcontractor_monthly_admin_fee: parseFloat(edit.subcontractor_monthly_admin_fee) || 0,
       })
       const loadsUpdated = res.data?.loads_updated ?? 0
-      if (loadsUpdated > 0) {
-        toast.success(`Settings saved · ${loadsUpdated} unpaid subcontractor load${loadsUpdated !== 1 ? 's' : ''} recalculated`)
+      const fillupsUpdated = res.data?.fillups_updated ?? 0
+      // Changing the fee re-costs existing fill-ups, so always say so out loud —
+      // a silent change is what let Safetec's May/June 2026 admin fees go blank.
+      if (loadsUpdated > 0 || fillupsUpdated > 0) {
+        const parts = []
+        if (fillupsUpdated > 0) parts.push(`${fillupsUpdated} fill-up${fillupsUpdated !== 1 ? 's' : ''} re-costed`)
+        if (loadsUpdated > 0) parts.push(`${loadsUpdated} unpaid subcontractor load${loadsUpdated !== 1 ? 's' : ''} recalculated`)
+        toast.success(`Settings saved · ${parts.join(' · ')}`)
       } else {
         setSavedFee(p => ({ ...p, [key]: true }))
         setTimeout(() => setSavedFee(p => ({ ...p, [key]: false })), 2000)
