@@ -10,6 +10,7 @@ import DateInput from '../components/DateInput'
 import { errorMessage } from '../utils/helpers'
 import { getVerifications, verifyValue, finalizeValue } from '../services/api'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
+import SearchableSelect from '../components/SearchableSelect'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -278,6 +279,12 @@ function soleLinkedTruck(trucks) {
   return linked.length === 1 ? linked[0].id : null
 }
 
+// "KGJ578EC (11) · Assigned truck" — the source stays in the label because the
+// searchable dropdown is a flat list (no optgroups), so it has to carry the grouping.
+const truckLabel = (t) => t
+  ? `${t.registration}${t.fleet_number ? ` (${t.fleet_number})` : ''} · ${t.source}`
+  : ''
+
 function FoodPaymentModal({ entry, trucks, onSave, onClose }) {
   const isEdit = !!entry?.id
   // Final verification lock: every field but Notes is read-only; save sends only notes.
@@ -299,11 +306,6 @@ function FoodPaymentModal({ entry, trucks, onSave, onClose }) {
     const sole = soleLinkedTruck(trucks)
     if (sole) setForm(f => ({ ...f, truck_id: String(sole) }))
   }, [trucks])
-  // Group the picker so linked trucks sit above the rest of the fleet.
-  const truckGroups = (trucks || []).reduce((acc, t) => {
-    (acc[t.source] = acc[t.source] || []).push(t)
-    return acc
-  }, {})
   return (
     <Modal title={isEdit ? 'Edit Food Payment' : 'Add Food Payment'} onClose={onClose}>
       {locked && (
@@ -330,18 +332,23 @@ function FoodPaymentModal({ entry, trucks, onSave, onClose }) {
         </div>
       </div>
       <label className="form-label" style={{ marginTop: 12 }}>Truck *</label>
-      <select className="form-input" value={form.truck_id} onChange={e => set('truck_id', e.target.value)} disabled={locked}>
-        <option value="">Select a truck…</option>
-        {Object.entries(truckGroups).map(([source, list]) => (
-          <optgroup key={source} label={source}>
-            {list.map(t => (
-              <option key={t.id} value={t.id}>
-                {t.registration}{t.fleet_number ? ` (${t.fleet_number})` : ''}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
+      {locked ? (
+        <input className="form-input" value={truckLabel(trucks?.find(t => String(t.id) === form.truck_id)) || '—'} disabled />
+      ) : (
+        // Searchable: the fleet list is long, and the source suffix ("Assigned truck",
+        // "Loads in Jul 2026", …) is searchable text too, so typing "assigned" or a
+        // fleet number narrows it as fast as a registration does. Order is preserved
+        // from the API — trucks the driver is linked to first, rest of the fleet after.
+        <SearchableSelect
+          formInput
+          value={form.truck_id}
+          onChange={v => set('truck_id', v)}
+          options={trucks || []}
+          getValue={t => String(t.id)}
+          getLabel={truckLabel}
+          placeholder="Search registration or fleet number…"
+        />
+      )}
       <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
         The allowance shows under this truck's Food Allowance tab only — it is still paid to the driver.
       </p>
