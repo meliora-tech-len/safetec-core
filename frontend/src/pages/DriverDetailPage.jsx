@@ -270,7 +270,15 @@ function AdditionalLoadModal({ entry, defaultTruckReg, onSave, onClose }) {
   )
 }
 
-function FoodPaymentModal({ entry, onSave, onClose }) {
+// Preselect a truck only when there is exactly one the driver is actually linked to
+// ("Other truck" = the rest of the fleet, offered but never assumed). A driver who
+// moves between trucks must pick, so the allowance lands on the right Food Allowance tab.
+function soleLinkedTruck(trucks) {
+  const linked = (trucks || []).filter(t => t.source !== 'Other truck')
+  return linked.length === 1 ? linked[0].id : null
+}
+
+function FoodPaymentModal({ entry, trucks, onSave, onClose }) {
   const isEdit = !!entry?.id
   // Final verification lock: every field but Notes is read-only; save sends only notes.
   const locked = !!entry?.verified3_by
@@ -280,8 +288,22 @@ function FoodPaymentModal({ entry, onSave, onClose }) {
     paid_by:      entry?.paid_by  || '',
     is_verified:  entry?.is_verified || false,
     notes:        entry?.notes   || '',
+    // The payment shows on exactly this truck's Food Allowance tab. Without it a
+    // driver linked to several trucks gets the same entry duplicated under each.
+    truck_id:     entry?.truck_id != null ? String(entry.truck_id) : String(soleLinkedTruck(trucks) || ''),
   })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  // Trucks may still be loading when the modal opens — apply the default once they arrive.
+  useEffect(() => {
+    if (form.truck_id || !trucks?.length) return
+    const sole = soleLinkedTruck(trucks)
+    if (sole) setForm(f => ({ ...f, truck_id: String(sole) }))
+  }, [trucks])
+  // Group the picker so linked trucks sit above the rest of the fleet.
+  const truckGroups = (trucks || []).reduce((acc, t) => {
+    (acc[t.source] = acc[t.source] || []).push(t)
+    return acc
+  }, {})
   return (
     <Modal title={isEdit ? 'Edit Food Payment' : 'Add Food Payment'} onClose={onClose}>
       {locked && (
@@ -307,6 +329,22 @@ function FoodPaymentModal({ entry, onSave, onClose }) {
           <label htmlFor="fp-verified" className="form-label" style={{ margin: 0 }}>Verified</label>
         </div>
       </div>
+      <label className="form-label" style={{ marginTop: 12 }}>Truck *</label>
+      <select className="form-input" value={form.truck_id} onChange={e => set('truck_id', e.target.value)} disabled={locked}>
+        <option value="">Select a truck…</option>
+        {Object.entries(truckGroups).map(([source, list]) => (
+          <optgroup key={source} label={source}>
+            {list.map(t => (
+              <option key={t.id} value={t.id}>
+                {t.registration}{t.fleet_number ? ` (${t.fleet_number})` : ''}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
+        The allowance shows under this truck's Food Allowance tab only — it is still paid to the driver.
+      </p>
       <label className="form-label" style={{ marginTop: 12 }}>Notes</label>
       <input className="form-input" autoFocus={locked} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
       <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
@@ -314,7 +352,8 @@ function FoodPaymentModal({ entry, onSave, onClose }) {
         <button className="btn-primary" style={{ flex: 1 }} onClick={() => {
           if (locked) { onSave({ notes: form.notes.trim() }); return }
           if (!form.amount) { toast.error('Amount is required'); return }
-          onSave({ ...form, payment_date: new Date(form.payment_date + 'T12:00:00').toISOString(), amount: parseFloat(form.amount) })
+          if (!form.truck_id) { toast.error('Select the truck this food allowance belongs to'); return }
+          onSave({ ...form, payment_date: new Date(form.payment_date + 'T12:00:00').toISOString(), amount: parseFloat(form.amount), truck_id: parseInt(form.truck_id, 10) })
         }}>Save</button>
       </div>
     </Modal>
@@ -338,6 +377,7 @@ export default function DriverDetailPage() {
   const [mineGroups,  setMineGroups]  = useState([])
   const [salaryHistory, setSalaryHistory] = useState([])
   const [entities,    setEntities]    = useState([])
+  const [trucks,      setTrucks]      = useState([])   // for food-allowance truck attribution
   const [loading,     setLoading]     = useState(true)
 
   const [pdfLoading, setPdfLoading] = useState(false)
@@ -438,6 +478,14 @@ export default function DriverDetailPage() {
 
   useEffect(() => { loadCycle() }, [loadCycle])
 
+  // Trucks this driver is linked to — the Food Allowance truck picker. Period-aware
+  // so the trucks actually driven this month sort to the top.
+  useEffect(() => {
+    api.get(`/api/drivers/${driverId}/trucks?year=${year}&month=${month}`)
+      .then(setTrucks)
+      .catch(() => setTrucks([]))
+  }, [driverId, year, month])
+
   // ── Per-value verification overlay (payroll) ────────────────────────────────
   const [verif, setVerif] = useState({})
   const cyclePrefix = cycle?.id ? `paycycle:${cycle.id}` : null
@@ -514,6 +562,7 @@ export default function DriverDetailPage() {
   const cashDedParsed = parseFloat(cashDed || 0)
   const taxSarsParsed = parseFloat(taxSars || 0)
   const totalFoodPaid = cycle?.food_payments?.reduce((s, p) => s + parseFloat(p.amount || 0), 0) || 0
+  const truckReg = (id) => trucks.find(t => t.id === id)?.registration
   const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed + taxSarsParsed : 0) + loanDedParsed + cashDedParsed + totalFoodPaid
   // Sick/Holiday/Leave are part of the wage (earnings) AND withheld into their
   // funds (deductions), so they appear on both sides and net to zero in take-home.
@@ -594,7 +643,11 @@ export default function DriverDetailPage() {
   const tripLogEffectiveCount = (cycle?.trip_log || []).reduce((sum, t) => sum + tripCountValue(t), 0)
   const sortedTripLog = applySort(cycle?.trip_log || [], tripSort)
   const sortedFoodPayments = applySort(cycle?.food_payments || [], foodSort,
-    (row, col) => col === 'amount' ? parseFloat(row.amount || 0) : row[col])
+    (row, col) => {
+      if (col === 'amount')   return parseFloat(row.amount || 0)
+      if (col === 'truck_id') return truckReg(row.truck_id) || ''   // sort by registration, not id
+      return row[col]
+    })
 
   return (
     <div style={{ padding: 'var(--page-pad)', flex: 1, maxWidth: 1400 }}>
@@ -1036,6 +1089,7 @@ export default function DriverDetailPage() {
                   <table>
                     <thead><tr>
                       <SortableHeader label="Date" col="payment_date" sort={foodSort} onSort={onFoodSort} />
+                      <SortableHeader label="Truck" col="truck_id" sort={foodSort} onSort={onFoodSort} />
                       <SortableHeader label="Paid By" col="paid_by" sort={foodSort} onSort={onFoodSort} />
                       <SortableHeader label="Amount" col="amount" sort={foodSort} onSort={onFoodSort} />
                       <th style={{ width: 60 }}>✓</th>
@@ -1045,6 +1099,11 @@ export default function DriverDetailPage() {
                       {sortedFoodPayments.map(fp => (
                         <tr key={fp.id}>
                           <td style={{ fontSize: 12 }}>{fmtDate(fp.payment_date)}</td>
+                          <td style={{ fontSize: 12 }}>
+                            {fp.truck_id
+                              ? (truckReg(fp.truck_id) || `#${fp.truck_id}`)
+                              : <span style={{ color: 'var(--warning, #d97706)' }} title="Not linked to a truck — shows under every truck this driver is linked to. Edit to fix.">Unassigned</span>}
+                          </td>
                           <td style={{ fontSize: 12 }}>{fp.paid_by || '—'}</td>
                           <td style={{
                             fontSize: 12,
@@ -1242,13 +1301,14 @@ export default function DriverDetailPage() {
       {fpModal !== null && (
         <FoodPaymentModal
           entry={fpModal.id ? fpModal : null}
+          trucks={trucks}
           onClose={() => setFpModal(null)}
           onSave={async (data) => {
             try {
               if (fpModal.id) await api.put(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${fpModal.id}`, data)
               else await api.post(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments`, data)
               loadCycle(); setFpModal(null); toast.success('Saved')
-            } catch { toast.error('Save failed') }
+            } catch (e) { toast.error(errorMessage(e, 'Save failed')) }
           }}
         />
       )}

@@ -1259,6 +1259,8 @@ class DriverFoodPaymentUpdate(BaseModel):
     paid_by: Optional[str] = None
     is_verified: Optional[bool] = None
     notes: Optional[str] = None
+    # Re-attribute to another truck (also how a legacy truck-less row gets fixed).
+    truck_id: Optional[int] = None
 
 
 class DriverFoodPaymentOut(DriverFoodPaymentCreate):

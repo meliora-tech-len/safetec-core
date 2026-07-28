@@ -653,6 +653,81 @@ def remove_truck_assignment(
     return {"detail": "Assignment removed"}
 
 
+@router.get("/{driver_id}/trucks")
+def list_driver_trucks(
+    driver_id: int,
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Trucks this driver is linked to — the picker behind "which truck does this
+    food allowance belong to". Mirrors the linkage the truck Food Allowance tab
+    reads back (fleet.list_truck_food_payments): assigned truck, casual truck
+    assignments, and any truck the driver is named on a load (or split-load line)
+    for. When year/month are given, loads are narrowed to that month first; the
+    remaining linked trucks still follow, then the rest of the entity's fleet, so
+    the user is never stuck without a choice.
+    """
+    driver = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    _check_access(driver.entity_id, current_user)
+
+    order: List[int] = []
+    source: dict = {}
+
+    def add(truck_id, label):
+        if truck_id and truck_id not in source:
+            source[truck_id] = label
+            order.append(truck_id)
+
+    add(driver.truck_id, "Assigned truck")
+    for a in driver.casual_assignments:
+        add(a.truck_id, "Assigned (casual)")
+
+    def load_truck_ids(period: bool):
+        q = (
+            db.query(TruckLoad.truck_id)
+            .outerjoin(TruckLoadDriverSplit, TruckLoadDriverSplit.truck_load_id == TruckLoad.id)
+            .filter(
+                TruckLoad.truck_id.isnot(None),
+                or_(TruckLoad.driver_id == driver_id, TruckLoadDriverSplit.driver_id == driver_id),
+            )
+        )
+        if period:
+            last_num = calendar.monthrange(year, month)[1]
+            q = q.filter(
+                TruckLoad.load_date >= datetime(year, month, 1, tzinfo=timezone.utc),
+                TruckLoad.load_date <= datetime(year, month, last_num, 23, 59, 59, tzinfo=timezone.utc),
+            )
+        return [tid for (tid,) in q.distinct().all()]
+
+    if year and month:
+        for tid in load_truck_ids(period=True):
+            add(tid, f"Loads in {calendar.month_abbr[month]} {year}")
+    for tid in load_truck_ids(period=False):
+        add(tid, "Previously driven")
+
+    trucks = {t.id: t for t in db.query(Truck).filter(Truck.id.in_(order)).all()} if order else {}
+    result = [
+        {"id": tid, "registration": trucks[tid].registration,
+         "fleet_number": trucks[tid].fleet_number, "source": source[tid]}
+        for tid in order if tid in trucks
+    ]
+
+    # Everything else in the driver's entity, so an unlinked truck can still be picked.
+    rest_q = db.query(Truck).filter(Truck.entity_id == driver.entity_id)
+    if order:
+        rest_q = rest_q.filter(~Truck.id.in_(order))
+    rest = rest_q.order_by(Truck.registration).all()
+    result += [
+        {"id": t.id, "registration": t.registration, "fleet_number": t.fleet_number, "source": "Other truck"}
+        for t in rest
+    ]
+    return result
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Pay cycles
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1074,13 +1149,17 @@ def add_food_payment(
     _check_access(driver.entity_id, current_user)
     cycle = _get_or_create_cycle(driver_id, year, month, db)
     data = payload.model_dump()
-    # Attribute the payment to a truck so it shows under exactly one truck's Food
-    # Allowance tab. The truck-profile tab sends truck_id explicitly; the driver
-    # payslip page doesn't, so default to the driver's assigned truck. Without this
-    # the row is truck-less and the legacy fallback leaks it onto every truck the
-    # (casual) driver is merely named on a load for.
-    if data.get("truck_id") is None and driver.truck_id is not None:
+    # Every payment must be attributed to a truck so it shows under exactly one
+    # truck's Food Allowance tab. The truck-profile tab sends truck_id explicitly;
+    # the driver payslip page asks the user to pick one. A truck-less row falls
+    # through to the legacy fallback and leaks onto every truck the (casual) driver
+    # is merely named on a load for — the duplicate-entry bug — so refuse it.
+    if data.get("truck_id") is None:
         data["truck_id"] = driver.truck_id
+    if data.get("truck_id") is None:
+        raise HTTPException(status_code=400, detail="Select the truck this food allowance belongs to")
+    if not db.query(Truck.id).filter(Truck.id == data["truck_id"]).first():
+        raise HTTPException(status_code=404, detail="Truck not found")
     entry = DriverFoodPayment(pay_cycle_id=cycle.id, **data)
     db.add(entry)
     db.flush()

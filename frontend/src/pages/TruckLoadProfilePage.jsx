@@ -1577,6 +1577,9 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
         amount,
         notes: editForm.notes.trim(),
       }
+      // Legacy rows have no truck and therefore show under every truck the driver is
+      // linked to. Editing one here claims it for this truck, so the duplicates clear.
+      if (entry.truck_id == null) payload.truck_id = truck.id
     }
     setEditSaving(true)
     try {
