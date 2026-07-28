@@ -1630,3 +1630,45 @@ class ReportExclusion(Base):
     __table_args__ = (
         UniqueConstraint('record_type', 'record_id', name='uq_report_exclusion_record'),
     )
+
+
+class ProfitSheetReportRow(Base):
+    """User edits to one line of the monthly Profit Sheet report.
+
+    Every figure on that report auto-fills from live data (loads, diesel fill-ups,
+    the per-truck Profit Sheet), so this table stores ONLY the corrections: a NULL
+    column means "keep using the calculated value". That way fixing a load or an
+    invoice afterwards still flows through, and only what she deliberately typed
+    over stays fixed.
+
+    `truck_id` NULL = a free-text line she added by hand (the source spreadsheet
+    carries a couple of unattributed profit lines at the bottom).
+    """
+    __tablename__ = "profit_sheet_report_rows"
+
+    id          = Column(Integer, primary_key=True)
+    entity_id   = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    year        = Column(Integer, nullable=False)
+    month       = Column(Integer, nullable=False)
+    truck_id    = Column(Integer, ForeignKey("trucks.id", ondelete="CASCADE"), nullable=True)
+    sort_order  = Column(Integer, default=0)
+
+    reg_no_override           = Column(String(50))
+    driver_override           = Column(String(200))
+    diesel_override           = Column(Numeric(14, 2))
+    diesel_avg_override       = Column(Numeric(14, 2))
+    loads_override            = Column(Numeric(10, 2))
+    profit_override           = Column(Numeric(14, 2))
+    sand_loads_incl_vat       = Column(Numeric(14, 2))
+    profit_excl_sand_override = Column(Numeric(14, 2))
+    notes                     = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    entity = relationship("BusinessEntity")
+    truck  = relationship("Truck")
+
+    __table_args__ = (
+        UniqueConstraint('entity_id', 'year', 'month', 'truck_id', name='uq_profit_sheet_report_row'),
+    )

@@ -697,29 +697,47 @@ def get_dashboard_summary(
 
 # ── List invoices by vehicle reg + month/year (for Profit Sheet) ─────────────
 
-@router.get("/by-vehicle")
-def list_invoices_by_vehicle(
-    vehicle_reg: str = Query(...),
-    month: int = Query(...),
-    year: int = Query(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    target = vehicle_reg.strip().upper()
+def invoices_by_vehicle_regs(db: Session, regs, month: int, year: int) -> dict:
+    """Supplier-invoice expense lines attributable to each of `regs` for one
+    costing period, keyed by upper-case reg.
 
-    # Resolve the truck to determine its entity (for the Safetec cash-timing
-    # exemption) and id (for the sent-costing roll-forward) — same period
-    # rules Costing uses, so an invoice shows up in the same month on both.
-    truck = (
+    This is the batched core of GET /by-vehicle. The Profit Sheet report needs
+    the same figure for a whole fleet at once, and calling the single-reg path
+    per truck meant one heavy query each — but a second implementation would be
+    free to drift from the one the truck's own Profit Sheet tab shows, and these
+    two must always agree. So there is one implementation and the endpoint below
+    is a one-reg call into it.
+    """
+    targets = [r.strip().upper() for r in regs if r and r.strip()]
+    if not targets:
+        return {}
+    target_set = set(targets)
+
+    # Resolve each reg to its truck — needed for the entity (the Safetec
+    # cash-timing exemption) and the id (the sent-costing roll-forward), the
+    # same period rules Costing uses so an invoice lands in the same month on
+    # both. A temp plate resolves to the same truck as its real one.
+    trucks = (
         db.query(Truck)
-        .filter(or_(Truck.registration.ilike(target), Truck.temp_registration.ilike(target)))
-        .first()
+        .filter(or_(
+            func.upper(Truck.registration).in_(target_set),
+            func.upper(Truck.temp_registration).in_(target_set),
+        ))
+        .all()
     )
-    is_safetec = False
-    if truck:
-        entity = db.query(BusinessEntity).filter(BusinessEntity.id == truck.entity_id).first()
-        is_safetec = bool(entity and (entity.code or "").upper() == "SFT")
-    sent_map = build_sent_map(db, [truck.id] if truck else [])
+    truck_by_reg: dict = {}
+    for t in trucks:
+        for reg in (t.registration, t.temp_registration):
+            key = (reg or "").strip().upper()
+            if key in target_set:
+                truck_by_reg.setdefault(key, t)
+
+    safetec_ids = {
+        e.id for e in db.query(BusinessEntity).filter(
+            func.upper(BusinessEntity.code) == "SFT"
+        ).all()
+    }
+    sent_map = build_sent_map(db, [t.id for t in trucks])
 
     # Candidate window: statement periods from 3 months back (natural periods
     # that may have rolled forward through consecutive sent months into this
@@ -737,9 +755,9 @@ def list_invoices_by_vehicle(
             SupplierInvoice.is_archived != True,
             stmt_idx.between(period_idx - 3, period_idx + 1),
             or_(
-                SupplierInvoice.vehicle_reg.ilike(vehicle_reg),
+                func.upper(SupplierInvoice.vehicle_reg).in_(target_set),
                 SupplierInvoice.line_items.any(
-                    SupplierInvoiceLineItem.unit.ilike(vehicle_reg)
+                    func.upper(SupplierInvoiceLineItem.unit).in_(target_set)
                 ),
             ),
         )
@@ -747,7 +765,8 @@ def list_invoices_by_vehicle(
         .all()
     )
 
-    def _in_period(inv: SupplierInvoice) -> bool:
+    def _in_period(inv: SupplierInvoice, truck) -> bool:
+        is_safetec = bool(truck and truck.entity_id in safetec_ids)
         natural = natural_invoice_period(inv, is_safetec)
         if natural is None:
             return False
@@ -755,10 +774,8 @@ def list_invoices_by_vehicle(
             return natural == (year, month)
         return roll_past_sent(natural, truck.id, inv.created_at, sent_map) == (year, month)
 
-    invoices = [inv for inv in candidates if _in_period(inv)]
-
-    def _amount_for_truck(inv: SupplierInvoice) -> float:
-        """Incl-VAT amount of this invoice attributable to the requested reg.
+    def _amount_for_reg(inv: SupplierInvoice, target: str) -> float:
+        """Incl-VAT amount of this invoice attributable to one reg.
 
         Multi-line/split invoices with per-sub-line regs contribute only the
         sub-lines matching this truck; everything else contributes its full total.
@@ -774,22 +791,44 @@ def list_invoices_by_vehicle(
                 ))
         return float(inv.amount)
 
-    result = []
-    for inv in invoices:
-        amount = _amount_for_truck(inv)
-        if amount == 0:
-            continue
-        result.append({
-            "id": inv.id,
-            "supplier_name": inv.supplier.name if inv.supplier else None,
-            "invoice_number": inv.invoice_number,
-            "invoice_date": str(inv.invoice_date) if inv.invoice_date else None,
-            "amount": amount,
-            "vat_applicable": inv.vat_applicable,
-            "is_diesel_supplier": bool(inv.supplier.is_diesel_supplier) if inv.supplier else False,
-            "description": inv.description,
-        })
+    result = {t: [] for t in target_set}
+    for inv in candidates:
+        # Only the regs this invoice actually names — its own vehicle_reg plus
+        # any sub-line regs — are considered, so a fleet-wide call attributes
+        # each invoice exactly where the single-reg call would have.
+        # Uppercased but NOT trimmed, matching the SQL filter above exactly, so a
+        # reg with stray whitespace is skipped here just as it is in the query.
+        touched = {(inv.vehicle_reg or "").upper()}
+        touched |= {(li.unit or "").upper() for li in (inv.line_items or [])}
+        for target in touched & target_set:
+            if not _in_period(inv, truck_by_reg.get(target)):
+                continue
+            amount = _amount_for_reg(inv, target)
+            if amount == 0:
+                continue
+            result[target].append({
+                "id": inv.id,
+                "supplier_name": inv.supplier.name if inv.supplier else None,
+                "invoice_number": inv.invoice_number,
+                "invoice_date": str(inv.invoice_date) if inv.invoice_date else None,
+                "amount": amount,
+                "vat_applicable": inv.vat_applicable,
+                "is_diesel_supplier": bool(inv.supplier.is_diesel_supplier) if inv.supplier else False,
+                "description": inv.description,
+            })
     return result
+
+
+@router.get("/by-vehicle")
+def list_invoices_by_vehicle(
+    vehicle_reg: str = Query(...),
+    month: int = Query(...),
+    year: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    target = vehicle_reg.strip().upper()
+    return invoices_by_vehicle_regs(db, [target], month, year).get(target, [])
 
 
 # ── List invoices grouped by statement ───────────────────────────────────────

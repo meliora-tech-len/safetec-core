@@ -2593,3 +2593,56 @@ class ReportExclusionCreate(BaseModel):
     record_type: str          # 'invoice' | 'supplier_invoice'
     record_id: int
     reason: Optional[str] = None
+
+
+# ── Profit Sheet report ───────────────────────────────────────────────────────
+
+class ProfitSheetReportOverrides(BaseModel):
+    """What the user typed over on one report line. Every field is optional —
+    NULL means "keep the calculated figure", so corrections upstream still flow
+    through to the untouched columns."""
+    reg_no: Optional[str] = None
+    driver: Optional[str] = None
+    diesel: Optional[Decimal] = None
+    diesel_avg_per_load: Optional[Decimal] = None
+    loads: Optional[Decimal] = None
+    profit: Optional[Decimal] = None
+    sand_loads_incl_vat: Optional[Decimal] = None
+    profit_excl_sand: Optional[Decimal] = None
+
+
+class ProfitSheetReportAuto(BaseModel):
+    """The calculated figures behind a line, always sent so the UI can show them
+    as placeholders and revert an override back to them."""
+    reg_no: Optional[str] = None
+    driver: Optional[str] = None
+    diesel: Decimal = Decimal("0")
+    loads: Decimal = Decimal("0")
+    profit: Decimal = Decimal("0")
+
+
+class ProfitSheetReportRowOut(BaseModel):
+    truck_id: Optional[int] = None
+    sort_order: int = 0
+    is_custom: bool = False        # hand-added line, not backed by a truck
+    notes: Optional[str] = None
+    auto: ProfitSheetReportAuto
+    overrides: ProfitSheetReportOverrides
+
+
+class ProfitSheetReportOut(BaseModel):
+    entity_id: int
+    year: int
+    month: int
+    rows: List[ProfitSheetReportRowOut]
+
+
+class ProfitSheetReportRowIn(BaseModel):
+    truck_id: Optional[int] = None
+    sort_order: int = 0
+    notes: Optional[str] = None
+    overrides: ProfitSheetReportOverrides = ProfitSheetReportOverrides()
+
+
+class ProfitSheetReportSave(BaseModel):
+    rows: List[ProfitSheetReportRowIn]

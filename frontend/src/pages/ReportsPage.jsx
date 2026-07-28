@@ -7,6 +7,7 @@ import {
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
   getSubcontractorLoadsReport, getPoLoadReconciliationReport, lookupPoLoadSlip,
   createReportExclusion, deleteReportExclusion,
+  getProfitSheetReport, saveProfitSheetReport,
 } from '../services/api'
 import { errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
@@ -23,6 +24,7 @@ const fmtN = (n, d = 2) => Number(n || 0).toFixed(d)
 
 const TABS = [
   { key: 'income',   label: 'Income vs Expenses' },
+  { key: 'profit',   label: 'Profit Sheet' },
   { key: 'subloads', label: 'Subcontractor Loads' },
   { key: 'poloads',  label: 'Invoiced PO vs Loads' },
   { key: 'truck',    label: 'Diesel by Truck' },
@@ -31,6 +33,48 @@ const TABS = [
 ]
 
 const fmtT = (n) => `${Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`
+
+// ── Profit Sheet value resolution ─────────────────────────────────────────────
+// One line carries both the calculated figure (`auto`) and whatever the user
+// typed over it (`overrides`). The override wins when it holds anything; an
+// emptied input falls straight back to the calculated figure. The two derived
+// columns are computed from the RESOLVED values rather than stored, so they stay
+// correct while she is still typing in the columns they depend on.
+const psBlank = (v) => v === null || v === undefined || v === ''
+const psNum   = (v) => (psBlank(v) ? 0 : Number(v) || 0)
+
+const psValue = (r, key) => {
+  const ov = r.overrides || {}, auto = r.auto || {}
+  switch (key) {
+    case 'reg_no': return psBlank(ov.reg_no) ? (auto.reg_no || '') : ov.reg_no
+    case 'driver': return psBlank(ov.driver) ? (auto.driver || '') : ov.driver
+    case 'diesel': return psBlank(ov.diesel) ? psNum(auto.diesel) : psNum(ov.diesel)
+    case 'loads':  return psBlank(ov.loads)  ? psNum(auto.loads)  : psNum(ov.loads)
+    case 'profit': return psBlank(ov.profit) ? psNum(auto.profit) : psNum(ov.profit)
+    case 'sand':   return psNum(ov.sand_loads_incl_vat)
+    case 'diesel_avg': {
+      if (!psBlank(ov.diesel_avg_per_load)) return psNum(ov.diesel_avg_per_load)
+      const loads = psValue(r, 'loads')
+      return loads ? psValue(r, 'diesel') / loads : 0
+    }
+    case 'profit_ex_sand': {
+      if (!psBlank(ov.profit_excl_sand)) return psNum(ov.profit_excl_sand)
+      return psValue(r, 'profit') - psValue(r, 'sand')
+    }
+    default: return ''
+  }
+}
+
+const psTotals = (rows) => rows.reduce((a, r) => ({
+  diesel:         a.diesel + psValue(r, 'diesel'),
+  loads:          a.loads + psValue(r, 'loads'),
+  profit:         a.profit + psValue(r, 'profit'),
+  sand:           a.sand + psValue(r, 'sand'),
+  profit_ex_sand: a.profit_ex_sand + psValue(r, 'profit_ex_sand'),
+}), { diesel: 0, loads: 0, profit: 0, sand: 0, profit_ex_sand: 0 })
+
+const PS_HEADERS = ['Reg No', 'Driver', 'Diesel', 'Diesel Average P/L', 'Loads on Truck',
+                    'Profit', 'Sand Loads (Incl VAT)', 'Profit Excl Sand', 'Notes']
 
 const thisYear = new Date().getFullYear()
 const thisMonth = new Date().getMonth() + 1
@@ -50,6 +94,13 @@ export default function ReportsPage() {
   const [detailData, setDetailData]   = useState(null)
   const [subData, setSubData]         = useState(null)
   const [poData, setPoData]           = useState(null)
+
+  // Profit Sheet is the one editable report — its rows live here (not in the
+  // child) so the export handlers write exactly what is on screen, unsaved
+  // edits included.
+  const [profitRows, setProfitRows]   = useState(null)
+  const [profitDirty, setProfitDirty] = useState(false)
+  const [profitSaving, setProfitSaving] = useState(false)
 
   // Which month's drill-down is open — needed to refetch it after an exclusion.
   const detailMonthRef = useRef(null)
@@ -99,10 +150,15 @@ export default function ReportsPage() {
     setDetailData(null)
     setSubData(null)
     setPoData(null)
+    setProfitRows(null)
+    setProfitDirty(false)
     try {
       if (tab === 'income') {
         const res = await getIncomeExpensesReport({ entity_id: entityId, year })
         setIncomeData(res.data)
+      } else if (tab === 'profit') {
+        const res = await getProfitSheetReport({ entity_id: entityId, year, month })
+        setProfitRows(res.data.rows.map(r => ({ ...r, key: r.truck_id ?? `custom-${crypto.randomUUID()}` })))
       } else if (tab === 'subloads') {
         const res = await getSubcontractorLoadsReport({ entity_id: entityId, year, month })
         setSubData(res.data)
@@ -835,7 +891,141 @@ export default function ReportsPage() {
     doc.save(`invoiced-po-vs-loads-${year}-${String(month).padStart(2, '0')}.pdf`)
   }
 
+  // ── Profit Sheet: edit / save / export ──────────────────────────────────────
+  const updateProfitRow = useCallback((key, patch) => {
+    setProfitRows(rows => rows.map(r => r.key === key
+      ? { ...r, ...patch, overrides: { ...r.overrides, ...(patch.overrides || {}) } }
+      : r))
+    setProfitDirty(true)
+  }, [])
+
+  const addProfitRow = useCallback(() => {
+    setProfitRows(rows => [...(rows || []), {
+      key: `custom-${crypto.randomUUID()}`, truck_id: null, is_custom: true,
+      sort_order: (rows?.length ?? 0) + 1000, notes: '',
+      auto: {}, overrides: {},
+    }])
+    setProfitDirty(true)
+  }, [])
+
+  const removeProfitRow = useCallback((key) => {
+    setProfitRows(rows => rows.filter(r => r.key !== key))
+    setProfitDirty(true)
+  }, [])
+
+  const saveProfitSheet = useCallback(async () => {
+    if (!profitRows || !entityId) return
+    setProfitSaving(true)
+    try {
+      const payload = {
+        rows: profitRows.map((r, i) => ({
+          truck_id: r.truck_id ?? null,
+          sort_order: i,
+          notes: r.notes || null,
+          // Blank inputs are sent as null so the server drops the override and
+          // the column goes back to tracking the calculated figure.
+          overrides: Object.fromEntries(
+            Object.entries(r.overrides || {}).map(([k, v]) => [k, psBlank(v) ? null : v])
+          ),
+        })),
+      }
+      const res = await saveProfitSheetReport({ entity_id: entityId, year, month }, payload)
+      setProfitRows(res.data.rows.map(r => ({ ...r, key: r.truck_id ?? `custom-${crypto.randomUUID()}` })))
+      setProfitDirty(false)
+      toast.success('Profit sheet report saved')
+    } catch (err) {
+      toast.error(errorMessage(err, 'Failed to save the report'))
+    } finally {
+      setProfitSaving(false)
+    }
+  }, [profitRows, entityId, year, month])
+
+  const profitTitle = `Profit Sheet — ${MONTHS[month - 1]} ${year}`
+  const profitSlug  = `profit-sheet-${year}-${String(month).padStart(2, '0')}`
+
+  const handleProfitExportExcel = () => {
+    if (!profitRows?.length) return
+    setShowExportMenu(false)
+    const t   = psTotals(profitRows)
+    const now = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' })
+    const ws  = XLSX.utils.aoa_to_sheet([
+      [profitTitle], [`Generated: ${now}`], [],
+      PS_HEADERS,
+      ...profitRows.map(r => [
+        psValue(r, 'reg_no'), psValue(r, 'driver'),
+        psValue(r, 'diesel'), psValue(r, 'diesel_avg'), psValue(r, 'loads'),
+        psValue(r, 'profit'), psValue(r, 'sand'), psValue(r, 'profit_ex_sand'),
+        r.notes || '',
+      ]),
+      [],
+      ['TOTAL', '', t.diesel, '', t.loads, t.profit, t.sand, t.profit_ex_sand, ''],
+    ])
+    ws['!cols'] = [{ wch: 12 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 15 },
+                   { wch: 16 }, { wch: 20 }, { wch: 18 }, { wch: 70 }]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Profit Sheet')
+    XLSX.writeFile(wb, `${profitSlug}.xlsx`)
+  }
+
+  const handleProfitExportPdf = () => {
+    if (!profitRows?.length) return
+    setShowExportMenu(false)
+    const t   = psTotals(profitRows)
+    const now = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+
+    doc.setFontSize(15); doc.setFont('helvetica', 'bold')
+    doc.text(profitTitle, 14, 15)
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(120)
+    doc.text(`Generated ${now}`, 14, 21)
+    doc.setTextColor(0)
+
+    autoTable(doc, {
+      head: [PS_HEADERS],
+      body: [
+        ...profitRows.map(r => [
+          psValue(r, 'reg_no'), psValue(r, 'driver'),
+          fmtN(psValue(r, 'diesel')), fmtN(psValue(r, 'diesel_avg')),
+          String(psValue(r, 'loads')),
+          fmtN(psValue(r, 'profit')),
+          psValue(r, 'sand') ? fmtN(psValue(r, 'sand')) : '',
+          fmtN(psValue(r, 'profit_ex_sand')),
+          r.notes || '',
+        ]),
+        ['TOTAL', '', fmtN(t.diesel), '', String(t.loads), fmtN(t.profit), fmtN(t.sand), fmtN(t.profit_ex_sand), ''],
+      ],
+      startY: 26,
+      styles: { fontSize: 7, cellPadding: 1.6, overflow: 'linebreak' },
+      headStyles: { fillColor: [71, 85, 105], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+      columnStyles: {
+        0: { cellWidth: 20, fontStyle: 'bold' }, 1: { cellWidth: 24 },
+        2: { cellWidth: 22, halign: 'right' }, 3: { cellWidth: 24, halign: 'right' },
+        4: { cellWidth: 18, halign: 'center' }, 5: { cellWidth: 24, halign: 'right' },
+        6: { cellWidth: 24, halign: 'right' },
+        7: { cellWidth: 24, halign: 'right', fontStyle: 'bold', fillColor: [255, 249, 196] },
+        8: { cellWidth: 'auto' },
+      },
+      didParseCell: (d) => {
+        if (d.section !== 'body') return
+        const row = profitRows[d.row.index]
+        if (!row) {                       // the TOTAL row
+          d.cell.styles.fontStyle = 'bold'
+          d.cell.styles.fillColor = [235, 235, 235]
+          return
+        }
+        // A loss is called out in red, mirroring how the sheet is marked up by hand.
+        if (psValue(row, 'profit') < 0 && [0, 1, 2, 3, 4, 5, 7, 8].includes(d.column.index)) {
+          d.cell.styles.textColor = [220, 38, 38]
+        }
+      },
+      margin: { left: 14, right: 14 },
+    })
+
+    doc.save(`${profitSlug}.pdf`)
+  }
+
   const hasData = tab === 'income' ? !!incomeData
+    : tab === 'profit' ? !!profitRows?.length
     : tab === 'subloads' ? !!subData?.subcontractors?.length
     : tab === 'poloads' ? !!(poData?.pos?.length || poData?.uninvoiced?.length)
     : dieselData.length > 0
@@ -848,8 +1038,26 @@ export default function ReportsPage() {
           <p style={styles.subtitle}>Business reports and reconciliations</p>
         </div>
         <div style={{ position: 'relative' }}>
-          {tab === 'income' || tab === 'subloads' || tab === 'poloads' ? (
-            <>
+          {tab === 'income' || tab === 'profit' || tab === 'subloads' || tab === 'poloads' ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {tab === 'profit' && (
+                <>
+                  {profitDirty && <span style={{ fontSize: 12, color: '#d97706' }}>Unsaved changes</span>}
+                  <button
+                    onClick={saveProfitSheet}
+                    disabled={profitSaving || !profitDirty}
+                    style={{
+                      ...styles.btnSecondary,
+                      background: profitDirty ? 'var(--accent)' : 'var(--bg-hover)',
+                      color: profitDirty ? '#fff' : 'var(--text-primary)',
+                      borderColor: profitDirty ? 'var(--accent)' : 'var(--border)',
+                      cursor: profitSaving || !profitDirty ? 'default' : 'pointer',
+                    }}
+                  >
+                    {profitSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => setShowExportMenu(v => !v)}
                 style={styles.btnSecondary}
@@ -865,7 +1073,9 @@ export default function ReportsPage() {
                     background: 'var(--bg-card)', border: '1px solid var(--border)',
                     borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', minWidth: 180, overflow: 'hidden',
                   }}>
-                    {(tab === 'subloads'
+                    {(tab === 'profit'
+                      ? [{ label: 'Export Excel (.xlsx)', action: handleProfitExportExcel }, { label: 'Export PDF', action: handleProfitExportPdf }]
+                      : tab === 'subloads'
                       ? [{ label: 'Export Excel (.xlsx)', action: handleSubExportExcel }, { label: 'Export PDF', action: handleSubExportPdf }]
                       : tab === 'poloads'
                       ? [{ label: 'Export Excel (.xlsx)', action: handlePoExportExcel }, { label: 'Export PDF', action: handlePoExportPdf }]
@@ -887,7 +1097,7 @@ export default function ReportsPage() {
                   </div>
                 </>
               )}
-            </>
+            </div>
           ) : (
             <button onClick={exportCsv} style={styles.btnSecondary} disabled={!hasData}>
               Export
@@ -932,6 +1142,15 @@ export default function ReportsPage() {
           : incomeData
             ? <IncomeExpensesReport data={incomeData} year={year} onViewDetail={loadDetail} />
             : <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
+      ) : tab === 'profit' ? (
+        !profitRows
+          ? <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
+          : <ProfitSheetReport
+              rows={profitRows}
+              onChange={updateProfitRow}
+              onAddRow={addProfitRow}
+              onRemoveRow={removeProfitRow}
+            />
       ) : tab === 'subloads' ? (
         !subData
           ? <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
@@ -957,6 +1176,161 @@ export default function ReportsPage() {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Profit Sheet (editable) ───────────────────────────────────────────────────
+// Every cell is an input pre-filled with the calculated figure. Overtyping one
+// stores an override; clearing it hands the cell back to the calculation, which
+// is why the blur handler normalises an empty string to null rather than to 0.
+function ProfitSheetReport({ rows, onChange, onAddRow, onRemoveRow }) {
+  const totals = psTotals(rows)
+
+  const setOverride = (r, field, value) => onChange(r.key, { overrides: { [field]: value } })
+
+  // `null`/`undefined` means untouched → show the calculated figure. An empty
+  // string means she is mid-edit and cleared it → leave it empty until blur.
+  const shown = (r, field, autoText) => {
+    const ov = r.overrides?.[field]
+    return ov === null || ov === undefined ? autoText : ov
+  }
+
+  // Called as a plain function, NOT rendered as <Cell/> — a component declared
+  // inside the render would get a fresh identity every keystroke, remounting the
+  // input and dropping focus after a single character.
+  const cell = ({ r, field, autoText, type = 'number', align = 'right', tint, bold }) => {
+    const overridden = !psBlank(r.overrides?.[field])
+    return (
+      <input
+        type={type}
+        step={type === 'number' ? '0.01' : undefined}
+        value={shown(r, field, autoText)}
+        onChange={e => setOverride(r, field, e.target.value)}
+        onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+        onBlur={e => {
+          e.target.style.borderColor = 'transparent'
+          if (e.target.value === '') setOverride(r, field, null)
+        }}
+        style={{
+          width: '100%', minWidth: type === 'number' ? 86 : 96,
+          padding: '5px 7px', fontSize: 12.5, textAlign: align,
+          fontWeight: bold ? 700 : 500,
+          color: 'var(--text-primary)',
+          background: overridden ? 'rgba(234,179,8,0.14)' : (tint || 'transparent'),
+          border: '1px solid transparent', borderRadius: 4, outline: 'none',
+        }}
+        title={overridden ? `Edited — clear the cell to go back to ${autoText || '—'}` : undefined}
+      />
+    )
+  }
+
+  return (
+    <div style={styles.card}>
+      <div style={{ ...styles.reconNote, background: 'rgba(59,130,246,0.08)', borderBottom: '1px solid rgba(59,130,246,0.25)', color: 'var(--text-secondary)', fontWeight: 500 }}>
+        Every cell is editable. Figures fill in from loads, diesel and each truck's Profit Sheet —
+        type over any of them to correct it, or clear a cell to go back to the calculated value.
+        Edited cells are highlighted. Remember to Save before you leave the page.
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ ...styles.table, minWidth: 1180 }}>
+          <thead>
+            <tr>
+              {PS_HEADERS.map(h => (
+                <th key={h} style={{ ...styles.th, whiteSpace: 'nowrap' }}>{h}</th>
+              ))}
+              <th style={{ ...styles.th, width: 34 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const loss = psValue(r, 'profit') < 0
+              return (
+                <tr key={r.key} style={{ ...styles.row, ...(loss ? { background: 'rgba(220,38,38,0.05)' } : {}) }}>
+                  <td style={{ ...styles.td, padding: 4 }}>
+                    {cell({ r, field: 'reg_no', autoText: r.auto?.reg_no || '', type: 'text', align: 'left', bold: true })}
+                  </td>
+                  <td style={{ ...styles.td, padding: 4 }}>
+                    {cell({ r, field: 'driver', autoText: r.auto?.driver || '', type: 'text', align: 'left' })}
+                  </td>
+                  <td style={{ ...styles.td, padding: 4 }}>
+                    {cell({ r, field: 'diesel', autoText: fmtN(r.auto?.diesel) })}
+                  </td>
+                  <td style={{ ...styles.td, padding: 4 }}>
+                    {/* Derived: diesel ÷ loads, unless she pins it by hand. */}
+                    {cell({ r, field: 'diesel_avg_per_load', autoText: fmtN(psValue(r, 'diesel_avg')) })}
+                  </td>
+                  <td style={{ ...styles.td, padding: 4 }}>
+                    {cell({ r, field: 'loads', autoText: String(psNum(r.auto?.loads)), align: 'center' })}
+                  </td>
+                  <td style={{ ...styles.td, padding: 4 }}>
+                    {cell({ r, field: 'profit', autoText: fmtN(r.auto?.profit), bold: true })}
+                  </td>
+                  <td style={{ ...styles.td, padding: 4 }}>
+                    {/* No calculated source — sand loads are captured by hand. */}
+                    {cell({ r, field: 'sand_loads_incl_vat', autoText: '' })}
+                  </td>
+                  <td style={{ ...styles.td, padding: 4 }}>
+                    {/* Derived: profit − sand loads, unless she pins it by hand. */}
+                    {cell({ r, field: 'profit_excl_sand', autoText: fmtN(psValue(r, 'profit_ex_sand')),
+                            tint: 'rgba(250,204,21,0.18)', bold: true })}
+                  </td>
+                  <td style={{ ...styles.td, padding: 4, minWidth: 260 }}>
+                    <input
+                      type="text"
+                      value={r.notes ?? ''}
+                      onChange={e => onChange(r.key, { notes: e.target.value })}
+                      placeholder="Notes"
+                      style={{
+                        width: '100%', minWidth: 240, padding: '5px 7px', fontSize: 12.5,
+                        color: 'var(--text-secondary)', background: 'transparent',
+                        border: '1px solid transparent', borderRadius: 4, outline: 'none',
+                      }}
+                      onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+                      onBlur={e => { e.target.style.borderColor = 'transparent' }}
+                    />
+                  </td>
+                  <td style={{ ...styles.td, padding: 4, textAlign: 'center' }}>
+                    {/* Only hand-added lines can be removed — a truck line would
+                        just come back on the next load, since it is calculated. */}
+                    {r.is_custom && (
+                      <button
+                        onClick={() => onRemoveRow(r.key)}
+                        title="Remove this line"
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: 'var(--text-muted)', fontSize: 16, lineHeight: 1, padding: 2,
+                        }}
+                      >×</button>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+            <tr style={styles.totalRow}>
+              <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
+              <td style={styles.td} />
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.diesel)}</td>
+              <td style={styles.td} />
+              <td style={{ ...styles.td, textAlign: 'center', fontWeight: 700 }}>{totals.loads}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, color: totals.profit < 0 ? 'var(--danger)' : '#16a34a' }}>
+                {fmtR(totals.profit)}
+              </td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtR(totals.sand)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, background: 'rgba(250,204,21,0.18)', color: totals.profit_ex_sand < 0 ? 'var(--danger)' : '#16a34a' }}>
+                {fmtR(totals.profit_ex_sand)}
+              </td>
+              <td style={styles.td} />
+              <td style={styles.td} />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+        <button onClick={onAddRow} style={{ ...styles.btnSecondary, padding: '6px 12px', fontSize: 12 }}>
+          + Add line
+        </button>
+      </div>
     </div>
   )
 }

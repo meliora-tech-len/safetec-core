@@ -1,7 +1,7 @@
 import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, and_
 from typing import Optional
 
 from app.db.database import get_db
@@ -10,10 +10,13 @@ from app.models.models import (
     User, TruckLoad, DieselFillUp, SupplierInvoice, SupplierInvoiceLineItem,
     DriverPayCycle, Driver, PayrollSettings, PayrollEntry, Supplier, PaymentTermType,
     Invoice, InvoiceLineItem, Customer, DocumentType, InvoiceStatus, BusinessEntity,
-    Truck, Subcontractor, ReportExclusion,
+    Truck, Subcontractor, ReportExclusion, TruckMonthlyExpenses, ProfitSheetReportRow,
 )
 from app.services.audit import log_action
-from app.schemas.schemas import ReportExclusionCreate
+from app.schemas.schemas import (
+    ReportExclusionCreate, ProfitSheetReportSave, ProfitSheetReportOut,
+    ProfitSheetReportRowOut, ProfitSheetReportAuto, ProfitSheetReportOverrides,
+)
 from app.services.payroll_calculator import calculate_pay_cycle
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -1403,3 +1406,286 @@ def po_load_slip_lookup(
         })
 
     return {'slip': slip.strip(), 'invoiced': invoiced, 'loads': loads}
+
+
+# ── Profit Sheet report ───────────────────────────────────────────────────────
+
+# Legacy named expense columns on truck_monthly_expenses. New profit sheets keep
+# everything in custom_lines with these left NULL, but older rows still carry
+# amounts here, so both are summed — skipping any column whose label a custom
+# line already repeats, which is exactly what the profit sheet UI does.
+_PROFIT_SHEET_EXPENSE_COLUMNS = [
+    ('drivers_salary',       "Driver's Salary"),
+    ('insurance_trailer',    'Insurance Trailer'),
+    ('liability_3rd_party',  '3rd Party Liability'),
+    ('goods_in_transit',     'Goods in Transit'),
+    ('loss_of_use',          'Loss of Use'),
+    ('personal_accident',    'Personal Accident'),
+    ('communication_device', 'Communication Device'),
+    ('sauma',                'SASRIA'),
+    ('diesel',               'Diesel'),
+    ('tyre_maintenance',     'Tyre Maintenance'),
+    ('other_suppliers',      'Other Suppliers'),
+]
+
+
+def _profit_sheet_net_profit(sheet, loads_incl: float, sub_incl: float,
+                             supplier_total: float) -> float:
+    """Net profit for one truck-month, exactly as the truck's Profit Sheet tab
+    shows it: income incl VAT − (captured expense lines + supplier invoices).
+
+    Income falls back the same way the sheet does — the manual override first,
+    then the subcontractor payout, then the truck's own invoiced income — so the
+    report and the sheet can never disagree.
+    """
+    auto_income = sub_incl if sub_incl > 0 else loads_incl
+    income = float(sheet.income_incl_vat) if (sheet and sheet.income_incl_vat is not None) else auto_income
+
+    expenses = supplier_total
+    if sheet:
+        custom = sheet.custom_lines or []
+        used = {(l.get('description') or '').strip().lower() for l in custom}
+        expenses += sum(float(l.get('amount') or 0) for l in custom)
+        for col, label in _PROFIT_SHEET_EXPENSE_COLUMNS:
+            val = getattr(sheet, col, None)
+            if val is not None and label.lower() not in used:
+                expenses += float(val)
+
+    return round(income - expenses, 2)
+
+
+@router.get("/profit-sheet", response_model=ProfitSheetReportOut)
+def profit_sheet_report(
+    entity_id: int = Query(...),
+    year: int = Query(..., ge=2020),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """One line per own-fleet truck for the month — reg, driver, diesel, diesel
+    per load, loads, profit, sand loads and profit excluding sand.
+
+    Everything is calculated from the modules that already own the data, then any
+    value the user typed over (stored in profit_sheet_report_rows) is returned
+    alongside it. The client shows the override when there is one and the
+    calculated figure otherwise, so a late correction upstream still lands here.
+
+    Loads use the statement period, falling back to the load date — the same rule
+    costing and the subcontractor report use, so the load counts reconcile.
+    """
+    _check_entity_access(entity_id, current_user)
+
+    trucks = (
+        db.query(Truck)
+        .filter(
+            Truck.entity_id == entity_id,
+            Truck.is_subcontractor == False,      # noqa: E712 — SQL boolean, not Python
+            Truck.subcontractor_id.is_(None),
+        )
+        .order_by(Truck.fleet_number, Truck.registration)
+        .all()
+    )
+    truck_ids = [t.id for t in trucks]
+
+    in_period = and_(
+        func.coalesce(TruckLoad.statement_month, func.extract('month', TruckLoad.load_date)) == month,
+        func.coalesce(TruckLoad.statement_year, func.extract('year', TruckLoad.load_date)) == year,
+    ) if truck_ids else None
+
+    load_rows = (
+        db.query(
+            TruckLoad.truck_id,
+            func.count(TruckLoad.id).label('loads'),
+            func.coalesce(func.sum(TruckLoad.amount_incl_vat), 0).label('incl'),
+            func.coalesce(func.sum(TruckLoad.subcontractor_amount_incl_vat), 0).label('sub_incl'),
+        )
+        .filter(TruckLoad.truck_id.in_(truck_ids), TruckLoad.is_archived == False, in_period)  # noqa: E712
+        .group_by(TruckLoad.truck_id)
+        .all()
+    ) if truck_ids else []
+    loads_by_truck = {r.truck_id: r for r in load_rows}
+
+    # Diesel is the grand total (fuel + admin fee) — the cost actually carried.
+    diesel_rows = (
+        db.query(
+            DieselFillUp.truck_id,
+            func.coalesce(func.sum(DieselFillUp.total_amount), 0).label('total'),
+        )
+        .filter(
+            DieselFillUp.truck_id.in_(truck_ids),
+            func.extract('year', DieselFillUp.fillup_date) == year,
+            func.extract('month', DieselFillUp.fillup_date) == month,
+        )
+        .group_by(DieselFillUp.truck_id)
+        .all()
+    ) if truck_ids else []
+    diesel_by_truck = {r.truck_id: float(r.total or 0) for r in diesel_rows}
+
+    sheets = {
+        s.truck_id: s
+        for s in db.query(TruckMonthlyExpenses).filter(
+            TruckMonthlyExpenses.truck_id.in_(truck_ids),
+            TruckMonthlyExpenses.year == year,
+            TruckMonthlyExpenses.month == month,
+        ).all()
+    } if truck_ids else {}
+
+    # Driver 1 is the truck's driver; the slot-less/second driver is ignored so
+    # the column matches the one name the source sheet carries per reg.
+    driver_rows = db.query(Driver).filter(
+        Driver.truck_id.in_(truck_ids), Driver.is_active == True,  # noqa: E712
+    ).all() if truck_ids else []
+    # Sorted in Python: NULLS LAST isn't portable across SQLite and PostgreSQL,
+    # and an unassigned slot must fall behind Driver 1 either way.
+    driver_rows.sort(key=lambda d: (d.driver_slot is None, d.driver_slot or 0, d.id))
+    drivers = {}
+    for d in driver_rows:
+        drivers.setdefault(d.truck_id, f"{d.first_name} {d.last_name}".strip())
+
+    # Supplier-invoice expenses for the whole fleet in one query — the per-reg
+    # endpoint the Profit Sheet tab calls is far too slow run 25+ times over.
+    from app.api.routes.supplier_invoices import invoices_by_vehicle_regs
+    inv_by_reg = invoices_by_vehicle_regs(
+        db, [t.registration for t in trucks if t.registration], month, year,
+    )
+    supplier_totals = {
+        reg: sum(float(i.get('amount') or 0) for i in invs)
+        for reg, invs in inv_by_reg.items()
+    }
+
+    saved = {
+        r.truck_id: r
+        for r in db.query(ProfitSheetReportRow).filter(
+            ProfitSheetReportRow.entity_id == entity_id,
+            ProfitSheetReportRow.year == year,
+            ProfitSheetReportRow.month == month,
+        ).all()
+    }
+
+    def _overrides(rec) -> ProfitSheetReportOverrides:
+        if rec is None:
+            return ProfitSheetReportOverrides()
+        return ProfitSheetReportOverrides(
+            reg_no=rec.reg_no_override,
+            driver=rec.driver_override,
+            diesel=rec.diesel_override,
+            diesel_avg_per_load=rec.diesel_avg_override,
+            loads=rec.loads_override,
+            profit=rec.profit_override,
+            sand_loads_incl_vat=rec.sand_loads_incl_vat,
+            profit_excl_sand=rec.profit_excl_sand_override,
+        )
+
+    rows: list[ProfitSheetReportRowOut] = []
+    for i, t in enumerate(trucks):
+        lr    = loads_by_truck.get(t.id)
+        sheet = sheets.get(t.id)
+        rec   = saved.get(t.id)
+        loads = int(lr.loads) if lr else 0
+        diesel = diesel_by_truck.get(t.id, 0.0)
+        supplier_total = supplier_totals.get((t.registration or '').strip().upper(), 0.0)
+
+        # A truck with nothing captured and nothing typed is not on the sheet.
+        if not lr and not diesel and not sheet and not supplier_total and rec is None:
+            continue
+
+        profit = _profit_sheet_net_profit(
+            sheet,
+            float(lr.incl or 0) if lr else 0.0,
+            float(lr.sub_incl or 0) if lr else 0.0,
+            supplier_total,
+        )
+        rows.append(ProfitSheetReportRowOut(
+            truck_id=t.id,
+            sort_order=rec.sort_order if rec and rec.sort_order is not None else i,
+            is_custom=False,
+            notes=rec.notes if rec else None,
+            auto=ProfitSheetReportAuto(
+                reg_no=t.registration,
+                driver=drivers.get(t.id) or t.driver_name,
+                diesel=round(diesel, 2),
+                loads=loads,
+                profit=profit,
+            ),
+            overrides=_overrides(rec),
+        ))
+
+    # Hand-added lines (truck_id NULL) — nothing to calculate, all typed.
+    for rec in db.query(ProfitSheetReportRow).filter(
+        ProfitSheetReportRow.entity_id == entity_id,
+        ProfitSheetReportRow.year == year,
+        ProfitSheetReportRow.month == month,
+        ProfitSheetReportRow.truck_id.is_(None),
+    ).order_by(ProfitSheetReportRow.sort_order, ProfitSheetReportRow.id).all():
+        rows.append(ProfitSheetReportRowOut(
+            truck_id=None,
+            sort_order=rec.sort_order if rec.sort_order is not None else 9999,
+            is_custom=True,
+            notes=rec.notes,
+            auto=ProfitSheetReportAuto(),
+            overrides=_overrides(rec),
+        ))
+
+    rows.sort(key=lambda r: (r.sort_order, r.auto.reg_no or ''))
+    return ProfitSheetReportOut(entity_id=entity_id, year=year, month=month, rows=rows)
+
+
+@router.put("/profit-sheet", response_model=ProfitSheetReportOut)
+def save_profit_sheet_report(
+    payload: ProfitSheetReportSave,
+    entity_id: int = Query(...),
+    year: int = Query(..., ge=2020),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Replace the period's saved edits. Only overrides are stored — a row where
+    the user typed nothing is dropped rather than written as a wall of NULLs, so
+    the report keeps tracking live data until she actually changes something."""
+    _check_entity_access(entity_id, current_user)
+
+    db.query(ProfitSheetReportRow).filter(
+        ProfitSheetReportRow.entity_id == entity_id,
+        ProfitSheetReportRow.year == year,
+        ProfitSheetReportRow.month == month,
+    ).delete(synchronize_session=False)
+
+    seen_trucks: set[int] = set()
+    kept = 0
+    for row in payload.rows:
+        o = row.overrides
+        has_value = any(v is not None and v != '' for v in (
+            o.reg_no, o.driver, o.diesel, o.diesel_avg_per_load, o.loads,
+            o.profit, o.sand_loads_incl_vat, o.profit_excl_sand, row.notes,
+        ))
+        if not has_value:
+            continue
+        if row.truck_id is not None:
+            # The unique index is per truck per period; a duplicate would be a
+            # client bug, and keeping the first is the safe reading.
+            if row.truck_id in seen_trucks:
+                continue
+            seen_trucks.add(row.truck_id)
+        db.add(ProfitSheetReportRow(
+            entity_id=entity_id, year=year, month=month,
+            truck_id=row.truck_id, sort_order=row.sort_order,
+            reg_no_override=(o.reg_no or None),
+            driver_override=(o.driver or None),
+            diesel_override=o.diesel,
+            diesel_avg_override=o.diesel_avg_per_load,
+            loads_override=o.loads,
+            profit_override=o.profit,
+            sand_loads_incl_vat=o.sand_loads_incl_vat,
+            profit_excl_sand_override=o.profit_excl_sand,
+            notes=(row.notes or None),
+        ))
+        kept += 1
+
+    log_action(
+        db, "report.profit_sheet_saved", user_id=current_user.id, entity_id=entity_id,
+        resource_type="profit_sheet_report",
+        description=f"Saved {kept} edited line(s) on the Profit Sheet report for {MONTH_NAMES[month - 1]} {year}",
+    )
+    db.commit()
+    return profit_sheet_report(entity_id=entity_id, year=year, month=month,
+                               db=db, current_user=current_user)
