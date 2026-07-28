@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Users, Plus, Search, X, Trash2, Edit2 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
@@ -23,6 +24,14 @@ const TYPE_BADGE = {
   permanent: { label: 'Permanent', cls: 'badge-paid' },
   casual:    { label: 'Casual',    cls: 'badge-quote' },
 }
+
+const MONTHS = [
+  '', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+const currentMonth = () => new Date().getMonth() + 1
+const currentYear  = () => new Date().getFullYear()
 
 const formatCurrency = (n) =>
   `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -251,6 +260,8 @@ export default function DriversPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterEntity, setFilterEntity] = useEntityFilter(urlEntityId)
   const [filterType, setFilterType]     = useState('permanent')
+  const [month, setMonth] = useSessionState('period:drivers:month', currentMonth())
+  const [year, setYear]   = useSessionState('period:drivers:year', currentYear())
   const [showInactive, setShowInactive] = useState(false)
   const [modal, setModal]       = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
@@ -269,6 +280,8 @@ export default function DriversPage() {
       if (filterEntity)      params.set('entity_id', filterEntity)
       if (filterType)        params.set('driver_type', filterType)
       if (debouncedSearch)   params.set('search', debouncedSearch)
+      params.set('month', month)
+      params.set('year', year)
       if (showInactive) params.set('is_active', 'false')
       // when showing inactive, don't filter by is_active at all — pass nothing to get all
       const isActiveParam = showInactive ? '' : 'true'
@@ -287,7 +300,7 @@ export default function DriversPage() {
     } finally {
       if (loadSeqRef.current === seq) setLoading(false)
     }
-  }, [filterEntity, filterType, debouncedSearch, showInactive])
+  }, [filterEntity, filterType, debouncedSearch, showInactive, month, year])
 
   useEffect(() => {
     let ignore = false
@@ -309,6 +322,10 @@ export default function DriversPage() {
     [drivers, sort, entities]
   )
 
+  // Labels the load/food/net-pay columns so an exported sheet says which period
+  // it covers — those figures follow the picker, not today's date.
+  const periodLabel = `${MONTHS[month]} ${year}`
+
   return (
     <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
       <div className="page-header">
@@ -321,9 +338,9 @@ export default function DriversPage() {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <ExportButton
-            title="Drivers Report"
-            filename="drivers"
-            data={drivers}
+            title={`Drivers Report — ${periodLabel}`}
+            filename={`drivers-${year}-${String(month).padStart(2, '0')}`}
+            data={sortedDrivers}
             columns={[
               { header: 'Employee #',   key: 'employee_number' },
               { header: 'First Name',   key: 'first_name' },
@@ -331,8 +348,10 @@ export default function DriversPage() {
               { header: 'Type',         key: 'driver_type' },
               { header: 'Entity',       value: r => entityCode(r.entity_id) },
               { header: 'Truck',        key: 'truck_registration' },
-              { header: 'Loads (month)',    key: 'load_count_this_month' },
-              { header: 'Payments (month)', value: r => parseFloat(r.total_payments_this_month || 0).toFixed(2) },
+              { header: 'Subcontractor', key: 'subcontractor_name' },
+              { header: `Loads (${periodLabel})`,          key: 'load_count_this_month' },
+              { header: `Food Allowance (${periodLabel})`, value: r => parseFloat(r.food_total_this_month || 0).toFixed(2) },
+              { header: `Net Pay (${periodLabel})`,        value: r => parseFloat(r.net_pay_this_month || 0).toFixed(2) },
               { header: 'Status',       value: r => r.is_active ? 'Active' : 'Inactive' },
             ]}
           />
@@ -357,6 +376,22 @@ export default function DriversPage() {
             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         )}
+        <select
+          value={month}
+          onChange={e => setMonth(Number(e.target.value))}
+          style={{ width: 'auto', minWidth: 130 }}
+          title="Period for the Loads / Food Allowance / Net Pay columns and the export"
+        >
+          {MONTHS.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+        </select>
+        <input
+          type="number"
+          value={year}
+          onChange={e => setYear(Number(e.target.value))}
+          style={{ width: 90 }}
+          min={2020}
+          max={2099}
+        />
         <div style={{ display: 'flex', background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 3, gap: 2 }}>
           {[['permanent', 'Permanent'], ['casual', 'Casual']].map(([val, label]) => (
             <button
@@ -401,8 +436,16 @@ export default function DriversPage() {
                 <SortableHeader label="Type" col="driver_type" sort={sort} onSort={onSort} />
                 <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
                 <SortableHeader label="Truck" col="truck_registration" sort={sort} onSort={onSort} />
-                <th className="text-right">Loads (month)</th>
-                <th className="text-right">Payments (month)</th>
+                <SortableHeader label="Subcontractor" col="subcontractor_name" sort={sort} onSort={onSort} />
+                <th className="text-right" style={{ whiteSpace: 'nowrap' }}>Loads<br />{periodLabel}</th>
+                <th className="text-right" style={{ whiteSpace: 'nowrap' }}
+                    title={`Food allowances captured against this driver's ${periodLabel} pay cycle`}>
+                  Food Allowance<br />{periodLabel}
+                </th>
+                <th className="text-right" style={{ whiteSpace: 'nowrap' }}
+                    title={`Net payable on this driver's ${periodLabel} pay cycle — the same figure the payslip prints`}>
+                  Net Pay<br />{periodLabel}
+                </th>
                 <SortableHeader label="Status" col="is_active" sort={sort} onSort={onSort} />
                 <th></th>
               </tr>
@@ -423,8 +466,10 @@ export default function DriversPage() {
                     <span style={chipStyle}>{entityCode(d.entity_id)}</span>
                   </td>
                   <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{d.truck_registration || '—'}</td>
+                  <td style={{ fontSize: 12 }}>{d.subcontractor_name || '—'}</td>
                   <td className="text-right" style={{ fontWeight: 600 }}>{d.load_count_this_month}</td>
-                  <td className="text-right" style={{ fontSize: 12 }}>{formatCurrency(d.total_payments_this_month)}</td>
+                  <td className="text-right" style={{ fontSize: 12 }}>{formatCurrency(d.food_total_this_month)}</td>
+                  <td className="text-right" style={{ fontSize: 12, fontWeight: 600 }}>{formatCurrency(d.net_pay_this_month)}</td>
                   <td>
                     <span className={`badge ${d.is_active ? 'badge-paid' : 'badge-cancelled'}`}>
                       {d.is_active ? 'Active' : 'Inactive'}

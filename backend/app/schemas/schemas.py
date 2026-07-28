@@ -1021,9 +1021,13 @@ class DriverSummary(BaseModel):
     truck_id: Optional[int] = None
     driver_slot: Optional[int] = None
     truck_registration: Optional[str] = None
+    subcontractor_name: Optional[str] = None
     is_active: bool
     load_count_this_month: int = 0
-    total_payments_this_month: Decimal = Decimal("0")
+    # Both come from the driver's DriverPayCycle for the requested period
+    # (the list's month/year params, defaulting to the current month).
+    net_pay_this_month: Decimal = Decimal("0")
+    food_total_this_month: Decimal = Decimal("0")
     casual_assignments: List['CasualTruckAssignmentOut'] = []
 
     class Config:

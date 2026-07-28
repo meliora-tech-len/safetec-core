@@ -6,7 +6,7 @@ logger = logging.getLogger("safetec.drivers")
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.responses import Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func, extract
 from typing import List, Optional
 from decimal import Decimal
@@ -58,7 +58,61 @@ def _current_month_bounds():
     return today.replace(day=1), today
 
 
-def _build_summary(driver: Driver, month_start: date, db: Session, payment_map: dict) -> dict:
+def _truck_subcontractor(truck: Optional[Truck]) -> Optional[str]:
+    """Subcontractor a truck belongs to — linked record first, free-text fallback."""
+    if truck is None:
+        return None
+    if truck.subcontractor is not None:
+        return truck.subcontractor.name
+    return truck.subcontractor_name or None
+
+
+def _driver_subcontractor(driver: Driver) -> Optional[str]:
+    """Drivers have no subcontractor of their own — it comes from the truck(s)
+    they drive. A casual on several subcontractors' trucks shows all of them."""
+    trucks = [driver.truck] + [a.truck for a in driver.casual_assignments]
+    names = []
+    for name in (_truck_subcontractor(t) for t in trucks):
+        if name and name not in names:
+            names.append(name)
+    return ", ".join(names) or None
+
+
+def _month_cycle_totals(db: Session, driver_ids: List[int], month_start: date) -> dict:
+    """Net pay + food allowance for the month, per driver, straight off the pay
+    cycle. The list used to read PayrollEntry.net_payable, but nothing ever
+    writes a PayrollEntry row, so that column was always 0 — DriverPayCycle is
+    the live source (same figures the payslip prints)."""
+    if not driver_ids:
+        return {}
+    settings = _get_payroll_settings(db)
+    cycles = db.query(DriverPayCycle).options(
+        joinedload(DriverPayCycle.driver),
+        joinedload(DriverPayCycle.additional_loads),
+        joinedload(DriverPayCycle.food_payments),
+    ).filter(
+        DriverPayCycle.driver_id.in_(driver_ids),
+        DriverPayCycle.pay_month == month_start.month,
+        DriverPayCycle.pay_year == month_start.year,
+    ).all()
+
+    totals = {}
+    for cycle in cycles:
+        driver = cycle.driver
+        calc = calculate_pay_cycle(
+            cycle,
+            settings,
+            driver.driver_type.value if driver and driver.driver_type else "permanent",
+            bool(driver and driver.exclude_mine_bonus),
+        )
+        totals[cycle.driver_id] = {
+            "net_pay": calc["net_payable"],
+            "food": calc["food_deduction"],
+        }
+    return totals
+
+
+def _build_summary(driver: Driver, month_start: date, db: Session, cycle_map: dict) -> dict:
     start_dt = datetime(month_start.year, month_start.month, 1, tzinfo=timezone.utc)
     end_dt = (datetime(month_start.year + 1, 1, 1, tzinfo=timezone.utc)
               if month_start.month == 12
@@ -107,9 +161,11 @@ def _build_summary(driver: Driver, month_start: date, db: Session, payment_map: 
         "truck_id": driver.truck_id,
         "driver_slot": driver.driver_slot,
         "truck_registration": driver.truck.registration if driver.truck else None,
+        "subcontractor_name": _driver_subcontractor(driver),
         "is_active": driver.is_active,
         "load_count_this_month": load_count,
-        "total_payments_this_month": payment_map.get(driver.id, Decimal("0")),
+        "net_pay_this_month": cycle_map.get(driver.id, {}).get("net_pay", Decimal("0")),
+        "food_total_this_month": cycle_map.get(driver.id, {}).get("food", Decimal("0")),
         "casual_assignments": casual_assignments,
     }
 
@@ -338,13 +394,20 @@ def list_drivers(
     driver_type: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(True),
     search: Optional[str] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12, description="Period for the load/food/net-pay columns; defaults to the current month"),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
     skip: int = Query(0, ge=0),
     limit: int = Query(200, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     accessible = _accessible_ids(current_user)
-    q = db.query(Driver)
+    q = db.query(Driver).options(
+        joinedload(Driver.truck).joinedload(Truck.subcontractor),
+        joinedload(Driver.casual_assignments)
+            .joinedload(CasualTruckAssignment.truck)
+            .joinedload(Truck.subcontractor),
+    )
     if accessible is not None:
         q = q.filter(Driver.entity_id.in_(accessible))
     if entity_id:
@@ -363,15 +426,10 @@ def list_drivers(
         ))
 
     drivers = q.order_by(Driver.last_name, Driver.first_name).offset(skip).limit(limit).all()
-    month_start, _ = _current_month_bounds()
-    driver_ids = [d.id for d in drivers]
-    entries = db.query(PayrollEntry.driver_id, PayrollEntry.net_payable).filter(
-        PayrollEntry.driver_id.in_(driver_ids),
-        PayrollEntry.pay_month == month_start.month,
-        PayrollEntry.pay_year == month_start.year,
-    ).all()
-    payment_map = {row.driver_id: row.net_payable for row in entries}
-    return [_build_summary(d, month_start, db, payment_map) for d in drivers]
+    default_start, _ = _current_month_bounds()
+    month_start = date(year or default_start.year, month or default_start.month, 1)
+    cycle_map = _month_cycle_totals(db, [d.id for d in drivers], month_start)
+    return [_build_summary(d, month_start, db, cycle_map) for d in drivers]
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────
