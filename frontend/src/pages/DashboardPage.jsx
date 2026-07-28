@@ -36,6 +36,9 @@ export default function DashboardPage() {
   const days30PayLabel = `Due 7th of ${MONTH_NAMES[(period.month + 1) % 12 + 1]}`
   const days30PayDate = (month, year) =>
     month && year ? formatDate(new Date(year, month + 1, 7)) : '—'
+  // Sort keys: always a number so blanks and dates never fall back to text compare.
+  const dateSort = (v) => (v ? new Date(v).getTime() : 0)
+  const statementSort = (r) => (r.statement_year || 0) * 12 + (r.statement_month || 0)
   const yearOptions = (() => {
     const cur = new Date().getFullYear()
     const yrs = []
@@ -80,13 +83,15 @@ export default function DashboardPage() {
   }
 
   // ── Drill-down "show proof" modals for the Debtors/Creditors totals ────────
+  // Columns carry a `sortValue` wherever the rendered text wouldn't sort right —
+  // amounts (currency strings) and dates (dd/mm/yyyy) both need the raw value.
   const debtorColumns = (dateLabel, dateField) => [
     { label: 'Invoice #', render: r => r.invoice_number },
     { label: 'Customer', render: r => r.customer_name || r.supplier_name || '—' },
     { label: 'Entity', render: r => r.entity_code || '—' },
-    { label: 'Status', render: r => <span className={statusBadgeClass(r.status)}>{r.status}</span> },
-    { label: dateLabel, render: r => formatDate(r[dateField]) },
-    { label: 'Amount', align: 'right', render: r => formatCurrency(r.total) },
+    { label: 'Status', render: r => <span className={statusBadgeClass(r.status)}>{r.status}</span>, sortValue: r => r.status },
+    { label: dateLabel, render: r => formatDate(r[dateField]), sortValue: r => dateSort(r[dateField]) },
+    { label: 'Amount', align: 'right', render: r => formatCurrency(r.total), sortValue: r => Number(r.total) || 0 },
   ]
   const creditorDate = (r, dateField) => {
     if (dateField === 'statement') return r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—'
@@ -96,15 +101,21 @@ export default function DashboardPage() {
     if (dateField === 'pay_30') return days30PayDate(r.statement_month, r.statement_year)
     return formatDate(r[dateField])
   }
+  // 'pay_30' is a straight offset off the statement period, so it sorts on the
+  // same key — no need to rebuild the derived date.
+  const creditorDateSort = (r, dateField) =>
+    (dateField === 'statement' || dateField === 'pay_30') ? statementSort(r) : dateSort(r[dateField])
   const creditorColumns = (dateLabel, dateField, amountField, showInvoiceDate = false) => [
     { label: 'Invoice #', render: r => r.invoice_number || '—' },
     { label: 'Supplier', render: r => r.supplier_name },
     { label: 'Entity', render: r => r.entity_code || '—' },
     // The invoice date often falls outside the statement period it's billed in, so
     // show both when drilling into what's still owed.
-    ...(showInvoiceDate ? [{ label: 'Invoice date', render: r => formatDate(r.invoice_date) }] : []),
-    { label: dateLabel, render: r => creditorDate(r, dateField) },
-    { label: 'Amount', align: 'right', render: r => formatCurrency(r[amountField]) },
+    ...(showInvoiceDate
+      ? [{ label: 'Invoice date', render: r => formatDate(r.invoice_date), sortValue: r => dateSort(r.invoice_date) }]
+      : []),
+    { label: dateLabel, render: r => creditorDate(r, dateField), sortValue: r => creditorDateSort(r, dateField) },
+    { label: 'Amount', align: 'right', render: r => formatCurrency(r[amountField]), sortValue: r => Number(r[amountField]) || 0 },
   ]
   const goToInvoice = (row) => { setDrilldown(null); navigate(`/invoices/${row.id}`) }
   const goToSupplier = (row) => { if (!row.supplier_id) return; setDrilldown(null); navigate(`/suppliers/${row.supplier_id}`) }
@@ -153,8 +164,8 @@ export default function DashboardPage() {
         { label: 'Customer', render: r => r.customer_name || r.supplier_name || '—' },
         { label: 'Entity', render: r => r.entity_code || '—' },
         { label: 'Type', render: r => r._type },
-        { label: 'Date', render: r => formatDate(r._date) },
-        { label: 'Amount', align: 'right', render: r => formatCurrency(r.total) },
+        { label: 'Date', render: r => formatDate(r._date), sortValue: r => dateSort(r._date) },
+        { label: 'Amount', align: 'right', render: r => formatCurrency(r.total), sortValue: r => Number(r.total) || 0 },
       ],
       onRowClick: goToInvoice,
     })
@@ -167,9 +178,9 @@ export default function DashboardPage() {
     columns: [
       { label: 'Invoice #', render: r => r.invoice_number },
       { label: 'Customer', render: r => r.customer_name || r.supplier_name || '—' },
-      { label: 'Status', render: r => <span className={statusBadgeClass(r.status)}>{r.status}</span> },
-      { label: 'Issued', render: r => formatDate(r.issue_date) },
-      { label: 'Amount', align: 'right', render: r => formatCurrency(r.total) },
+      { label: 'Status', render: r => <span className={statusBadgeClass(r.status)}>{r.status}</span>, sortValue: r => r.status },
+      { label: 'Issued', render: r => formatDate(r.issue_date), sortValue: r => dateSort(r.issue_date) },
+      { label: 'Amount', align: 'right', render: r => formatCurrency(r.total), sortValue: r => Number(r.total) || 0 },
     ],
     onRowClick: goToInvoice,
   })
@@ -179,21 +190,21 @@ export default function DashboardPage() {
     columns: [
       { label: 'Invoice #', render: r => r.invoice_number || '—' },
       { label: 'Supplier', render: r => r.supplier_name },
-      { label: 'Invoice date', render: r => formatDate(r.invoice_date) },
+      { label: 'Invoice date', render: r => formatDate(r.invoice_date), sortValue: r => dateSort(r.invoice_date) },
       // The P&L groups supplier invoices by statement period, so show it next to
       // the invoice date — the two often fall in different months.
-      { label: 'Statement', render: r => creditorDate(r, 'statement') },
-      { label: 'Amount', align: 'right', render: r => formatCurrency(r.amount) },
+      { label: 'Statement', render: r => creditorDate(r, 'statement'), sortValue: r => statementSort(r) },
+      { label: 'Amount', align: 'right', render: r => formatCurrency(r.amount), sortValue: r => Number(r.amount) || 0 },
     ],
     onRowClick: goToSupplier,
   })
 
   const openOverallCreditors = () => {
     const rows = [
-      ...payables.outstanding_current_invoices.map(r => ({ ...r, _type: 'Outstanding Cash', _date: r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—', _amount: r.outstanding_amount })),
-      ...payables.outstanding_days_30_invoices.map(r => ({ ...r, _type: 'Outstanding 30-Day', _date: r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—', _amount: r.outstanding_amount })),
-      ...payables.paid_current_invoices.map(r => ({ ...r, _type: 'Paid Cash', _date: formatDate(r.paid_date), _amount: r.amount })),
-      ...payables.paid_days_30_invoices.map(r => ({ ...r, _type: 'Paid 30-Day', _date: formatDate(r.paid_date), _amount: r.amount })),
+      ...payables.outstanding_current_invoices.map(r => ({ ...r, _type: 'Outstanding Cash', _date: r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—', _sortDate: dateSort(new Date(r.statement_year, (r.statement_month || 1) - 1, 1)), _amount: r.outstanding_amount })),
+      ...payables.outstanding_days_30_invoices.map(r => ({ ...r, _type: 'Outstanding 30-Day', _date: r.statement_month ? `${MONTH_NAMES[r.statement_month]} ${r.statement_year}` : '—', _sortDate: dateSort(new Date(r.statement_year, (r.statement_month || 1) - 1, 1)), _amount: r.outstanding_amount })),
+      ...payables.paid_current_invoices.map(r => ({ ...r, _type: 'Paid Cash', _date: formatDate(r.paid_date), _sortDate: dateSort(r.paid_date), _amount: r.amount })),
+      ...payables.paid_days_30_invoices.map(r => ({ ...r, _type: 'Paid 30-Day', _date: formatDate(r.paid_date), _sortDate: dateSort(r.paid_date), _amount: r.amount })),
     ]
     setDrilldown({
       title: 'Creditors — Overall Total', subtitle: `Paid + Outstanding · ${periodLabel}`,
@@ -204,8 +215,8 @@ export default function DashboardPage() {
         { label: 'Supplier', render: r => r.supplier_name },
         { label: 'Entity', render: r => r.entity_code || '—' },
         { label: 'Type', render: r => r._type },
-        { label: 'Date', render: r => r._date },
-        { label: 'Amount', align: 'right', render: r => formatCurrency(r._amount) },
+        { label: 'Date', render: r => r._date, sortValue: r => r._sortDate },
+        { label: 'Amount', align: 'right', render: r => formatCurrency(r._amount), sortValue: r => Number(r._amount) || 0 },
       ],
       onRowClick: goToSupplier,
     })

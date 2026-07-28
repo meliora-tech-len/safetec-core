@@ -1,13 +1,28 @@
+import { useMemo } from 'react'
 import { X } from 'lucide-react'
 import { formatCurrency } from '../utils/helpers'
+import SortableHeader, { useSort, applySort } from './SortableHeader'
 
 /**
  * Generic "show proof" modal for a dashboard total — lists the itemized rows
  * that sum to the clicked stat card, with a total footer that should match it.
- * `columns` is [{ label, align?, render(row) }]; `onRowClick` (optional) makes
- * rows clickable (e.g. navigate to the underlying invoice).
+ * `columns` is [{ label, align?, render(row), sortValue?(row) }]; `onRowClick`
+ * (optional) makes rows clickable (e.g. navigate to the underlying invoice).
+ * Every column header sorts: give `sortValue` whenever what's rendered doesn't
+ * sort correctly as text (amounts, formatted dates).
  */
 export default function DrilldownModal({ title, subtitle, rows, total, columns, onRowClick, onClose }) {
+  const { sort, onSort } = useSort(null)
+  // Columns are keyed by label; fall back to the rendered cell, unwrapping the
+  // odd JSX cell (e.g. a status badge) down to its text.
+  const sortedRows = useMemo(() => applySort(rows, sort, (row, label) => {
+    const col = columns.find(c => c.label === label)
+    if (!col) return ''
+    if (col.sortValue) return col.sortValue(row)
+    const cell = col.render(row)
+    return cell && typeof cell === 'object' ? (cell.props?.children ?? '') : cell
+  }), [rows, sort, columns])
+
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 900 }}>
@@ -27,14 +42,20 @@ export default function DrilldownModal({ title, subtitle, rows, total, columns, 
                 <thead>
                   <tr>
                     {columns.map(col => (
-                      <th key={col.label} className={col.align === 'right' ? 'text-right' : undefined}>
-                        {col.label}
-                      </th>
+                      <SortableHeader
+                        key={col.label}
+                        label={col.label}
+                        col={col.label}
+                        sort={sort}
+                        onSort={onSort}
+                        className={col.align === 'right' ? 'text-right' : undefined}
+                        style={col.align === 'right' ? { textAlign: 'right' } : undefined}
+                      />
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, i) => (
+                  {sortedRows.map((row, i) => (
                     <tr
                       key={row.id ?? i}
                       onClick={onRowClick ? () => onRowClick(row) : undefined}
