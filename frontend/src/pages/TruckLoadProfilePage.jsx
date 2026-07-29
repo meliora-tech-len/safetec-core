@@ -1456,7 +1456,7 @@ function WashesSection({ truck, year, month }) {
 
 
 // ── Food Allowance section ─────────────────────────────────────────────────────
-function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId }) {
+function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId, allTrucks }) {
   const { user: foodUser, isAdmin: foodIsAdmin } = useAuth()
   const [entries, setEntries]     = useState([])
   const [loading, setLoading]     = useState(true)
@@ -1466,8 +1466,8 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
   const [deleteTarget, setDeleteTarget] = useState(null)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  // Inline row editing (date / amount / notes). Driver can't be reassigned here —
-  // the update endpoint doesn't move a payment between pay cycles.
+  // Inline row editing (date / truck / amount / notes). Driver can't be reassigned
+  // here — the update endpoint doesn't move a payment between pay cycles.
   const [editingId, setEditingId]   = useState(null)
   const [editForm, setEditForm]     = useState({})
   const [editSaving, setEditSaving] = useState(false)
@@ -1555,6 +1555,9 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
       payment_date: e.payment_date ? e.payment_date.slice(0, 10) : today,
       amount:       e.amount != null ? String(e.amount) : '',
       notes:        e.notes || '',
+      // Legacy rows have no truck and only surface here through the driver-link
+      // fallback — default them to this truck so saving claims the row.
+      truck_id:     String(e.truck_id ?? truck.id),
       locked:       !!e.verified3_by,
     })
     setEditingId(e.id)
@@ -1563,11 +1566,14 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
   const doUpdate = async () => {
     const entry = entries.find(x => x.id === editingId)
     if (!entry) return
-    // Final verification lock: the note is the only field the backend still accepts,
-    // and it must be sent on its own or the whole update is rejected.
+    if (!editForm.truck_id) return toast.error('Select the truck this food allowance belongs to')
+    // Final verification lock: the note and the truck are the only fields the backend
+    // still accepts — anything else in the payload gets the whole update rejected.
+    // Truck stays editable so a row filed under the wrong registration can be moved
+    // to the right one without unlocking.
     let payload
     if (editForm.locked) {
-      payload = { notes: editForm.notes.trim() }
+      payload = { notes: editForm.notes.trim(), truck_id: parseInt(editForm.truck_id, 10) }
     } else {
       if (!editForm.payment_date) return toast.error('Date required')
       const amount = parseFloat(editForm.amount) || 0
@@ -1576,15 +1582,16 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
         payment_date: new Date(editForm.payment_date + 'T12:00:00').toISOString(),
         amount,
         notes: editForm.notes.trim(),
+        truck_id: parseInt(editForm.truck_id, 10),
       }
-      // Legacy rows have no truck and therefore show under every truck the driver is
-      // linked to. Editing one here claims it for this truck, so the duplicates clear.
-      if (entry.truck_id == null) payload.truck_id = truck.id
     }
     setEditSaving(true)
     try {
       await updateDriverFoodPayment(entry.driver_id, entry.pay_year, entry.pay_month, entry.id, payload)
-      toast.success('Food allowance updated')
+      // Re-pointed at another truck: the row leaves this tab, so say where it went.
+      toast.success(payload.truck_id !== truck.id
+        ? `Moved to ${regFor(payload.truck_id) || 'the selected truck'}`
+        : 'Food allowance updated')
       setEditingId(null)
       fetchEntries()
     } catch (e) {
@@ -1599,13 +1606,23 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
 
   const total = entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
 
+  // This tab is truck-scoped, so the Truck cell is there to *correct* a row filed
+  // under the wrong registration rather than to vary. Legacy truck-less rows (which
+  // only surface here via the driver link) read as this truck until they're saved.
+  const truckOptions = useMemo(() => (
+    (allTrucks || []).some(t => t.id === truck.id) ? allTrucks : [truck, ...(allTrucks || [])]
+  ), [allTrucks, truck])
+  const truckLabel = (t) => `${t.registration}${t.fleet_number ? ` (${t.fleet_number})` : ''}`
+  const regFor = (id) => truckOptions.find(t => String(t.id) === String(id))?.registration
+
   const { sort: foodSort, onSort: onFoodSort } = useSort('payment_date', 'asc')
   const sortedFood = useMemo(() => applySort(entries, foodSort, (row, col) => {
     if (col === 'amount') return parseFloat(row.amount || 0)
+    if (col === 'truck_id') return regFor(row.truck_id ?? truck.id) || ''   // sort by registration, not id
     // Verification sorts by how far the row has progressed through the 3 steps
     if (col === 'verification') return ((row.verified || row.is_verified) ? 1 : 0) + (row.verified2_by ? 1 : 0) + (row.verified3_by ? 1 : 0)
     return row[col]
-  }), [entries, foodSort])
+  }), [entries, foodSort, truckOptions])
 
   return (
     <div>
@@ -1672,6 +1689,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
             <thead>
               <tr>
                 <SortableHeader label="Driver" col="driver_name" sort={foodSort} onSort={onFoodSort} />
+                <SortableHeader label="Truck" col="truck_id" sort={foodSort} onSort={onFoodSort} />
                 <SortableHeader label="Date" col="payment_date" sort={foodSort} onSort={onFoodSort} />
                 <SortableHeader label="Notes" col="notes" sort={foodSort} onSort={onFoodSort} />
                 <SortableHeader label="Amount" col="amount" sort={foodSort} onSort={onFoodSort} style={{ textAlign: 'right' }} />
@@ -1688,9 +1706,16 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
                       {e.driver_name}
                       {editForm.locked && (
                         <div style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>
-                          Locked by final verification — note only
+                          Locked by final verification — note and truck only
                         </div>
                       )}
+                    </td>
+                    <td style={{ padding: '4px 6px', minWidth: 170 }}>
+                      {/* Editable even when locked — moves the row to the right truck's tab. */}
+                      <SearchableSelect formInput value={editForm.truck_id}
+                        onChange={v => setEF('truck_id', v)}
+                        options={truckOptions} getValue={t => String(t.id)} getLabel={truckLabel}
+                        placeholder="Registration…" />
                     </td>
                     <td style={{ padding: '4px 6px' }}>
                       <DateInput className="form-input" value={editForm.payment_date}
@@ -1721,8 +1746,13 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
                   </tr>
                 ) : (
                   <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => startEdit(e)}
-                    title={e.verified3_by ? 'Locked — click to edit the note' : 'Click to edit'}>
+                    title={e.verified3_by ? 'Locked — click to edit the note or truck' : 'Click to edit'}>
                     <td style={{ fontWeight: 600 }}>{e.driver_name}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      {e.truck_id
+                        ? (regFor(e.truck_id) || `#${e.truck_id}`)
+                        : <span style={{ color: 'var(--warning, #d97706)' }} title="Not linked to a truck — shows under every truck this driver is linked to. Edit to claim it for this truck.">Unassigned</span>}
+                    </td>
                     <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.payment_date)}</td>
                     <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{e.notes || '—'}</td>
                     <td style={{
@@ -1749,7 +1779,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId })
             {entries.length > 0 && (
               <tfoot>
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                  <td colSpan={3} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
+                  <td colSpan={4} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
                   <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(total)}</td>
                   <td />
                   <td />
@@ -3126,7 +3156,7 @@ export default function TruckLoadProfilePage() {
 
       {/* ── Food Allowance tab ─────────────────────────────────────────────────── */}
       {activeTab === 'food' && (
-        <FoodAllowanceSection truck={truck} year={year} month={month} drivers={drivers} selectedDriverId={selectedDriverId} />
+        <FoodAllowanceSection truck={truck} year={year} month={month} drivers={drivers} selectedDriverId={selectedDriverId} allTrucks={allTrucks} />
       )}
 
       {/* ── Profit Sheet tab (SFT only) ─────────────────────────────────────────── */}

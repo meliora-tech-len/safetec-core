@@ -1187,15 +1187,29 @@ def update_food_payment(
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
     updates = payload.model_dump(exclude_none=True)
-    # Final-verification lock: a free-text note may still be added/edited
-    # (a note-only edit sends just `notes`).
-    ensure_not_locked(entry, updates, {"notes"})
+    # Final-verification lock: a free-text note may still be added/edited, and the
+    # payment may still be re-attributed to the correct truck. Re-attribution moves
+    # which truck's Food Allowance tab shows the row — it changes no amount, date or
+    # verification state — and a wrong truck is exactly the kind of mistake only
+    # noticed after the row was locked.
+    ensure_not_locked(entry, updates, {"notes", "truck_id"})
+    old_truck_id = entry.truck_id
+    if "truck_id" in updates and updates["truck_id"] != old_truck_id:
+        new_truck = db.query(Truck).filter(Truck.id == updates["truck_id"]).first()
+        if not new_truck:
+            raise HTTPException(status_code=404, detail="Truck not found")
     for field, value in updates.items():
         setattr(entry, field, value)
+    description = f"Updated food payment #{payment_id} for {driver.first_name} {driver.last_name}"
+    if entry.truck_id != old_truck_id:
+        old_reg = None
+        if old_truck_id:
+            old_reg = db.query(Truck.registration).filter(Truck.id == old_truck_id).scalar()
+        description += f" — truck {old_reg or 'unassigned'} → {new_truck.registration}"
     log_action(db, "food_payment.updated", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="food_payment",
                resource_id=payment_id,
-               description=f"Updated food payment #{payment_id} for {driver.first_name} {driver.last_name}")
+               description=description)
     db.commit()
     db.refresh(entry)
     return entry

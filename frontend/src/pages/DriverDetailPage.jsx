@@ -287,7 +287,9 @@ const truckLabel = (t) => t
 
 function FoodPaymentModal({ entry, trucks, onSave, onClose }) {
   const isEdit = !!entry?.id
-  // Final verification lock: every field but Notes is read-only; save sends only notes.
+  // Final verification lock: every field but Notes and Truck is read-only. Truck stays
+  // editable because a payment sitting under the wrong truck is usually only spotted
+  // after the row was locked, and re-pointing it changes no amount or verification.
   const locked = !!entry?.verified3_by
   const [form, setForm] = useState({
     payment_date: entry?.payment_date ? new Date(entry.payment_date).toISOString().slice(0,10) : new Date().toISOString().slice(0,10),
@@ -310,7 +312,7 @@ function FoodPaymentModal({ entry, trucks, onSave, onClose }) {
     <Modal title={isEdit ? 'Edit Food Payment' : 'Add Food Payment'} onClose={onClose}>
       {locked && (
         <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 6, background: 'rgba(253,224,71,0.18)', fontSize: 12, color: 'var(--text-secondary)' }}>
-          This payment is locked by final verification — only the note can be changed.
+          This payment is locked by final verification — only the note and the truck can be changed.
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: 'var(--col-2)', gap: '12px 16px' }}>
@@ -332,23 +334,20 @@ function FoodPaymentModal({ entry, trucks, onSave, onClose }) {
         </div>
       </div>
       <label className="form-label" style={{ marginTop: 12 }}>Truck *</label>
-      {locked ? (
-        <input className="form-input" value={truckLabel(trucks?.find(t => String(t.id) === form.truck_id)) || '—'} disabled />
-      ) : (
-        // Searchable: the fleet list is long, and the source suffix ("Assigned truck",
-        // "Loads in Jul 2026", …) is searchable text too, so typing "assigned" or a
-        // fleet number narrows it as fast as a registration does. Order is preserved
-        // from the API — trucks the driver is linked to first, rest of the fleet after.
-        <SearchableSelect
-          formInput
-          value={form.truck_id}
-          onChange={v => set('truck_id', v)}
-          options={trucks || []}
-          getValue={t => String(t.id)}
-          getLabel={truckLabel}
-          placeholder="Search registration or fleet number…"
-        />
-      )}
+      {/* Searchable: the fleet list is long, and the source suffix ("Assigned truck",
+          "Loads in Jul 2026", …) is searchable text too, so typing "assigned" or a
+          fleet number narrows it as fast as a registration does. Order is preserved
+          from the API — trucks the driver is linked to first, rest of the fleet after.
+          Stays enabled under the final lock so a mis-linked truck can be corrected. */}
+      <SearchableSelect
+        formInput
+        value={form.truck_id}
+        onChange={v => set('truck_id', v)}
+        options={trucks || []}
+        getValue={t => String(t.id)}
+        getLabel={truckLabel}
+        placeholder="Search registration or fleet number…"
+      />
       <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
         The allowance shows under this truck's Food Allowance tab only — it is still paid to the driver.
       </p>
@@ -357,7 +356,11 @@ function FoodPaymentModal({ entry, trucks, onSave, onClose }) {
       <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
         <button className="btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
         <button className="btn-primary" style={{ flex: 1 }} onClick={() => {
-          if (locked) { onSave({ notes: form.notes.trim() }); return }
+          if (locked) {
+            if (!form.truck_id) { toast.error('Select the truck this food allowance belongs to'); return }
+            onSave({ notes: form.notes.trim(), truck_id: parseInt(form.truck_id, 10) })
+            return
+          }
           if (!form.amount) { toast.error('Amount is required'); return }
           if (!form.truck_id) { toast.error('Select the truck this food allowance belongs to'); return }
           onSave({ ...form, payment_date: new Date(form.payment_date + 'T12:00:00').toISOString(), amount: parseFloat(form.amount), truck_id: parseInt(form.truck_id, 10) })
@@ -1133,7 +1136,7 @@ export default function DriverDetailPage() {
                             />
                           </td>
                           <td style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn-icon" onClick={() => setFpModal(fp)} style={{ padding: 4 }} title={fp.verified3_by ? 'Locked — edit note only' : 'Edit'}><Edit2 size={11} /></button>
+                            <button className="btn-icon" onClick={() => setFpModal(fp)} style={{ padding: 4 }} title={fp.verified3_by ? 'Locked — edit note or truck only' : 'Edit'}><Edit2 size={11} /></button>
                             <button className="btn-icon" onClick={async () => {
                               if (!confirm('Delete?')) return
                               try { await api.del(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${fp.id}`); loadCycle() }
