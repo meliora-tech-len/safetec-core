@@ -1599,6 +1599,9 @@ def profit_sheet_report(
             truck_id=t.id,
             sort_order=rec.sort_order if rec and rec.sort_order is not None else i,
             is_custom=False,
+            # Deleted lines are still sent so the client can list and restore
+            # them; it is the client that keeps them off the table and totals.
+            is_hidden=bool(rec.is_hidden) if rec else False,
             notes=rec.notes if rec else None,
             auto=ProfitSheetReportAuto(
                 reg_no=t.registration,
@@ -1658,7 +1661,9 @@ def save_profit_sheet_report(
             o.reg_no, o.driver, o.diesel, o.diesel_avg_per_load, o.loads,
             o.profit, o.sand_loads_incl_vat, o.profit_excl_sand, row.notes,
         ))
-        if not has_value:
+        # A deleted truck line carries no typed value but must still be stored —
+        # it is the only record that she took the line off the report.
+        if not has_value and not row.is_hidden:
             continue
         if row.truck_id is not None:
             # The unique index is per truck per period; a duplicate would be a
@@ -1678,6 +1683,9 @@ def save_profit_sheet_report(
             sand_loads_incl_vat=o.sand_loads_incl_vat,
             profit_excl_sand_override=o.profit_excl_sand,
             notes=(row.notes or None),
+            # Only a truck line can be hidden; a hand-added one is simply gone
+            # from the payload, so there is nothing left to flag.
+            is_hidden=bool(row.is_hidden and row.truck_id is not None),
         ))
         kept += 1
 

@@ -2632,6 +2632,7 @@ class ProfitSheetReportRowOut(BaseModel):
     truck_id: Optional[int] = None
     sort_order: int = 0
     is_custom: bool = False        # hand-added line, not backed by a truck
+    is_hidden: bool = False        # truck line deleted off the report, restorable
     notes: Optional[str] = None
     auto: ProfitSheetReportAuto
     overrides: ProfitSheetReportOverrides
@@ -2647,6 +2648,7 @@ class ProfitSheetReportOut(BaseModel):
 class ProfitSheetReportRowIn(BaseModel):
     truck_id: Optional[int] = None
     sort_order: int = 0
+    is_hidden: bool = False
     notes: Optional[str] = None
     overrides: ProfitSheetReportOverrides = ProfitSheetReportOverrides()
 

@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
+import SortableHeader, { applySort } from '../components/SortableHeader'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
@@ -76,6 +77,16 @@ const psTotals = (rows) => rows.reduce((a, r) => ({
 const PS_HEADERS = ['Reg No', 'Driver', 'Diesel', 'Diesel Average P/L', 'Loads on Truck',
                     'Profit', 'Sand Loads (Incl VAT)', 'Profit Excl Sand', 'Notes']
 
+// Header label → the resolved value it sorts on, so the numeric columns compare
+// as numbers instead of as the text in the input.
+const PS_SORT_KEYS = {
+  'Reg No': 'reg_no', 'Driver': 'driver', 'Diesel': 'diesel',
+  'Diesel Average P/L': 'diesel_avg', 'Loads on Truck': 'loads', 'Profit': 'profit',
+  'Sand Loads (Incl VAT)': 'sand', 'Profit Excl Sand': 'profit_ex_sand',
+}
+const psSortValue = (r, label) =>
+  label === 'Notes' ? (r.notes || '') : psValue(r, PS_SORT_KEYS[label])
+
 const thisYear = new Date().getFullYear()
 const thisMonth = new Date().getMonth() + 1
 
@@ -101,6 +112,30 @@ export default function ReportsPage() {
   const [profitRows, setProfitRows]   = useState(null)
   const [profitDirty, setProfitDirty] = useState(false)
   const [profitSaving, setProfitSaving] = useState(false)
+  // Sorting is a view on the same rows — it never rewrites the saved order, but
+  // the exports do follow it, since they print what is on screen. The order is
+  // frozen as a list of row keys when a header is clicked rather than recomputed
+  // from the values: on an editable table, re-sorting every keystroke would make
+  // the line jump out from under the cursor while she is typing into it.
+  const [profitSort, setProfitSort]   = useState({ col: null, dir: 'asc' })
+  const [profitOrder, setProfitOrder] = useState(null)
+  const [showHiddenProfit, setShowHiddenProfit] = useState(false)
+
+  const profitVisible = useMemo(() => {
+    const visible = (profitRows || []).filter(r => !r.is_hidden)
+    if (!profitOrder) return visible
+    const pos = new Map(profitOrder.map((k, i) => [k, i]))
+    // A row the frozen order has never seen (just added or restored) sits last.
+    return [...visible].sort((a, b) => (pos.get(a.key) ?? Infinity) - (pos.get(b.key) ?? Infinity))
+  }, [profitRows, profitOrder])
+
+  const profitHidden = useMemo(() => (profitRows || []).filter(r => r.is_hidden), [profitRows])
+
+  const onProfitSort = useCallback((col) => {
+    const next = { col, dir: profitSort.col === col && profitSort.dir === 'asc' ? 'desc' : 'asc' }
+    setProfitSort(next)
+    setProfitOrder(applySort(profitVisible, next, psSortValue).map(r => r.key))
+  }, [profitSort, profitVisible])
 
   // Which month's drill-down is open — needed to refetch it after an exclusion.
   const detailMonthRef = useRef(null)
@@ -152,6 +187,9 @@ export default function ReportsPage() {
     setPoData(null)
     setProfitRows(null)
     setProfitDirty(false)
+    setShowHiddenProfit(false)
+    setProfitSort({ col: null, dir: 'asc' })
+    setProfitOrder(null)
     try {
       if (tab === 'income') {
         const res = await getIncomeExpensesReport({ entity_id: entityId, year })
@@ -908,8 +946,18 @@ export default function ReportsPage() {
     setProfitDirty(true)
   }, [])
 
+  // A hand-added line has no calculated source, so deleting it just drops it. A
+  // truck line would be rebuilt from live data on the next load, so it is
+  // flagged hidden instead — off the table, the totals and the exports, but
+  // listed under the table so it can be put back.
   const removeProfitRow = useCallback((key) => {
-    setProfitRows(rows => rows.filter(r => r.key !== key))
+    setProfitRows(rows => rows.flatMap(r =>
+      r.key !== key ? [r] : (r.is_custom ? [] : [{ ...r, is_hidden: true }])))
+    setProfitDirty(true)
+  }, [])
+
+  const restoreProfitRow = useCallback((key) => {
+    setProfitRows(rows => rows.map(r => r.key === key ? { ...r, is_hidden: false } : r))
     setProfitDirty(true)
   }, [])
 
@@ -921,6 +969,7 @@ export default function ReportsPage() {
         rows: profitRows.map((r, i) => ({
           truck_id: r.truck_id ?? null,
           sort_order: i,
+          is_hidden: !!r.is_hidden,
           notes: r.notes || null,
           // Blank inputs are sent as null so the server drops the override and
           // the column goes back to tracking the calculated figure.
@@ -943,15 +992,17 @@ export default function ReportsPage() {
   const profitTitle = `Profit Sheet — ${MONTHS[month - 1]} ${year}`
   const profitSlug  = `profit-sheet-${year}-${String(month).padStart(2, '0')}`
 
+  // Exports print exactly what is on screen: deleted lines are out, and the rows
+  // come through in whatever order the headers are sorted by.
   const handleProfitExportExcel = () => {
-    if (!profitRows?.length) return
+    if (!profitVisible.length) return
     setShowExportMenu(false)
-    const t   = psTotals(profitRows)
+    const t   = psTotals(profitVisible)
     const now = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' })
     const ws  = XLSX.utils.aoa_to_sheet([
       [profitTitle], [`Generated: ${now}`], [],
       PS_HEADERS,
-      ...profitRows.map(r => [
+      ...profitVisible.map(r => [
         psValue(r, 'reg_no'), psValue(r, 'driver'),
         psValue(r, 'diesel'), psValue(r, 'diesel_avg'), psValue(r, 'loads'),
         psValue(r, 'profit'), psValue(r, 'sand'), psValue(r, 'profit_ex_sand'),
@@ -968,9 +1019,9 @@ export default function ReportsPage() {
   }
 
   const handleProfitExportPdf = () => {
-    if (!profitRows?.length) return
+    if (!profitVisible.length) return
     setShowExportMenu(false)
-    const t   = psTotals(profitRows)
+    const t   = psTotals(profitVisible)
     const now = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
 
@@ -983,7 +1034,7 @@ export default function ReportsPage() {
     autoTable(doc, {
       head: [PS_HEADERS],
       body: [
-        ...profitRows.map(r => [
+        ...profitVisible.map(r => [
           psValue(r, 'reg_no'), psValue(r, 'driver'),
           fmtN(psValue(r, 'diesel')), fmtN(psValue(r, 'diesel_avg')),
           String(psValue(r, 'loads')),
@@ -1007,7 +1058,7 @@ export default function ReportsPage() {
       },
       didParseCell: (d) => {
         if (d.section !== 'body') return
-        const row = profitRows[d.row.index]
+        const row = profitVisible[d.row.index]
         if (!row) {                       // the TOTAL row
           d.cell.styles.fontStyle = 'bold'
           d.cell.styles.fillColor = [235, 235, 235]
@@ -1025,7 +1076,7 @@ export default function ReportsPage() {
   }
 
   const hasData = tab === 'income' ? !!incomeData
-    : tab === 'profit' ? !!profitRows?.length
+    : tab === 'profit' ? profitVisible.length > 0
     : tab === 'subloads' ? !!subData?.subcontractors?.length
     : tab === 'poloads' ? !!(poData?.pos?.length || poData?.uninvoiced?.length)
     : dieselData.length > 0
@@ -1146,10 +1197,16 @@ export default function ReportsPage() {
         !profitRows
           ? <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
           : <ProfitSheetReport
-              rows={profitRows}
+              rows={profitVisible}
+              hiddenRows={profitHidden}
+              showHidden={showHiddenProfit}
+              onToggleHidden={() => setShowHiddenProfit(v => !v)}
+              sort={profitSort}
+              onSort={onProfitSort}
               onChange={updateProfitRow}
               onAddRow={addProfitRow}
               onRemoveRow={removeProfitRow}
+              onRestoreRow={restoreProfitRow}
             />
       ) : tab === 'subloads' ? (
         !subData
@@ -1184,7 +1241,12 @@ export default function ReportsPage() {
 // Every cell is an input pre-filled with the calculated figure. Overtyping one
 // stores an override; clearing it hands the cell back to the calculation, which
 // is why the blur handler normalises an empty string to null rather than to 0.
-function ProfitSheetReport({ rows, onChange, onAddRow, onRemoveRow }) {
+// `rows` arrives already filtered and sorted; `hiddenRows` are the truck lines
+// deleted off the report, listed under the table so they can be put back.
+function ProfitSheetReport({
+  rows, hiddenRows = [], showHidden, onToggleHidden,
+  sort, onSort, onChange, onAddRow, onRemoveRow, onRestoreRow,
+}) {
   const totals = psTotals(rows)
 
   const setOverride = (r, field, value) => onChange(r.key, { overrides: { [field]: value } })
@@ -1230,14 +1292,18 @@ function ProfitSheetReport({ rows, onChange, onAddRow, onRemoveRow }) {
       <div style={{ ...styles.reconNote, background: 'rgba(59,130,246,0.08)', borderBottom: '1px solid rgba(59,130,246,0.25)', color: 'var(--text-secondary)', fontWeight: 500 }}>
         Every cell is editable. Figures fill in from loads, diesel and each truck's Profit Sheet —
         type over any of them to correct it, or clear a cell to go back to the calculated value.
-        Edited cells are highlighted. Remember to Save before you leave the page.
+        Edited cells are highlighted. Click a column heading to sort, and × to take a line off the
+        report. Remember to Save before you leave the page.
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ ...styles.table, minWidth: 1180 }}>
           <thead>
             <tr>
               {PS_HEADERS.map(h => (
-                <th key={h} style={{ ...styles.th, whiteSpace: 'nowrap' }}>{h}</th>
+                <SortableHeader
+                  key={h} label={h} col={h} sort={sort} onSort={onSort}
+                  style={{ ...styles.th, whiteSpace: 'nowrap' }}
+                />
               ))}
               <th style={{ ...styles.th, width: 34 }} />
             </tr>
@@ -1291,18 +1357,19 @@ function ProfitSheetReport({ rows, onChange, onAddRow, onRemoveRow }) {
                     />
                   </td>
                   <td style={{ ...styles.td, padding: 4, textAlign: 'center' }}>
-                    {/* Only hand-added lines can be removed — a truck line would
-                        just come back on the next load, since it is calculated. */}
-                    {r.is_custom && (
-                      <button
-                        onClick={() => onRemoveRow(r.key)}
-                        title="Remove this line"
-                        style={{
-                          background: 'none', border: 'none', cursor: 'pointer',
-                          color: 'var(--text-muted)', fontSize: 16, lineHeight: 1, padding: 2,
-                        }}
-                      >×</button>
-                    )}
+                    {/* A hand-added line is gone for good; a truck line is only
+                        taken off the report and can be restored below, since it
+                        is rebuilt from live data on every load. */}
+                    <button
+                      onClick={() => onRemoveRow(r.key)}
+                      title={r.is_custom
+                        ? 'Delete this line'
+                        : 'Take this line off the report (it can be restored below)'}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: 'var(--text-muted)', fontSize: 16, lineHeight: 1, padding: 2,
+                      }}
+                    >×</button>
                   </td>
                 </tr>
               )
@@ -1323,13 +1390,56 @@ function ProfitSheetReport({ rows, onChange, onAddRow, onRemoveRow }) {
               <td style={styles.td} />
               <td style={styles.td} />
             </tr>
+
+            {/* Removed lines sit below the total so it is obvious they are out
+                of it — greyed, read-only, one click away from coming back. */}
+            {showHidden && hiddenRows.map(r => (
+              <tr key={r.key} style={{ ...styles.row, opacity: 0.55 }}>
+                <td style={{ ...styles.td, fontWeight: 700, textDecoration: 'line-through' }}>
+                  {psValue(r, 'reg_no') || '—'}
+                </td>
+                <td style={styles.td}>{psValue(r, 'driver') || '—'}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtN(psValue(r, 'diesel'))}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtN(psValue(r, 'diesel_avg'))}</td>
+                <td style={{ ...styles.td, textAlign: 'center' }}>{psValue(r, 'loads')}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtN(psValue(r, 'profit'))}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtN(psValue(r, 'sand'))}</td>
+                <td style={{ ...styles.td, textAlign: 'right' }}>{fmtN(psValue(r, 'profit_ex_sand'))}</td>
+                <td style={{ ...styles.td, fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                  Removed from the report
+                </td>
+                <td style={{ ...styles.td, textAlign: 'center' }}>
+                  <button
+                    onClick={() => onRestoreRow(r.key)}
+                    title="Put this line back on the report"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: 'var(--accent)', fontSize: 14, lineHeight: 1, padding: 2,
+                    }}
+                  >↺</button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
-      <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+      <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10, alignItems: 'center' }}>
         <button onClick={onAddRow} style={{ ...styles.btnSecondary, padding: '6px 12px', fontSize: 12 }}>
           + Add line
         </button>
+        {hiddenRows.length > 0 && (
+          <button
+            onClick={onToggleHidden}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: '6px 4px',
+              fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', textDecoration: 'underline',
+            }}
+          >
+            {showHidden
+              ? 'Hide removed lines'
+              : `${hiddenRows.length} removed line${hiddenRows.length === 1 ? '' : 's'} — show`}
+          </button>
+        )}
       </div>
     </div>
   )

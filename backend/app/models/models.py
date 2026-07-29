@@ -1663,6 +1663,11 @@ class ProfitSheetReportRow(Base):
     profit_excl_sand_override = Column(Numeric(14, 2))
     notes                     = Column(Text)
 
+    # A truck line the user deleted off the report. It is rebuilt from live data
+    # every load, so "deleted" has to be remembered rather than acted on — the
+    # line is kept out of the table, the totals and the exports until restored.
+    is_hidden                 = Column(Boolean, nullable=False, default=False, server_default="false")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
