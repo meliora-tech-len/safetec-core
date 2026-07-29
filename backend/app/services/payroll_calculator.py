@@ -74,6 +74,11 @@ def calculate_pay_cycle(
         total_deductions = loan_deduction + cash_deduction + food_deduction
         net_payable = gross - total_deductions
 
+        # Cost to Company — casuals have no company contributions, so it defaults
+        # to gross. Display line only; never part of net payable.
+        ctc_ovr = ov('ctc_override')
+        ctc = ctc_ovr if ctc_ovr is not None else gross
+
         return {
             "driver_type":               "casual",
             "grand_total_loads":          effective_total,
@@ -99,7 +104,7 @@ def calculate_pay_cycle(
             "tax_sars":                    Decimal("0.00"),
             "uif":                         Decimal("0.00"),
             "total_statutory":             Decimal("0.00"),
-            "ctc":                         r(gross),
+            "ctc":                         r(ctc),
             "subsistence_advance_paid":    Decimal("0.00"),
             "subsistence_budgeted":        Decimal("0.00"),
             "subsistence_variance":        Decimal("0.00"),

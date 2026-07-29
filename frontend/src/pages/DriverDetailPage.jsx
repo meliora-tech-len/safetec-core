@@ -581,7 +581,8 @@ export default function DriverDetailPage() {
   const grossEarnings = liveCalc ? liveCalc.gross + accrualOffset : 0
   const netPayable = liveCalc ? grossEarnings - totalDeductions : 0
   // Cost to Company — total earnings + company contributions (provident +
-  // NBCRFLI + wellness). Display line only; never part of net payable.
+  // NBCRFLI + wellness). Casuals have no company contributions, so it equals
+  // gross. Display line only; never part of net payable.
   const ctcComputed = grossEarnings + (stat ? stat.provident + stat.nbcrfli + stat.wellness : 0)
 
   const downloadPayslip = async () => {
@@ -995,12 +996,10 @@ export default function DriverDetailPage() {
                   <span>Net payable</span><span>{fmt(netPayable)}</span>
                 </div>
 
-                {isPermanent && stat && (
-                  <div style={{ marginTop: 10, paddingTop: 6, borderTop: '1px dashed var(--border)' }}>
-                    <OverrideRow label="CTC" hint="(cost to company)" field="ctc_override"
-                      overrides={overrides} setOverrides={setOverrides} computed={ctcComputed} />
-                  </div>
-                )}
+                <div style={{ marginTop: 10, paddingTop: 6, borderTop: '1px dashed var(--border)' }}>
+                  <OverrideRow label="CTC" hint="(cost to company)" field="ctc_override"
+                    overrides={overrides} setOverrides={setOverrides} computed={ctcComputed} />
+                </div>
 
                 <button className="btn-primary" style={{ marginTop: 14, width: '100%' }} onClick={saveLoads} disabled={savingLoads}>
                   {savingLoads ? 'Saving…' : 'Save payslip changes'}
