@@ -1195,7 +1195,7 @@ export default function SupplierProfilePage() {
         toast.success('Invoice added')
       }
       setShowNew(false)
-      setNewForm(blankForm(supplier?.entity_id))
+      setNewForm(blankForm(supplier?.entity_id, supplier?.is_diesel_supplier))
       setAmountAutoFilled(false)
       await loadInvoices()
     } catch (e) { toast.error(errorMessage(e)) }
@@ -1984,15 +1984,16 @@ export default function SupplierProfilePage() {
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('amount')}>
                         Amount{sortArrow('amount')}
                       </th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Deposit</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Outstanding</th>
+                      {/* Deposit / Outstanding / VAT don't apply to diesel statements */}
+                      {!isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Deposit</th>}
+                      {!isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Outstanding</th>}
                       {isDiesel && !isWBGDiesel && (
                         <th style={{ ...styles.th, textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('litres')}>
                           Litres{sortArrow('litres')}
                         </th>
                       )}
                       {isDiesel && !isWBGDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
-                      <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>
+                      {!isDiesel && <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>}
                       <th style={{ ...styles.th, width: 28, textAlign: 'center' }}>
                         {groupSelectable.length > 0 && (
                           <input
@@ -2021,7 +2022,8 @@ export default function SupplierProfilePage() {
                       const editFields = isEditing && !isLocked
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
-                      const totalCols = 13 + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
+                      // Diesel drops Description, Deposit, Outstanding and VAT; adds Litres + Rate/L
+                      const totalCols = (isDiesel ? 9 : 13) + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
 
                       return (
                         <Fragment key={inv.id}>
@@ -2190,34 +2192,38 @@ export default function SupplierProfilePage() {
                             </td>
 
                             {/* Deposit Paid */}
-                            <td style={{ ...styles.td, textAlign: 'right' }}>
-                              {editFields ? (
-                                <input
-                                  type="number" step="0.01" min="0" placeholder="0.00"
-                                  value={f.deposit_paid || ''}
-                                  onChange={e => setEditForm(p => ({ ...p, deposit_paid: e.target.value }))}
-                                  onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
-                                  onClick={e => e.stopPropagation()}
-                                  style={{ ...styles.cellInput, width: 90, textAlign: 'right' }}
-                                />
-                              ) : inv.deposit_paid ? (
-                                <span style={{ fontSize: 12 }}>{formatCurrency(inv.deposit_paid)}</span>
-                              ) : (
-                                <span style={{ color: 'var(--text-muted)' }}>—</span>
-                              )}
-                            </td>
+                            {!isDiesel && (
+                              <td style={{ ...styles.td, textAlign: 'right' }}>
+                                {editFields ? (
+                                  <input
+                                    type="number" step="0.01" min="0" placeholder="0.00"
+                                    value={f.deposit_paid || ''}
+                                    onChange={e => setEditForm(p => ({ ...p, deposit_paid: e.target.value }))}
+                                    onKeyDown={e => handleKeyDown(e, saveEdit, cancelEdit)}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ ...styles.cellInput, width: 90, textAlign: 'right' }}
+                                  />
+                                ) : inv.deposit_paid ? (
+                                  <span style={{ fontSize: 12 }}>{formatCurrency(inv.deposit_paid)}</span>
+                                ) : (
+                                  <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                )}
+                              </td>
+                            )}
 
                             {/* Outstanding Amount */}
-                            <td style={{ ...styles.td, textAlign: 'right' }}>
-                              {(() => {
-                                const amt = parseFloat(isEditing ? f.amount : inv.amount) || 0
-                                const dep = parseFloat(isEditing ? f.deposit_paid : inv.deposit_paid) || 0
-                                const outstanding = amt - dep
-                                if (dep === 0) return <span style={{ color: 'var(--text-muted)' }}>—</span>
-                                if (outstanding <= 0) return <span style={{ color: '#16a34a', fontSize: 12, fontWeight: 600 }}>Paid</span>
-                                return <span style={{ fontSize: 12, fontWeight: 600, color: '#d97706' }}>{formatCurrency(outstanding)}</span>
-                              })()}
-                            </td>
+                            {!isDiesel && (
+                              <td style={{ ...styles.td, textAlign: 'right' }}>
+                                {(() => {
+                                  const amt = parseFloat(isEditing ? f.amount : inv.amount) || 0
+                                  const dep = parseFloat(isEditing ? f.deposit_paid : inv.deposit_paid) || 0
+                                  const outstanding = amt - dep
+                                  if (dep === 0) return <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                  if (outstanding <= 0) return <span style={{ color: '#16a34a', fontSize: 12, fontWeight: 600 }}>Paid</span>
+                                  return <span style={{ fontSize: 12, fontWeight: 600, color: '#d97706' }}>{formatCurrency(outstanding)}</span>
+                                })()}
+                              </td>
+                            )}
 
                             {/* Litres — diesel suppliers only (not WBG bulk-import) */}
                             {isDiesel && !isWBGDiesel && (
@@ -2281,22 +2287,24 @@ export default function SupplierProfilePage() {
                             )}
 
                             {/* VAT */}
-                            <td style={{ ...styles.td, textAlign: 'center' }}>
-                              {inv.is_multi_line && !isDiesel ? (
-                                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>per line</span>
-                              ) : editFields ? (
-                                <input
-                                  type="checkbox" checked={f.vat_applicable}
-                                  onChange={e => setEditForm(p => ({ ...p, vat_applicable: e.target.checked }))}
-                                  onClick={e => e.stopPropagation()}
-                                  style={{ cursor: 'pointer' }}
-                                />
-                              ) : (
-                                inv.vat_applicable
-                                  ? <span style={{ color: '#16a34a', fontSize: 15, fontWeight: 700 }}>✓</span>
-                                  : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>
-                              )}
-                            </td>
+                            {!isDiesel && (
+                              <td style={{ ...styles.td, textAlign: 'center' }}>
+                                {inv.is_multi_line ? (
+                                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>per line</span>
+                                ) : editFields ? (
+                                  <input
+                                    type="checkbox" checked={f.vat_applicable}
+                                    onChange={e => setEditForm(p => ({ ...p, vat_applicable: e.target.checked }))}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ cursor: 'pointer' }}
+                                  />
+                                ) : (
+                                  inv.vat_applicable
+                                    ? <span style={{ color: '#16a34a', fontSize: 15, fontWeight: 700 }}>✓</span>
+                                    : <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>
+                                )}
+                              </td>
+                            )}
 
                             {/* Bulk-select checkbox */}
                             <td style={{ ...styles.td, textAlign: 'center', width: 28 }} onClick={e => e.stopPropagation()}>
@@ -2460,13 +2468,13 @@ export default function SupplierProfilePage() {
                   <tfoot>
                     <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                       <td
-                        colSpan={3 + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0)}
+                        colSpan={3 + (isDiesel ? 0 : 1) + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0)}
                         style={{ ...styles.td, fontWeight: 700, textAlign: 'right' }}
                       >
                         Statement Total:
                       </td>
                       <td style={{ ...styles.td, fontWeight: 700 }}>{formatCurrency(group.subtotal)}</td>
-                      <td colSpan={8 + (isDiesel ? 2 : 0)} style={styles.td} />
+                      <td colSpan={(isDiesel ? 5 : 8) + (isDiesel && !isWBGDiesel ? 2 : 0)} style={styles.td} />
                     </tr>
                   </tfoot>
                 </table>
@@ -2712,18 +2720,22 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
           )}
         </div>
 
-        <div style={CS.field(120)}>
-          <label style={CS.label}>Deposit Paid</label>
-          <input type="number" step="0.01" min="0" placeholder="0.00"
-            value={form.deposit_paid || ''}
-            onChange={e => set('deposit_paid', e.target.value)}
-            onKeyDown={handleField}
-            style={{ ...CS.input, textAlign: 'right' }} />
-        </div>
+        {/* Deposits don't apply to diesel statements */}
+        {!isDiesel && (
+          <div style={CS.field(120)}>
+            <label style={CS.label}>Deposit Paid</label>
+            <input type="number" step="0.01" min="0" placeholder="0.00"
+              value={form.deposit_paid || ''}
+              onChange={e => set('deposit_paid', e.target.value)}
+              onKeyDown={handleField}
+              style={{ ...CS.input, textAlign: 'right' }} />
+          </div>
+        )}
 
-        {/* Multi-line non-diesel invoices set VAT per line, so the invoice-level
-            toggle is hidden in that mode. Single, split and diesel keep it. */}
-        {!(form.is_multi_line && !splitMode && !isDiesel) && (
+        {/* Multi-line invoices set VAT per line, so the invoice-level toggle is
+            hidden in that mode. Diesel is zero-rated (VAT sits on the admin fee),
+            so it has no invoice-level toggle either. */}
+        {!isDiesel && !(form.is_multi_line && !splitMode) && (
           <div style={{ ...CS.field(110), flex: 'none' }}>
             <label style={CS.label}>VAT</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 7 }}>
