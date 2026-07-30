@@ -59,9 +59,12 @@ def calculate_pay_cycle(
         effective_total = Decimal(loads_a + loads_b) + Decimal(split_a + split_b) * Decimal("0.5")
         casual_total    = effective_total
 
-        # Per-load bonus — loads delivered to the bonus mines (Assmang/Mokala/Tawana/Sebilo)
-        assmang_effective = (Decimal(cycle.assmang_loads or 0)
-                             + Decimal(getattr(cycle, 'assmang_split_loads', 0) or 0) * Decimal("0.5"))
+        # Per-load bonus — loads delivered to the bonus mines (Assmang/Mokala/Tawana/Sebilo).
+        # For casuals the Group A bucket IS that set of mines (see load_bonus.py), so the
+        # bonus is derived straight off Group A — full loads plus split lines at 0.5 each.
+        # That keeps the bonus right for hand-typed Group A loads too, which never touch
+        # the assmang_* columns (those are only synced from TruckLoad rows).
+        assmang_effective = Decimal(loads_a) + Decimal(split_a) * Decimal("0.5")
         mine_ov = ov('mine_bonus_override')
         if exclude_mine_bonus:
             assmang_bonus = Decimal(0)
@@ -74,10 +77,16 @@ def calculate_pay_cycle(
         total_deductions = loan_deduction + cash_deduction + food_deduction
         net_payable = gross - total_deductions
 
-        # Cost to Company — casuals have no company contributions, so it defaults
-        # to gross. Display line only; never part of net payable.
+        # Cost to Company — gross (loads incl. split halves + mine bonus + additional
+        # loads) PLUS the food allowance. Casuals have no company contributions.
+        #
+        # Food sits on both sides by design, matching the wage sheet this module
+        # replicates: there, loads 8800 + bonus 600 + food 100 = 9500 is the cost-to-
+        # company base, while DRIVER WAGES = 8800 + 600 − 100 = 9300. So the food is
+        # counted as a company cost and still recovered from the driver's payout — it is
+        # NOT an earnings line (that would lift net pay). Display only; never part of net.
         ctc_ovr = ov('ctc_override')
-        ctc = ctc_ovr if ctc_ovr is not None else gross
+        ctc = ctc_ovr if ctc_ovr is not None else gross + food_deduction
 
         return {
             "driver_type":               "casual",

@@ -1023,7 +1023,8 @@ class DriverSummary(BaseModel):
     truck_registration: Optional[str] = None
     subcontractor_name: Optional[str] = None
     is_active: bool
-    load_count_this_month: int = 0
+    # Float, not int — split loads count 0.5 each, so a driver can be on 3.5 loads.
+    load_count_this_month: float = 0
     # Both come from the driver's DriverPayCycle for the requested period
     # (the list's month/year params, defaulting to the current month).
     net_pay_this_month: Decimal = Decimal("0")

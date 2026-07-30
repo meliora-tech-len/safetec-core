@@ -48,7 +48,8 @@ const fmtDate = (d) => {
 // A trip log row from a split load is 0.5 of a load (notes tagged "split load"); everything else is 1.
 const isSplitTrip = (t) => !!(t.notes && t.notes.includes('split load'))
 const tripCountValue = (t) => (isSplitTrip(t) ? 0.5 : 1)
-const fmtTripCount = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
+// Load / trip counts print whole where whole, else one decimal (splits are 0.5).
+const fmtLoadCount = (n) => (Number.isInteger(n) ? String(n) : Number(n).toFixed(1))
 
 // Read a manual override: blank/null → null (use computed), else the number.
 const ovNum = (v) => (v === '' || v === null || v === undefined) ? null : Number(v)
@@ -63,8 +64,6 @@ function calcLive(inputs, settings, additionalLoads, driverType, excludeMineBonu
   const lExtra = Number(inputs.lohatla_extra_loads || 0)
   const lTotal = lBase + lExtra
   const additionalTotal = (additionalLoads || []).reduce((sum, al) => sum + parseFloat(al.amount || 0), 0)
-  // Assmang bonus applies only to loads delivered to the ASSMANG mine
-  const assmangEff = Number(inputs.assmang_loads || 0) + Number(inputs.assmang_split_loads || 0) * 0.5
   const mineOv = ovNum(overrides.mine_bonus_override)
 
   if (driverType === 'casual') {
@@ -77,12 +76,17 @@ function calcLive(inputs, settings, additionalLoads, driverType, excludeMineBonu
     const earningsA  = rateA * loadsA + (rateA / 2) * splitA
     const earningsB  = rateB * loadsB + (rateB / 2) * splitB
     const loadEarnings = earningsA + earningsB
-    const effectiveTotal = loadsA + loadsB + (splitA + splitB) * 0.5
+    const effA = loadsA + splitA * 0.5
+    const effB = loadsB + splitB * 0.5
+    const effectiveTotal = effA + effB
+    // Group A IS the bonus-mine set, so the bonus counts effective Group A loads
+    // (splits at 0.5) — mirrors payroll_calculator.py's casual branch.
+    const assmangEff = effA
     const assmangComputed = parseFloat(s.assmang_bonus_per_load || 0) * assmangEff
     const assmang    = excludeMineBonus ? 0 : (mineOv != null ? mineOv : assmangComputed)
     const gross        = loadEarnings + assmang + additionalTotal
     return {
-      grand: effectiveTotal, loadsA, loadsB, splitA, splitB, rateA, rateB,
+      grand: effectiveTotal, loadsA, loadsB, splitA, splitB, effA, effB, rateA, rateB,
       earningsA, earningsB, loadEarnings, assmang, assmangComputed, assmangEff, additionalTotal, gross,
       isCasual: true,
       basicSalary: 0, basicComputed: 0, subsL: 0, totalSubs: 0, subsComputed: 0,
@@ -108,6 +112,8 @@ function calcLive(inputs, settings, additionalLoads, driverType, excludeMineBonu
   const incL = ovInc != null ? ovInc : incComputed
   const totalInc = incL
 
+  // Permanent: bonus loads come from the synced bonus-mine counts (no group buckets)
+  const assmangEff = Number(inputs.assmang_loads || 0) + Number(inputs.assmang_split_loads || 0) * 0.5
   const assmangComputed = parseFloat(s.assmang_bonus_per_load) * assmangEff
   const assmang = excludeMineBonus ? 0 : (mineOv != null ? mineOv : assmangComputed)
   const gross = basicSalary + totalSubs + totalInc + assmang + additionalTotal
@@ -546,6 +552,7 @@ export default function DriverDetailPage() {
   } : null
 
   // Live calc
+  const totalFoodPaid = cycle?.food_payments?.reduce((s, p) => s + parseFloat(p.amount || 0), 0) || 0
   const liveCalc = calcLive(loads, effectiveSettings, cycle?.additional_loads, driver?.driver_type, driver?.exclude_mine_bonus, overrides)
   const statComputed = liveCalc && driver?.driver_type === 'permanent'
     ? calcStatutory(liveCalc.basicSalary, effectiveSettings)
@@ -571,7 +578,6 @@ export default function DriverDetailPage() {
   const loanDedParsed = parseFloat(loanDed || 0)
   const cashDedParsed = parseFloat(cashDed || 0)
   const taxSarsParsed = parseFloat(taxSars || 0)
-  const totalFoodPaid = cycle?.food_payments?.reduce((s, p) => s + parseFloat(p.amount || 0), 0) || 0
   const truckReg = (id) => trucks.find(t => t.id === id)?.registration
   const totalDeductions = (stat ? stat.total : 0) + (driver?.driver_type === 'permanent' ? subsAdvanceParsed + taxSarsParsed : 0) + loanDedParsed + cashDedParsed + totalFoodPaid
   // Sick/Holiday/Leave are part of the wage (earnings) AND withheld into their
@@ -580,10 +586,14 @@ export default function DriverDetailPage() {
   const accrualOffset = stat ? (stat.sickFund + stat.holidayFund + stat.leavePay) : 0
   const grossEarnings = liveCalc ? liveCalc.gross + accrualOffset : 0
   const netPayable = liveCalc ? grossEarnings - totalDeductions : 0
-  // Cost to Company — total earnings + company contributions (provident +
-  // NBCRFLI + wellness). Casuals have no company contributions, so it equals
-  // gross. Display line only; never part of net payable.
-  const ctcComputed = grossEarnings + (stat ? stat.provident + stat.nbcrfli + stat.wellness : 0)
+  // Cost to Company — total earnings + company contributions (provident + NBCRFLI +
+  // wellness). Casuals have no company contributions; theirs is gross PLUS the food
+  // allowance, mirroring the wage sheet (loads + bonus + food = cost to company, while
+  // wages = loads + bonus − food). Display line only; never part of net payable.
+  const isCasual = driver?.driver_type === 'casual'
+  const ctcComputed = grossEarnings
+    + (stat ? stat.provident + stat.nbcrfli + stat.wellness : 0)
+    + (isCasual ? totalFoodPaid : 0)
 
   const downloadPayslip = async () => {
     setPdfLoading(true)
@@ -771,7 +781,7 @@ export default function DriverDetailPage() {
                   </div>
                   {loads.permanent_split_loads > 0 && (
                     <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>
-                      Incl. {loads.permanent_split_loads} split load{loads.permanent_split_loads > 1 ? 's' : ''} (+{(loads.permanent_split_loads * 0.5).toFixed(1)} effective, auto) — folded into Extra loads above
+                      Incl. {loads.permanent_split_loads} split load{loads.permanent_split_loads > 1 ? 's' : ''} (½ each → +{(loads.permanent_split_loads * 0.5).toFixed(1)} effective, auto) — folded into Extra loads above
                     </div>
                   )}
                 </div>
@@ -808,7 +818,8 @@ export default function DriverDetailPage() {
                   {(loads.casual_split_group_a_loads > 0 || loads.casual_split_group_b_loads > 0) && effectiveSettings && (
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 10px',
                       background: 'var(--bg-surface)', borderRadius: 6 }}>
-                      Incl. split loads — Group A: {loads.casual_split_group_a_loads} · Group B: {loads.casual_split_group_b_loads}
+                      Incl. split loads (½ each) — Group A: {loads.casual_split_group_a_loads} × ½ = {(loads.casual_split_group_a_loads * 0.5).toFixed(1)}
+                      &nbsp;· Group B: {loads.casual_split_group_b_loads} × ½ = {(loads.casual_split_group_b_loads * 0.5).toFixed(1)}
                       &nbsp;(+{((loads.casual_split_group_a_loads + loads.casual_split_group_b_loads) * 0.5).toFixed(1)} eff., folded into fields above ·&nbsp;
                       {fmt(
                         (loads.casual_split_group_a_loads * parseFloat(effectiveSettings.casual_rate_group_a || 0)) / 2 +
@@ -914,15 +925,22 @@ export default function DriverDetailPage() {
                 <h3 style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 700 }}>Payslip Summary</h3>
 
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Income</div>
-                {liveCalc.isCasual ? [
-                  ...(liveCalc.loadsA > 0 ? [[`Group A (${liveCalc.loadsA} × ${fmt(liveCalc.rateA)})`, fmt(liveCalc.earningsA)]] : []),
-                  ...(liveCalc.loadsB > 0 ? [[`Group B (${liveCalc.loadsB} × ${fmt(liveCalc.rateB)})`, fmt(liveCalc.earningsB)]] : []),
-                  ['Additional loads',   fmt(liveCalc.additionalTotal)],
-                ].map(([l, v]) => (
-                  <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>{l}</span><span>{v}</span>
-                  </div>
-                )) : (
+                {liveCalc.isCasual ? (
+                  /* Load counts are EFFECTIVE — split lines count 0.5 each and are
+                     folded into their group, matching the amount on the same row. */
+                  <>
+                    {liveCalc.effA > 0 && (
+                      <SummaryRow label={`Group A (${fmtLoadCount(liveCalc.effA)} × ${fmt(liveCalc.rateA)})`} val={fmt(liveCalc.earningsA)} />
+                    )}
+                    {liveCalc.effB > 0 && (
+                      <SummaryRow label={`Group B (${fmtLoadCount(liveCalc.effB)} × ${fmt(liveCalc.rateB)})`} val={fmt(liveCalc.earningsB)} />
+                    )}
+                    <OverrideRow label="Mine bonus" hint={`(${fmtLoadCount(liveCalc.assmangEff)} × R${parseFloat(effectiveSettings?.assmang_bonus_per_load || 150).toFixed(0)})`}
+                      field="mine_bonus_override" overrides={overrides} setOverrides={setOverrides}
+                      computed={liveCalc.assmangComputed} disabled={driver.exclude_mine_bonus} disabledNote="Excluded" />
+                    <SummaryRow label="Additional loads" val={fmt(liveCalc.additionalTotal)} />
+                  </>
+                ) : (
                   <>
                     <OverrideRow label="Basic salary" field="basic_salary_override" overrides={overrides} setOverrides={setOverrides} computed={liveCalc.basicComputed} />
                     {statComputed && <>
@@ -997,8 +1015,17 @@ export default function DriverDetailPage() {
                 </div>
 
                 <div style={{ marginTop: 10, paddingTop: 6, borderTop: '1px dashed var(--border)' }}>
-                  <OverrideRow label="CTC" hint="(cost to company)" field="ctc_override"
+                  <OverrideRow label="CTC"
+                    hint={isCasual ? '(gross income + food allowance)' : '(cost to company)'}
+                    field="ctc_override"
                     overrides={overrides} setOverrides={setOverrides} computed={ctcComputed} />
+                  {isCasual && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Gross {fmt(grossEarnings)}
+                      {totalFoodPaid > 0 && <> + food allowance {fmt(totalFoodPaid)}</>}
+                      {' '}= {fmt(ctcComputed)}
+                    </div>
+                  )}
                 </div>
 
                 <button className="btn-primary" style={{ marginTop: 14, width: '100%' }} onClick={saveLoads} disabled={savingLoads}>
@@ -1153,7 +1180,7 @@ export default function DriverDetailPage() {
             {/* Trip log */}
             <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Trip Log <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>{fmtTripCount(tripLogEffectiveCount)} trips</span></h3>
+                <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Trip Log <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>{fmtLoadCount(tripLogEffectiveCount)} trips</span></h3>
                 <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setTripModal(true)}><Plus size={13} /> Add trip</button>
               </div>
               <p style={{ margin: '0 0 10px', fontSize: 11, color: 'var(--text-muted)' }}>Auto-populated from Truck Loads. Manual entries can also be added.</p>

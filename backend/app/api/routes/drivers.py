@@ -112,7 +112,32 @@ def _month_cycle_totals(db: Session, driver_ids: List[int], month_start: date) -
     return totals
 
 
-def _build_summary(driver: Driver, month_start: date, db: Session, cycle_map: dict) -> dict:
+def _month_split_counts(db: Session, driver_ids: List[int], month_start: date) -> dict:
+    """Split-load line count per driver for the period — each line is 0.5 of a load.
+
+    Bucketed by the load's STATEMENT period (coalesced with load_date) and keyed by
+    (driver_id, entity_id), matching _sync_split_driver / _prefill_from_truckloads so
+    the list column agrees with the driver's pay cycle."""
+    if not driver_ids:
+        return {}
+    rows = (
+        db.query(TruckLoadDriverSplit.driver_id, TruckLoad.entity_id,
+                 func.count(TruckLoadDriverSplit.id))
+        .join(TruckLoad, TruckLoadDriverSplit.truck_load_id == TruckLoad.id)
+        .filter(
+            TruckLoadDriverSplit.driver_id.in_(driver_ids),
+            TruckLoad.is_archived != True,
+            func.coalesce(TruckLoad.statement_month, extract("month", TruckLoad.load_date)) == month_start.month,
+            func.coalesce(TruckLoad.statement_year,  extract("year",  TruckLoad.load_date)) == month_start.year,
+        )
+        .group_by(TruckLoadDriverSplit.driver_id, TruckLoad.entity_id)
+        .all()
+    )
+    return {(r[0], r[1]): r[2] for r in rows}
+
+
+def _build_summary(driver: Driver, month_start: date, db: Session, cycle_map: dict,
+                   split_map: Optional[dict] = None) -> dict:
     start_dt = datetime(month_start.year, month_start.month, 1, tzinfo=timezone.utc)
     end_dt = (datetime(month_start.year + 1, 1, 1, tzinfo=timezone.utc)
               if month_start.month == 12
@@ -142,6 +167,9 @@ def _build_summary(driver: Driver, month_start: date, db: Session, cycle_map: di
         ).scalar() or 0
     else:
         load_count = 0
+    # Split loads are excluded from the counts above (is_split_load) — they're credited
+    # per driver line at 0.5 each, so fold the halves in to show the effective figure.
+    split_halves = (split_map or {}).get((driver.id, driver.entity_id), 0) * 0.5
     casual_assignments = [
         {
             "id": a.id,
@@ -163,7 +191,7 @@ def _build_summary(driver: Driver, month_start: date, db: Session, cycle_map: di
         "truck_registration": driver.truck.registration if driver.truck else None,
         "subcontractor_name": _driver_subcontractor(driver),
         "is_active": driver.is_active,
-        "load_count_this_month": load_count,
+        "load_count_this_month": load_count + split_halves,
         "net_pay_this_month": cycle_map.get(driver.id, {}).get("net_pay", Decimal("0")),
         "food_total_this_month": cycle_map.get(driver.id, {}).get("food", Decimal("0")),
         "casual_assignments": casual_assignments,
@@ -428,8 +456,10 @@ def list_drivers(
     drivers = q.order_by(Driver.last_name, Driver.first_name).offset(skip).limit(limit).all()
     default_start, _ = _current_month_bounds()
     month_start = date(year or default_start.year, month or default_start.month, 1)
-    cycle_map = _month_cycle_totals(db, [d.id for d in drivers], month_start)
-    return [_build_summary(d, month_start, db, cycle_map) for d in drivers]
+    driver_ids = [d.id for d in drivers]
+    cycle_map = _month_cycle_totals(db, driver_ids, month_start)
+    split_map = _month_split_counts(db, driver_ids, month_start)
+    return [_build_summary(d, month_start, db, cycle_map, split_map) for d in drivers]
 
 
 # ── Detail ────────────────────────────────────────────────────────────────────
