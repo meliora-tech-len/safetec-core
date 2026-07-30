@@ -445,6 +445,11 @@ export const addBudgetLine = (sectionId, data) => api.post(`/budgets/sections/${
 export const updateBudgetLine = (lineId, data) => api.patch(`/budgets/lines/${lineId}`, data)
 export const deleteBudgetLine = (lineId) => api.delete(`/budgets/lines/${lineId}`)
 export const upsertBudgetLineValue = (lineId, data) => api.put(`/budgets/lines/${lineId}/values`, data)
+// Bank Info Summary rows (Safetec) — hand-captured account balances and the
+// TO BE PAID list; `kind` is 'bank' or 'to_be_paid'.
+export const addBudgetBankRow = (budgetId, data) => api.post(`/budgets/${budgetId}/bank-rows`, data)
+export const updateBudgetBankRow = (rowId, data) => api.patch(`/budgets/bank-rows/${rowId}`, data)
+export const deleteBudgetBankRow = (rowId) => api.delete(`/budgets/bank-rows/${rowId}`)
 
 // Pull existing system data into ONE section's auto lines (the section header's
 // "Pull from System"). Manual lines, hand-edited cells and every other section

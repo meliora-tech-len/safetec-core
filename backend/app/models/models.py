@@ -1515,6 +1515,16 @@ class Budget(Base):
     # outside this system, so the figure is typed in, not derived. Display-only:
     # it never feeds Expenses, Profit or Actual Profit. NULL = not captured yet.
     external_profit = Column(Numeric(15, 2), nullable=True)
+    # Bank Info Summary (Safetec). Override-only in the Profit Sheet sense: NULL
+    # means "use the calculated value", so a budget correction still flows through.
+    #   vat_back_trailer              typed in — no system source models a VAT claim
+    #                                 on a specific trailer purchase.
+    #   bank_profit_override          pins PROFIT FOR <MONTH>, normally Income − Expenses.
+    #   profit_excl_vat_back_override pins "profit would have been without vat back",
+    #                                 normally profit + vat_back_trailer.
+    vat_back_trailer              = Column(Numeric(15, 2), nullable=True)
+    bank_profit_override          = Column(Numeric(15, 2), nullable=True)
+    profit_excl_vat_back_override = Column(Numeric(15, 2), nullable=True)
 
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
@@ -1523,8 +1533,34 @@ class Budget(Base):
     entity   = relationship("BusinessEntity")
     sections = relationship("BudgetSection", back_populates="budget",
                             cascade="all, delete-orphan", order_by="BudgetSection.sort_order")
+    bank_rows = relationship("BudgetBankRow", back_populates="budget",
+                             cascade="all, delete-orphan", order_by="BudgetBankRow.sort_order")
 
     __table_args__ = (UniqueConstraint("entity_id", "period_month", "period_year"),)
+
+
+class BudgetBankRow(Base):
+    """One labelled amount in the Bank Info Summary block (Safetec).
+
+    Two lists share this table, told apart by `kind`: 'bank' is the account-balance
+    list at the top (read off the banking system by hand each month), 'to_be_paid'
+    is the boxed TO BE PAID list at the bottom. Free rows rather than fixed columns
+    because accounts open and close, and some carry a free-text `note` from the
+    sheet (e.g. "R1879550.29 - to be paid back").
+    """
+    __tablename__ = "budget_bank_rows"
+
+    id         = Column(Integer, primary_key=True)
+    budget_id  = Column(Integer, ForeignKey("budgets.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind       = Column(String(20), nullable=False, default="bank", server_default="bank")  # bank | to_be_paid
+    label      = Column(String(300), nullable=False)
+    note       = Column(String(300), nullable=True)
+    amount     = Column(Numeric(15, 2), nullable=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    budget = relationship("Budget", back_populates="bank_rows")
 
 
 class BudgetSection(Base):

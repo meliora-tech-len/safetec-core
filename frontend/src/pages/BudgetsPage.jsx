@@ -6,6 +6,7 @@ import {
   getBudgets, getBudget, createBudget, deleteBudget,
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
   addBudgetLine, deleteBudgetLine, upsertBudgetLineValue, updateBudget,
+  addBudgetBankRow, updateBudgetBankRow, deleteBudgetBankRow,
   pullBudgetSection, getBudgetIncomeCandidates, setBudgetIncomeLines, replicateBudget,
   getVerifications, verifyValue, finalizeValue, getSuppliers, updateSupplier,
   getBudgetLineTemplates, createBudgetLineTemplate, updateBudgetLineTemplate, deleteBudgetLineTemplate,
@@ -126,7 +127,10 @@ export default function BudgetsPage() {
   const [constantsLoading, setConstantsLoading] = useState(false)
   const [constantSaving, setConstantSaving] = useState({}) // templateId -> boolean (in flight)
   const [newConstant, setNewConstant] = useState({ name: '', section_name: 'OTHER', entity_id: '' })
-  const [externalProfitEdit, setExternalProfitEdit] = useState(null) // null = not editing, else string
+  // Inline edits on the Safetec summary/bank block. Budget-level numeric fields are
+  // keyed by column name; bank rows by `${rowId}:${field}`. Absent key = not editing.
+  const [budgetFieldEdits, setBudgetFieldEdits] = useState({})
+  const [bankEdits, setBankEdits] = useState({})
 
   // Entities this user can see budgets for (admin: all)
   const budgetEntities = useMemo(() => {
@@ -595,21 +599,158 @@ export default function BudgetsPage() {
     return { income, expenses, profit, personal, actualProfit: profit - personal, baseLabel: `${MONTHS[bm - 1]} ${by}` }
   }, [budget, isSft, months])
 
-  // "Profit According to Johan's Profit Sheet" — that sheet isn't in the system, so
-  // the figure is typed in and stored on the budget. Blank clears it.
-  const saveExternalProfit = async () => {
-    const raw = (externalProfitEdit ?? '').trim()
-    setExternalProfitEdit(null)
+  // Numeric fields stored straight on the budget — the typed-in figures (Johan's
+  // profit, vat back) and the override columns that pin an otherwise-calculated
+  // one. Blank clears the field, which for an override restores the calculation.
+  const startBudgetFieldEdit = (field) => setBudgetFieldEdits(p => ({
+    ...p, [field]: budget[field] == null ? '' : String(parseFloat(budget[field])),
+  }))
+  const cancelBudgetFieldEdit = (field) =>
+    setBudgetFieldEdits(p => { const q = { ...p }; delete q[field]; return q })
+
+  const saveBudgetField = async (field) => {
+    const raw = (budgetFieldEdits[field] ?? '').trim()
+    cancelBudgetFieldEdit(field)
     if (raw !== '' && Number.isNaN(parseFloat(raw))) { toast.error('Enter a number'); return }
     const value = raw === '' ? null : parseFloat(raw)
-    const current = budget.external_profit == null ? null : parseFloat(budget.external_profit)
+    const current = budget[field] == null ? null : parseFloat(budget[field])
     if (value === current) return
     try {
-      const res = await updateBudget(budget.id, { external_profit: value })
-      setBudget(b => ({ ...b, external_profit: res.data.external_profit }))
+      const res = await updateBudget(budget.id, { [field]: value })
+      setBudget(b => ({ ...b, [field]: res.data[field] }))
     } catch (e) {
-      toast.error(errorMessage(e, "Failed to save Johan's profit figure"))
+      toast.error(errorMessage(e, 'Failed to save amount'))
     }
+  }
+
+  // Bank Info Summary rows — label, note and amount are all hand-captured.
+  const saveBankRow = async (row, field) => {
+    const key = `${row.id}:${field}`
+    const raw = (bankEdits[key] ?? '').trim()
+    setBankEdits(p => { const q = { ...p }; delete q[key]; return q })
+    let value = raw === '' ? null : raw
+    if (field === 'amount') {
+      if (raw !== '' && Number.isNaN(parseFloat(raw))) { toast.error('Enter a number'); return }
+      value = raw === '' ? null : parseFloat(raw)
+      if (value === (row.amount == null ? null : parseFloat(row.amount))) return
+    } else {
+      if (field === 'label' && !value) { toast.error('A label is required'); return }
+      if ((value || '') === (row[field] || '')) return
+    }
+    try {
+      const res = await updateBudgetBankRow(row.id, { [field]: value })
+      setBudget(b => ({ ...b, bank_rows: b.bank_rows.map(r => (r.id === row.id ? res.data : r)) }))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to save row'))
+    }
+  }
+
+  const handleAddBankRow = async (kind) => {
+    try {
+      const res = await addBudgetBankRow(budget.id, { kind, label: 'New row' })
+      setBudget(b => ({ ...b, bank_rows: [...(b.bank_rows || []), res.data] }))
+      setBankEdits(p => ({ ...p, [`${res.data.id}:label`]: '' }))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to add row'))
+    }
+  }
+
+  const handleDeleteBankRow = async (row) => {
+    try {
+      await deleteBudgetBankRow(row.id)
+      setBudget(b => ({ ...b, bank_rows: b.bank_rows.filter(r => r.id !== row.id) }))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to delete row'))
+    }
+  }
+
+  // The block's figures. Every calculated one can be pinned by its *_override
+  // column; a blank override falls back to the calculation.
+  const bankInfo = useMemo(() => {
+    if (!budget || !sftSummary) return null
+    const rows = budget.bank_rows || []
+    const pick = (o, calc) => (o == null ? calc : parseFloat(o))
+    const profit = pick(budget.bank_profit_override, sftSummary.profit)
+    const vatBack = num(budget.vat_back_trailer)
+    return {
+      accounts: rows.filter(r => r.kind === 'bank'),
+      toBePaid: rows.filter(r => r.kind === 'to_be_paid'),
+      profit,
+      vatBack,
+      // The sheet ADDS the vat back: it is VAT paid out that comes back, so profit
+      // without having had to lay it out would have been higher.
+      profitExclVatBack: pick(budget.profit_excl_vat_back_override, profit + vatBack),
+      toBePaidTotal: rows.filter(r => r.kind === 'to_be_paid').reduce((s, r) => s + num(r.amount), 0),
+    }
+  }, [budget, sftSummary])
+
+  // Render helpers for the bank block. Plain functions, not components, so typing
+  // into a cell doesn't remount the input and lose focus on every keystroke.
+  const bankCell = (row, field, { placeholder, style } = {}) => {
+    const key = `${row.id}:${field}`
+    const editing = bankEdits[key] != null
+    const isAmount = field === 'amount'
+    if (editing) {
+      return (
+        <input
+          className="form-input" autoFocus
+          type={isAmount ? 'number' : 'text'} step={isAmount ? '0.01' : undefined}
+          style={{ padding: '2px 6px', textAlign: isAmount ? 'right' : 'left', ...style }}
+          value={bankEdits[key]}
+          onChange={e => setBankEdits(p => ({ ...p, [key]: e.target.value }))}
+          onBlur={() => saveBankRow(row, field)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            if (e.key === 'Escape') setBankEdits(p => { const q = { ...p }; delete q[key]; return q })
+          }}
+        />
+      )
+    }
+    const raw = row[field]
+    const shown = isAmount
+      ? (raw == null ? '—' : formatCurrency(raw))
+      : (raw || placeholder || '—')
+    return (
+      <span
+        onClick={() => setBankEdits(p => ({
+          ...p, [key]: raw == null ? '' : (isAmount ? String(parseFloat(raw)) : String(raw)),
+        }))}
+        style={{ cursor: 'pointer', color: raw ? undefined : 'var(--text-muted)', ...style }}
+        title="Click to edit"
+      >
+        {shown}
+      </span>
+    )
+  }
+
+  // A figure the system calculates but the user may pin. Blank the input to unpin.
+  const overridableAmount = (field, calculated, style) => {
+    const editing = budgetFieldEdits[field] != null
+    const pinned = budget[field] != null
+    if (editing) {
+      return (
+        <input
+          className="form-input" type="number" step="0.01" autoFocus
+          style={{ padding: '2px 6px', textAlign: 'right', ...style }}
+          value={budgetFieldEdits[field]}
+          onChange={e => setBudgetFieldEdits(p => ({ ...p, [field]: e.target.value }))}
+          onBlur={() => saveBudgetField(field)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            if (e.key === 'Escape') cancelBudgetFieldEdit(field)
+          }}
+        />
+      )
+    }
+    return (
+      <span
+        onClick={() => startBudgetFieldEdit(field)} style={{ cursor: 'pointer', ...style }}
+        title={pinned ? 'Edited by hand — blank it to go back to the calculated figure' : 'Click to edit'}
+      >
+        {formatCurrency(calculated)}
+        {pinned && <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>edited</span>}
+      </span>
+    )
   }
 
   const selectedEntity = budgetEntities.find(e => String(e.id) === String(entityId))
@@ -736,21 +877,21 @@ export default function BudgetsPage() {
                   <div
                     key={c.label} className="stat-card"
                     style={c.editable ? { cursor: 'pointer' } : undefined}
-                    onClick={c.editable && externalProfitEdit == null
-                      ? () => setExternalProfitEdit(budget.external_profit == null ? '' : String(parseFloat(budget.external_profit)))
+                    onClick={c.editable && budgetFieldEdits.external_profit == null
+                      ? () => startBudgetFieldEdit('external_profit')
                       : undefined}
                   >
                     <div className="stat-card-label">{c.label}</div>
-                    {c.editable && externalProfitEdit != null ? (
+                    {c.editable && budgetFieldEdits.external_profit != null ? (
                       <input
                         className="form-input" type="number" step="0.01" autoFocus
                         style={{ fontSize: 20, fontWeight: 700, padding: '2px 6px' }}
-                        value={externalProfitEdit}
-                        onChange={e => setExternalProfitEdit(e.target.value)}
-                        onBlur={saveExternalProfit}
+                        value={budgetFieldEdits.external_profit}
+                        onChange={e => setBudgetFieldEdits(p => ({ ...p, external_profit: e.target.value }))}
+                        onBlur={() => saveBudgetField('external_profit')}
                         onKeyDown={e => {
                           if (e.key === 'Enter') e.currentTarget.blur()
-                          if (e.key === 'Escape') setExternalProfitEdit(null)
+                          if (e.key === 'Escape') cancelBudgetFieldEdit('external_profit')
                         }}
                       />
                     ) : (
@@ -765,6 +906,106 @@ export default function BudgetsPage() {
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
                 {sftSummary.baseLabel} only — the two months that follow are shown in the grid for cash-flow planning and don&apos;t affect these figures.
               </div>
+
+              {/* Bank Info Summary — account balances are read off the banking system
+                  by hand; the profit line below them is pulled from this budget. */}
+              {bankInfo && (
+                <div className="card" style={{ marginTop: 16, padding: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, textDecoration: 'underline' }}>
+                    Bank Info Summary
+                  </div>
+
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <tbody>
+                      {bankInfo.accounts.map(row => (
+                        <tr key={row.id}>
+                          <td style={{ padding: '4px 8px 4px 0', whiteSpace: 'nowrap' }}>{bankCell(row, 'label')}</td>
+                          <td style={{ padding: '4px 8px', width: '45%', color: 'var(--text-muted)', fontSize: 12 }}>
+                            {bankCell(row, 'note', { placeholder: '+ note', style: { fontSize: 12 } })}
+                          </td>
+                          <td style={{ padding: '4px 0', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                            {bankCell(row, 'amount')}
+                          </td>
+                          <td style={{ width: 28, textAlign: 'right' }}>
+                            <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
+                              <Trash2 size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('bank')}>
+                    <Plus size={13} /> Add account
+                  </button>
+
+                  {/* Profit — pulled from the budget above, then adjusted for the VAT back. */}
+                  <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                      <span style={{ fontSize: 17, fontWeight: 700, textTransform: 'uppercase' }}>
+                        Profit for {sftSummary.baseLabel}
+                      </span>
+                      {overridableAmount('bank_profit_override', bankInfo.profit, { fontSize: 17, fontWeight: 700 })}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      Pulled from this budget — Income − Expenses
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12,
+                      background: 'rgba(150, 190, 90, 0.22)', padding: '6px 8px', margin: '10px 0 0',
+                      fontStyle: 'italic', fontWeight: 600,
+                    }}
+                  >
+                    <span>vat back trailer</span>
+                    {overridableAmount('vat_back_trailer', bankInfo.vatBack, { fontWeight: 700, fontStyle: 'normal' })}
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '8px 8px 0' }}>
+                    <span>profit would have been without vat back</span>
+                    {overridableAmount('profit_excl_vat_back_override', bankInfo.profitExclVatBack, { fontWeight: 700 })}
+                  </div>
+
+                  {/* TO BE PAID */}
+                  <div style={{ border: '1px solid var(--border)', padding: 12, marginTop: 16 }}>
+                    <div style={{ fontWeight: 700, fontStyle: 'italic', textDecoration: 'underline', marginBottom: 6 }}>
+                      TO BE PAID:
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <tbody>
+                        {bankInfo.toBePaid.map(row => (
+                          <tr key={row.id}>
+                            <td style={{ padding: '3px 8px 3px 0' }}>{bankCell(row, 'label')}</td>
+                            <td style={{ padding: '3px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                              {bankCell(row, 'amount')}
+                            </td>
+                            <td style={{ width: 28, textAlign: 'right' }}>
+                              <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
+                                <Trash2 size={13} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        <tr>
+                          <td style={{ padding: '6px 8px 0 0' }} />
+                          <td style={{
+                            padding: '6px 0 0', textAlign: 'right', fontWeight: 700, fontStyle: 'italic',
+                            borderTop: '1px solid var(--border)', whiteSpace: 'nowrap',
+                          }}>
+                            {formatCurrency(bankInfo.toBePaidTotal)}
+                          </td>
+                          <td />
+                        </tr>
+                      </tbody>
+                    </table>
+                    <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('to_be_paid')}>
+                      <Plus size={13} /> Add line
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : isObhi && obhiSplit ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 24 }}>

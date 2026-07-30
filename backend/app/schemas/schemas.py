@@ -2518,6 +2518,37 @@ class BudgetUpdate(BaseModel):
     # Nullable on purpose: sending null clears the typed-in figure. PATCH uses
     # exclude_unset, so omitting it leaves the stored value alone.
     external_profit: Optional[Decimal] = None
+    vat_back_trailer: Optional[Decimal] = None
+    bank_profit_override: Optional[Decimal] = None
+    profit_excl_vat_back_override: Optional[Decimal] = None
+
+
+class BudgetBankRowCreate(BaseModel):
+    kind: str = "bank"          # bank | to_be_paid
+    label: str
+    note: Optional[str] = None
+    amount: Optional[Decimal] = None
+    sort_order: Optional[int] = None
+
+
+class BudgetBankRowUpdate(BaseModel):
+    label: Optional[str] = None
+    note: Optional[str] = None
+    amount: Optional[Decimal] = None
+    sort_order: Optional[int] = None
+
+
+class BudgetBankRowOut(BaseModel):
+    id: int
+    budget_id: int
+    kind: str
+    label: str
+    note: Optional[str] = None
+    amount: Optional[Decimal] = None
+    sort_order: Optional[int] = None
+
+    class Config:
+        from_attributes = True
 
 
 class BudgetOut(BaseModel):
@@ -2529,6 +2560,9 @@ class BudgetOut(BaseModel):
     status: str
     notes: Optional[str] = None
     external_profit: Optional[Decimal] = None
+    vat_back_trailer: Optional[Decimal] = None
+    bank_profit_override: Optional[Decimal] = None
+    profit_excl_vat_back_override: Optional[Decimal] = None
     created_at: Optional[datetime] = None
 
     class Config:
@@ -2537,6 +2571,7 @@ class BudgetOut(BaseModel):
 
 class BudgetDetailOut(BudgetOut):
     sections: List[BudgetSectionOut] = []
+    bank_rows: List[BudgetBankRowOut] = []
 
 
 # ── Income selection ──────────────────────────────────────────────────────────

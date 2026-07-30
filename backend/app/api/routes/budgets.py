@@ -9,9 +9,11 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, UserEntityAccess, BusinessEntity,
     Budget, BudgetSection, BudgetLine, BudgetLineValue, BudgetLineTemplate,
+    BudgetBankRow,
 )
 from app.schemas.schemas import (
     BudgetCreate, BudgetUpdate, BudgetOut, BudgetDetailOut,
+    BudgetBankRowCreate, BudgetBankRowUpdate, BudgetBankRowOut,
     BudgetSectionCreate, BudgetSectionUpdate, BudgetSectionOut,
     BudgetLineCreate, BudgetLineUpdate, BudgetLineOut,
     BudgetLineValueIn, BudgetLineValueOut,
@@ -67,6 +69,38 @@ def _sections_for_entity(entity) -> list:
     return [(name, st) for (name, st) in DEFAULT_SECTIONS if name not in excluded]
 
 
+# Bank Info Summary — Safetec only, same gate as the profit summary above it. Labels
+# come from Larissa's sheet; amounts are read off the banking system by hand, so a
+# new budget starts with the rows present and empty. The rows are freely
+# editable/deletable afterwards, so this is a starting point, not a fixed schema.
+BANK_INFO_ENTITIES = {"SFT"}
+DEFAULT_BANK_ROWS = [
+    ("bank", "CURRENT ACC"),
+    ("bank", "MONEY MARKET 001"),
+    ("bank", "MONEY MARKET 002 - VAT"),
+    ("bank", "MONEY MARKET 003 - BUILD UP"),
+    ("bank", "MONEY MARKET 004 - INTEREST"),
+    ("bank", "MONEY MARKET 005"),
+    ("to_be_paid", "30days"),
+    ("to_be_paid", "current"),
+    ("to_be_paid", "KRIP & 7CS"),
+]
+BANK_ROW_KINDS = {"bank", "to_be_paid"}
+
+
+def _seed_bank_rows(budget: Budget, entity, db: Session) -> int:
+    """Seed the Bank Info Summary rows (labels only) on a new Safetec budget."""
+    if (entity.code or "").upper() not in BANK_INFO_ENTITIES:
+        return 0
+    existing = db.query(BudgetBankRow).filter(BudgetBankRow.budget_id == budget.id).count()
+    if existing:
+        return 0
+    for order, (kind, label) in enumerate(DEFAULT_BANK_ROWS):
+        db.add(BudgetBankRow(budget_id=budget.id, kind=kind, label=label, sort_order=order))
+    db.flush()
+    return len(DEFAULT_BANK_ROWS)
+
+
 # ── Permission helpers ────────────────────────────────────────────────────────
 
 def ensure_budget_access(user: User, entity_id: int, db: Session):
@@ -116,7 +150,8 @@ def _get_line_checked(line_id: int, user: User, db: Session) -> BudgetLine:
 
 def _load_detail(budget_id: int, db: Session) -> Budget:
     return db.query(Budget).options(
-        joinedload(Budget.sections).joinedload(BudgetSection.lines).joinedload(BudgetLine.values)
+        joinedload(Budget.sections).joinedload(BudgetSection.lines).joinedload(BudgetLine.values),
+        joinedload(Budget.bank_rows),
     ).filter(Budget.id == budget_id).first()
 
 
@@ -412,6 +447,7 @@ def create_budget(
     # no amounts anyway (they exist for the user to type into).
     sections = {s.name: s for s in db.query(BudgetSection).filter(BudgetSection.budget_id == budget.id).all()}
     _apply_constants(budget, db, sections)
+    _seed_bank_rows(budget, entity, db)
     db.commit()
     return _load_detail(budget.id, db)
 
@@ -909,6 +945,73 @@ def delete_line(
     db.delete(line)
     db.commit()
     return {"detail": "Line deleted"}
+
+
+# ── Bank Info Summary rows ────────────────────────────────────────────────────
+# Two lists on one table, told apart by `kind`: the account balances at the top and
+# the boxed TO BE PAID list at the bottom. Both are hand-captured, so these are plain
+# CRUD — nothing here pulls from the system.
+
+def _get_bank_row_checked(row_id: int, user: User, db: Session) -> BudgetBankRow:
+    row = db.query(BudgetBankRow).filter(BudgetBankRow.id == row_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Bank row not found")
+    ensure_budget_access(user, row.budget.entity_id, db)
+    return row
+
+
+@router.post("/{budget_id}/bank-rows", response_model=BudgetBankRowOut)
+def add_bank_row(
+    budget_id: int,
+    payload: BudgetBankRowCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    budget = _get_budget_checked(budget_id, current_user, db)
+    if payload.kind not in BANK_ROW_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {sorted(BANK_ROW_KINDS)}")
+    # Order within the row's own list, so adding an account never lands it in the
+    # middle of the TO BE PAID box.
+    siblings = [r.sort_order or 0 for r in budget.bank_rows if r.kind == payload.kind]
+    row = BudgetBankRow(
+        budget_id=budget.id,
+        kind=payload.kind,
+        label=payload.label,
+        note=payload.note,
+        amount=payload.amount,
+        sort_order=payload.sort_order if payload.sort_order is not None else max(siblings, default=-1) + 1,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.patch("/bank-rows/{row_id}", response_model=BudgetBankRowOut)
+def update_bank_row(
+    row_id: int,
+    payload: BudgetBankRowUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    row = _get_bank_row_checked(row_id, current_user, db)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(row, field, value)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete("/bank-rows/{row_id}")
+def delete_bank_row(
+    row_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    row = _get_bank_row_checked(row_id, current_user, db)
+    db.delete(row)
+    db.commit()
+    return {"detail": "Bank row deleted"}
 
 
 # ── Values (upsert per line+month) ────────────────────────────────────────────
