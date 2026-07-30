@@ -2515,6 +2515,9 @@ class BudgetUpdate(BaseModel):
     name: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
+    # Nullable on purpose: sending null clears the typed-in figure. PATCH uses
+    # exclude_unset, so omitting it leaves the stored value alone.
+    external_profit: Optional[Decimal] = None
 
 
 class BudgetOut(BaseModel):
@@ -2525,6 +2528,7 @@ class BudgetOut(BaseModel):
     period_year: int
     status: str
     notes: Optional[str] = None
+    external_profit: Optional[Decimal] = None
     created_at: Optional[datetime] = None
 
     class Config:

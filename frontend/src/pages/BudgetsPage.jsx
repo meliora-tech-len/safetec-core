@@ -5,7 +5,7 @@ import { useSessionState } from '../hooks/useSessionState'
 import {
   getBudgets, getBudget, createBudget, deleteBudget,
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
-  addBudgetLine, deleteBudgetLine, upsertBudgetLineValue,
+  addBudgetLine, deleteBudgetLine, upsertBudgetLineValue, updateBudget,
   pullBudgetSection, getBudgetIncomeCandidates, setBudgetIncomeLines, replicateBudget,
   getVerifications, verifyValue, finalizeValue, getSuppliers, updateSupplier,
   getBudgetLineTemplates, createBudgetLineTemplate, updateBudgetLineTemplate, deleteBudgetLineTemplate,
@@ -38,6 +38,13 @@ const CONSTANT_SECTION_OPTIONS = [
 ]
 
 const INCOME_SECTION = 'INCOME'
+
+// Safetec's summary splits its expenses in two: what the trucks cost, and what was
+// paid out of the same account but sits outside truck costing (the owners' personal
+// spend and the non-truck business spend). Both still count as money that left, so
+// they stay inside Expenses; they are then shown again as "Personal Expenses" and
+// taken off Profit to land on Actual Profit — mirroring Johan's sheet.
+const SFT_PERSONAL_SECTIONS = ['PERSONAL NOT ON TRUCK COSTING', 'BUSINESS NOT ON TRUCK COSTING']
 
 // Sections the backend can pull system data into — mirrors SECTION_SOURCES in
 // budget_autofill.py. Anything else (DEBIT ORDERS, a hand-added section) has no
@@ -119,6 +126,7 @@ export default function BudgetsPage() {
   const [constantsLoading, setConstantsLoading] = useState(false)
   const [constantSaving, setConstantSaving] = useState({}) // templateId -> boolean (in flight)
   const [newConstant, setNewConstant] = useState({ name: '', section_name: 'OTHER', entity_id: '' })
+  const [externalProfitEdit, setExternalProfitEdit] = useState(null) // null = not editing, else string
 
   // Entities this user can see budgets for (admin: all)
   const budgetEntities = useMemo(() => {
@@ -563,6 +571,47 @@ export default function BudgetsPage() {
     }
   }, [totals, isObhi, months])
 
+  // Safetec's summary is a profit statement for the BASE month alone, not the
+  // three-month window: it answers "what did May earn and what did May cost".
+  // The two forward columns in the grid are cash-flow planning and stay out of it.
+  const isSft = (selectedEntityCode || '').toUpperCase() === 'SFT'
+  const sftSummary = useMemo(() => {
+    if (!budget || !isSft || !months.length) return null
+    const { month: bm, year: by } = months[0]
+    let income = 0, expenses = 0, personal = 0
+    for (const s of budget.sections) {
+      const isPersonal = SFT_PERSONAL_SECTIONS.includes((s.name || '').toUpperCase())
+      for (const l of s.lines) {
+        for (const v of l.values || []) {
+          if (v.month !== bm || v.year !== by) continue
+          if (s.section_type === 'income') { income += num(v.amount_due); continue }
+          const amount = num(v.amount_due) + num(v.amount_paid)
+          expenses += amount
+          if (isPersonal) personal += amount
+        }
+      }
+    }
+    const profit = income - expenses
+    return { income, expenses, profit, personal, actualProfit: profit - personal, baseLabel: `${MONTHS[bm - 1]} ${by}` }
+  }, [budget, isSft, months])
+
+  // "Profit According to Johan's Profit Sheet" — that sheet isn't in the system, so
+  // the figure is typed in and stored on the budget. Blank clears it.
+  const saveExternalProfit = async () => {
+    const raw = (externalProfitEdit ?? '').trim()
+    setExternalProfitEdit(null)
+    if (raw !== '' && Number.isNaN(parseFloat(raw))) { toast.error('Enter a number'); return }
+    const value = raw === '' ? null : parseFloat(raw)
+    const current = budget.external_profit == null ? null : parseFloat(budget.external_profit)
+    if (value === current) return
+    try {
+      const res = await updateBudget(budget.id, { external_profit: value })
+      setBudget(b => ({ ...b, external_profit: res.data.external_profit }))
+    } catch (e) {
+      toast.error(errorMessage(e, "Failed to save Johan's profit figure"))
+    }
+  }
+
   const selectedEntity = budgetEntities.find(e => String(e.id) === String(entityId))
 
   // The Exclude modal opens from a section header, so it lists that section's
@@ -663,9 +712,61 @@ export default function BudgetsPage() {
       {/* Budget grid */}
       {entityId && !noAccess && !loading && budget && (
         <>
-          {/* Summary — OBHI reconciles per month-group (income vs the expenses that
-              income has to cover); every other entity uses the single window total. */}
-          {isObhi && obhiSplit ? (
+          {/* Summary — Safetec shows a base-month profit statement; OBHI reconciles
+              per month-group (income vs the expenses that income has to cover);
+              every other entity uses the single window total. */}
+          {isSft && sftSummary ? (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16 }}>
+                {[
+                  { label: 'Income', value: sftSummary.income },
+                  { label: 'Expenses', value: sftSummary.expenses,
+                    hint: 'Every expense section, To Pay + Paid' },
+                  { label: 'Profit', value: sftSummary.profit, big: true,
+                    hint: 'Income − Expenses',
+                    cls: sftSummary.profit < 0 ? ' text-danger' : ' text-success' },
+                  { label: "Profit — Johan's Profit Sheet", value: budget.external_profit,
+                    hint: 'Click to enter', editable: true },
+                  { label: 'Personal Expenses', value: sftSummary.personal,
+                    hint: 'Personal + Business not on truck costing' },
+                  { label: 'Actual Profit', value: sftSummary.actualProfit, big: true,
+                    hint: 'Profit − Personal Expenses',
+                    cls: sftSummary.actualProfit < 0 ? ' text-danger' : ' text-success' },
+                ].map(c => (
+                  <div
+                    key={c.label} className="stat-card"
+                    style={c.editable ? { cursor: 'pointer' } : undefined}
+                    onClick={c.editable && externalProfitEdit == null
+                      ? () => setExternalProfitEdit(budget.external_profit == null ? '' : String(parseFloat(budget.external_profit)))
+                      : undefined}
+                  >
+                    <div className="stat-card-label">{c.label}</div>
+                    {c.editable && externalProfitEdit != null ? (
+                      <input
+                        className="form-input" type="number" step="0.01" autoFocus
+                        style={{ fontSize: 20, fontWeight: 700, padding: '2px 6px' }}
+                        value={externalProfitEdit}
+                        onChange={e => setExternalProfitEdit(e.target.value)}
+                        onBlur={saveExternalProfit}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') e.currentTarget.blur()
+                          if (e.key === 'Escape') setExternalProfitEdit(null)
+                        }}
+                      />
+                    ) : (
+                      <div className={`stat-card-value${c.cls || ''}`} style={{ fontSize: c.big ? 26 : 22 }}>
+                        {c.value == null ? '—' : formatCurrency(c.value)}
+                      </div>
+                    )}
+                    {c.hint && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{c.hint}</div>}
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                {sftSummary.baseLabel} only — the two months that follow are shown in the grid for cash-flow planning and don&apos;t affect these figures.
+              </div>
+            </div>
+          ) : isObhi && obhiSplit ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 24 }}>
               {[obhiSplit.g1, obhiSplit.g2].map(g => (
                 <div key={g.title} className="stat-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

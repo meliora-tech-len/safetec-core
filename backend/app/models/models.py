@@ -1511,6 +1511,10 @@ class Budget(Base):
     period_year  = Column(Integer, nullable=False)
     status       = Column(String(20), default="active")  # active | closed
     notes        = Column(Text, nullable=True)
+    # "Profit According to Johan's Profit Sheet" on the summary — that sheet lives
+    # outside this system, so the figure is typed in, not derived. Display-only:
+    # it never feeds Expenses, Profit or Actual Profit. NULL = not captured yet.
+    external_profit = Column(Numeric(15, 2), nullable=True)
 
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
