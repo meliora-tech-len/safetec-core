@@ -47,6 +47,26 @@ const INCOME_SECTION = 'INCOME'
 // taken off Profit to land on Actual Profit — mirroring Johan's sheet.
 const SFT_PERSONAL_SECTIONS = ['PERSONAL NOT ON TRUCK COSTING', 'BUSINESS NOT ON TRUCK COSTING']
 
+// "vat back trailer" is derived, not typed. Almost every vehicle-finance line
+// carries a note of the VAT that will come back on it — "… 01.03.R26915.38 - VAT
+// BACK R133582.50 - END 01.02.2029" — so the note alone marks a dozen lines and
+// means nothing on its own. What marks the month the VAT actually CAME back is the
+// line billing its stated VAT-back figure instead of its usual instalment, so a
+// line counts only when its amount for the month matches its own note.
+// The "R" is required: some labels note a VAT-back *date* ("VAT BACK (01.08.2025)").
+const VAT_BACK_RE = /VAT\s*BACK\s*R\s*([\d.,\s]+)/i
+// Generous next to the gap between an instalment (~R27k) and a VAT back (~R133k+),
+// tight enough that only the intended line can match.
+const VAT_BACK_TOLERANCE = 5
+
+function vatBackFromLine(line, amount) {
+  const match = VAT_BACK_RE.exec(line.name || '')
+  if (!match) return null
+  const stated = parseFloat(match[1].replace(/[\s,]/g, '').replace(/\.$/, ''))
+  if (!stated || Number.isNaN(stated)) return null
+  return Math.abs(stated - amount) <= VAT_BACK_TOLERANCE ? { stated, amount } : null
+}
+
 // Sections the backend can pull system data into — mirrors SECTION_SOURCES in
 // budget_autofill.py. Anything else (DEBIT ORDERS, a hand-added section) has no
 // system source, so it gets no "Pull from System" button. INCOME is absent on
@@ -131,6 +151,8 @@ export default function BudgetsPage() {
   // keyed by column name; bank rows by `${rowId}:${field}`. Absent key = not editing.
   const [budgetFieldEdits, setBudgetFieldEdits] = useState({})
   const [bankEdits, setBankEdits] = useState({})
+  // sessionStorage-backed so the block stays as the user left it across navigation.
+  const [bankInfoOpen, setBankInfoOpen] = useSessionState('budgets.bankInfoOpen', true)
 
   // Entities this user can see budgets for (admin: all)
   const budgetEntities = useMemo(() => {
@@ -671,18 +693,33 @@ export default function BudgetsPage() {
     const rows = budget.bank_rows || []
     const pick = (o, calc) => (o == null ? calc : parseFloat(o))
     const profit = pick(budget.bank_profit_override, sftSummary.profit)
-    const vatBack = num(budget.vat_back_trailer)
+
+    // Lines that billed their stated VAT back this month (see VAT_BACK_RE).
+    const { month: bm, year: by } = months[0]
+    const vatBackHits = []
+    for (const s of budget.sections) {
+      if (s.section_type === 'income') continue
+      for (const l of s.lines) {
+        const v = (l.values || []).find(x => x.month === bm && x.year === by)
+        if (!v) continue
+        const hit = vatBackFromLine(l, num(v.amount_due) + num(v.amount_paid))
+        if (hit) vatBackHits.push({ ...hit, name: l.name })
+      }
+    }
+    const vatBackPulled = vatBackHits.reduce((s, h) => s + h.amount, 0)
+    const vatBack = pick(budget.vat_back_trailer, vatBackPulled)
     return {
       accounts: rows.filter(r => r.kind === 'bank'),
       toBePaid: rows.filter(r => r.kind === 'to_be_paid'),
       profit,
       vatBack,
+      vatBackHits,
       // The sheet ADDS the vat back: it is VAT paid out that comes back, so profit
       // without having had to lay it out would have been higher.
       profitExclVatBack: pick(budget.profit_excl_vat_back_override, profit + vatBack),
       toBePaidTotal: rows.filter(r => r.kind === 'to_be_paid').reduce((s, r) => s + num(r.amount), 0),
     }
-  }, [budget, sftSummary])
+  }, [budget, sftSummary, months])
 
   // Render helpers for the bank block. Plain functions, not components, so typing
   // into a cell doesn't remount the input and lose focus on every keystroke.
@@ -911,10 +948,25 @@ export default function BudgetsPage() {
                   by hand; the profit line below them is pulled from this budget. */}
               {bankInfo && (
                 <div className="card" style={{ marginTop: 16, padding: 16 }}>
-                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, textDecoration: 'underline' }}>
-                    Bank Info Summary
-                  </div>
+                  <button
+                    onClick={() => setBankInfoOpen(o => !o)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none',
+                      padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit',
+                      fontWeight: 700, fontSize: 15, marginBottom: bankInfoOpen ? 12 : 0, width: '100%',
+                    }}
+                    aria-expanded={bankInfoOpen}
+                  >
+                    {bankInfoOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    <span style={{ textDecoration: 'underline' }}>Bank Info Summary</span>
+                    {!bankInfoOpen && (
+                      <span style={{ marginLeft: 'auto', fontWeight: 600, fontSize: 13, color: 'var(--text-muted)' }}>
+                        Profit {formatCurrency(bankInfo.profit)}
+                      </span>
+                    )}
+                  </button>
 
+                  {bankInfoOpen && (<>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <tbody>
                       {bankInfo.accounts.map(row => (
@@ -962,6 +1014,13 @@ export default function BudgetsPage() {
                     <span>vat back trailer</span>
                     {overridableAmount('vat_back_trailer', bankInfo.vatBack, { fontWeight: 700, fontStyle: 'normal' })}
                   </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', margin: '3px 8px 0' }}>
+                    {budget.vat_back_trailer != null
+                      ? 'Typed in — blank it to go back to the lines below'
+                      : bankInfo.vatBackHits.length
+                        ? `Pulled from ${bankInfo.vatBackHits.length} line${bankInfo.vatBackHits.length > 1 ? 's' : ''} billing their stated VAT back this month: ${bankInfo.vatBackHits.map(h => h.name.split(' - ')[0]).join(', ')}`
+                        : 'No line billed its stated VAT back this month — click to enter one'}
+                  </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '8px 8px 0' }}>
                     <span>profit would have been without vat back</span>
@@ -1004,6 +1063,7 @@ export default function BudgetsPage() {
                       <Plus size={13} /> Add line
                     </button>
                   </div>
+                  </>)}
                 </div>
               )}
             </div>
