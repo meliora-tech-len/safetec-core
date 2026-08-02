@@ -5,7 +5,7 @@ import { useSessionState } from '../hooks/useSessionState'
 import {
   getBudgets, getBudget, createBudget, deleteBudget,
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
-  addBudgetLine, deleteBudgetLine, upsertBudgetLineValue, updateBudget,
+  addBudgetLine, updateBudgetLine, deleteBudgetLine, upsertBudgetLineValue, updateBudget,
   addBudgetBankRow, updateBudgetBankRow, deleteBudgetBankRow,
   pullBudgetSection, getBudgetIncomeCandidates, setBudgetIncomeLines, replicateBudget,
   getVerifications, verifyValue, finalizeValue, getSuppliers, updateSupplier,
@@ -129,6 +129,7 @@ export default function BudgetsPage() {
   const [creating, setCreating] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(null) // budget object
   const [cellEdits, setCellEdits] = useState({})   // `${lineId}:${m}:${y}:${field}` -> string
+  const [nameEdits, setNameEdits] = useState({})   // lineId -> string (absent = not editing)
   const [newSection, setNewSection] = useState(null) // null | { name, section_type }
   const [pulling, setPulling] = useState({})       // sectionId -> boolean (in flight)
   const [replicating, setReplicating] = useState(false)
@@ -182,6 +183,7 @@ export default function BudgetsPage() {
       const detail = await getBudget(match.id)
       setBudget(detail.data)
       setCellEdits({})
+      setNameEdits({})
     } catch (e) {
       if (e.response?.status === 403) {
         setNoAccess(true)
@@ -250,6 +252,7 @@ export default function BudgetsPage() {
       const res = await pullBudgetSection(budget.id, section.id)
       setBudget(res.data)
       setCellEdits({})
+      setNameEdits({})
       toast.success(`Pulled ${section.name} from the system`)
     } catch (e) {
       toast.error(errorMessage(e, `Failed to pull ${section.name}`))
@@ -323,6 +326,7 @@ export default function BudgetsPage() {
       const res = await setBudgetIncomeLines(budget.id, [...incomeModal.picked])
       setBudget(res.data)
       setCellEdits({})
+      setNameEdits({})
       setIncomeModal(null)
       toast.success('Income updated')
     } catch (e) {
@@ -539,6 +543,32 @@ export default function BudgetsPage() {
       setCellEdits(p => { const q = { ...p }; delete q[key]; return q })
     } catch (e) {
       toast.error(errorMessage(e, 'Failed to save amount'))
+    }
+  }
+
+  // Line names are hand-editable, including on system-pulled lines: the backend
+  // flags a typed name so the next pull refreshes the amounts but keeps the name.
+  const commitLineName = async (line) => {
+    const raw = nameEdits[line.id]
+    if (raw == null) return
+    const name = raw.trim()
+    const clear = () => setNameEdits(p => { const q = { ...p }; delete q[line.id]; return q })
+    if (!name) { toast.error('A name is required'); return }
+    if (name === line.name) { clear(); return }
+    try {
+      const res = await updateBudgetLine(line.id, { name })
+      setBudget(b => ({
+        ...b,
+        sections: b.sections.map(s => ({
+          ...s,
+          lines: s.lines.map(l => (l.id === line.id
+            ? { ...l, name: res.data.name, name_overridden: res.data.name_overridden }
+            : l)),
+        })),
+      }))
+      clear()
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to rename line'))
     }
   }
 
@@ -1249,8 +1279,30 @@ export default function BudgetsPage() {
                     <tbody>
                       {sortedLines(section).map(line => (
                         <tr key={line.id}>
-                          <td style={{ fontWeight: 500, minWidth: 180, maxWidth: 260, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'top' }} title={line.name}>
-                            {line.name}
+                          <td style={{ fontWeight: 500, minWidth: 180, maxWidth: 260, verticalAlign: 'top' }}>
+                            {nameEdits[line.id] != null ? (
+                              <textarea
+                                className="form-input" autoFocus rows={1}
+                                ref={autoGrow}
+                                style={lineNameInput}
+                                value={nameEdits[line.id]}
+                                onChange={e => { autoGrow(e.target); setNameEdits(p => ({ ...p, [line.id]: e.target.value })) }}
+                                onBlur={() => commitLineName(line)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
+                                  if (e.key === 'Escape') setNameEdits(p => { const q = { ...p }; delete q[line.id]; return q })
+                                }}
+                              />
+                            ) : (
+                              <span
+                                onClick={() => setNameEdits(p => ({ ...p, [line.id]: line.name }))}
+                                style={{ cursor: 'text', wordBreak: 'break-word' }}
+                                title={line.name_overridden ? 'Renamed by hand — a pull keeps this name. Click to edit'
+                                  : 'Click to edit'}
+                              >
+                                {line.name}
+                              </span>
+                            )}
                             {line.source === 'auto' && (
                               <span className="badge badge-sent" style={{ fontSize: 9, marginLeft: 6, verticalAlign: 'middle' }}>auto</span>
                             )}
@@ -1753,6 +1805,21 @@ const cellInputLocked = {
   color: 'var(--text-secondary)',
   background: 'var(--bg-surface)',
   borderColor: 'transparent',
+}
+
+// Line names wrap over as many rows as they need, so they're edited in a textarea
+// that grows to fit rather than an input that scrolls the text out of sight.
+const lineNameInput = {
+  width: '100%', fontSize: 12.5, fontWeight: 500, lineHeight: 1.35,
+  background: 'var(--bg-base)', border: '1px solid var(--accent)', borderRadius: 5,
+  padding: '3px 6px', color: 'var(--text-primary)', outline: 'none',
+  resize: 'none', overflow: 'hidden', display: 'block',
+}
+
+const autoGrow = (el) => {
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
 }
 
 // Clickable sort headers.

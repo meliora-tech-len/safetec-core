@@ -1595,6 +1595,9 @@ class BudgetLine(Base):
     # never auto-touched.
     source     = Column(String(20), nullable=False, default="manual", server_default="manual")
     source_key = Column(String(120), nullable=True, index=True)
+    # The user renamed this line by hand, so a pull must leave the name alone
+    # (it still refreshes the amounts). Manual lines never get renamed anyway.
+    name_overridden = Column(Boolean, nullable=False, default=False, server_default="0")
 
     section = relationship("BudgetSection", back_populates="lines")
     values  = relationship("BudgetLineValue", back_populates="line", cascade="all, delete-orphan")

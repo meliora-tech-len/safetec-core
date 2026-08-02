@@ -2474,6 +2474,7 @@ class BudgetLineOut(BaseModel):
     sort_order: int = 0
     source: str = "manual"
     source_key: Optional[str] = None
+    name_overridden: bool = False
     values: List[BudgetLineValueOut] = []
 
     class Config:

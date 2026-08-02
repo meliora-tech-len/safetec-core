@@ -331,7 +331,8 @@ def _apply_autofill(budget: Budget, db: Session, current_user: User,
             db.add(line); db.flush()
             auto_lines[spec["source_key"]] = line
         else:
-            line.name = spec["line_name"]   # keep fresh (e.g. supplier renamed)
+            if not line.name_overridden:
+                line.name = spec["line_name"]   # keep fresh (e.g. supplier renamed)
             if line.section_id != sec.id:
                 # Classification changed (e.g. a supplier was flagged intercompany) —
                 # move the line, and its value history, into its new section.
@@ -747,6 +748,7 @@ def replicate_budget(
                 tgt_line = BudgetLine(
                     section_id=tgt_sec.id, name=src_line.name, notes=src_line.notes,
                     source=src_line.source, source_key=src_line.source_key,
+                    name_overridden=src_line.name_overridden,
                     sort_order=next_order,
                 )
                 next_order += 1
@@ -928,7 +930,16 @@ def update_line(
     current_user: User = Depends(get_current_user),
 ):
     line = _get_line_checked(line_id, current_user, db)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if "name" in changes:
+        name = (changes["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="A name is required")
+        changes["name"] = name
+        # A hand-typed name on a system line has to survive the next pull.
+        if name != line.name:
+            line.name_overridden = True
+    for field, value in changes.items():
         setattr(line, field, value)
     db.commit()
     db.refresh(line)
