@@ -259,7 +259,10 @@ export default function DriversPage() {
   const [search, setSearch]     = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterEntity, setFilterEntity] = useEntityFilter(urlEntityId)
-  const [filterType, setFilterType]     = useState('permanent')
+  // Sticky for the session: editing a casual driver and coming back to the
+  // list used to drop you on Permanent, so the driver you just edited was
+  // nowhere to be seen.
+  const [filterType, setFilterType]     = useSessionState('filter:drivers:type', 'permanent')
   const [month, setMonth] = useSessionState('period:drivers:month', currentMonth())
   const [year, setYear]   = useSessionState('period:drivers:year', currentYear())
   const [showInactive, setShowInactive] = useState(false)
