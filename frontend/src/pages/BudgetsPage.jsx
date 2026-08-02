@@ -9,6 +9,7 @@ import {
   addBudgetLine, updateBudgetLine, deleteBudgetLine, upsertBudgetLineValue, updateBudget,
   addBudgetBankRow, updateBudgetBankRow, deleteBudgetBankRow,
   pullBudgetSection, getBudgetIncomeCandidates, setBudgetIncomeLines, replicateBudget,
+  getReplicatePreview,
   getVerifications, verifyValue, finalizeValue, getSuppliers, updateSupplier,
   getBudgetLineTemplates, createBudgetLineTemplate, updateBudgetLineTemplate, deleteBudgetLineTemplate,
 } from '../services/api'
@@ -134,6 +135,9 @@ export default function BudgetsPage() {
   const [newSection, setNewSection] = useState(null) // null | { name, section_type }
   const [pulling, setPulling] = useState({})       // sectionId -> boolean (in flight)
   const [replicating, setReplicating] = useState(false)
+  // "Match exactly" — remembered per session, and the preview of what it will remove.
+  const [pruneOnReplicate, setPruneOnReplicate] = useSessionState('budgets.pruneOnReplicate', false)
+  const [pruneModal, setPruneModal] = useState(null)   // null | BudgetPrunePreviewOut
   const [quickAdd, setQuickAdd] = useState(null)   // null | { kind: 'income'|'expense', sectionId, name }
   const [verif, setVerif] = useState({})           // target -> ValueVerification
   const [sortByCol, setSortByCol] = useLocalState('sort:budgets.sections', {})   // sectionId -> { key, dir }
@@ -262,22 +266,48 @@ export default function BudgetsPage() {
     }
   }
 
-  const handleReplicate = async () => {
+  const runReplicate = async (prune) => {
     if (!budget) return
     setReplicating(true)
     try {
-      const { data } = await replicateBudget(budget.id)
+      const { data } = await replicateBudget(budget.id, prune)
       const { period_month: pm, period_year: py } = data.budget
       toast.success(
         `${data.created ? 'Created' : 'Updated'} ${MONTHS[pm - 1]} ${py} — `
         + `${data.lines_added} line(s) added, ${data.values_filled} amount(s) carried over`
+        + (prune ? `, ${data.lines_removed} extra line(s) removed` : '')
       )
+      if (prune && data.lines_kept) {
+        toast(`${data.lines_kept} extra line(s) kept — they hold figures someone typed in.`,
+          { icon: '✋', duration: 6000 })
+      }
+      setPruneModal(null)
       // Jump to the month we just filled so the result is visible, rather than
       // leaving the user on the source month wondering whether anything happened.
       setMonth(pm)
       setYear(py)
     } catch (e) {
       toast.error(errorMessage(e, 'Failed to replicate budget'))
+    } finally {
+      setReplicating(false)
+    }
+  }
+
+  // Plain replicate goes straight through: it only ever adds. Pruning deletes, so
+  // it shows what will go first — unless there's nothing to remove.
+  const handleReplicate = async () => {
+    if (!budget) return
+    if (!pruneOnReplicate) return runReplicate(false)
+    setReplicating(true)
+    try {
+      const { data } = await getReplicatePreview(budget.id)
+      if (!data.target_exists || (!data.remove.length && !data.sections_removed.length)) {
+        setReplicating(false)
+        return runReplicate(true)
+      }
+      setPruneModal(data)
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to check next month'))
     } finally {
       setReplicating(false)
     }
@@ -1156,6 +1186,14 @@ export default function BudgetsPage() {
             >
               <CopyPlus size={14} /> {replicating ? 'Replicating…' : `Replicate to ${MONTHS[(Number(month) % 12)]}`}
             </button>
+            <label
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', color: 'var(--text-secondary)' }}
+              title={`Also REMOVE lines ${MONTHS[(Number(month) % 12)]} has that ${MONTHS[Number(month) - 1]} doesn't, and put it in the same order — so the two months read the same. Lines holding figures someone typed in are never removed. You'll see exactly what goes before anything happens.`}
+            >
+              <input type="checkbox" checked={pruneOnReplicate}
+                onChange={e => setPruneOnReplicate(e.target.checked)} />
+              Match exactly
+            </label>
             {isAdmin && (
               <button className="btn-ghost btn-sm" onClick={openConstants}>
                 <ListChecks size={14} /> Manage Constants
@@ -1435,6 +1473,73 @@ export default function BudgetsPage() {
           ? `Delete the ${MONTHS[confirmDelete.period_month - 1]} ${confirmDelete.period_year} budget for ${selectedEntity?.code || ''}? All sections, lines and amounts will be removed.`
           : ''}
       />
+
+      {/* "Match exactly" — what pruning will remove from next month, before it does. */}
+      {pruneModal && (
+        <div className="modal-overlay" onClick={() => setPruneModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 560, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <CopyPlus size={18} style={{ color: 'var(--accent)' }} />
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>
+                    Match {MONTHS[pruneModal.target_month - 1]} {pruneModal.target_year} to {MONTHS[Number(month) - 1]} {year}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{selectedEntity?.code} — {selectedEntity?.name}</div>
+                </div>
+              </div>
+              <button className="btn-icon" onClick={() => setPruneModal(null)}><X size={16} /></button>
+            </div>
+
+            <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, flex: 1, overflowY: 'auto' }}>
+              <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                {MONTHS[pruneModal.target_month - 1]} will get every line {MONTHS[Number(month) - 1]} has, in the same
+                order, and these <strong>{pruneModal.remove.length}</strong> line(s) it has on its own will be
+                removed. Their figures came from the system — <strong>Pull from System</strong> brings them back.
+              </p>
+
+              <div style={{ border: '1px solid var(--border)', borderRadius: 6 }}>
+                {pruneModal.remove.map(item => (
+                  <div key={item.line_id}
+                    style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '5px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 10, minWidth: 150, flexShrink: 0 }}>{item.section}</span>
+                    <span style={{ flex: 1, wordBreak: 'break-word' }}>{item.name}</span>
+                    {item.has_figures && (
+                      <span className="badge badge-sent" style={{ fontSize: 9 }} title="Has figures on it — they can be pulled again">has figures</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {pruneModal.sections_removed.length > 0 && (
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Empty section(s) going too: <strong>{pruneModal.sections_removed.join(', ')}</strong>
+                </p>
+              )}
+
+              {pruneModal.keep.length > 0 && (
+                <div>
+                  <p style={{ margin: '0 0 6px', fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Kept — someone typed these figures in, so they stay even though {MONTHS[Number(month) - 1]} has no such line:
+                  </p>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                    {pruneModal.keep.map(i => `${i.section} — ${i.name}`).join(' · ')}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
+              <button className="btn-ghost" onClick={() => setPruneModal(null)} disabled={replicating}>Cancel</button>
+              <button className="btn-primary" onClick={() => runReplicate(true)} disabled={replicating}>
+                {replicating ? 'Replicating…' : `Replicate & remove ${pruneModal.remove.length}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showExclusions && (
         <div className="modal-overlay" onClick={closeExclusions}>

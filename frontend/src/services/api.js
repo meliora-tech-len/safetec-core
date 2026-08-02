@@ -468,7 +468,14 @@ export const setBudgetIncomeLines = (budgetId, sourceKeys) =>
 // Carry this budget forward into the next month, creating it if needed. Figures
 // keep their absolute month, so only those still inside the next month's window
 // come along. Merges into an existing budget rather than overwriting it.
-export const replicateBudget = (budgetId) => api.post(`/budgets/${budgetId}/replicate`)
+// `prune` also removes lines next month has that this one doesn't, and copies
+// this month's ordering over, so the two months end up structurally identical.
+// Lines holding hand-typed figures are never removed.
+export const replicateBudget = (budgetId, prune = false) =>
+  api.post(`/budgets/${budgetId}/replicate`, null, { params: prune ? { prune: true } : {} })
+
+// What a pruning replicate would remove from next month. Read-only.
+export const getReplicatePreview = (budgetId) => api.get(`/budgets/${budgetId}/replicate-preview`)
 
 // Budget "constants" — recurring lines (e.g. Travel & Accom) seeded into every
 // budget's matching section on creation, and into a section when it's pulled.

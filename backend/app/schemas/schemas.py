@@ -2608,6 +2608,29 @@ class BudgetReplicateOut(BaseModel):
     created: bool                  # target budget didn't exist and was created
     lines_added: int
     values_filled: int
+    # prune=true only: extras removed so the target matches the source, and the
+    # extras left standing because they hold hand-typed figures.
+    lines_removed: int = 0
+    sections_removed: int = 0
+    lines_kept: int = 0
+
+
+class BudgetPruneItemOut(BaseModel):
+    line_id: int
+    section: str
+    name: str
+    source: str
+    has_figures: bool
+
+
+class BudgetPrunePreviewOut(BaseModel):
+    """What a pruning replicate would remove from next month."""
+    target_month: int
+    target_year: int
+    target_exists: bool            # false = replicate will create it, nothing to prune
+    remove: List[BudgetPruneItemOut]
+    keep: List[BudgetPruneItemOut]  # extras protected because they hold typed figures
+    sections_removed: List[str]
 
 
 class BudgetLineTemplateCreate(BaseModel):

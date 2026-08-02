@@ -19,6 +19,7 @@ from app.schemas.schemas import (
     BudgetLineValueIn, BudgetLineValueOut,
     BudgetLineTemplateCreate, BudgetLineTemplateUpdate, BudgetLineTemplateOut,
     BudgetIncomeCandidateOut, BudgetIncomeSelection, BudgetReplicateOut,
+    BudgetPruneItemOut, BudgetPrunePreviewOut,
 )
 from app.services.audit import log_action
 from app.services.budget_autofill import (
@@ -659,9 +660,158 @@ def set_income_lines(
     return _load_detail(budget_id, db)
 
 
+# ── Prune (the "match exactly" half of replicate) ─────────────────────────────
+# Replicate only ever merges, so a target month that was pulled (or seeded with
+# constants) before being replicated into keeps every line the source doesn't
+# have, and the two months drift apart. Pruning removes those extras.
+
+def _line_ident(line) -> str:
+    """How replicate decides two lines are the same one — keep the two in step."""
+    return line.source_key or ("name:" + (line.name or "").strip().lower())
+
+
+def _prunable(line, values) -> bool:
+    """Can this extra line go without losing anything the user typed?
+
+    Empty lines always can. A system line can too: its figures came from a pull
+    and another pull brings them back. What we never touch is a hand-typed
+    figure — a manual line with an amount on it, or an auto cell the user pinned.
+    """
+    if not any(v.amount_due is not None or v.amount_paid is not None for v in values):
+        return True
+    if line.source == "manual":
+        return False
+    return not any(v.is_overridden for v in values)
+
+
+def _prune_plan(db: Session, source: Budget, target: Budget):
+    """Extras the target has and the source doesn't.
+
+    Returns (remove, keep, sections_to_remove). `remove` and `keep` are lists of
+    (section_name, BudgetLine); `keep` is the extras protected by _prunable.
+    Safe to compute before the merge: the merge only ever adds lines the source
+    has, and those are exactly the ones this never touches.
+    """
+    src_sections = db.query(BudgetSection).filter(BudgetSection.budget_id == source.id).all()
+    src_idents = {}
+    for s in src_sections:
+        counts: dict = {}
+        for l in db.query(BudgetLine).filter(BudgetLine.section_id == s.id).all():
+            counts[_line_ident(l)] = counts.get(_line_ident(l), 0) + 1
+        src_idents[s.name] = counts
+
+    remove, keep, sections_to_remove = [], [], []
+    for tsec in db.query(BudgetSection).filter(BudgetSection.budget_id == target.id).all():
+        tgt_lines = db.query(BudgetLine).filter(BudgetLine.section_id == tsec.id).all()
+        wanted = src_idents.get(tsec.name)
+        section_gone = wanted is None
+        if section_gone:
+            wanted = {}
+
+        # Duplicate names are real (three CENTRA FIN (BIKE) rows, say), so match
+        # by count: keep as many as the source has, the rest are extras.
+        seen: dict = {}
+        extras = []
+        for l in tgt_lines:
+            k = _line_ident(l)
+            seen[k] = seen.get(k, 0) + 1
+            if seen[k] > wanted.get(k, 0):
+                extras.append(l)
+
+        blocked = False
+        for l in extras:
+            values = db.query(BudgetLineValue).filter(BudgetLineValue.line_id == l.id).all()
+            if _prunable(l, values):
+                remove.append((tsec.name, l))
+            else:
+                keep.append((tsec.name, l))
+                blocked = True
+
+        # A section only goes once nothing of the user's is left standing in it.
+        if section_gone and not blocked:
+            sections_to_remove.append(tsec)
+
+    return remove, keep, sections_to_remove
+
+
+def _apply_prune(db: Session, source: Budget, target: Budget):
+    """Delete the extras, then put the target's sections and lines in the
+    source's order so the two months read the same top to bottom."""
+    remove, keep, sections_to_remove = _prune_plan(db, source, target)
+
+    for _, line in remove:
+        db.query(BudgetLineValue).filter(BudgetLineValue.line_id == line.id).delete()
+        db.delete(line)
+    db.flush()
+    for sec in sections_to_remove:
+        db.delete(sec)
+    db.flush()
+
+    src_sections = {s.name: s for s in db.query(BudgetSection).filter(
+        BudgetSection.budget_id == source.id).all()}
+    for tsec in db.query(BudgetSection).filter(BudgetSection.budget_id == target.id).all():
+        ssec = src_sections.get(tsec.name)
+        if ssec is None:
+            continue
+        tsec.sort_order = ssec.sort_order
+        order = {}
+        for i, sl in enumerate(db.query(BudgetLine).filter(
+                BudgetLine.section_id == ssec.id).order_by(BudgetLine.sort_order, BudgetLine.id).all()):
+            order.setdefault(_line_ident(sl), []).append(i)
+        for tl in db.query(BudgetLine).filter(
+                BudgetLine.section_id == tsec.id).order_by(BudgetLine.sort_order, BudgetLine.id).all():
+            slot = order.get(_line_ident(tl))
+            if slot:
+                tl.sort_order = slot.pop(0)
+
+    return len(remove), len(keep), len(sections_to_remove)
+
+
+@router.get("/{budget_id}/replicate-preview", response_model=BudgetPrunePreviewOut)
+def replicate_preview(
+    budget_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """What a pruning replicate would remove from next month. Read-only."""
+    source = _get_budget_checked(budget_id, current_user, db)
+    tm, ty = _next_month(source.period_month, source.period_year)
+    target = db.query(Budget).filter(
+        Budget.entity_id == source.entity_id,
+        Budget.period_month == tm,
+        Budget.period_year == ty,
+    ).first()
+    if target is None:
+        # Nothing there yet, so replicate creates it and there is nothing to prune.
+        return BudgetPrunePreviewOut(target_month=tm, target_year=ty, target_exists=False,
+                                     remove=[], keep=[], sections_removed=[])
+
+    remove, keep, sections_to_remove = _prune_plan(db, source, target)
+
+    def out(items):
+        return [
+            BudgetPruneItemOut(
+                line_id=l.id, section=sec, name=l.name, source=l.source,
+                has_figures=db.query(BudgetLineValue).filter(
+                    BudgetLineValue.line_id == l.id,
+                    or_(BudgetLineValue.amount_due.isnot(None),
+                        BudgetLineValue.amount_paid.isnot(None)),
+                ).count() > 0,
+            )
+            for sec, l in items
+        ]
+
+    return BudgetPrunePreviewOut(
+        target_month=tm, target_year=ty, target_exists=True,
+        remove=out(remove), keep=out(keep),
+        sections_removed=[s.name for s in sections_to_remove],
+    )
+
+
 @router.post("/{budget_id}/replicate", response_model=BudgetReplicateOut)
 def replicate_budget(
     budget_id: int,
+    prune: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -679,6 +829,13 @@ def replicate_budget(
     Merge, never overwrite: missing lines are added and only blank cells are
     filled, so a target month someone has already worked in keeps its figures and
     pressing Replicate twice changes nothing the second time.
+
+    `prune=true` finishes the job the other way round: after the merge, extra
+    lines the target has and the source doesn't are removed and the target is put
+    in the source's order, so the two months end up structurally identical.
+    Hand-typed figures are never removed (see _prunable) — those extras stay and
+    are counted in `lines_kept`. Call GET /replicate-preview first to show the
+    user what will go.
     """
     source = _get_budget_checked(budget_id, current_user, db)
     tm, ty = _next_month(source.period_month, source.period_year)
@@ -732,9 +889,12 @@ def replicate_budget(
 
         tgt_lines = db.query(BudgetLine).filter(BudgetLine.section_id == tgt_sec.id).all()
         # System lines match on source_key; hand-added ones have none, so they
-        # match on name — otherwise every replicate would duplicate them.
-        by_key = {l.source_key: l for l in tgt_lines if l.source_key}
-        by_name = {(l.name or "").strip().lower(): l for l in tgt_lines}
+        # match on name — otherwise every replicate would duplicate them. Each
+        # target line can only stand in for ONE source line, so the same name
+        # three times over (three CENTRA FIN (BIKE) rows) carries over as three.
+        pool: dict = {}
+        for l in tgt_lines:
+            pool.setdefault(_line_ident(l), []).append(l)
         next_order = max([l.sort_order or 0 for l in tgt_lines], default=-1) + 1
 
         src_lines = db.query(BudgetLine).filter(
@@ -742,8 +902,8 @@ def replicate_budget(
         ).order_by(BudgetLine.sort_order).all()
 
         for src_line in src_lines:
-            name_key = (src_line.name or "").strip().lower()
-            tgt_line = by_key.get(src_line.source_key) if src_line.source_key else by_name.get(name_key)
+            bucket = pool.get(_line_ident(src_line))
+            tgt_line = bucket.pop(0) if bucket else None
             if tgt_line is None:
                 tgt_line = BudgetLine(
                     section_id=tgt_sec.id, name=src_line.name, notes=src_line.notes,
@@ -754,9 +914,6 @@ def replicate_budget(
                 next_order += 1
                 db.add(tgt_line)
                 db.flush()
-                if src_line.source_key:
-                    by_key[src_line.source_key] = tgt_line
-                by_name[name_key] = tgt_line
                 lines_added += 1
 
             existing = {
@@ -781,12 +938,21 @@ def replicate_budget(
                 tgt_val.is_overridden = src_val.is_overridden
                 values_filled += 1
 
+    lines_removed = sections_removed = lines_kept = 0
+    if prune and not created:
+        db.flush()   # the merge's new lines must be visible to the plan
+        lines_removed, lines_kept, sections_removed = _apply_prune(db, source, target)
+
     log_action(
         db, "budget.replicated", user_id=current_user.id,
         resource_type="budget", resource_id=target.id,
         description=f"Replicated budget {source.period_month}/{source.period_year} → {tm}/{ty} "
                     f"({'created' if created else 'merged into existing'}; "
-                    f"{lines_added} line(s) added, {values_filled} value(s) filled)",
+                    f"{lines_added} line(s) added, {values_filled} value(s) filled"
+                    + (f"; pruned to match: {lines_removed} line(s) and "
+                       f"{sections_removed} section(s) removed, {lines_kept} kept "
+                       f"(hand-typed figures)" if prune else "")
+                    + ")",
     )
     db.commit()
     return BudgetReplicateOut(
@@ -794,6 +960,9 @@ def replicate_budget(
         created=created,
         lines_added=lines_added,
         values_filled=values_filled,
+        lines_removed=lines_removed,
+        sections_removed=sections_removed,
+        lines_kept=lines_kept,
     )
 
 
