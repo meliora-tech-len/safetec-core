@@ -1308,6 +1308,31 @@ class DieselFillUp(Base):
     creator          = relationship("User", foreign_keys=[created_by])
 
 
+class DieselLock(Base):
+    """Per entity + diesel month: the month is LOCKED. No fill-up values may be
+    added, changed or removed in that month (a free-text note stays editable —
+    it is never part of any total), and the admin-fee re-snapshot skips it.
+
+    Simpler than the subcontractor costing "Sent" flag: nothing rolls forward.
+    `locked_at` is the recorded lock date — audit trail and on-screen label only.
+    """
+    __tablename__ = "diesel_locks"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    entity_id    = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    month        = Column(Integer, nullable=False)
+    year         = Column(Integer, nullable=False)
+    locked_at    = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    locked_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    entity    = relationship("BusinessEntity")
+    locked_by = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("entity_id", "month", "year", name="uq_diesel_lock_period"),
+    )
+
+
 # ── Payroll Entries (auto-draft workflow) ─────────────────────────────────────
 
 class PayrollEntry(Base):

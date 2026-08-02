@@ -3,13 +3,14 @@ import {
   getDieselFillUps, getDieselFillUpSummary, createDieselFillUp,
   updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp, finalizeDieselFillUp,
   getCurrentDieselRate, getEntities, getDieselSettings, getSuppliers,
+  getDieselLocks, setDieselLock,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage, dieselTypeForSupplier } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
 import toast from 'react-hot-toast'
-import { Plus, Search, X, Trash2, Fuel, Save, Upload, Pencil } from 'lucide-react'
+import { Plus, Search, X, Trash2, Fuel, Save, Upload, Pencil, Lock, RotateCcw } from 'lucide-react'
 import ImportDieselModal from '../components/ImportDieselModal'
 import ExportButton from '../components/ExportButton'
 import SearchableSelect from '../components/SearchableSelect'
@@ -93,6 +94,11 @@ export default function DieselFillUpsPage() {
   const [noteEditId,   setNoteEditId]   = useState(null)
   const [noteText,     setNoteText]     = useState('')
   const [noteSaving,   setNoteSaving]   = useState(false)
+  // Month lock — one row per entity + month/year; locked = no values in or out
+  const [locks,        setLocks]        = useState([])
+  const [lockModal,    setLockModal]    = useState(false)
+  const [lockDate,     setLockDate]     = useState(today)
+  const [lockSaving,   setLockSaving]   = useState(false)
   const firstInputRef = useRef(null)
   const { sort, onSort } = useSort('truck_registration', 'asc', 'diesel-fillups')
 
@@ -130,6 +136,50 @@ export default function DieselFillUpsPage() {
   }, [buildParams])
 
   useEffect(() => { load() }, [load])
+
+  // Which of the shown months are locked. Fetched for every accessible entity so
+  // rows still read as locked under "All Entities"; the lock control itself needs
+  // a single entity to act on.
+  const loadLocks = useCallback(() => {
+    getDieselLocks({ year: filterYear, month: filterMonth })
+      .then(r => setLocks(r.data || []))
+      .catch(() => setLocks([]))
+  }, [filterYear, filterMonth])
+
+  useEffect(() => { loadLocks() }, [loadLocks])
+
+  const lock = useMemo(
+    () => (filterEntity ? locks.find(l => String(l.entity_id) === String(filterEntity)) : null) || null,
+    [locks, filterEntity],
+  )
+  const lockedEntityIds = useMemo(() => new Set(locks.map(l => l.entity_id)), [locks])
+  const isLocked = !!lock
+  const rowLocked = f => lockedEntityIds.has(f.entity_id)
+
+  const applyLock = async () => {
+    if (!lockDate) { toast.error('Pick the date the month was locked'); return }
+    setLockSaving(true)
+    try {
+      await setDieselLock(
+        { entity_id: filterEntity, month: filterMonth, year: filterYear },
+        { locked: true, locked_date: lockDate },
+      )
+      toast.success(`${MONTHS[filterMonth]} ${filterYear} diesel locked`)
+      setLockModal(false)
+      setEditingId(null)
+      loadLocks()
+    } catch (err) { toast.error(errorMessage(err)) }
+    finally { setLockSaving(false) }
+  }
+
+  const removeLock = async () => {
+    if (!window.confirm(`Unlock the ${MONTHS[filterMonth]} ${filterYear} diesel month? Values can be added and changed again.`)) return
+    try {
+      await setDieselLock({ entity_id: filterEntity, month: filterMonth, year: filterYear }, { locked: false })
+      toast.success('Diesel month unlocked')
+      loadLocks()
+    } catch (err) { toast.error(errorMessage(err)) }
+  }
 
   // Fetch trucks, suppliers, and diesel settings when edit row entity changes
   useEffect(() => {
@@ -179,6 +229,7 @@ export default function DieselFillUpsPage() {
 
   const startNew = () => {
     if (editingId !== null) return // guard — must intentionally exit first
+    if (isLocked) return toast.error(`${MONTHS[filterMonth]} ${filterYear} is locked — unlock it to log diesel`)
     setEditForm({ ...BLANK, entity_id: filterEntity || '' })
     setAutoRate(null); setRateEdited(false)
     setEditingId('new')
@@ -186,6 +237,7 @@ export default function DieselFillUpsPage() {
 
   const startEdit = (f) => {
     if (editingId !== null) return // guard — intentional exit only
+    if (rowLocked(f)) return       // locked month — only the note is editable
     setEditForm({
       entity_id:     String(f.entity_id    || ''),
       truck_id:      String(f.truck_id     || ''),
@@ -343,7 +395,33 @@ export default function DieselFillUpsPage() {
           <h1 className="page-title">Diesel Log</h1>
           <p className="page-subtitle">{fillups.length} records — {MONTHS[filterMonth]} {filterYear}</p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* Month lock — per entity per month */}
+          {isLocked ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span
+                title={`Diesel locked${lock.locked_by_name ? ` by ${lock.locked_by_name}` : ''} — no values can be added, changed or removed in this month`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 800, letterSpacing: 0.5, background: 'rgba(34,197,94,0.15)', color: '#16a34a' }}
+              >
+                <Lock size={11} /> LOCKED {formatDate(lock.locked_at)}
+              </span>
+              <button className="btn-icon btn-ghost" title="Unlock this diesel month" onClick={removeLock} style={{ padding: 2 }}>
+                <RotateCcw size={13} color="var(--text-muted)" />
+              </button>
+            </span>
+          ) : (
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => { setLockDate(today); setLockModal(true) }}
+              disabled={!filterEntity}
+              title={filterEntity
+                ? `Lock the ${MONTHS[filterMonth]} ${filterYear} diesel month — no values in or out`
+                : 'Pick a single entity to lock its diesel month'}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 }}
+            >
+              <Lock size={12} /> Lock Month
+            </button>
+          )}
           <ExportButton
             title={`Diesel Logs — ${MONTHS[filterMonth]} ${filterYear}`}
             filename={`diesel-${filterYear}-${filterMonth}`}
@@ -367,11 +445,13 @@ export default function DieselFillUpsPage() {
             ]}
           />
           {isBokamosho && (
-            <button className="btn-ghost" onClick={() => setShowImport(true)}>
+            <button className="btn-ghost" onClick={() => setShowImport(true)} disabled={isLocked}
+              title={isLocked ? `${MONTHS[filterMonth]} ${filterYear} is locked` : undefined}>
               <Upload size={15} /> Import
             </button>
           )}
-          <button className="btn-primary" onClick={startNew} disabled={editingId !== null}>
+          <button className="btn-primary" onClick={startNew} disabled={editingId !== null || isLocked}
+            title={isLocked ? `${MONTHS[filterMonth]} ${filterYear} is locked — unlock it to log diesel` : undefined}>
             <Plus size={15} /> Log Diesel
           </button>
         </div>
@@ -531,7 +611,7 @@ export default function DieselFillUpsPage() {
               ) : (
                 <Fragment key={f.id}>
                 <tr
-                  onClick={() => f.verified3_by ? startNoteEdit(f) : startEdit(f)}
+                  onClick={() => (f.verified3_by || rowLocked(f)) ? startNoteEdit(f) : startEdit(f)}
                   style={{ cursor: editingId !== null ? 'default' : 'pointer' }}>
                   {multiEntity && (
                     <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -578,7 +658,7 @@ export default function DieselFillUpsPage() {
                     <VerifyBadge item={f} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} adminFinalizeAnytime />
                   </td>
                   <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
-                    {!!f.verified3_by && (
+                    {(!!f.verified3_by || rowLocked(f)) && (
                       <button
                         className="btn-icon btn-ghost"
                         onClick={e => { e.stopPropagation(); startNoteEdit(f) }}
@@ -588,9 +668,16 @@ export default function DieselFillUpsPage() {
                         <Pencil size={13} />
                       </button>
                     )}
-                    <button className="btn-icon btn-ghost" onClick={e => handleDelete(f, e)} title="Delete">
-                      <Trash2 size={13} color="var(--danger)" />
-                    </button>
+                    {rowLocked(f) ? (
+                      <span title="This diesel month is locked — unlock it to change or remove values"
+                        style={{ display: 'inline-flex', verticalAlign: 'middle' }}>
+                        <Lock size={13} color="var(--text-muted)" />
+                      </span>
+                    ) : (
+                      <button className="btn-icon btn-ghost" onClick={e => handleDelete(f, e)} title="Delete">
+                        <Trash2 size={13} color="var(--danger)" />
+                      </button>
+                    )}
                   </td>
                 </tr>
                 {noteEditId === f.id && (
@@ -639,6 +726,42 @@ export default function DieselFillUpsPage() {
           )}
         </table>
       </div>
+
+      {/* ── Lock Month Modal ── */}
+      {lockModal && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setLockModal(false)}>
+          <div className="modal">
+            <div className="modal-header">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                <Lock size={16} style={{ color: 'var(--accent)' }} />
+                Lock Diesel — {MONTHS[filterMonth]} {filterYear}
+              </h2>
+              <button className="btn-icon btn-ghost" onClick={() => setLockModal(false)}><X size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, marginTop: 0, lineHeight: 1.5 }}>
+                This locks the <strong>{MONTHS[filterMonth]} {filterYear}</strong> diesel month for{' '}
+                <strong>{entities.find(e => String(e.id) === String(filterEntity))?.code || 'this entity'}</strong> —
+                no logs can be added, changed, imported or removed in it. Notes stay editable.
+              </p>
+              <div className="form-group">
+                <label>Locked on *</label>
+                <DateInput className="form-input" value={lockDate} onChange={e => setLockDate(e.target.value)} />
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                  If the month was actually closed off earlier, pick that date — it's recorded on the lock
+                  and in the audit log. Diesel logged after it simply belongs to a later month.
+                </span>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn-ghost" onClick={() => setLockModal(false)}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={applyLock} disabled={lockSaving}>
+                {lockSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : <><Lock size={14} /> Lock Month</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <DeleteModal
         isOpen={!!deleteTarget}

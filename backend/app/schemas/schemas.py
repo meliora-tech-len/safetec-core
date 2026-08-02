@@ -2062,6 +2062,28 @@ class DieselFillUpOut(BaseModel):
         from_attributes = True
 
 
+class DieselLockOut(BaseModel):
+    entity_id: int
+    month: int
+    year: int
+    locked_at: datetime
+    locked_by_id: Optional[int] = None
+    locked_by_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DieselLockUpdate(BaseModel):
+    # True = lock this entity's diesel month (no values in or out);
+    # False = unlock it again.
+    locked: bool
+    # The date the month was actually closed off (defaults to today). Recorded
+    # for the audit trail and the on-screen badge — unlike the costing "Sent"
+    # date nothing rolls forward, so it never moves values between months.
+    locked_date: Optional[date] = None
+
+
 class DieselSummaryByTruck(BaseModel):
     truck_reg: str
     fillup_count: int

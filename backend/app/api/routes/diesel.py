@@ -9,19 +9,23 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
-    User, DieselSettings, DieselRate, DieselFillUp,
+    User, DieselSettings, DieselRate, DieselFillUp, DieselLock,
     Supplier, Truck, TruckLoad, SupplierInvoice, BusinessEntity,
 )
 from app.schemas.schemas import (
     DieselSettingsOut, DieselSettingsUpdate,
     DieselRateCreate, DieselRateUpdate, DieselRateOut,
     DieselFillUpCreate, DieselFillUpUpdate, DieselFillUpOut,
-    DieselFillUpSummary,
+    DieselFillUpSummary, DieselLockOut, DieselLockUpdate,
     DieselSummaryByTruck, DieselSupplierReconciliation, DieselAnnualMonthRow,
     DieselInvoiceReconciliationRow,
     DieselImportRequest, DieselImportResult, DieselImportRowResult,
 )
 from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
+from app.services.diesel_lock import (
+    ensure_fillup_unlocked, ensure_period_unlocked, exclude_locked_periods,
+    fillup_period, get_lock, lock_message, locked_periods, period_for,
+)
 from app.services.audit import log_action
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
@@ -287,8 +291,8 @@ def update_diesel_settings(
     # carrying the pre-change %. A fill-up on a different % holds a fee the supplier
     # itself billed per line (Intsimbi's 1.5%, back-computed from their statement) —
     # that is a real invoiced amount, not our markup, and must survive. Archived and
-    # finally-verified rows are skipped too: the lock is what freezes a reconciled
-    # month against a later fee change.
+    # finally-verified rows are skipped too, as is anything in a locked diesel
+    # month: the locks are what freeze a reconciled month against a later fee change.
     new_pct = Decimal(str(payload.admin_fee_pct))
     apply_fee = bool(payload.apply_admin_fee)
     new_effective_pct = new_pct if apply_fee else Decimal("0")
@@ -297,16 +301,13 @@ def update_diesel_settings(
 
     fillups_updated = 0
     if new_effective_pct != old_effective_pct:
-        stale_fillups = (
-            db.query(DieselFillUp)
-            .filter(
-                DieselFillUp.entity_id == entity_id,
-                DieselFillUp.is_archived.is_(False),
-                DieselFillUp.verified3_by.is_(None),
-                func.coalesce(DieselFillUp.admin_fee_pct, 0) == old_effective_pct,
-            )
-            .all()
+        stale_q = db.query(DieselFillUp).filter(
+            DieselFillUp.entity_id == entity_id,
+            DieselFillUp.is_archived.is_(False),
+            DieselFillUp.verified3_by.is_(None),
+            func.coalesce(DieselFillUp.admin_fee_pct, 0) == old_effective_pct,
         )
+        stale_fillups = exclude_locked_periods(db, stale_q, entity_id).all()
         for f in stale_fillups:
             amounts = DieselCalculationService.calculate_fillup_amounts(
                 litres=Decimal(str(f.litres or 0)),
@@ -349,6 +350,104 @@ def update_diesel_settings(
     out.loads_updated = loads_updated
     out.fillups_updated = fillups_updated
     return out
+
+
+# ── Diesel Month Lock ─────────────────────────────────────────────────────────
+
+def _lock_out(row: DieselLock) -> dict:
+    return {
+        "entity_id": row.entity_id,
+        "month": row.month,
+        "year": row.year,
+        "locked_at": row.locked_at,
+        "locked_by_id": row.locked_by_id,
+        "locked_by_name": row.locked_by.full_name if row.locked_by else None,
+    }
+
+
+@router.get("/locks", response_model=List[DieselLockOut])
+def list_diesel_locks(
+    entity_id: Optional[int] = Query(None),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Locked diesel months, optionally narrowed to one entity/year/month."""
+    accessible = _accessible_entity_ids(current_user)
+    q = db.query(DieselLock)
+    if accessible is not None:
+        q = q.filter(DieselLock.entity_id.in_(accessible))
+    if entity_id:
+        _check_entity_access(entity_id, current_user)
+        q = q.filter(DieselLock.entity_id == entity_id)
+    if year:
+        q = q.filter(DieselLock.year == year)
+    if month:
+        q = q.filter(DieselLock.month == month)
+    rows = q.order_by(DieselLock.year.desc(), DieselLock.month.desc()).all()
+    return [_lock_out(r) for r in rows]
+
+
+@router.put("/locks", response_model=Optional[DieselLockOut])
+def set_diesel_lock(
+    payload: DieselLockUpdate,
+    entity_id: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lock an entity's diesel month (no values in or out) or unlock it again.
+    The optional locked_date records the date the month was closed off — audit
+    trail and on-screen label only; nothing rolls forward into the next month."""
+    _check_entity_access(entity_id, current_user)
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    row = get_lock(db, entity_id, month, year)
+
+    if not payload.locked:
+        if not row:
+            return None
+        db.delete(row)
+        log_action(
+            db, "diesel_lock.unlocked", user_id=current_user.id,
+            entity_id=entity_id, resource_type="diesel_lock",
+            description=f"Unlocked the {month:02d}/{year} diesel month for {entity.code}",
+        )
+        db.commit()
+        return None
+
+    if row:
+        return _lock_out(row)
+
+    now_utc = datetime.now(timezone.utc)
+    # Backdated lock: stamp end of that day, so the badge reads as the day the
+    # month was actually closed off.
+    if payload.locked_date and payload.locked_date != now_utc.date():
+        locked_at = datetime(
+            payload.locked_date.year, payload.locked_date.month, payload.locked_date.day,
+            23, 59, 59, tzinfo=timezone.utc,
+        )
+    else:
+        locked_at = now_utc
+
+    row = DieselLock(
+        entity_id=entity_id, month=month, year=year,
+        locked_at=locked_at, locked_by_id=current_user.id,
+    )
+    db.add(row)
+    log_action(
+        db, "diesel_lock.locked", user_id=current_user.id,
+        entity_id=entity_id, resource_type="diesel_lock",
+        description=f"Locked the {month:02d}/{year} diesel month for {entity.code}",
+        new_values={"locked_at": locked_at.isoformat()},
+    )
+    db.commit()
+    db.refresh(row)
+    return _lock_out(row)
 
 
 # ── Diesel Rates ──────────────────────────────────────────────────────────────
@@ -696,6 +795,12 @@ def create_fillup(
     if payload.fillup_date > date.today():
         raise HTTPException(status_code=400, detail="Fill-up date cannot be in the future")
 
+    # Diesel month lock — nothing may be added to a month that was closed off
+    ensure_period_unlocked(
+        db, payload.entity_id,
+        period_for(db, payload.fillup_date, payload.supplier_invoice_id),
+    )
+
     # Hard block duplicates (ignore archived records)
     if payload.slip_number and payload.truck_id:
         existing = db.query(DieselFillUp).filter(
@@ -834,6 +939,10 @@ def import_diesel(
     apply_admin_fee = settings.apply_admin_fee if settings else False
     vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
 
+    # Locked diesel months take no imported rows — flagged per row (and in the
+    # dry-run preview) rather than failing the whole sheet, so the rest still lands.
+    locked = locked_periods(db, payload.entity_id)
+
     result = DieselImportResult(total=len(payload.rows), committed=payload.commit)
     unmatched_regs: set[str] = set()
     # slips already seen in this batch (avoid in-file duplicates), keyed by (truck, supplier, slip)
@@ -873,6 +982,11 @@ def import_diesel(
         rr.truck_registration = truck.registration
         rr.matched_by_temp = by_temp
 
+        row_period = (row.fillup_date.year, row.fillup_date.month) if row.fillup_date else None
+        if row_period in locked:
+            rr.status = "invalid"; rr.message = lock_message(row_period[1], row_period[0])
+            result.invalid += 1; result.rows.append(rr); continue
+
         slip = (row.slip_number or "").strip()
 
         # Rate-pending placeholder resolution (BKMO): a slip was logged before its
@@ -897,6 +1011,12 @@ def import_diesel(
                 .first()
             )
         if pending is not None:
+            # The placeholder itself may sit in an earlier, already locked month
+            # (its statement period), even though this row's date is open.
+            pend_period = fillup_period(db, pending)
+            if pend_period in locked:
+                rr.status = "invalid"; rr.message = lock_message(pend_period[1], pend_period[0])
+                result.invalid += 1; result.rows.append(rr); continue
             result.updated += 1
             rr.status = "updated"
             rr.message = "Filled rate into a pending slip; litres taken from the import"
@@ -1012,6 +1132,8 @@ def update_fillup(
     # Final-verification lock: a free-text note may still be added/edited
     # (a note-only edit sends just `notes`).
     ensure_not_locked(f, updates, {"notes"})
+    # Diesel month lock — same note-only exception
+    ensure_fillup_unlocked(db, f, updates, {"notes"})
 
     # Recalculate amounts if litres or rate changes
     litres = Decimal(str(updates.get("litres", f.litres)))
@@ -1085,6 +1207,7 @@ def archive_fillup(
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
     ensure_not_locked(f)
+    ensure_fillup_unlocked(db, f)
 
     f.is_archived = True
     log_action(
@@ -1107,6 +1230,7 @@ def delete_fillup(
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
     ensure_not_locked(f)
+    ensure_fillup_unlocked(db, f)
 
     if f.verified and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Cannot delete a verified fill-up. Contact an admin.")

@@ -30,6 +30,9 @@ from app.services.verification import (
     build_initials_cache, intent_from_action,
 )
 from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
+from app.services.diesel_lock import (
+    is_locked_period, locked_periods, period_for_invoice,
+)
 from app.services.supplier_invoice_attachments import (
     MAX_ATTACH_BYTES,
     resolve_attach_type as _resolve_attach_type,
@@ -167,6 +170,14 @@ def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, li: SupplierIn
             fillup = cand
     if not fillup:
         return
+    # Re-pointing a fill-up moves it into the new invoice's diesel month; leave it
+    # alone if either side of that move is a locked month.
+    if is_locked_period(db, invoice.entity_id, period_for_invoice(invoice, line_date)):
+        return
+    old_inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == fillup.supplier_invoice_id).first() \
+        if fillup.supplier_invoice_id else None
+    if is_locked_period(db, fillup.entity_id, period_for_invoice(old_inv, fillup.fillup_date)):
+        return
     old_inv_id = fillup.supplier_invoice_id
     fillup.supplier_invoice_id = invoice.id
     if invoice.invoice_number:
@@ -216,6 +227,11 @@ def _maybe_create_line_fillup(
 
     inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
     fillup_date = li.line_date or inv_date
+
+    # The diesel month this would land in is locked — leave the Diesel Log alone.
+    # The invoice and its line still save; only the fill-up side is skipped.
+    if is_locked_period(db, invoice.entity_id, period_for_invoice(invoice, fillup_date)):
+        return
 
     # Already a fill-up for this slip on this truck (created earlier, or linked
     # just now by _link_fillup_from_slip)? Then only ensure it points at this
@@ -367,6 +383,11 @@ def _auto_create_diesel_fillup(
             return None
 
         inv_date = supplier_invoice.invoice_date.date() if hasattr(supplier_invoice.invoice_date, 'date') else supplier_invoice.invoice_date
+
+        # Locked diesel month → don't touch the Diesel Log (the invoice itself
+        # still saves; it simply gains no fill-up).
+        if is_locked_period(db, entity_id, period_for_invoice(supplier_invoice, inv_date)):
+            return None
 
         slip = (supplier_invoice.invoice_number or "").strip()
         # Only top-up suppliers use the invoice-number field to carry a depot slip;
@@ -1991,6 +2012,9 @@ def bulk_import_invoices(
     apply_admin_fee = diesel_settings.apply_admin_fee if diesel_settings else False
     entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
     vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
+    # Locked diesel months take no fill-ups — the invoices and their lines still
+    # import, only the Diesel Log side is left untouched.
+    diesel_locked = locked_periods(db, payload.entity_id)
 
     for item in payload.invoices:
         num = (item.invoice_number or '').strip()
@@ -2093,6 +2117,11 @@ def bulk_import_invoices(
             # formatting can't drop the match and orphan the placeholder.
             truck = _resolve_truck_by_reg(db, payload.entity_id, li.unit)
             if not truck:
+                continue
+
+            # Diesel month lock — skip the fill-up sync entirely (no create, no
+            # relink, no overwrite) for a month that has been closed off.
+            if period_for_invoice(inv, fillup_date) in diesel_locked:
                 continue
 
             # Use the rate from the Excel rate column if supplied; fall back to
