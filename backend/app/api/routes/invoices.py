@@ -23,7 +23,6 @@ from app.services.audit import log_action
 from app.services.invoice_numbering import generate_invoice_number, peek_invoice_number
 from app.services.po_number import po_number_for_invoice
 from app.services.pdf_generator import generate_invoice_pdf
-from app.services.email import send_invoice_email
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 logger = logging.getLogger("safetec.invoices")
@@ -1042,50 +1041,5 @@ async def split_po_pdf(
     )
 
 
-@router.post("/{invoice_id}/send-email", status_code=200)
-async def send_invoice_email_endpoint(
-    invoice_id: int,
-    theme: str = Query("dark", pattern="^(dark|light)$"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    invoice = db.query(Invoice).options(
-        joinedload(Invoice.line_items),
-        joinedload(Invoice.supplier),
-        joinedload(Invoice.customer),
-        joinedload(Invoice.entity),
-    ).filter(Invoice.id == invoice_id).first()
-    if not invoice:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    _check_entity_access(invoice.entity_id, current_user)
-
-    recipient = invoice.supplier or invoice.customer
-    if not recipient or not recipient.email:
-        raise HTTPException(status_code=422, detail="Supplier/customer has no email address")
-
-    def _build():
-        pdf_bytes = generate_invoice_pdf(
-            invoice, invoice.entity, invoice.supplier, customer=invoice.customer, theme=theme
-        )
-        return _merge_with_attachment(pdf_bytes, invoice)
-
-    pdf_bytes = await asyncio.to_thread(_build)
-    send_invoice_email(
-        to=recipient.email,
-        invoice_number=invoice.invoice_number,
-        document_type=invoice.document_type,
-        supplier_name=recipient.name,
-        pdf_bytes=pdf_bytes,
-    )
-    doc_label = "Invoice" if invoice.document_type == "invoice" else "Quote"
-
-    # Mark as sent when emailed via the app
-    if invoice.status in ("draft", "ready"):
-        invoice.status = "sent"
-
-    log_action(db, "invoice.emailed", user_id=current_user.id,
-               entity_id=invoice.entity_id, resource_type="invoice",
-               resource_id=invoice_id,
-               description=f"{doc_label} {invoice.invoice_number} emailed to {recipient.name} ({recipient.email})")
-    db.commit()
-    return {"detail": "Email sent"}
+# Invoices are not emailed from the app — download the PDF and send it yourself.
+# The password-reset link is the only mail this system sends.

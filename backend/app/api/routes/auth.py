@@ -88,8 +88,14 @@ def forgot_password(request: Request, body: ForgotPasswordRequest, db: Session =
     try:
         send_password_reset_email(to=user.email, full_name=user.full_name, reset_url=reset_url)
     except Exception as e:
+        # The token is already committed, so an admin can still relay this URL by
+        # hand from the logs — but never tell the user an email is on its way.
         logger.error(f"Failed to send reset email to {user.email}: {e}")
         logger.info(f"Password reset URL for {user.email}: {reset_url}")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not send the reset email. Please contact your administrator.",
+        )
 
 
 @router.post("/reset-password", status_code=204)

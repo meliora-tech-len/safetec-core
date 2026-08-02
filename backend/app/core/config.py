@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     LINEAR_API_TOKEN: Optional[str] = None
     LINEAR_TEAM_ID: Optional[str] = None
 
-    # SMTP — optional. If not set, reset links are printed to the server console.
+    # SMTP — outside production, reset links are printed to the server console
+    # when unset. In production an unset/broken relay is a hard error.
     SMTP_HOST: Optional[str] = None
     SMTP_PORT: int = 587
     SMTP_USER: Optional[str] = None

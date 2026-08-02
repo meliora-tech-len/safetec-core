@@ -1,27 +1,72 @@
 """
-Email service — sends transactional emails via SMTP.
-If SMTP is not configured, the message is printed to the server console
-so a dev/admin can relay the reset link manually.
+Email service — sends the password-reset link via SMTP.
+
+That reset link is the only mail this system sends; there is deliberately no
+other sender here. Outside production, a message that cannot be sent because
+SMTP is unconfigured is printed to the server console so a dev/admin can relay
+the link manually. In production a missing or broken relay raises
+EmailDeliveryError: reporting a phantom success is what let a missing DNS
+record go unnoticed.
 """
 
 import smtplib
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Guards against a worker hanging on the OS default connect timeout when the
+# relay host resolves but silently drops the connection (firewall, dead box).
+SMTP_TIMEOUT = 20
+
+
+class EmailDeliveryError(RuntimeError):
+    """Raised when a message could not be handed to the SMTP relay."""
 
 
 def _smtp_configured() -> bool:
     return bool(settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD)
 
 
+def _unconfigured_reason() -> str:
+    missing = [
+        name for name in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD")
+        if not getattr(settings, name)
+    ]
+    return f"SMTP is not configured (missing: {', '.join(missing)})"
+
+
+def _deliver(msg: MIMEMultipart, to: str) -> None:
+    """Hand a built message to the relay. Raises EmailDeliveryError on failure."""
+    sender = msg["From"]
+    try:
+        if settings.SMTP_TLS:
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=SMTP_TIMEOUT) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                server.sendmail(sender, [to], msg.as_string())
+        else:
+            with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=SMTP_TIMEOUT) as server:
+                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                server.sendmail(sender, [to], msg.as_string())
+    except Exception as e:
+        logger.error(
+            f"SMTP delivery to {to} failed via {settings.SMTP_HOST}:{settings.SMTP_PORT} "
+            f"— {type(e).__name__}: {e}"
+        )
+        raise EmailDeliveryError(
+            f"SMTP relay {settings.SMTP_HOST}:{settings.SMTP_PORT} did not accept the message"
+        ) from e
+
+
 def send_email(to: str, subject: str, body_html: str, body_text: str) -> None:
-    """Send an email. Falls back to console logging if SMTP is not configured."""
+    """Send an email. Console fallback outside production; raises in production."""
     if not _smtp_configured():
+        if settings.ENVIRONMENT == "production":
+            raise EmailDeliveryError(_unconfigured_reason())
         logger.warning("SMTP not configured — printing email to console instead")
         print("\n" + "=" * 60)
         print(f"TO:      {to}")
@@ -38,20 +83,7 @@ def send_email(to: str, subject: str, body_html: str, body_text: str) -> None:
     msg.attach(MIMEText(body_text, "plain"))
     msg.attach(MIMEText(body_html, "html"))
 
-    try:
-        if settings.SMTP_TLS:
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-                server.ehlo()
-                server.starttls()
-                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                server.sendmail(msg["From"], [to], msg.as_string())
-        else:
-            with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                server.sendmail(msg["From"], [to], msg.as_string())
-    except Exception as e:
-        logger.error(f"Failed to send email to {to}: {e}")
-        raise
+    _deliver(msg, to)
 
 
 def send_password_reset_email(to: str, full_name: str, reset_url: str) -> None:
@@ -83,64 +115,3 @@ def send_password_reset_email(to: str, full_name: str, reset_url: str) -> None:
     """
 
     send_email(to, subject, body_html, body_text)
-
-
-def send_invoice_email(
-    to: str,
-    invoice_number: str,
-    document_type: str,
-    supplier_name: str,
-    pdf_bytes: bytes,
-) -> None:
-    """Send an invoice/quote email with the PDF attached."""
-    doc_label = "Invoice" if document_type == "invoice" else "Quote"
-    subject = f"{doc_label} {invoice_number}"
-
-    body_text = (
-        f"Dear {supplier_name},\n\n"
-        f"Please find attached {doc_label.lower()} {invoice_number}.\n\n"
-        "Kind regards"
-    )
-
-    body_html = f"""
-    <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
-      <p style="color:#555">Dear {supplier_name},</p>
-      <p style="color:#555">Please find attached <strong>{doc_label} {invoice_number}</strong>.</p>
-      <p style="color:#555">Kind regards</p>
-    </div>
-    """
-
-    if not _smtp_configured():
-        logger.warning("SMTP not configured — cannot send invoice email")
-        return
-
-    msg = MIMEMultipart("mixed")
-    msg["Subject"] = subject
-    msg["From"] = settings.SMTP_FROM or settings.SMTP_USER
-    msg["To"] = to
-
-    alt = MIMEMultipart("alternative")
-    alt.attach(MIMEText(body_text, "plain"))
-    alt.attach(MIMEText(body_html, "html"))
-    msg.attach(alt)
-
-    attachment = MIMEBase("application", "pdf")
-    attachment.set_payload(pdf_bytes)
-    encoders.encode_base64(attachment)
-    attachment.add_header("Content-Disposition", f'attachment; filename="{invoice_number}.pdf"')
-    msg.attach(attachment)
-
-    try:
-        if settings.SMTP_TLS:
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-                server.ehlo()
-                server.starttls()
-                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                server.sendmail(msg["From"], [to], msg.as_string())
-        else:
-            with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-                server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                server.sendmail(msg["From"], [to], msg.as_string())
-    except Exception as e:
-        logger.error(f"Failed to send invoice email to {to}: {e}")
-        raise

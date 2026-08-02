@@ -67,9 +67,6 @@ export const getDashboardStats = (entity_id, params = {}) =>
   api.get('/invoices/dashboard', { params: { ...(entity_id ? { entity_id } : {}), ...params } })
 export const getProfitLossSummary = (params = {}) =>
   api.get('/invoices/profit-loss', { params })
-export const sendInvoiceEmail = (id, theme = 'dark') =>
-  api.post(`/invoices/${id}/send-email`, null, { params: { theme } })
-
 export const downloadInvoicePdf = async (id, invoiceNumber, theme = 'dark', includeAttachment = true) => {
   const res = await api.get(`/invoices/${id}/pdf`, {
     params: { theme, include_attachment: includeAttachment },
