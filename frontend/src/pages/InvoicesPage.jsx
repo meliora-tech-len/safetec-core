@@ -113,7 +113,9 @@ export default function InvoicesPage({ docType = 'invoice' }) {
     return s
   }, [allInvoices])
 
-  const { sort, onSort } = useSort('issue_date', 'desc')
+  // Keyed by document type — invoices, quotes and POs are separate tables to
+  // the user even though they share this page.
+  const { sort, onSort } = useSort('issue_date', 'desc', `invoices.${docType}`)
 
   const displayedInvoices = useMemo(() => {
     const filtered = allInvoices.filter(inv => {

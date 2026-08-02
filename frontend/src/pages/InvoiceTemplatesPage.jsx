@@ -47,7 +47,7 @@ export default function InvoiceTemplatesPage() {
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
-  const { sort, onSort } = useSort('name', 'asc')
+  const { sort, onSort } = useSort('name', 'asc', 'invoice-templates')
 
   const displayed = useMemo(() => {
     const q = search.toLowerCase()

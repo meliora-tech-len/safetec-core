@@ -2,6 +2,7 @@
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useSessionState } from '../hooks/useSessionState'
+import { useLocalState } from '../hooks/useLocalState'
 import {
   getSubcontractor, getSuppliers, getFleetTrucks,
   createSubcontractorInvoice, createSupplierInvoice,
@@ -94,8 +95,8 @@ export default function SubcontractorProfilePage() {
   const [saving, setSaving]               = useState(false)
   const [collapsed, setCollapsed]         = useState({})
   const [deleteTarget, setDeleteTarget]   = useState(null)
-  const [sortCol, setSortCol]             = useState('invoice_date')
-  const [sortDir, setSortDir]             = useState('asc')
+  const [sortCol, setSortCol]             = useLocalState('sort:subcontractor.invoices.col', 'invoice_date')
+  const [sortDir, setSortDir]             = useLocalState('sort:subcontractor.invoices.dir', 'asc')
   const firstInputRef = useRef(null)
 
   // Costing tab state

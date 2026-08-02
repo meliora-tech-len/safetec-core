@@ -180,7 +180,7 @@ export default function AuditPage() {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
 
-  const { sort, onSort } = useSort('created_at', 'desc')
+  const { sort, onSort } = useSort('created_at', 'desc', 'audit')
   const reqRef = useRef(0)
 
   const entityMap = Object.fromEntries(entities.map(e => [e.id, e.name]))

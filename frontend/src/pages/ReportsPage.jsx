@@ -3,6 +3,7 @@ import SortableHeader, { applySort } from '../components/SortableHeader'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
+import { useLocalState } from '../hooks/useLocalState'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
@@ -117,7 +118,7 @@ export default function ReportsPage() {
   // frozen as a list of row keys when a header is clicked rather than recomputed
   // from the values: on an editable table, re-sorting every keystroke would make
   // the line jump out from under the cursor while she is typing into it.
-  const [profitSort, setProfitSort]   = useState({ col: null, dir: 'asc' })
+  const [profitSort, setProfitSort]   = useLocalState('sort:reports.profit-sheet', { col: null, dir: 'asc' })
   const [profitOrder, setProfitOrder] = useState(null)
   const [showHiddenProfit, setShowHiddenProfit] = useState(false)
 
@@ -130,6 +131,14 @@ export default function ReportsPage() {
   }, [profitRows, profitOrder])
 
   const profitHidden = useMemo(() => (profitRows || []).filter(r => r.is_hidden), [profitRows])
+
+  // The frozen order is per-fetch, the sort choice is remembered — so when a
+  // fresh set of rows lands, re-freeze it under the remembered sort. Without
+  // this the header would show an arrow over rows in their saved order.
+  useEffect(() => {
+    if (!profitRows || profitOrder || !profitSort.col) return
+    setProfitOrder(applySort(profitVisible, profitSort, psSortValue).map(r => r.key))
+  }, [profitRows])
 
   const onProfitSort = useCallback((col) => {
     const next = { col, dir: profitSort.col === col && profitSort.dir === 'asc' ? 'desc' : 'asc' }
@@ -188,7 +197,6 @@ export default function ReportsPage() {
     setProfitRows(null)
     setProfitDirty(false)
     setShowHiddenProfit(false)
-    setProfitSort({ col: null, dir: 'asc' })
     setProfitOrder(null)
     try {
       if (tab === 'income') {

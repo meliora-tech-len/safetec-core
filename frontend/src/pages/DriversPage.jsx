@@ -312,7 +312,7 @@ export default function DriversPage() {
 
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
 
-  const { sort, onSort } = useSort('last_name', 'asc')
+  const { sort, onSort } = useSort('last_name', 'asc', 'drivers')
   const sortedDrivers = useMemo(() =>
     applySort(drivers, sort, (d, col) => {
       if (col === 'name') return `${d.last_name} ${d.first_name}`

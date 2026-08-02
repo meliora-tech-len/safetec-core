@@ -1002,7 +1002,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
     return acc
   }, {})
 
-  const { sort: addSort, onSort: onAddSort } = useSort('load_date', 'asc')
+  const { sort: addSort, onSort: onAddSort } = useSort('load_date', 'asc', 'truck.additional')
   const sortedAdditional = useMemo(() => applySort(entries, addSort), [entries, addSort])
 
   return (
@@ -1619,7 +1619,7 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId, a
   const truckLabel = (t) => `${t.registration}${t.fleet_number ? ` (${t.fleet_number})` : ''}`
   const regFor = (id) => truckOptions.find(t => String(t.id) === String(id))?.registration
 
-  const { sort: foodSort, onSort: onFoodSort } = useSort('payment_date', 'asc')
+  const { sort: foodSort, onSort: onFoodSort } = useSort('payment_date', 'asc', 'truck.food')
   const sortedFood = useMemo(() => applySort(entries, foodSort, (row, col) => {
     if (col === 'amount') return parseFloat(row.amount || 0)
     if (col === 'truck_id') return regFor(row.truck_id ?? truck.id) || ''   // sort by registration, not id
@@ -2573,7 +2573,7 @@ export default function TruckLoadProfilePage() {
     ? (showPo ? 9 : 8)
     : (showPo ? 14 : 13) + (showSub ? 3 : 0) - (vatRegistered ? 0 : 1)
 
-  const { sort: loadSort, onSort: onLoadSort } = useSort('load_date', 'asc')
+  const { sort: loadSort, onSort: onLoadSort } = useSort('load_date', 'asc', 'truck.loads')
   const sortedLoads = useMemo(() => applySort(loads, loadSort), [loads, loadSort])
 
   const toggleSplitGroup = (gid) => setOpenSplitGroups(s => {

@@ -422,8 +422,8 @@ export default function DriverDetailPage() {
   // Real SARS income tax for the cycle (manual, default 0)
   const [taxSars, setTaxSars] = useState(0)
   const [savingLoads, setSavingLoads] = useState(false)
-  const { sort: tripSort, onSort: onTripSort } = useSort('trip_date', 'asc')
-  const { sort: foodSort, onSort: onFoodSort } = useSort('payment_date', 'asc')
+  const { sort: tripSort, onSort: onTripSort } = useSort('trip_date', 'asc', 'driver.trip-log')
+  const { sort: foodSort, onSort: onFoodSort } = useSort('payment_date', 'asc', 'driver.food')
 
   // Load driver + settings once
   useEffect(() => {

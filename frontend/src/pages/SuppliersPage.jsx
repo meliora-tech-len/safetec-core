@@ -44,7 +44,7 @@ export default function SuppliersPage() {
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
-  const { sort, onSort } = useSort('name', 'asc')
+  const { sort, onSort } = useSort('name', 'asc', 'suppliers')
   const sortedSuppliers = useMemo(() => applySort(suppliers, sort), [suppliers, sort])
 
   const openCreate = () => setModal({ mode: 'create' })

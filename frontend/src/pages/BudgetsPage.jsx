@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
+import { useLocalState } from '../hooks/useLocalState'
 import {
   getBudgets, getBudget, createBudget, deleteBudget,
   addBudgetSection, updateBudgetSection, deleteBudgetSection,
@@ -135,7 +136,7 @@ export default function BudgetsPage() {
   const [replicating, setReplicating] = useState(false)
   const [quickAdd, setQuickAdd] = useState(null)   // null | { kind: 'income'|'expense', sectionId, name }
   const [verif, setVerif] = useState({})           // target -> ValueVerification
-  const [sortByCol, setSortByCol] = useState({})   // sectionId -> { key, dir }
+  const [sortByCol, setSortByCol] = useLocalState('sort:budgets.sections', {})   // sectionId -> { key, dir }
   const [suppliers, setSuppliers] = useState([])   // suppliers for the selected entity (Add Expense picker)
   const [showExclusions, setShowExclusions] = useState(null) // null | section name being filtered on
   // Income picker: null | { loading, candidates, picked: Set<source_key>, saving }
@@ -479,7 +480,16 @@ export default function BudgetsPage() {
 
   // ── Column sorting (view-only; defaults to alphabetical by Item name) ─────────
   const colKey = (m, y, field) => `${m}:${y}:${field}`
-  const getSort = (sectionId) => sortByCol[sectionId] || { key: 'name', dir: 'asc' }
+  const getSort = (sectionId) => {
+    const s = sortByCol[sectionId]
+    if (!s) return { key: 'name', dir: 'asc' }
+    // A remembered month column can fall outside the months now on screen
+    // (statement mode toggled) — sorting on a column nobody can see reads as
+    // "not sorted at all", so drop back to name.
+    if (s.key !== 'name' && !months.some(({ month: m, year: y }) => s.key.startsWith(`${m}:${y}:`)))
+      return { key: 'name', dir: 'asc' }
+    return s
+  }
   const toggleSort = (sectionId, key) => setSortByCol(p => {
     const cur = p[sectionId] || { key: 'name', dir: 'asc' }
     if (cur.key === key) return { ...p, [sectionId]: { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' } }

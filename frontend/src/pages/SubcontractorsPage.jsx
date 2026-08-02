@@ -41,7 +41,7 @@ export default function SubcontractorsPage() {
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
-  const { sort, onSort } = useSort('name', 'asc')
+  const { sort, onSort } = useSort('name', 'asc', 'subcontractors')
   const sortedSubs = useMemo(() => applySort(subcontractors, sort), [subcontractors, sort])
 
   // When a reg was searched, carry it into the profile so it jumps to that truck.

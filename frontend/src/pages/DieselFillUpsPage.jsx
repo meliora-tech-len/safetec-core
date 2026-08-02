@@ -94,7 +94,7 @@ export default function DieselFillUpsPage() {
   const [noteText,     setNoteText]     = useState('')
   const [noteSaving,   setNoteSaving]   = useState(false)
   const firstInputRef = useRef(null)
-  const { sort, onSort } = useSort('truck_registration', 'asc')
+  const { sort, onSort } = useSort('truck_registration', 'asc', 'diesel-fillups')
 
   // Reference data — entities once on mount
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])

@@ -12,6 +12,7 @@ import {
   uploadSupplierInvoiceAttachment, deleteSupplierInvoiceAttachment, viewSupplierInvoiceAttachment,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
+import { useLocalState } from '../hooks/useLocalState'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock, Calendar } from 'lucide-react'
@@ -934,8 +935,10 @@ export default function SupplierProfilePage() {
   const [amountAutoFilled, setAmountAutoFilled] = useState(false)
   const [subbies, setSubbies] = useState([])
   const [dieselFillups, setDieselFillups] = useState([])
-  const [sortCol, setSortCol] = useState('vehicle_reg')
-  const [sortDir, setSortDir] = useState('asc')
+  // Remembered across reloads, and shared by every supplier — it's a view
+  // preference, not something to re-pick on each profile.
+  const [sortCol, setSortCol] = useLocalState('sort:supplier.invoices.col', 'vehicle_reg')
+  const [sortDir, setSortDir] = useLocalState('sort:supplier.invoices.dir', 'asc')
   const [filterText, setFilterText] = useState('')
 
   const loadInvoices = useCallback(() =>

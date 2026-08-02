@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Truck, Car, Plus, Search, X, ChevronDown, ChevronUp, Edit2, Trash2, AlertTriangle, AlertCircle, Clock, ChevronsUpDown, Check } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useLocalState } from '../hooks/useLocalState'
 import toast from 'react-hot-toast'
 import ExportButton from '../components/ExportButton'
 import DeleteModal from '../components/DeleteModal'
@@ -1085,8 +1086,8 @@ export default function FleetPage() {
   const [pvFilterStatus, setPvFilterStatus]             = useState('active')
   const [modal, setModal]       = useState(null)
   const [selected, setSelected] = useState(null)
-  const [truckSort, setTruckSort]       = useState({ col: null, dir: 'asc' })
-  const [pvSort, setPvSort]             = useState({ col: null, dir: 'asc' })
+  const [truckSort, setTruckSort]       = useLocalState('sort:fleet.trucks', { col: null, dir: 'asc' })
+  const [pvSort, setPvSort]             = useLocalState('sort:fleet.personal-vehicles', { col: null, dir: 'asc' })
   const [truckGroupBy, setTruckGroupBy] = useState('entity')
   const loadSeqRef = useRef(0)
   const alertsShownRef = useRef(false)

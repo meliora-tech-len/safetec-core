@@ -45,7 +45,7 @@ export default function UsersPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const { sort, onSort } = useSort('full_name', 'asc')
+  const { sort, onSort } = useSort('full_name', 'asc', 'users')
   const sortedUsers = useMemo(() => applySort(users, sort), [users, sort])
 
   const load = async () => {

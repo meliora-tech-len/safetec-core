@@ -57,7 +57,7 @@ export default function CustomersPage() {
 
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
 
-  const { sort, onSort } = useSort('name', 'asc')
+  const { sort, onSort } = useSort('name', 'asc', 'customers')
   const sortedCustomers = useMemo(() => applySort(customers, sort), [customers, sort])
 
   const handleSave = async (formData) => {

@@ -1,10 +1,18 @@
-import { useState, useMemo } from 'react'
 import { ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
+import { useLocalState } from '../hooks/useLocalState'
 
-export function useSort(defaultCol = null, defaultDir = 'asc') {
-  const [sort, setSort] = useState({ col: defaultCol, dir: defaultDir })
+/**
+ * Table sort state. Pass a stable `key` (unique per table) to remember the
+ * user's choice across reloads and sessions; omit it for throwaway tables
+ * (modals) that should always open on their default order.
+ */
+export function useSort(defaultCol = null, defaultDir = 'asc', key = null) {
+  const fallback = { col: defaultCol, dir: defaultDir }
+  const [stored, setSort] = useLocalState(key ? `sort:${key}` : null, fallback)
+  // Guard against a stored value written by an older shape of this hook.
+  const sort = stored && (stored.dir === 'asc' || stored.dir === 'desc') ? stored : fallback
   const onSort = (col) =>
-    setSort(prev => ({ col, dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc' }))
+    setSort(prev => ({ col, dir: prev?.col === col && prev?.dir === 'asc' ? 'desc' : 'asc' }))
   return { sort, onSort }
 }
 
