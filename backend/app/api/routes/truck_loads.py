@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 import logging
 
 logger = logging.getLogger("safetec.truck_loads")
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import func, and_, or_, case, extract
 from typing import List, Optional
 from datetime import datetime, timezone
@@ -107,12 +107,20 @@ def _resolve_rate(db: Session, mine_id: int, entity_id: int) -> Optional[Decimal
     return rate.rate_per_ton if rate else None
 
 
+def _driver_type(driver: Optional[Driver]) -> Optional[str]:
+    """'permanent' / 'casual' as a plain string (the column is an Enum)."""
+    if driver is None:
+        return None
+    return getattr(driver.driver_type, "value", driver.driver_type)
+
+
 def _enrich(load: TruckLoad) -> dict:
     """Return a dict with computed/joined fields for the response."""
     d = {c.name: getattr(load, c.name) for c in load.__table__.columns}
     d["truck_registration"] = load.truck.registration if load.truck else None
     d["mine_name"]           = load.mine.name if load.mine else None
     d["supplier_name"]       = load.supplier.name if load.supplier else None
+    d["driver_type"]         = _driver_type(load.driver)
     d["driver_splits"] = [
         {
             "id":          s.id,
@@ -122,6 +130,7 @@ def _enrich(load: TruckLoad) -> dict:
             "slip_number": s.slip_number,
             "driver_name": (f"{s.driver.first_name} {s.driver.last_name}".strip()
                             if s.driver else None),
+            "driver_type": _driver_type(s.driver),
             "mine_name":   s.mine.name if s.mine else None,
         }
         for s in (load.driver_splits or [])
@@ -469,7 +478,12 @@ def list_truck_loads(
 ):
     accessible = _accessible_entity_ids(current_user)
 
-    q = db.query(TruckLoad)
+    # driver/splits are read for every row by _enrich (driver name + type) — pull
+    # them in one go rather than a query per load.
+    q = db.query(TruckLoad).options(
+        joinedload(TruckLoad.driver),
+        selectinload(TruckLoad.driver_splits).joinedload(TruckLoadDriverSplit.driver),
+    )
     if accessible is not None:
         q = q.filter(TruckLoad.entity_id.in_(accessible))
     if entity_id:

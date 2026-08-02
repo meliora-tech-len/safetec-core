@@ -518,6 +518,8 @@ def list_truck_food_payments(
         d = {c.name: getattr(fp, c.name) for c in fp.__table__.columns}
         d["driver_id"]   = driver.id
         d["driver_name"] = f"{driver.first_name} {driver.last_name}".strip()
+        # 'permanent' / 'casual' — the header totals label each driver by type.
+        d["driver_type"] = getattr(driver.driver_type, "value", driver.driver_type)
         d["pay_year"]    = year
         d["pay_month"]   = month
         # Verification display (initials/dates) so the Food Allowance tab shows the

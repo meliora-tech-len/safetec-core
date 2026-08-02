@@ -36,6 +36,8 @@ import DateInput from '../components/DateInput'
 const fmt    = (n) => n == null ? '—' : `R ${parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const fmtNum = (n) => n == null ? '—' : parseFloat(n).toLocaleString('en-ZA', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA') : '—'
+// Effective loads: splits land on halves, so show 4.5 but keep whole numbers clean.
+const fmtLoads = (n) => Number.isInteger(n) ? String(n) : n.toFixed(1)
 const today = new Date().toISOString().slice(0, 10)
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -1456,7 +1458,7 @@ function WashesSection({ truck, year, month }) {
 
 
 // ── Food Allowance section ─────────────────────────────────────────────────────
-function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId, allTrucks }) {
+function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId, allTrucks, onEntriesLoaded }) {
   const { user: foodUser, isAdmin: foodIsAdmin } = useAuth()
   const [entries, setEntries]     = useState([])
   const [loading, setLoading]     = useState(true)
@@ -1496,9 +1498,11 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId, a
     try {
       const res = await getTruckFoodPayments(truck.id, { year, month })
       setEntries(res.data)
+      // Keep the header's per-driver totals in step with edits made in this tab.
+      onEntriesLoaded?.(res.data)
     } catch { /* silently ignore */ }
     finally { setLoading(false) }
-  }, [truck.id, year, month])
+  }, [truck.id, year, month, onEntriesLoaded])
 
   useEffect(() => { fetchEntries() }, [fetchEntries])
 
@@ -2258,6 +2262,21 @@ export default function TruckLoadProfilePage() {
 
   useEffect(() => { fetchLoads() }, [fetchLoads])
 
+  const isSubcontractorEntity = truck?.entity_is_subcontractor || false
+
+  // ── Food allowances for the header totals ───────────────────────────────────
+  // Fetched here (not only in the Food tab) so the per-driver totals are there
+  // before the tab is ever opened; the tab hands its fresh list back on save.
+  const [foodEntries, setFoodEntries] = useState([])
+  useEffect(() => {
+    if (!truck || isSubcontractorEntity) { setFoodEntries([]); return }
+    let stale = false
+    getTruckFoodPayments(truck.id, { year, month })
+      .then(r => { if (!stale) setFoodEntries(r.data || []) })
+      .catch(() => { if (!stale) setFoodEntries([]) })
+    return () => { stale = true }
+  }, [truck, year, month, isSubcontractorEntity])
+
   // ── Per-line verification overlay (Loads) ───────────────────────────────────
   const [loadVerif, setLoadVerif] = useState({})
   const loadsVerifPrefix = truck ? `truckloads:${truck.id}:${year}-${String(month).padStart(2, '0')}` : null
@@ -2523,7 +2542,7 @@ export default function TruckLoadProfilePage() {
   }
 
   // ── Derived ──────────────────────────────────────────────────────────────────
-  const isSubcontractorEntity = truck?.entity_is_subcontractor || false
+  // (isSubcontractorEntity is defined further up — the food fetch depends on it.)
   const entityCode = truck ? (entities.find(e => e.id === truck.entity_id)?.code || '') : ''
   const isSafetec  = entityCode === 'SFT'
   const isBokamosho = entityCode === 'BKMO'
@@ -2564,6 +2583,44 @@ export default function TruckLoadProfilePage() {
   const displayRows = useMemo(() => sortedLoads.map(l => (
     l.is_split_load ? { type: 'split', load: l } : { type: 'single', load: l }
   )), [sortedLoads])
+
+  // ── Per-driver totals for the header (this truck, this period) ───────────────
+  // Loads count effective, not raw: a split load is 0.5 to each of its two drivers,
+  // matching what payroll credits them. Loads with no driver are grouped so the
+  // rows still add up to the period's load count.
+  const driverTotals = useMemo(() => {
+    const map = new Map()
+    // Prefer the live driver record's type over whatever the row was saved with.
+    const typeOf = (id, fallback) =>
+      drivers.find(d => String(d.id) === String(id))?.driver_type || fallback || null
+
+    const add = (id, name, type, loads, food) => {
+      const key = id ?? 'none'
+      if (!map.has(key)) map.set(key, { id: id ?? null, name: '', type: null, loads: 0, food: 0 })
+      const r = map.get(key)
+      if (name && !r.name) r.name = name
+      if (type && !r.type) r.type = type
+      r.loads += loads
+      r.food  += food
+    }
+
+    for (const l of loads) {
+      if (l.is_split_load) {
+        for (const s of (l.driver_splits || [])) {
+          add(s.driver_id, s.driver_name, typeOf(s.driver_id, s.driver_type), Number(s.share ?? 0.5), 0)
+        }
+      } else {
+        add(l.driver_id, l.driver_name, typeOf(l.driver_id, l.driver_type), 1, 0)
+      }
+    }
+    for (const f of foodEntries) {
+      add(f.driver_id, f.driver_name, typeOf(f.driver_id, f.driver_type), 0, parseFloat(f.amount || 0))
+    }
+    for (const r of map.values()) if (!r.name) r.name = 'No driver'
+    return [...map.values()].sort((a, b) =>
+      (a.id === null) - (b.id === null) || b.loads - a.loads || a.name.localeCompare(b.name)
+    )
+  }, [loads, foodEntries, drivers])
 
   const TABS = isSubcontractorEntity
     ? [{ key: 'loads', label: 'Loads' }, { key: 'diesel', label: 'Diesel' }]
@@ -2673,6 +2730,65 @@ export default function TruckLoadProfilePage() {
             {truck.status}
           </span>
         </div>
+
+        {/* Per-driver loads + food for the period selected below. Splits count 0.5
+            per driver, so these add up to the period's effective load count. */}
+        {!isSubcontractorEntity && driverTotals.length > 0 && (
+          <div style={{ minWidth: 240 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 4 }}>
+              Driver Totals · {MONTHS[month - 1].slice(0, 3)} {year}
+            </div>
+            <table style={{ borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)' }}>
+                  <th style={{ textAlign: 'left',  padding: '0 14px 3px 0' }}>Driver</th>
+                  <th style={{ textAlign: 'right', padding: '0 14px 3px 0' }}>Loads</th>
+                  <th style={{ textAlign: 'right', padding: '0 0 3px 0' }}>Food</th>
+                </tr>
+              </thead>
+              <tbody>
+                {driverTotals.map(d => {
+                  const perm = d.type === 'permanent'
+                  return (
+                    <tr key={d.id ?? 'none'}>
+                      <td style={{ padding: '2px 14px 2px 0', whiteSpace: 'nowrap' }}>
+                        <span style={{ color: d.id ? 'var(--text-primary)' : 'var(--text-muted)', fontStyle: d.id ? undefined : 'italic' }}>{d.name}</span>
+                        {d.type && (
+                          <span style={{
+                            marginLeft: 6, fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                            color: perm ? '#16a34a' : '#d97706',
+                            background: perm ? 'rgba(22,163,74,0.1)' : 'rgba(217,119,6,0.1)',
+                          }}>
+                            {perm ? 'PERM' : 'CASUAL'}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '2px 14px 2px 0', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {fmtLoads(d.loads)}
+                      </td>
+                      <td style={{ padding: '2px 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: d.food ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                        {d.food ? fmt(d.food) : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+              {driverTotals.length > 1 && (
+                <tfoot>
+                  <tr style={{ borderTop: '1px solid var(--border)', fontWeight: 700 }}>
+                    <td style={{ padding: '3px 14px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>Total</td>
+                    <td style={{ padding: '3px 14px 0 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtLoads(driverTotals.reduce((s, d) => s + d.loads, 0))}
+                    </td>
+                    <td style={{ padding: '3px 0 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmt(driverTotals.reduce((s, d) => s + d.food, 0))}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        )}
 
         {linkedSupplier && (
           <div>
@@ -3156,7 +3272,7 @@ export default function TruckLoadProfilePage() {
 
       {/* ── Food Allowance tab ─────────────────────────────────────────────────── */}
       {activeTab === 'food' && (
-        <FoodAllowanceSection truck={truck} year={year} month={month} drivers={drivers} selectedDriverId={selectedDriverId} allTrucks={allTrucks} />
+        <FoodAllowanceSection truck={truck} year={year} month={month} drivers={drivers} selectedDriverId={selectedDriverId} allTrucks={allTrucks} onEntriesLoaded={setFoodEntries} />
       )}
 
       {/* ── Profit Sheet tab (SFT only) ─────────────────────────────────────────── */}

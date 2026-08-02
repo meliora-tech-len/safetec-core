@@ -1477,6 +1477,7 @@ class TruckLoadDriverSplitBase(BaseModel):
 class TruckLoadDriverSplitOut(TruckLoadDriverSplitBase):
     id: int
     driver_name: Optional[str] = None
+    driver_type: Optional[str] = None
     mine_name: Optional[str] = None
 
     class Config:
@@ -1499,6 +1500,7 @@ class TruckLoadOut(TruckLoadBase):
     truck_registration: Optional[str] = None
     mine_name: Optional[str] = None
     supplier_name: Optional[str] = None
+    driver_type: Optional[str] = None
 
     class Config:
         from_attributes = True
