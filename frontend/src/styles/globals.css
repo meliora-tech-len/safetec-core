@@ -28,6 +28,10 @@
   /* Two-column inline grids — referenced as gridTemplateColumns: 'var(--col-2)'
      so they stack to one column on phones. */
   --col-2: 1fr 1fr;
+  /* Scrollbars */
+  --scroll-track: rgba(255,255,255,0.04);
+  --scroll-thumb: rgba(232,234,240,0.22);
+  --scroll-thumb-hover: rgba(232,234,240,0.42);
 }
 
 /* ── Light theme ───────────────────────────────────────────── */
@@ -53,6 +57,10 @@
   --radius:     10px;
   --radius-sm:  6px;
   --font: 'Inter', system-ui, -apple-system, sans-serif;
+  /* Scrollbars */
+  --scroll-track: rgba(0,0,0,0.05);
+  --scroll-thumb: rgba(17,24,39,0.26);
+  --scroll-thumb-hover: rgba(17,24,39,0.45);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -189,11 +197,39 @@ tbody tr:first-child td { border-top: none; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg-base); }
-::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+/* ── Scrollbars ─────────────────────────────────────────────────
+   Wide enough to grab comfortably (14px track / 8px visible thumb via a
+   transparent border), with a faint track so the scrollable area reads as
+   scrollable even when the thumb is at rest. Firefox gets the same colours
+   through scrollbar-color (inherited from :root). */
+::-webkit-scrollbar { width: 14px; height: 14px; }
+::-webkit-scrollbar-track {
+  background: var(--scroll-track);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  min-height: 44px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); background-clip: padding-box; }
+::-webkit-scrollbar-thumb:active { background: var(--accent); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+:root, [data-theme="dark"], [data-theme="light"] {
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+  scrollbar-width: auto;
+}
+
+/* Horizontal scrollers (wide tables) — same size, but the track is a touch
+   stronger so the bar is obvious sitting under the last row. */
+.table-wrapper::-webkit-scrollbar-track,
+.h-scroll::-webkit-scrollbar-track {
+  background: var(--scroll-track);
+  box-shadow: inset 0 1px 0 var(--border);
+}
 
 /* Modal overlay */
 .modal-overlay {
@@ -400,6 +436,11 @@ hr { border: none; border-top: 1px solid var(--border); }
   .page-title { font-size: 19px; }
   .modal-footer { flex-direction: column-reverse; }
   .modal-footer button { width: 100%; justify-content: center; }
+
+  /* Touch scrolling doesn't need a grab target — give the width back to the
+     content, but keep the bar visible enough to signal "this scrolls". */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { border-width: 2px; }
 
   /* Tables: keep rows on one line and let the card wrapper scroll
      horizontally, rather than squashing columns until values wrap. */
