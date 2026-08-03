@@ -1221,9 +1221,15 @@ def upsert_line_value(
         value.amount_due = data["amount_due"]
     if "amount_paid" in data:
         value.amount_paid = data["amount_paid"]
-    # A hand-edit pins the cell so a later refresh-from-system won't overwrite it.
+    # A hand-edit pins the cell so a later refresh-from-system won't overwrite it —
+    # but clearing the cell RELEASES the pin, so the next pull fills it from the
+    # system again. Without that there is no way back: a cell typed once (or zeroed
+    # while tabbing down a column) ignores every future pull forever, and Replicate
+    # carries the pin into the next month's budget with it.
+    # "Cleared" means the whole cell is blank — both To Pay and Paid — since the pin
+    # is per cell, not per box.
     if line.source == "auto":
-        value.is_overridden = True
+        value.is_overridden = not (value.amount_due is None and value.amount_paid is None)
 
     db.commit()
     db.refresh(value)

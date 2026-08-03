@@ -1381,7 +1381,10 @@ export default function BudgetsPage() {
                                     readOnly={locked}
                                     placeholder="0.00"
                                     title={locked ? 'Locked by final verification — remove the lock to edit'
-                                      : overridden ? 'Manually edited — a system refresh will not change this' : undefined}
+                                      : overridden ? (isIncome
+                                        ? 'Manually edited — a system refresh will not change this. Clear the box to go back to the system figure.'
+                                        : 'Manually edited — a system refresh will not change this. Clear both boxes for this month to go back to the system figure.')
+                                      : undefined}
                                     style={locked ? cellInputLocked : overridden ? cellInputOverridden : cellInputStyle}
                                   />
                                 </VerifiableAmount>
@@ -1906,7 +1909,9 @@ const cellInputStyle = {
 }
 
 // A pinned (manually edited) auto cell — subtle accent border so the user can see
-// which figures they've overridden and that a refresh won't touch them.
+// which figures they've overridden and that a refresh won't touch them. Clearing the
+// cell (both boxes) releases the pin, so the accent border disappears and the next
+// pull fills it from the system again.
 const cellInputOverridden = {
   ...cellInputStyle,
   border: '1px solid var(--accent)',
