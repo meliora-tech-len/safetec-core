@@ -10,7 +10,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
 import toast from 'react-hot-toast'
-import { Plus, Search, X, Trash2, Fuel, Save, Upload, Pencil, Lock, RotateCcw } from 'lucide-react'
+import { Plus, Search, X, Trash2, Fuel, Save, Upload, Pencil, Lock, RotateCcw, CheckCircle } from 'lucide-react'
 import ImportDieselModal from '../components/ImportDieselModal'
 import ExportButton from '../components/ExportButton'
 import SearchableSelect from '../components/SearchableSelect'
@@ -99,6 +99,10 @@ export default function DieselFillUpsPage() {
   const [lockModal,    setLockModal]    = useState(false)
   const [lockDate,     setLockDate]     = useState(today)
   const [lockSaving,   setLockSaving]   = useState(false)
+  // Bulk verification — rows ticked for "Verify selected" / "Final lock selected"
+  const [selectedIds,    setSelectedIds]    = useState(new Set())
+  const [verifyingBulk,  setVerifyingBulk]  = useState(false)
+  const [finalizingBulk, setFinalizingBulk] = useState(false)
   const firstInputRef = useRef(null)
   const { sort, onSort } = useSort('truck_registration', 'asc', 'diesel-fillups')
 
@@ -128,6 +132,8 @@ export default function DieselFillUpsPage() {
 
   const load = useCallback(() => {
     setLoading(true)
+    // A new filter brings a different set of rows — drop any stale ticks with it
+    setSelectedIds(new Set())
     const params = buildParams()
     Promise.all([
       getDieselFillUps(params).then(r => setFillups(r.data)),
@@ -329,6 +335,73 @@ export default function DieselFillUpsPage() {
     catch (err) { toast.error(errorMessage(err)) }
   }
 
+  // ── Bulk verification ────────────────────────────────────────────────────────
+  // Whether the current user can still ADD a verification tick to this row —
+  // mirrors VerifyBadge's add logic so the checkbox only appears where a
+  // "Verify selected" would actually do something (step 1, or step 2 by another
+  // user). Rows this user has already ticked, or that are fully handled, are out.
+  const canUserVerify = (f) => {
+    if (f.verified3_by || f.verified3_by_initials) return false  // final lock applied
+    const step1 = !!f.verified
+    const step2 = !!(f.verified2_by || f.verified2_by_initials)
+    if (!step1) return true
+    if (!step2 && f.verified_by !== user?.id) return true
+    return false
+  }
+
+  // Admin only, not already locked. No step-1 prerequisite — the diesel finalize
+  // endpoint runs with require_step1=False, so the admin may lock on her own and
+  // others can still add ticks to empty steps afterwards.
+  const canUserFinalize = (f) => isAdmin && !(f.verified3_by || f.verified3_by_initials)
+
+  const canUserSelect = (f) => canUserVerify(f) || canUserFinalize(f)
+
+  const toggleSelect = (id) => setSelectedIds(s => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
+  })
+
+  const clearSelection = () => setSelectedIds(new Set())
+
+  // Apply the current user's next verification step to every selected row. Reuses
+  // the single-row endpoint with the explicit 'add' intent (safe — it no-ops
+  // server-side on anything this user can't tick), patching each row as it returns.
+  const handleVerifySelected = async () => {
+    const targets = visible.filter(f => selectedIds.has(f.id) && canUserVerify(f))
+    if (!targets.length) return
+    setVerifyingBulk(true)
+    let ok = 0
+    for (const f of targets) {
+      try {
+        const { data } = await verifyDieselFillUp(f.id, 'add')
+        patchFillup(data)
+        ok++
+      } catch (err) { toast.error(errorMessage(err)) }
+    }
+    setVerifyingBulk(false)
+    clearSelection()
+    if (ok) toast.success(`Verified ${ok} log${ok === 1 ? '' : 's'}`)
+  }
+
+  // Admin final lock over the selection — explicit 'apply' intent, so anything
+  // already locked is a server-side no-op rather than an accidental unlock.
+  const handleFinalizeSelected = async () => {
+    const targets = visible.filter(f => selectedIds.has(f.id) && canUserFinalize(f))
+    if (!targets.length) return
+    if (!window.confirm(`Apply the final lock to ${targets.length} diesel log${targets.length === 1 ? '' : 's'}? Locked logs can no longer be edited.`)) return
+    setFinalizingBulk(true)
+    let ok = 0
+    for (const f of targets) {
+      try {
+        const { data } = await finalizeDieselFillUp(f.id, 'apply')
+        patchFillup(data)
+        ok++
+      } catch (err) { toast.error(errorMessage(err)) }
+    }
+    setFinalizingBulk(false)
+    clearSelection()
+    if (ok) toast.success(`Final lock applied to ${ok} log${ok === 1 ? '' : 's'}`)
+  }
+
   const handleDelete = (f, e) => {
     e.stopPropagation()
     setDeleteTarget(f)
@@ -380,7 +453,22 @@ export default function DieselFillUpsPage() {
   }, [summary, search, visible])
 
   const multiEntity = entities.length > 1
-  const COLS = multiEntity ? 15 : 14
+  const COLS = multiEntity ? 16 : 15
+
+  // Selection state derived from what's on screen — a row filtered away can't be
+  // acted on, so it drops out of the counts too.
+  const selectable         = visible.filter(canUserSelect)
+  const selectedVerifiable  = visible.filter(f => selectedIds.has(f.id) && canUserVerify(f))
+  const selectedFinalizable = visible.filter(f => selectedIds.has(f.id) && canUserFinalize(f))
+  const selectedCount      = visible.filter(f => selectedIds.has(f.id)).length
+  const allSelected        = selectable.length > 0 && selectable.every(f => selectedIds.has(f.id))
+  const bulkBusy           = verifyingBulk || finalizingBulk
+  const toggleSelectAll = () => setSelectedIds(s => {
+    const n = new Set(s)
+    if (allSelected) selectable.forEach(f => n.delete(f.id))
+    else selectable.forEach(f => n.add(f.id))
+    return n
+  })
 
   // Diesel-sheet import is restricted to Bokamosho (BKMO) only
   const importEntityId = filterEntity || activeEntity?.id
@@ -567,6 +655,12 @@ export default function DieselFillUpsPage() {
               <th>Type</th>
               <th>Invoice #</th>
               <th>Slip #</th>
+              <th style={{ width: 28, textAlign: 'center' }}>
+                {selectable.length > 0 && (
+                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
+                    title="Select all" style={{ cursor: 'pointer' }} />
+                )}
+              </th>
               <th>Verified</th>
               <th></th>
             </tr>
@@ -654,6 +748,14 @@ export default function DieselFillUpsPage() {
                   </td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.invoice_number || '—'}</td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.slip_number || '—'}</td>
+                  {/* Bulk-select checkbox */}
+                  <td style={{ width: 28, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                    {canUserSelect(f) && (
+                      <input type="checkbox" checked={selectedIds.has(f.id)}
+                        onChange={() => toggleSelect(f.id)}
+                        title="Select" style={{ cursor: 'pointer' }} />
+                    )}
+                  </td>
                   <td>
                     <VerifyBadge item={f} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} adminFinalizeAnytime />
                   </td>
@@ -720,12 +822,57 @@ export default function DieselFillUpsPage() {
                   {formatCurrency((parseFloat(displaySummary.total_admin_fee) + parseFloat(displaySummary.total_admin_fee_vat || 0)))}
                 </td>
                 <td className="text-right" style={{ padding: '10px 12px' }}>{formatCurrency(displaySummary.grand_total)}</td>
-                <td colSpan={5} />
+                <td colSpan={6} />
               </tr>
             </tfoot>
           )}
         </table>
       </div>
+
+      {/* Bulk-action bar — floats while diesel logs are selected */}
+      {selectedCount > 0 && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          display: 'flex', alignItems: 'center', gap: 14, zIndex: 900,
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '10px 16px',
+          boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{selectedCount} selected</span>
+          {selectedVerifiable.length > 0 && (
+            <button
+              onClick={handleVerifySelected}
+              disabled={bulkBusy}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 7, border: 'none',
+                background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
+                cursor: verifyingBulk ? 'default' : 'pointer', opacity: bulkBusy ? 0.6 : 1,
+              }}>
+              <CheckCircle size={15} />
+              {verifyingBulk ? 'Verifying…' : `Verify selected (${selectedVerifiable.length})`}
+            </button>
+          )}
+          {selectedFinalizable.length > 0 && (
+            <button
+              onClick={handleFinalizeSelected}
+              disabled={bulkBusy}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 7, border: 'none',
+                background: '#7c3aed', color: '#fff', fontWeight: 600, fontSize: 13,
+                cursor: finalizingBulk ? 'default' : 'pointer', opacity: bulkBusy ? 0.6 : 1,
+              }}>
+              <Lock size={15} />
+              {finalizingBulk ? 'Locking…' : `Final lock selected (${selectedFinalizable.length})`}
+            </button>
+          )}
+          <button onClick={clearSelection} disabled={bulkBusy} className="btn-ghost"
+            style={{ fontSize: 13, padding: '6px 10px' }}>
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* ── Lock Month Modal ── */}
       {lockModal && (
@@ -917,7 +1064,8 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
           style={{ ...S.input, width: 80 }} />
       </td>
 
-      {/* Verified — n/a while editing */}
+      {/* Bulk-select + Verified — n/a while editing */}
+      <td style={S.td} />
       <td style={S.td} />
 
       {/* Actions */}
