@@ -756,17 +756,28 @@ def acknowledge_licence_alert(
 
 # ── Truck Monthly Expenses (Profit Sheet) ────────────────────────────────────
 
-# Fixed insurance/finance lines that recur unchanged every month on the Profit
-# Sheet — ONLY these carry forward from the previous month (with their amounts).
-# Every other line (diesel, wages, tyres, other variable costs) is entered fresh
-# each month and income auto-fills from that month's loads.
+# A fresh month duplicates the previous month's expense list in full — same
+# lines, same wording, same order — so recurring costs (Sasfin, Beyonda, Ngqura
+# loads, maintenance, the insurance/finance lines) don't have to be retyped.
+# The standard lines below are only used to seed a truck's FIRST-EVER sheet,
+# where there's no earlier month to copy from.
 PROFIT_SHEET_CARRY_LINES = [
     "Insurance Trailer", "3rd Party Liability", "Goods in Transit", "Loss of Use",
     "Personal Accident", "Communication Device", "SASRIA", "Insurance Truck",
     "Theft Truck", "Theft Trailer", "5% of Sum Insured", "Truck Monthly Payment",
     "Trailers Monthly Payment",
 ]
-_PROFIT_SHEET_CARRY_SET = {s.strip().lower() for s in PROFIT_SHEET_CARRY_LINES}
+
+# Diesel and wages/salary lines are the volatile ones — they only settle once
+# the month's fill-ups and payroll are captured. Their DESCRIPTION carries over
+# (so the line is waiting to be filled) but the amount is blanked, so last
+# month's figure can never be mistaken for this month's.
+PROFIT_SHEET_BLANK_ON_CARRY = ("diesel", "wage", "salary")
+
+
+def _profit_sheet_carry_amount(description: str) -> bool:
+    d = (description or "").strip().lower()
+    return not any(word in d for word in PROFIT_SHEET_BLANK_ON_CARRY)
 
 
 @router.get("/trucks/{truck_id}/monthly-expenses", response_model=TruckMonthlyExpensesOut)
@@ -790,12 +801,11 @@ def get_monthly_expenses(
     if record:
         return record
 
-    # No sheet captured for this month yet — open it with the standard fixed
-    # insurance/finance lines (PROFIT_SHEET_CARRY_LINES), which are always present
-    # every month. Each line's amount is carried from the most recent earlier
-    # month where one was captured; anything else (diesel, wages, variable costs)
-    # is entered fresh and income auto-fills from this month's loads. Returned as
-    # an unsaved template (it persists when she saves).
+    # No sheet captured for this month yet — open it as a duplicate of the most
+    # recent earlier month: every expense line, in the same order, keeping her
+    # own wording, plus the notes, with the amount carried except on diesel/wages
+    # lines. Income is never carried; it auto-fills from this month's loads.
+    # Returned as an unsaved template (it persists when she saves).
     prior = (
         db.query(TruckMonthlyExpenses)
         .filter(
@@ -808,16 +818,25 @@ def get_monthly_expenses(
         .order_by(TruckMonthlyExpenses.year.desc(), TruckMonthlyExpenses.month.desc())
         .first()
     )
-    prior_amounts = {}
-    for l in (prior.custom_lines or []) if prior else []:
-        desc = (l.get("description") or "").strip().lower()
-        if desc in _PROFIT_SHEET_CARRY_SET:
-            prior_amounts[desc] = l.get("amount")
-    carried = [
-        {"id": uuid.uuid4().hex, "description": lbl, "amount": prior_amounts.get(lbl.strip().lower())}
-        for lbl in PROFIT_SHEET_CARRY_LINES
-    ]
-    return TruckMonthlyExpensesOut(truck_id=truck_id, year=year, month=month, custom_lines=carried)
+    if prior:
+        carried = [
+            {
+                "id": uuid.uuid4().hex,
+                "description": l.get("description") or "",
+                "amount": l.get("amount") if _profit_sheet_carry_amount(l.get("description")) else None,
+            }
+            for l in (prior.custom_lines or [])
+        ]
+        notes = prior.notes
+    else:
+        # First-ever sheet for this truck — seed the standard fixed lines, blank.
+        carried = [
+            {"id": uuid.uuid4().hex, "description": lbl, "amount": None}
+            for lbl in PROFIT_SHEET_CARRY_LINES
+        ]
+        notes = None
+    return TruckMonthlyExpensesOut(truck_id=truck_id, year=year, month=month,
+                                   custom_lines=carried, notes=notes)
 
 
 @router.put("/trucks/{truck_id}/monthly-expenses", response_model=TruckMonthlyExpensesOut)

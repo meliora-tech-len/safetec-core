@@ -1857,9 +1857,9 @@ function ProfitSheetSection({ truck, year, month, summary }) {
       ])
       const expData = expRes.data
       // Everything lives in the unified custom_lines list. The server decides which
-      // lines a fresh month opens with — only the fixed insurance/finance lines
-      // carry forward from the previous month (with amounts); the rest are entered
-      // fresh. We show exactly what it returns and inject nothing extra.
+      // lines a fresh month opens with — it duplicates the previous month's list in
+      // full, blanking the amount on diesel/wages lines only. We show exactly what
+      // it returns and inject nothing extra.
       const existing = expData.custom_lines || []
       const existingDescs = new Set(existing.map(l => (l.description || '').trim().toLowerCase()))
       // Legacy support only: fold any named-column value that still holds an amount
