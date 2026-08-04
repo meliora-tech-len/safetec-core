@@ -188,7 +188,9 @@ export default function SettingsPage() {
   }
 
   return (
-    <div style={{ padding: 'var(--page-pad)', maxWidth: 860 }}>
+    // No cap here — each Section caps itself (860 by default) so a single
+    // section can opt into more width without stretching the rest of the page.
+    <div style={{ padding: 'var(--page-pad)' }}>
       <div style={{ marginBottom: 28 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Settings</h1>
         <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', fontSize: 13 }}>
@@ -280,8 +282,8 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* ── Invoice Numbering ────────────────────────────────────────── */}
-      <Section title="Invoice Numbering" subtitle="Set each entity's counter to the LAST number you used — the next document continues from there (see the Next preview: invoice on top, purchase order below). Invoices, quotes and POs each run their own sequence. The app then increments automatically; you can still override the number on individual documents.">
+      {/* ── Billing Numbering ────────────────────────────────────────── */}
+      <Section wide title="Billing Numbering" subtitle="Set each entity's counter to the LAST number you used — the next document continues from there (see the Next preview: invoice on top, purchase order below). Invoices, quotes and POs each run their own sequence. The app then increments automatically; you can still override the number on individual documents.">
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -502,9 +504,13 @@ export default function SettingsPage() {
   )
 }
 
-function Section({ title, subtitle, children }) {
+// `wide` is for sections whose content is a table too broad for the standard
+// reading width — it uses the empty space on the right rather than forcing a
+// horizontal scrollbar. The scroll container inside stays as the fallback for
+// genuinely narrow screens.
+function Section({ title, subtitle, children, wide = false }) {
   return (
-    <div style={{ marginBottom: 28 }}>
+    <div style={{ marginBottom: 28, maxWidth: wide ? 1240 : 860 }}>
       <div style={{ marginBottom: 14 }}>
         <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{title}</h2>
         {subtitle && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '3px 0 0' }}>{subtitle}</p>}
