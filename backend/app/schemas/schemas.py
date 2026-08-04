@@ -44,6 +44,10 @@ class EntityBase(BaseModel):
     invoice_prefix: Optional[str] = None
     quote_prefix: Optional[str] = "QT"
     invoice_number_padding: Optional[int] = 5
+    # Purchase orders carry their own prefix/counter/padding (migration 128).
+    # po_number_padding None = fall back to invoice_number_padding.
+    po_prefix: Optional[str] = "PO"
+    po_number_padding: Optional[int] = None
     vat_rate: Optional[Decimal] = Decimal("0.15")
     vat_registered: bool = True
     primary_color: Optional[str] = "#2563eb"
@@ -69,6 +73,9 @@ class EntityUpdate(BaseModel):
     quote_prefix: Optional[str] = None
     quote_counter: Optional[int] = None
     invoice_number_padding: Optional[int] = None
+    po_prefix: Optional[str] = None
+    po_counter: Optional[int] = None
+    po_number_padding: Optional[int] = None
     vat_rate: Optional[Decimal] = None
     vat_registered: Optional[bool] = None
     primary_color: Optional[str] = None
@@ -80,6 +87,9 @@ class EntityOut(EntityBase):
     quote_counter: int
     quote_prefix: Optional[str] = "QT"
     invoice_number_padding: int = 5
+    po_prefix: Optional[str] = "PO"
+    po_counter: int = 0
+    po_number_padding: Optional[int] = None
     vat_registered: bool = True
     is_active: bool
     is_subcontractor_entity: bool = False

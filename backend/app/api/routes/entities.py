@@ -166,6 +166,7 @@ _NUMBERING_FIELDS = {
     "invoice_prefix", "invoice_counter",
     "quote_prefix", "quote_counter",
     "invoice_number_padding",
+    "po_prefix", "po_counter", "po_number_padding",
 }
 
 

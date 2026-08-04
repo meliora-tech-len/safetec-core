@@ -22,7 +22,7 @@ from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, Dashbo
 from app.services.audit import log_action
 from app.services.invoice_numbering import generate_invoice_number, peek_invoice_number
 from app.services.po_number import po_number_for_invoice
-from app.services.qty_adjustment import normalize_scope, resolve_quantities
+from app.services.qty_adjustment import normalize_scope, resolve_quantities, line_amount
 from app.services.pdf_generator import generate_invoice_pdf
 from app.services.email import send_invoice_email
 
@@ -167,9 +167,10 @@ def _apply_qty_adjustment(line_items_data, pct, scope: str):
         item.base_quantity = base
         item.qty_adjusted  = True
         if item.unit_price is not None:
-            item.amount = (Decimal(str(qty)) * Decimal(str(item.unit_price))).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
+            # Billed on the EXACT tonnage, not the 2 dp figure printed in the
+            # QTY column — rounding the tonnage first puts the amount cents out
+            # against the customer's sheet. See services/qty_adjustment.py.
+            item.amount = line_amount(base, pct, item.unit_price)
     return line_items_data
 
 

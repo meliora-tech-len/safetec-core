@@ -6,8 +6,19 @@ def prefix_for(entity: BusinessEntity, document_type: str) -> str:
     if document_type == "quote":
         return entity.quote_prefix or "QT"
     if document_type == "purchase_order":
-        return "PO"
+        return entity.po_prefix or "PO"
     return entity.invoice_prefix or entity.code or "INV"
+
+
+def padding_for(entity: BusinessEntity, document_type: str) -> int:
+    """Digit width for the numeric part.
+
+    POs may set their own; NULL means fall back to the entity-wide setting
+    (BTP: invoices unpadded, POs two-digit).
+    """
+    if document_type == "purchase_order" and entity.po_number_padding is not None:
+        return entity.po_number_padding
+    return entity.invoice_number_padding if entity.invoice_number_padding is not None else 5
 
 
 def format_number(prefix: str, counter: int, padding: int) -> str:
@@ -24,11 +35,15 @@ def resolve_next_number(db: Session, entity: BusinessEntity, document_type: str)
     lowered in Settings). Does NOT advance the stored counter.
     """
     prefix = prefix_for(entity, document_type)
-    padding = entity.invoice_number_padding if entity.invoice_number_padding is not None else 5
+    padding = padding_for(entity, document_type)
     if document_type == "quote":
         counter = (entity.quote_counter or 0) + 1
+    elif document_type == "purchase_order":
+        # POs run their own sequence (migration 128); before that they shared
+        # the invoice counter, which suggested PO775 on an entity whose POs
+        # were actually PO01..PO03.
+        counter = (entity.po_counter or 0) + 1
     else:
-        # purchase orders share the invoice counter (PO prefix, same sequence)
         counter = (entity.invoice_counter or 0) + 1
     while db.query(Invoice.id).filter(Invoice.invoice_number == format_number(prefix, counter, padding)).first():
         counter += 1
@@ -60,6 +75,8 @@ def generate_invoice_number(db: Session, entity_id: int, document_type: str = "i
     _, counter, number = resolve_next_number(db, entity, document_type)
     if document_type == "quote":
         entity.quote_counter = counter
+    elif document_type == "purchase_order":
+        entity.po_counter = counter
     else:
         entity.invoice_counter = counter
 

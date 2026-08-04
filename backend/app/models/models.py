@@ -102,6 +102,13 @@ class BusinessEntity(Base):
     # Minimum digit width for the numeric part. 0 = no padding (BTP739);
     # 5 = legacy zero-padded (OBHI03667). Applies to invoices and quotes.
     invoice_number_padding = Column(Integer, default=5, nullable=False, server_default="5")
+    # Purchase orders (migration 128). Own prefix AND own counter — a PO
+    # sequence is independent of the invoice one. po_number_padding is nullable
+    # because NULL means "use invoice_number_padding"; POs need their own since
+    # BTP invoices are unpadded (BTP775) while its POs are two-digit (PO04).
+    po_prefix = Column(String(10), default="PO", server_default="PO")
+    po_counter = Column(Integer, nullable=False, default=0, server_default="0")
+    po_number_padding = Column(Integer, nullable=True)
 
     # Tax
     vat_rate = Column(Numeric(5, 4), default=0.15)

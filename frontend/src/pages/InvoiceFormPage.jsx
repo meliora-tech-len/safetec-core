@@ -35,11 +35,21 @@ const lineTakesAdj = (line, pct, scope) =>
   (line.line_type || 'item') === 'item' &&
   (scope === 'all' || !!line.qty_adjusted)
 
-const billedQty = (line, pct, scope) => {
+// The EXACT adjusted tonnage — what the line is billed on. Rounding the
+// tonnage to 2 dp before multiplying by the rate puts the amount a few cents
+// out against the customer's sheet, so the rounding happens once, on the rands.
+const exactBilledQty = (line, pct, scope) => {
   if (line.quantity === '' || line.quantity == null) return null
   const base = parseFloat(line.quantity)
   if (isNaN(base)) return null
-  return lineTakesAdj(line, pct, scope) ? +(base * (1 + pct / 100)).toFixed(2) : base
+  return lineTakesAdj(line, pct, scope) ? base * (1 + pct / 100) : base
+}
+
+// The DISPLAYED/printed tonnage, rounded to 2 dp. An adjusted line therefore
+// does not always multiply out to its printed amount — same as the source sheet.
+const billedQty = (line, pct, scope) => {
+  const exact = exactBilledQty(line, pct, scope)
+  return exact == null ? null : +exact.toFixed(2)
 }
 
 // ── Quantity input formatting ─────────────────────────────────────────────────
@@ -73,7 +83,7 @@ const formatQtyInput = (raw) => {
 const withAmount = (line, pct, scope) => {
   if ((line.line_type || 'item') !== 'item') return line
   if (line.quantity === '' || line.unit_price === '') return line
-  const q = billedQty(line, pct, scope)
+  const q = exactBilledQty(line, pct, scope)   // exact, not the printed 2 dp figure
   if (q == null) return line
   const rate = parseFloat(line.unit_price)
   if (isNaN(rate)) return line

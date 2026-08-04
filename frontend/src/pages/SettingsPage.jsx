@@ -130,6 +130,9 @@ export default function SettingsPage() {
         quote_prefix: entity.quote_prefix,
         quote_counter: entity.quote_counter,
         invoice_number_padding: entity.invoice_number_padding,
+        po_prefix: entity.po_prefix,
+        po_counter: entity.po_counter,
+        po_number_padding: entity.po_number_padding,
       })
       // Reflect exactly what the server stored, so a save can never *look* successful
       // while the value silently reverts on the next page load.
@@ -141,6 +144,9 @@ export default function SettingsPage() {
           quote_prefix: saved.quote_prefix ?? 'QT',
           quote_counter: saved.quote_counter ?? 0,
           invoice_number_padding: saved.invoice_number_padding ?? 5,
+          po_prefix: saved.po_prefix ?? 'PO',
+          po_counter: saved.po_counter ?? 0,
+          po_number_padding: saved.po_number_padding ?? saved.invoice_number_padding ?? 5,
         },
       }))
       setSavedOk(p => ({ ...p, [`entity_${entity.id}`]: true }))
@@ -163,6 +169,11 @@ export default function SettingsPage() {
         quote_prefix: e.quote_prefix || 'QT',
         quote_counter: e.quote_counter || 0,
         invoice_number_padding: e.invoice_number_padding ?? 5,
+        po_prefix: e.po_prefix || 'PO',
+        po_counter: e.po_counter || 0,
+        // A null PO padding means "inherit the entity-wide digits" — resolve it
+        // here so the field always shows the width actually in use.
+        po_number_padding: e.po_number_padding ?? e.invoice_number_padding ?? 5,
       }
     })
     setEntityConfigs(cfg)
@@ -270,12 +281,12 @@ export default function SettingsPage() {
       </Section>
 
       {/* ── Invoice Numbering ────────────────────────────────────────── */}
-      <Section title="Invoice Numbering" subtitle="Set each entity's counter to the LAST invoice number you used — the next invoice continues from there (see the Next Invoice preview). The app then increments automatically; you can still override the number on individual invoices.">
+      <Section title="Invoice Numbering" subtitle="Set each entity's counter to the LAST number you used — the next document continues from there (see the Next preview: invoice on top, purchase order below). Invoices, quotes and POs each run their own sequence. The app then increments automatically; you can still override the number on individual documents.">
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'var(--bg-secondary)' }}>
-                {['Entity', 'Invoice Prefix', 'Last Invoice #', 'Quote Prefix', 'Last Quote #', 'Digits', 'Next Invoice', ''].map(h => (
+                {['Entity', 'Invoice Prefix', 'Last Invoice #', 'Quote Prefix', 'Last Quote #', 'Digits', 'PO Prefix', 'Last PO #', 'PO Digits', 'Next', ''].map(h => (
                   <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
                 ))}
               </tr>
@@ -285,6 +296,10 @@ export default function SettingsPage() {
                 const cfg = entityConfigs[entity.id] || {}
                 const pad = Math.max(0, parseInt(cfg.invoice_number_padding) || 0)
                 const nextInv = `${cfg.invoice_prefix || entity.code}${String((parseInt(cfg.invoice_counter) || 0) + 1).padStart(pad, '0')}`
+                // POs run their own prefix/counter/padding; padding falls back
+                // to the entity-wide digits when it has never been set.
+                const poPad = Math.max(0, parseInt(cfg.po_number_padding ?? cfg.invoice_number_padding) || 0)
+                const nextPO = `${cfg.po_prefix || 'PO'}${String((parseInt(cfg.po_counter) || 0) + 1).padStart(poPad, '0')}`
                 const isSaving = saving[`entity_${entity.id}`]
                 const isSaved = savedOk[`entity_${entity.id}`]
                 const saveError = errors[`entity_${entity.id}`]
@@ -321,7 +336,21 @@ export default function SettingsPage() {
                         style={{ width: 60, padding: '4px 8px', fontSize: 13 }} />
                     </td>
                     <td style={{ padding: '8px 10px' }}>
-                      <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{nextInv}</span>
+                      <input className="form-input" value={cfg.po_prefix ?? ''} onChange={e => updateEntityConfig(entity.id, 'po_prefix', e.target.value.toUpperCase())}
+                        style={{ width: 70, fontFamily: 'monospace', padding: '4px 8px', fontSize: 13 }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input className="form-input" type="number" min={0} value={cfg.po_counter ?? 0} onChange={e => updateEntityConfig(entity.id, 'po_counter', parseInt(e.target.value) || 0)}
+                        style={{ width: 90, padding: '4px 8px', fontSize: 13 }} />
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <input className="form-input" type="number" min={0} max={10} value={cfg.po_number_padding ?? cfg.invoice_number_padding ?? 5} onChange={e => updateEntityConfig(entity.id, 'po_number_padding', parseInt(e.target.value) || 0)}
+                        title="Minimum digits for PO numbers. Kept separate from invoices — BTP invoices are unpadded (BTP775) while its POs are two-digit (PO04)."
+                        style={{ width: 60, padding: '4px 8px', fontSize: 13 }} />
+                    </td>
+                    <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{nextInv}</div>
+                      <div style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{nextPO}</div>
                     </td>
                     <td style={{ padding: '8px 10px' }}>
                       <SaveButton

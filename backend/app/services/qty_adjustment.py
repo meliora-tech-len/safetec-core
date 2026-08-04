@@ -19,13 +19,31 @@ SCOPE_SELECTED = "selected"
 VALID_SCOPES   = {SCOPE_ALL, SCOPE_SELECTED}
 
 
+def exact_adjusted_quantity(base, pct) -> Decimal:
+    """base + pct%, NOT rounded. e.g. (32.56, 1.53) -> 33.058168
+
+    This is the figure the line is billed on. Rounding the tonnage to 2 dp
+    before multiplying by the rate puts the amount a few cents out against the
+    customer's own sheet, which multiplies the full-precision tonnage — so the
+    rounding happens once, at the cent, and never to the tonnage first.
+    """
+    return Decimal(str(base)) * (Decimal("1") + Decimal(str(pct)) / Decimal("100"))
+
+
 def adjusted_quantity(base, pct) -> Decimal:
-    """base + pct% , rounded to 2 dp. e.g. (32.56, 1.53) -> 33.06"""
-    base_d = Decimal(str(base))
-    pct_d  = Decimal(str(pct))
-    return (base_d * (Decimal("1") + pct_d / Decimal("100"))).quantize(
-        QTY_EXP, rounding=ROUND_HALF_UP
-    )
+    """The DISPLAYED/printed tonnage: base + pct%, rounded to 2 dp.
+
+    e.g. (32.56, 1.53) -> 33.06. Deliberately not what the amount is derived
+    from — see exact_adjusted_quantity. A printed line therefore does not
+    always multiply out to the printed amount, matching the source sheet.
+    """
+    return exact_adjusted_quantity(base, pct).quantize(QTY_EXP, rounding=ROUND_HALF_UP)
+
+
+def line_amount(base, pct, unit_price) -> Decimal:
+    """Bill the line on the exact tonnage, rounding only the rand result."""
+    exact = exact_adjusted_quantity(base, pct)
+    return (exact * Decimal(str(unit_price))).quantize(QTY_EXP, rounding=ROUND_HALF_UP)
 
 
 def line_takes_adjustment(item, pct, scope: str) -> bool:
