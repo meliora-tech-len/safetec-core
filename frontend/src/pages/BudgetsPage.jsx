@@ -276,10 +276,13 @@ export default function BudgetsPage() {
       toast.success(
         `${data.created ? 'Created' : 'Updated'} ${MONTHS[pm - 1]} ${py} — `
         + `${data.lines_added} line(s) added, ${data.values_filled} amount(s) carried over`
-        + (prune ? `, ${data.lines_removed} extra line(s) removed` : '')
+        + (data.bank_rows_added || data.bank_amounts_filled
+          ? `, bank info ${data.bank_rows_added} row(s) / ${data.bank_amounts_filled} amount(s)` : '')
+        + (prune ? `, ${data.lines_removed + data.bank_rows_removed} extra line(s) removed` : '')
       )
-      if (prune && data.lines_kept) {
-        toast(`${data.lines_kept} extra line(s) kept — they hold figures someone typed in.`,
+      const kept = data.lines_kept + (prune ? data.bank_rows_kept : 0)
+      if (prune && kept) {
+        toast(`${kept} extra line(s) kept — they hold figures someone typed in.`,
           { icon: '✋', duration: 6000 })
       }
       setPruneModal(null)
@@ -302,7 +305,8 @@ export default function BudgetsPage() {
     setReplicating(true)
     try {
       const { data } = await getReplicatePreview(budget.id)
-      if (!data.target_exists || (!data.remove.length && !data.sections_removed.length)) {
+      if (!data.target_exists || (!data.remove.length && !data.sections_removed.length
+                                  && !data.bank_remove.length)) {
         setReplicating(false)
         return runReplicate(true)
       }
@@ -1507,24 +1511,28 @@ export default function BudgetsPage() {
             </div>
 
             <div style={{ padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, flex: 1, overflowY: 'auto' }}>
-              <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                {MONTHS[pruneModal.target_month - 1]} will get every line {MONTHS[Number(month) - 1]} has, in the same
-                order, and these <strong>{pruneModal.remove.length}</strong> line(s) it has on its own will be
-                removed. Their figures came from the system — <strong>Pull from System</strong> brings them back.
-              </p>
+              {pruneModal.remove.length > 0 && (
+                <>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    {MONTHS[pruneModal.target_month - 1]} will get every line {MONTHS[Number(month) - 1]} has, in the same
+                    order, and these <strong>{pruneModal.remove.length}</strong> line(s) it has on its own will be
+                    removed. Their figures came from the system — <strong>Pull from System</strong> brings them back.
+                  </p>
 
-              <div style={{ border: '1px solid var(--border)', borderRadius: 6 }}>
-                {pruneModal.remove.map(item => (
-                  <div key={item.line_id}
-                    style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '5px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 10, minWidth: 150, flexShrink: 0 }}>{item.section}</span>
-                    <span style={{ flex: 1, wordBreak: 'break-word' }}>{item.name}</span>
-                    {item.has_figures && (
-                      <span className="badge badge-sent" style={{ fontSize: 9 }} title="Has figures on it — they can be pulled again">has figures</span>
-                    )}
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 6 }}>
+                    {pruneModal.remove.map(item => (
+                      <div key={item.line_id}
+                        style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '5px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: 10, minWidth: 150, flexShrink: 0 }}>{item.section}</span>
+                        <span style={{ flex: 1, wordBreak: 'break-word' }}>{item.name}</span>
+                        {item.has_figures && (
+                          <span className="badge badge-sent" style={{ fontSize: 9 }} title="Has figures on it — they can be pulled again">has figures</span>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              )}
 
               {pruneModal.sections_removed.length > 0 && (
                 <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -1532,13 +1540,36 @@ export default function BudgetsPage() {
                 </p>
               )}
 
-              {pruneModal.keep.length > 0 && (
+              {/* Bank Info Summary extras, kept apart from the lines above: nothing
+                  in that block is pulled, so a removed row is typed back in by hand. */}
+              {pruneModal.bank_remove.length > 0 && (
+                <div>
+                  <p style={{ margin: '0 0 6px', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    <strong>{pruneModal.bank_remove.length}</strong> empty Bank Info Summary row(s) will go too —
+                    {MONTHS[Number(month) - 1]} has no such row. Nothing is lost: they have no amount on them.
+                  </p>
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 6 }}>
+                    {pruneModal.bank_remove.map(item => (
+                      <div key={`bank:${item.row_id}`}
+                        style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '5px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: 10, minWidth: 150, flexShrink: 0 }}>
+                          {item.kind === 'bank' ? 'Bank Info — accounts' : 'Bank Info — to be paid'}
+                        </span>
+                        <span style={{ flex: 1, wordBreak: 'break-word' }}>{item.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(pruneModal.keep.length > 0 || pruneModal.bank_keep.length > 0) && (
                 <div>
                   <p style={{ margin: '0 0 6px', fontSize: 12, color: 'var(--text-secondary)' }}>
                     Kept — someone typed these figures in, so they stay even though {MONTHS[Number(month) - 1]} has no such line:
                   </p>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                    {pruneModal.keep.map(i => `${i.section} — ${i.name}`).join(' · ')}
+                    {[...pruneModal.keep.map(i => `${i.section} — ${i.name}`),
+                      ...pruneModal.bank_keep.map(i => `Bank Info — ${i.label}`)].join(' · ')}
                   </div>
                 </div>
               )}
@@ -1547,7 +1578,8 @@ export default function BudgetsPage() {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
               <button className="btn-ghost" onClick={() => setPruneModal(null)} disabled={replicating}>Cancel</button>
               <button className="btn-primary" onClick={() => runReplicate(true)} disabled={replicating}>
-                {replicating ? 'Replicating…' : `Replicate & remove ${pruneModal.remove.length}`}
+                {replicating ? 'Replicating…'
+                  : `Replicate & remove ${pruneModal.remove.length + pruneModal.bank_remove.length}`}
               </button>
             </div>
           </div>

@@ -2679,6 +2679,13 @@ class BudgetReplicateOut(BaseModel):
     lines_removed: int = 0
     sections_removed: int = 0
     lines_kept: int = 0
+    # Safetec's Bank Info Summary, carried over by its own pass (it sits outside
+    # the sections). `bank_amounts_filled` counts blanks filled, never overwrites;
+    # `bank_rows_kept` are extras left standing because they hold a typed figure.
+    bank_rows_added: int = 0
+    bank_amounts_filled: int = 0
+    bank_rows_removed: int = 0
+    bank_rows_kept: int = 0
 
 
 class BudgetPruneItemOut(BaseModel):
@@ -2689,6 +2696,13 @@ class BudgetPruneItemOut(BaseModel):
     has_figures: bool
 
 
+class BudgetBankPruneItemOut(BaseModel):
+    """A Bank Info Summary row a pruning replicate would remove (or keep)."""
+    row_id: int
+    kind: str        # bank | to_be_paid
+    label: str
+
+
 class BudgetPrunePreviewOut(BaseModel):
     """What a pruning replicate would remove from next month."""
     target_month: int
@@ -2697,6 +2711,10 @@ class BudgetPrunePreviewOut(BaseModel):
     remove: List[BudgetPruneItemOut]
     keep: List[BudgetPruneItemOut]  # extras protected because they hold typed figures
     sections_removed: List[str]
+    # Bank Info Summary extras. Kept apart from the lines above because nothing in
+    # that block comes from a pull — a removed row is typed back in, not re-pulled.
+    bank_remove: List[BudgetBankPruneItemOut] = []
+    bank_keep: List[BudgetBankPruneItemOut] = []
 
 
 class BudgetLineTemplateCreate(BaseModel):

@@ -19,7 +19,7 @@ from app.schemas.schemas import (
     BudgetLineValueIn, BudgetLineValueOut,
     BudgetLineTemplateCreate, BudgetLineTemplateUpdate, BudgetLineTemplateOut,
     BudgetIncomeCandidateOut, BudgetIncomeSelection, BudgetReplicateOut,
-    BudgetPruneItemOut, BudgetPrunePreviewOut,
+    BudgetPruneItemOut, BudgetPrunePreviewOut, BudgetBankPruneItemOut,
 )
 from app.services.audit import log_action
 from app.services.budget_autofill import (
@@ -767,6 +767,130 @@ def _apply_prune(db: Session, source: Budget, target: Budget):
     return len(remove), len(keep), len(sections_to_remove)
 
 
+def _bank_ident(row) -> str:
+    """How replicate decides two Bank Info Summary rows are the same one."""
+    return f"{row.kind}:{(row.label or '').strip().lower()}"
+
+
+def _replicate_bank_rows(db: Session, source: Budget, target: Budget):
+    """Carry the Bank Info Summary block forward.
+
+    The block is a plain list of hand-captured rows, not lines under a section,
+    so the section/line merge above walks straight past it and a replicated
+    month used to come out with no bank block at all.
+
+    Same merge rule as the lines: a row the target hasn't got is created with the
+    source's label, note and amount; a row it already has keeps what is on it and
+    only has its blanks filled. Balances are read off the banking system by hand
+    each month, so what carries over is last month's figure as a STARTING POINT —
+    typing over it is the normal way to use it, and replicating again won't undo
+    that. Returns (rows_added, amounts_filled).
+    """
+    src_rows = db.query(BudgetBankRow).filter(
+        BudgetBankRow.budget_id == source.id
+    ).order_by(BudgetBankRow.sort_order, BudgetBankRow.id).all()
+    if not src_rows:
+        return 0, 0
+
+    tgt_rows = db.query(BudgetBankRow).filter(BudgetBankRow.budget_id == target.id).all()
+    pool: dict = {}
+    for r in tgt_rows:
+        pool.setdefault(_bank_ident(r), []).append(r)
+    # New rows go on the end of their own list, mirroring add_bank_row.
+    next_order = {
+        k: max([r.sort_order or 0 for r in tgt_rows if r.kind == k], default=-1) + 1
+        for k in BANK_ROW_KINDS
+    }
+
+    rows_added = amounts_filled = 0
+    for src in src_rows:
+        bucket = pool.get(_bank_ident(src))
+        tgt = bucket.pop(0) if bucket else None
+        if tgt is None:
+            order = next_order.get(src.kind, 0)
+            next_order[src.kind] = order + 1
+            db.add(BudgetBankRow(budget_id=target.id, kind=src.kind, label=src.label,
+                                 note=src.note, amount=src.amount, sort_order=order))
+            rows_added += 1
+            if src.amount is not None:
+                amounts_filled += 1
+            continue
+        if tgt.amount is None and src.amount is not None:
+            tgt.amount = src.amount
+            amounts_filled += 1
+        if not (tgt.note or "").strip() and src.note:
+            tgt.note = src.note
+    db.flush()
+    return rows_added, amounts_filled
+
+
+def _bank_prune_plan(db: Session, source: Budget, target: Budget):
+    """Bank Info Summary rows the target has and the source doesn't.
+
+    Returns (remove, keep) as lists of BudgetBankRow. Nothing in this block comes
+    from a pull — every figure on it was read off the banking system by hand — so
+    the protection rule is simpler than _prunable's: a row with an amount or a
+    note on it is someone's work and stays; a bare label can go.
+
+    Safe to compute after the merge, which only ever adds rows the source has:
+    those are matched off against the source's own count and never land in
+    `remove`.
+    """
+    src_rows = db.query(BudgetBankRow).filter(BudgetBankRow.budget_id == source.id).all()
+    if not src_rows:
+        # No block to match against — leave the target's alone rather than
+        # emptying it out against a source that never had one.
+        return [], []
+
+    wanted: dict = {}
+    for r in src_rows:
+        wanted[_bank_ident(r)] = wanted.get(_bank_ident(r), 0) + 1
+
+    seen: dict = {}
+    remove, keep = [], []
+    for r in db.query(BudgetBankRow).filter(
+            BudgetBankRow.budget_id == target.id
+    ).order_by(BudgetBankRow.sort_order, BudgetBankRow.id).all():
+        k = _bank_ident(r)
+        seen[k] = seen.get(k, 0) + 1
+        if seen[k] <= wanted.get(k, 0):
+            continue    # the source has one of these, so it is not an extra
+        if r.amount is None and not (r.note or "").strip():
+            remove.append(r)
+        else:
+            keep.append(r)
+    return remove, keep
+
+
+def _apply_bank_prune(db: Session, source: Budget, target: Budget):
+    """Delete the extra bank rows, then put the rest in the source's order so the
+    two months' Bank Info Summary reads the same top to bottom."""
+    remove, keep = _bank_prune_plan(db, source, target)
+    for row in remove:
+        db.delete(row)
+    db.flush()
+
+    order: dict = {}
+    for r in db.query(BudgetBankRow).filter(
+            BudgetBankRow.budget_id == source.id
+    ).order_by(BudgetBankRow.sort_order, BudgetBankRow.id).all():
+        order.setdefault(_bank_ident(r), []).append(r.sort_order or 0)
+    # Extras that survived go under their list rather than jumbling into it.
+    tail = {k: max([r.sort_order or 0 for r in db.query(BudgetBankRow).filter(
+        BudgetBankRow.budget_id == source.id, BudgetBankRow.kind == k).all()], default=-1) + 1
+        for k in BANK_ROW_KINDS}
+    for r in db.query(BudgetBankRow).filter(
+            BudgetBankRow.budget_id == target.id
+    ).order_by(BudgetBankRow.sort_order, BudgetBankRow.id).all():
+        slot = order.get(_bank_ident(r))
+        if slot:
+            r.sort_order = slot.pop(0)
+        else:
+            r.sort_order = tail.get(r.kind, 0)
+            tail[r.kind] = r.sort_order + 1
+    return len(remove), len(keep)
+
+
 @router.get("/{budget_id}/replicate-preview", response_model=BudgetPrunePreviewOut)
 def replicate_preview(
     budget_id: int,
@@ -787,6 +911,10 @@ def replicate_preview(
                                      remove=[], keep=[], sections_removed=[])
 
     remove, keep, sections_to_remove = _prune_plan(db, source, target)
+    # The merge hasn't run here, so this is what the bank block looks like BEFORE
+    # the missing rows are added — which is exactly right: the merge only adds
+    # rows the source has, and those are never extras.
+    bank_remove, bank_keep = _bank_prune_plan(db, source, target)
 
     def out(items):
         return [
@@ -801,10 +929,14 @@ def replicate_preview(
             for sec, l in items
         ]
 
+    def bank_out(rows):
+        return [BudgetBankPruneItemOut(row_id=r.id, kind=r.kind, label=r.label) for r in rows]
+
     return BudgetPrunePreviewOut(
         target_month=tm, target_year=ty, target_exists=True,
         remove=out(remove), keep=out(keep),
         sections_removed=[s.name for s in sections_to_remove],
+        bank_remove=bank_out(bank_remove), bank_keep=bank_out(bank_keep),
     )
 
 
@@ -938,10 +1070,16 @@ def replicate_budget(
                 tgt_val.is_overridden = src_val.is_overridden
                 values_filled += 1
 
+    # Safetec's Bank Info Summary lives outside the sections, so it needs its own
+    # pass — otherwise the target month comes out with an empty bank block.
+    bank_rows_added, bank_amounts_filled = _replicate_bank_rows(db, source, target)
+
     lines_removed = sections_removed = lines_kept = 0
+    bank_rows_removed = bank_rows_kept = 0
     if prune and not created:
         db.flush()   # the merge's new lines must be visible to the plan
         lines_removed, lines_kept, sections_removed = _apply_prune(db, source, target)
+        bank_rows_removed, bank_rows_kept = _apply_bank_prune(db, source, target)
 
     log_action(
         db, "budget.replicated", user_id=current_user.id,
@@ -949,9 +1087,16 @@ def replicate_budget(
         description=f"Replicated budget {source.period_month}/{source.period_year} → {tm}/{ty} "
                     f"({'created' if created else 'merged into existing'}; "
                     f"{lines_added} line(s) added, {values_filled} value(s) filled"
+                    + (f"; bank info: {bank_rows_added} row(s) added, "
+                       f"{bank_amounts_filled} amount(s) carried"
+                       if bank_rows_added or bank_amounts_filled else "")
                     + (f"; pruned to match: {lines_removed} line(s) and "
                        f"{sections_removed} section(s) removed, {lines_kept} kept "
-                       f"(hand-typed figures)" if prune else "")
+                       f"(hand-typed figures)"
+                       + (f", bank info {bank_rows_removed} row(s) removed, "
+                          f"{bank_rows_kept} kept"
+                          if bank_rows_removed or bank_rows_kept else "")
+                       if prune else "")
                     + ")",
     )
     db.commit()
@@ -963,6 +1108,10 @@ def replicate_budget(
         lines_removed=lines_removed,
         sections_removed=sections_removed,
         lines_kept=lines_kept,
+        bank_rows_added=bank_rows_added,
+        bank_amounts_filled=bank_amounts_filled,
+        bank_rows_removed=bank_rows_removed,
+        bank_rows_kept=bank_rows_kept,
     )
 
 
