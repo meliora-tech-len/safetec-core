@@ -301,6 +301,14 @@ class Invoice(Base):
     terms = Column(Text)
     payment_reference = Column(String(255), nullable=True)
 
+    # Document-level quantity adjustment (migration 127). Some POs bill the
+    # weighbridge net mass plus a fixed percentage — e.g. Border Trade Post's
+    # +1.53%. The percentage is captured once here; `scope` decides whether it
+    # lands on every item line or only the ones flagged qty_adjusted.
+    # NULL pct = no adjustment on this document.
+    qty_adjustment_pct   = Column(Numeric(7, 4), nullable=True)
+    qty_adjustment_scope = Column(String(10), nullable=False, default='all', server_default='all')
+
     # PO ("POH") number this invoice was generated from, derived from notes /
     # the header line item on every save — see services/po_number.py. Null for a
     # hand-keyed invoice that didn't come from a PO import.
@@ -340,6 +348,13 @@ class InvoiceLineItem(Base):
     line_type  = Column(String(20), default='item')
     loading_number    = Column(String(100), nullable=True)
     offloading_number = Column(String(100), nullable=True)
+
+    # Quantity adjustment (migration 127). `quantity` is always the BILLED
+    # figure, so nothing downstream has to know about this; base_quantity is
+    # what the user actually captured (weighbridge net mass in tons) before the
+    # document's qty_adjustment_pct was applied.
+    base_quantity = Column(Numeric(12, 4), nullable=True)
+    qty_adjusted  = Column(Boolean, nullable=False, default=False, server_default='false')
 
     invoice = relationship("Invoice", back_populates="line_items")
 

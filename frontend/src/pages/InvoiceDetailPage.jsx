@@ -386,7 +386,16 @@ export default function InvoiceDetailPage({ docType = 'invoice' }) {
                         <td>{li.description}</td>
                         {isPO && <td className="text-right">{li.loading_number || '—'}</td>}
                         {isPO && <td className="text-right">{li.offloading_number || '—'}</td>}
-                        <td className="text-right">{li.quantity != null ? parseFloat(li.quantity).toLocaleString('en-ZA') : '—'}</td>
+                        <td className="text-right">
+                          {li.quantity != null ? parseFloat(li.quantity).toLocaleString('en-ZA') : '—'}
+                          {/* Adjusted line: show what it was derived from, so the
+                              billed figure is never an unexplained number. */}
+                          {li.qty_adjusted && li.base_quantity != null && (
+                            <div style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                              {parseFloat(li.base_quantity).toLocaleString('en-ZA')} +{parseFloat(invoice.qty_adjustment_pct)}%
+                            </div>
+                          )}
+                        </td>
                         <td className="text-right">{li.unit_price != null ? formatCurrency(li.unit_price) : '—'}</td>
                         <td className="text-right font-bold">{formatCurrency(li.amount)}</td>
                       </tr>

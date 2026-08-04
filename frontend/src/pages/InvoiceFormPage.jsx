@@ -19,7 +19,66 @@ const emptyLine = (type = 'item') => ({
   is_vat_exempt: false, sort_order: 0,
   line_type: type,
   loading_number: '', offloading_number: '',
+  // When the document carries a quantity adjustment, `quantity` holds the
+  // captured (net) figure and the billed figure is derived — see billedQty().
+  qty_adjusted: false,
 })
+
+// ── Quantity adjustment ───────────────────────────────────────────────────────
+// Some documents bill the captured quantity plus a fixed percentage (Border
+// Trade Post's POs bill weighbridge net mass +1.53%: 32.56 t → 33.06 t). The
+// user captures the net figure once and the percentage once; these two helpers
+// are the only place the uplift is applied, so the preview, the saved line and
+// the PDF can't drift apart. Mirrors services/qty_adjustment.py on the backend.
+const lineTakesAdj = (line, pct, scope) =>
+  pct != null && pct !== 0 &&
+  (line.line_type || 'item') === 'item' &&
+  (scope === 'all' || !!line.qty_adjusted)
+
+const billedQty = (line, pct, scope) => {
+  if (line.quantity === '' || line.quantity == null) return null
+  const base = parseFloat(line.quantity)
+  if (isNaN(base)) return null
+  return lineTakesAdj(line, pct, scope) ? +(base * (1 + pct / 100)).toFixed(2) : base
+}
+
+// ── Quantity input formatting ─────────────────────────────────────────────────
+// Quantities are held canonically with a dot decimal ('32.56') so parseFloat
+// works, but SA tonnage sheets write 32,56 — so a typed comma has to mean
+// "decimal point". Thousands are therefore grouped with a non-breaking space,
+// never a comma: if grouping used commas we couldn't tell a typed decimal
+// comma from a grouping one, which is exactly what broke the value before.
+const QTY_GROUP = ' '
+
+const parseQtyInput = (v) =>
+  String(v)
+    .replace(/[\s ]/g, '')   // drop grouping spaces
+    .replace(/,/g, '.')           // a comma is always a decimal point
+    .replace(/[^0-9.-]/g, '')     // ignore anything else
+
+const formatQtyInput = (raw) => {
+  if (raw === '' || raw == null) return ''
+  const s = String(raw)
+  const neg = s.startsWith('-')
+  // Keep the decimal portion exactly as typed, so "7082." and trailing digits
+  // like ".358"/".3580" survive mid-edit instead of being normalised away.
+  const [intPart, ...rest] = s.replace('-', '').split('.')
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, QTY_GROUP)
+  const decPart = s.includes('.') ? '.' + rest.join('') : ''
+  return (neg ? '-' : '') + grouped + decPart
+}
+
+// Re-derive a line's amount from its billed quantity. Used whenever the qty,
+// the rate, the percentage or the line's selection changes.
+const withAmount = (line, pct, scope) => {
+  if ((line.line_type || 'item') !== 'item') return line
+  if (line.quantity === '' || line.unit_price === '') return line
+  const q = billedQty(line, pct, scope)
+  if (q == null) return line
+  const rate = parseFloat(line.unit_price)
+  if (isNaN(rate)) return line
+  return { ...line, amount: String((q * rate).toFixed(2)) }
+}
 
 function LineTypeChip({ value, onChange }) {
   const t = LINE_TYPES.find(x => x.value === value) || LINE_TYPES[0]
@@ -83,6 +142,18 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
   const [vatRate, setVatRate] = useState(0.15)
   const [lines, setLines] = useState([emptyLine()])
 
+  // Quantity adjustment (Additional Settings). Available on every document
+  // type — POs are what prompted it, but an invoice billed off the same
+  // weighbridge tonnage needs the identical treatment.
+  const [adjEnabled, setAdjEnabled] = useState(false)
+  const [adjPct, setAdjPct]         = useState('')     // string as typed, e.g. '1.53'
+  const [adjScope, setAdjScope]     = useState('all')  // 'all' | 'selected'
+
+  const adjPctNum = adjEnabled && adjPct !== '' && !isNaN(parseFloat(adjPct))
+    ? parseFloat(adjPct) : null
+  const adjOn = adjPctNum != null && adjPctNum !== 0
+  const adjSelectable = adjOn && adjScope === 'selected'
+
   // PO-import invoices use a different column layout.
   // Primary detection: any item line has loading/offloading numbers in DB.
   // Fallback for older imports: notes field contains "PO Ref:" (set by ImportPOModal).
@@ -118,10 +189,17 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
           setPrintNote(inv.print_note || false)
           setIsVatExempt(inv.is_vat_exempt || false)
           setVatRate(inv.vat_rate != null ? parseFloat(inv.vat_rate) : 0.15)
+          setAdjEnabled(inv.qty_adjustment_pct != null)
+          setAdjPct(inv.qty_adjustment_pct != null ? String(parseFloat(inv.qty_adjustment_pct)) : '')
+          setAdjScope(inv.qty_adjustment_scope || 'all')
           setLines(inv.line_items.map(li => ({
             _id: String(li.id),
             description: li.description || '',
-            quantity: li.quantity != null ? String(li.quantity) : '',
+            // An adjusted line stores both figures — put the captured (net)
+            // one back in the input, since that's what the user typed.
+            quantity: li.base_quantity != null
+              ? String(li.base_quantity)
+              : (li.quantity != null ? String(li.quantity) : ''),
             unit_price: li.unit_price != null ? String(li.unit_price) : '',
             amount: String(li.amount),
             is_vat_exempt: li.is_vat_exempt || false,
@@ -129,6 +207,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             line_type: li.line_type || 'item',
             loading_number: li.loading_number || '',
             offloading_number: li.offloading_number || '',
+            qty_adjusted: li.qty_adjusted || false,
           })))
         } else if (templatePayload) {
           // Pre-fill from template clone
@@ -155,6 +234,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             line_type: li.line_type || 'item',
             loading_number: '',
             offloading_number: '',
+            qty_adjusted: false,
           })))
         } else if (poImportPayload) {
           // Match entity from supplier_code prefix (e.g. SFT003 → SFT entity)
@@ -186,6 +266,7 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
             line_type: li.line_type || 'item',
             loading_number: li.loading_number || '',
             offloading_number: li.offloading_number || '',
+            qty_adjusted: false,
           })))
         } else {
           const defaultEntity = activeEntity || entsRes.data[0]
@@ -258,17 +339,42 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
         updated[idx].amount     = ''
         updated[idx].is_vat_exempt = false
       }
-      // Auto-calc amount only for item rows with both qty and price filled
+      // Auto-calc amount only for item rows with both qty and price filled.
+      // Bills off the adjusted quantity when the line takes the adjustment.
       if ((field === 'quantity' || field === 'unit_price') && updated[idx].line_type === 'item') {
-        const qty   = field === 'quantity'   ? value : updated[idx].quantity
-        const price = field === 'unit_price' ? value : updated[idx].unit_price
-        if (qty !== '' && price !== '') {
-          updated[idx].amount = String((parseFloat(qty) * parseFloat(price)).toFixed(2))
-        }
+        updated[idx] = withAmount(updated[idx], adjPctNum, adjScope)
       }
       return updated
     })
   }
+
+  // ── Quantity adjustment handlers ──────────────────────────────────
+  // Changing the percentage, the scope or a line's selection re-bills every
+  // affected line, so the amounts on screen always match the setting shown.
+  const recalcAll = (pct, scope) =>
+    setLines(prev => prev.map(l => withAmount(l, pct, scope)))
+
+  const setAdjustmentEnabled = (on) => {
+    setAdjEnabled(on)
+    const pct = on && adjPct !== '' && !isNaN(parseFloat(adjPct)) ? parseFloat(adjPct) : null
+    recalcAll(pct, adjScope)
+  }
+
+  const changeAdjPct = (raw) => {
+    setAdjPct(raw)
+    const pct = adjEnabled && raw !== '' && !isNaN(parseFloat(raw)) ? parseFloat(raw) : null
+    recalcAll(pct, adjScope)
+  }
+
+  const changeAdjScope = (scope) => {
+    setAdjScope(scope)
+    recalcAll(adjPctNum, scope)
+  }
+
+  const toggleLineAdj = (idx) =>
+    setLines(prev => prev.map((l, i) =>
+      i === idx ? withAmount({ ...l, qty_adjusted: !l.qty_adjusted }, adjPctNum, adjScope) : l
+    ))
 
   const addLine = (type = 'item') => setLines(prev => [...prev, emptyLine(type)])
   const removeLine = (idx) => setLines(prev => prev.filter((_, i) => i !== idx))
@@ -334,13 +440,22 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
         notes: notes || null,
         print_note: printNote,
         status: statusOverride || 'draft',
+        // Explicit null (not omitted) so clearing the adjustment sticks.
+        qty_adjustment_pct: adjPctNum,
+        qty_adjustment_scope: adjScope,
         line_items: lines
           .filter(l => l.line_type === 'spacer' || l.description || parseFloat(l.amount))
           .map((l, i) => {
             const isItem = (l.line_type || 'item') === 'item'
+            const takesAdj = isItem && lineTakesAdj(l, adjPctNum, adjScope) && l.quantity !== ''
             return {
               description: l.description || null,
-              quantity:    isItem && l.quantity   !== '' ? parseFloat(l.quantity)   : null,
+              // `quantity` is always the BILLED figure; base_quantity keeps the
+              // net figure the user actually captured. The server re-derives
+              // the billed value from these two, so it stays authoritative.
+              quantity:    isItem && l.quantity   !== '' ? billedQty(l, adjPctNum, adjScope) : null,
+              base_quantity: takesAdj ? parseFloat(l.quantity) : null,
+              qty_adjusted:  takesAdj,
               unit_price:  isItem && l.unit_price !== '' ? parseFloat(l.unit_price) : null,
               amount:      isItem ? (parseFloat(l.amount) || 0) : 0,
               is_vat_exempt: l.is_vat_exempt,
@@ -574,7 +689,14 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                 )}
                 {isPOLayout && <span style={{ flex: 1.5, textAlign: 'right' }}>Loading #</span>}
                 {isPOLayout && <span style={{ flex: 1.5, textAlign: 'right' }}>Offloading #</span>}
+                {adjSelectable && <span style={{ width: 40, textAlign: 'center' }} title="Apply the adjustment to this line">Adj</span>}
                 <span style={{ flex: 1, textAlign: 'right' }}>Qty</span>
+                {adjOn && (
+                  <span style={{ flex: 1.1, textAlign: 'right', color: 'var(--accent)' }}
+                    title={`Net quantity +${adjPct}% — this is what gets billed and printed`}>
+                    Billed
+                  </span>
+                )}
                 <span style={{ flex: 2, textAlign: 'right' }}>Rate</span>
                 <span style={{ flex: 2, textAlign: 'right' }}>Amount</span>
                 <span style={{ width: 54, textAlign: 'center' }}>No VAT</span>
@@ -643,29 +765,43 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                             onChange={e => updateLine(idx, 'offloading_number', e.target.value)}
                           />
                         )}
+                        {adjSelectable && (
+                          <div style={{ width: 40, display: 'flex', justifyContent: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!line.qty_adjusted}
+                              onChange={() => toggleLineAdj(idx)}
+                              title={`Bill this line at net +${adjPct}%`}
+                              style={{ width: 15, height: 15, accentColor: 'var(--accent)' }}
+                            />
+                          </div>
+                        )}
                         <input
                           className="form-input"
                           type="text"
                           inputMode="decimal"
                           style={{ flex: 1, fontSize: 13, textAlign: 'right' }}
                           placeholder="—"
-                          value={line.quantity !== '' && line.quantity != null
-                            ? (() => {
-                                // Group the integer part with commas but keep the
-                                // decimal portion exactly as typed (so "7082." and
-                                // trailing digits like ".358"/".3580" don't get stripped).
-                                const raw = String(line.quantity)
-                                const neg = raw.startsWith('-')
-                                const [intPart, ...rest] = raw.replace('-', '').split('.')
-                                const grouped = intPart === ''
-                                  ? ''
-                                  : Number(intPart).toLocaleString('en-US')
-                                const decPart = raw.includes('.') ? '.' + rest.join('') : ''
-                                return (neg ? '-' : '') + grouped + decPart
-                              })()
-                            : ''}
-                          onChange={e => updateLine(idx, 'quantity', e.target.value.replace(/,/g, ''))}
+                          value={formatQtyInput(line.quantity)}
+                          onChange={e => updateLine(idx, 'quantity', parseQtyInput(e.target.value))}
                         />
+                        {adjOn && (() => {
+                          // Read-only: the billed figure is always derived, never typed.
+                          const applies = lineTakesAdj(line, adjPctNum, adjScope)
+                          const q = billedQty(line, adjPctNum, adjScope)
+                          return (
+                            <div style={{
+                              flex: 1.1, fontSize: 13, textAlign: 'right', padding: '0 8px',
+                              display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+                              fontVariantNumeric: 'tabular-nums',
+                              color: applies ? 'var(--accent)' : 'var(--text-muted)',
+                              fontWeight: applies ? 600 : 400,
+                            }}
+                              title={applies ? `${line.quantity} + ${adjPct}%` : 'No adjustment on this line'}>
+                              {q == null ? '—' : q.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          )
+                        })()}
                         <input
                           className="form-input"
                           type="number"
@@ -745,6 +881,89 @@ export default function InvoiceFormPage({ docType = 'invoice' }) {
                   min="0" max="100"
                 />
                 <span style={{ color: 'var(--text-muted)' }}>%</span>
+              </div>
+            )}
+          </div>
+
+          {/* Additional Settings — quantity adjustment */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <h3 style={styles.sectionTitle}>Additional Settings</h3>
+
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, cursor: 'pointer', fontSize: 12.5, fontWeight: 500 }}>
+              <input
+                type="checkbox"
+                checked={adjEnabled}
+                onChange={e => setAdjustmentEnabled(e.target.checked)}
+                style={{ width: 14, height: 14, marginTop: 2, flexShrink: 0 }}
+              />
+              <span>
+                Quantity adjustment
+                <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', fontWeight: 400, marginTop: 2 }}>
+                  Capture the net figure — the billed quantity is worked out for you.
+                </span>
+              </span>
+            </label>
+
+            {adjEnabled && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                <label className="form-label">Adjustment</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>+</span>
+                  <input
+                    type="number"
+                    value={adjPct}
+                    onChange={e => changeAdjPct(e.target.value)}
+                    placeholder="1.53"
+                    step="any"
+                    style={{
+                      width: 80, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 6,
+                      background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13,
+                      textAlign: 'right', fontWeight: 600,
+                    }}
+                  />
+                  <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>%</span>
+                </div>
+
+                <label className="form-label" style={{ marginTop: 12, display: 'block' }}>Apply to</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {[
+                    { value: 'all',      label: 'All line items' },
+                    { value: 'selected', label: 'Selected lines only' },
+                  ].map(opt => (
+                    <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12.5 }}>
+                      <input
+                        type="radio"
+                        name="adj-scope"
+                        checked={adjScope === opt.value}
+                        onChange={() => changeAdjScope(opt.value)}
+                        style={{ width: 14, height: 14 }}
+                      />
+                      {opt.label}
+                    </label>
+                  ))}
+                </div>
+
+                {adjSelectable && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+                    Tick the <strong>Adj</strong> box on each line that takes the adjustment
+                    {' — '}
+                    <strong style={{ color: 'var(--accent)' }}>
+                      {lines.filter(l => (l.line_type || 'item') === 'item' && l.qty_adjusted).length} selected
+                    </strong>
+                  </div>
+                )}
+
+                {adjOn && (
+                  <div style={{ marginTop: 12, padding: '8px 10px', background: 'var(--bg-secondary)', borderRadius: 6, fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    Example: <strong>32.56</strong> captured is billed as{' '}
+                    <strong style={{ color: 'var(--accent)' }}>
+                      {(32.56 * (1 + adjPctNum / 100)).toFixed(2)}
+                    </strong>
+                    <span style={{ display: 'block', marginTop: 4, color: 'var(--text-muted)' }}>
+                      The printed {docLabel.toLowerCase()} shows the billed figure.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>

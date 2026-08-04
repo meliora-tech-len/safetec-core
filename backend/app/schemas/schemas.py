@@ -413,6 +413,11 @@ class LineItemBase(BaseModel):
     line_type: str = 'item'
     loading_number: Optional[str] = None
     offloading_number: Optional[str] = None
+    # Quantity adjustment: base_quantity is the captured (pre-uplift) figure,
+    # qty_adjusted marks the line as taking the document's adjustment when the
+    # scope is 'selected'. `quantity` stays the billed figure either way.
+    base_quantity: Optional[Decimal] = None
+    qty_adjusted: bool = False
 
     @field_validator('line_type')
     @classmethod
@@ -448,6 +453,17 @@ class InvoiceBase(BaseModel):
     notes: Optional[str] = None
     print_note: bool = False
     terms: Optional[str] = None
+    # Document-level quantity adjustment, e.g. 1.53 for BTP's +1.53% on
+    # weighbridge tonnage. None = off. Scope: 'all' | 'selected'.
+    qty_adjustment_pct: Optional[Decimal] = None
+    qty_adjustment_scope: str = 'all'
+
+    @field_validator('qty_adjustment_scope')
+    @classmethod
+    def validate_adj_scope(cls, v):
+        if v not in {'all', 'selected'}:
+            raise ValueError("qty_adjustment_scope must be 'all' or 'selected'")
+        return v
 
 class InvoiceCreate(InvoiceBase):
     line_items: List[LineItemCreate] = []
@@ -466,7 +482,19 @@ class InvoiceUpdate(BaseModel):
     notes: Optional[str] = None
     print_note: Optional[bool] = None
     terms: Optional[str] = None
+    # Nullable on purpose — sending an explicit null turns the adjustment off.
+    # update_invoice drops it out of the exclude_none pass and applies it by
+    # model_fields_set so the clear isn't swallowed.
+    qty_adjustment_pct: Optional[Decimal] = None
+    qty_adjustment_scope: Optional[str] = None
     line_items: Optional[List[LineItemCreate]] = None
+
+    @field_validator('qty_adjustment_scope')
+    @classmethod
+    def validate_adj_scope(cls, v):
+        if v is not None and v not in {'all', 'selected'}:
+            raise ValueError("qty_adjustment_scope must be 'all' or 'selected'")
+        return v
 
 class InvoiceOut(InvoiceBase):
     id: int

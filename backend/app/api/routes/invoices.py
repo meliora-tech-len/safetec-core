@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, extract
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone
 from app.db.database import get_db
 from app.core.security import get_current_user
@@ -22,6 +22,7 @@ from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, Dashbo
 from app.services.audit import log_action
 from app.services.invoice_numbering import generate_invoice_number, peek_invoice_number
 from app.services.po_number import po_number_for_invoice
+from app.services.qty_adjustment import normalize_scope, resolve_quantities
 from app.services.pdf_generator import generate_invoice_pdf
 from app.services.email import send_invoice_email
 
@@ -145,6 +146,31 @@ def _line_amount(item) -> Decimal:
     if qty is not None and price is not None:
         return (Decimal(str(qty)) * Decimal(str(price))).quantize(Decimal("0.01"))
     return Decimal("0")
+
+
+def _apply_qty_adjustment(line_items_data, pct, scope: str):
+    """Resolve the billed quantity on each line for the document's adjustment.
+
+    Runs BEFORE totals so the subtotal is calculated off the uplifted figure.
+    `quantity` ends up as the billed value and `base_quantity` as what the user
+    captured; `qty_adjusted` is stored as what actually happened to the line,
+    so a reader never has to re-apply the scope rule to interpret a row.
+    Lines the adjustment doesn't touch are left exactly as they were sent.
+    """
+    for item in line_items_data:
+        qty, base = resolve_quantities(item, pct, scope)
+        if base is None:
+            item.base_quantity = None
+            item.qty_adjusted  = False
+            continue
+        item.quantity      = qty
+        item.base_quantity = base
+        item.qty_adjusted  = True
+        if item.unit_price is not None:
+            item.amount = (Decimal(str(qty)) * Decimal(str(item.unit_price))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+    return line_items_data
 
 
 def _calculate_totals(line_items_data, vat_rate: Decimal, is_vat_exempt: bool = False):
@@ -524,6 +550,9 @@ def create_invoice(
             invoice_number = provided
         else:
             invoice_number = generate_invoice_number(db, payload.entity_id, payload.document_type)
+
+        adj_scope = normalize_scope(payload.qty_adjustment_scope)
+        _apply_qty_adjustment(payload.line_items, payload.qty_adjustment_pct, adj_scope)
         subtotal, vat_amount, total = _calculate_totals(payload.line_items, vat_rate, payload.is_vat_exempt)
 
         invoice = Invoice(
@@ -543,6 +572,8 @@ def create_invoice(
             total=total,
             vat_rate=vat_rate,
             po_number=po_number_for_invoice(payload.notes, payload.line_items),
+            qty_adjustment_pct=payload.qty_adjustment_pct,
+            qty_adjustment_scope=adj_scope,
         )
         db.add(invoice)
         db.flush()
@@ -559,6 +590,8 @@ def create_invoice(
                 line_type=item_data.line_type,
                 loading_number=item_data.loading_number,
                 offloading_number=item_data.offloading_number,
+                base_quantity=item_data.base_quantity,
+                qty_adjusted=item_data.qty_adjusted,
             )
             db.add(item)
 
@@ -620,9 +653,19 @@ def update_invoice(
 
     try:
         old_status = invoice.status
-        update_data = payload.model_dump(exclude={"line_items"}, exclude_none=True)
+        # qty_adjustment_pct is handled separately: the generic pass drops
+        # None, which would make "turn the adjustment off" a no-op.
+        update_data = payload.model_dump(
+            exclude={"line_items", "qty_adjustment_pct", "qty_adjustment_scope"},
+            exclude_none=True,
+        )
         for field, value in update_data.items():
             setattr(invoice, field, value)
+
+        if "qty_adjustment_pct" in payload.model_fields_set:
+            invoice.qty_adjustment_pct = payload.qty_adjustment_pct
+        if payload.qty_adjustment_scope is not None:
+            invoice.qty_adjustment_scope = normalize_scope(payload.qty_adjustment_scope)
 
         # Reverting a paid invoice clears the recorded payment so it stays consistent.
         if old_status == "paid" and invoice.status != "paid":
@@ -632,6 +675,13 @@ def update_invoice(
         if payload.line_items is not None:
             db.query(InvoiceLineItem).filter(InvoiceLineItem.invoice_id == invoice_id).delete()
             entity = db.query(BusinessEntity).filter(BusinessEntity.id == invoice.entity_id).first()
+            # Uses the invoice's post-update values, so editing the percentage
+            # and the lines in one save re-bills every line at the new rate.
+            _apply_qty_adjustment(
+                payload.line_items,
+                invoice.qty_adjustment_pct,
+                normalize_scope(invoice.qty_adjustment_scope),
+            )
             for i, item_data in enumerate(payload.line_items):
                 db.add(InvoiceLineItem(
                     invoice_id=invoice.id,
@@ -644,6 +694,8 @@ def update_invoice(
                     line_type=item_data.line_type,
                     loading_number=item_data.loading_number,
                     offloading_number=item_data.offloading_number,
+                    base_quantity=item_data.base_quantity,
+                    qty_adjusted=item_data.qty_adjusted,
                 ))
             subtotal, vat_amount, total = _calculate_totals(payload.line_items, invoice.vat_rate, invoice.is_vat_exempt)
             invoice.subtotal = subtotal
