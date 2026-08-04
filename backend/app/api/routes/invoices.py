@@ -128,6 +128,16 @@ def _check_entity_access(entity_id: int, user: User):
         raise HTTPException(status_code=403, detail="Access denied to this entity")
 
 
+# Every rand figure on an invoice rounds commercially (half away from zero),
+# never with Python's default banker's rounding. At 15% VAT any base ending in
+# .10/.30/.50/.70/.90 lands exactly on a half-cent (19095.90 * 0.15 =
+# 2864.385); half-to-even resolves those DOWN whenever the preceding digit is
+# even, so the error was one-directional and quietly undercharged VAT by a cent
+# on about one invoice in ten. Spreadsheets round half-up, and these documents
+# get reconciled against spreadsheets.
+CENT = Decimal("0.01")
+
+
 def _line_amount(item) -> Decimal:
     """Return the effective amount for a line item.
     header, note, and spacer rows always contribute R 0.
@@ -140,11 +150,11 @@ def _line_amount(item) -> Decimal:
     if item.amount:
         explicit = Decimal(str(item.amount))
         if explicit != Decimal('0'):
-            return explicit.quantize(Decimal("0.01"))
+            return explicit.quantize(CENT, rounding=ROUND_HALF_UP)
     qty   = item.quantity   if item.quantity   is not None else None
     price = item.unit_price if item.unit_price is not None else None
     if qty is not None and price is not None:
-        return (Decimal(str(qty)) * Decimal(str(price))).quantize(Decimal("0.01"))
+        return (Decimal(str(qty)) * Decimal(str(price))).quantize(CENT, rounding=ROUND_HALF_UP)
     return Decimal("0")
 
 
@@ -183,9 +193,11 @@ def _calculate_totals(line_items_data, vat_rate: Decimal, is_vat_exempt: bool = 
             _line_amount(item) for item in line_items_data
             if not getattr(item, 'is_vat_exempt', False)
         )
-        vat_amount = (vat_base * vat_rate).quantize(Decimal("0.01"))
+        vat_amount = (vat_base * vat_rate).quantize(CENT, rounding=ROUND_HALF_UP)
     total = subtotal + vat_amount
-    return subtotal.quantize(Decimal("0.01")), vat_amount, total.quantize(Decimal("0.01"))
+    return (subtotal.quantize(CENT, rounding=ROUND_HALF_UP),
+            vat_amount,
+            total.quantize(CENT, rounding=ROUND_HALF_UP))
 
 
 @router.get("/", response_model=List[InvoiceOut])
