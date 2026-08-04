@@ -6,6 +6,7 @@ import { useSessionState } from '../hooks/useSessionState'
 import toast from 'react-hot-toast'
 import VerifyBadge from '../components/VerifyBadge'
 import VerifiableAmount from '../components/VerifiableAmount'
+import BulkUnlockButton from '../components/BulkUnlockButton'
 import DateInput from '../components/DateInput'
 import { errorMessage } from '../utils/helpers'
 import { getVerifications, verifyValue, finalizeValue } from '../services/api'
@@ -922,7 +923,19 @@ export default function DriverDetailPage() {
             {/* Payslip summary card */}
             {liveCalc && (
               <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
-                <h3 style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 700 }}>Payslip Summary</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, margin: '0 0 14px' }}>
+                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Payslip Summary</h3>
+                  {/* Clears this admin's final locks across every locked value on
+                      the payslip + the summary cards (same paycycle: prefix). */}
+                  <BulkUnlockButton
+                    items={Object.values(verif)}
+                    currentUserId={user?.id} isAdmin={isAdmin} noun="value"
+                    onUnlock={async (item) => {
+                      const { data } = await finalizeValue(item.target, driver?.entity_id, 'remove')
+                      setVerif(prev => ({ ...prev, [data.target]: data }))
+                    }}
+                  />
+                </div>
 
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Income</div>
                 {liveCalc.isCasual ? (
@@ -1047,7 +1060,17 @@ export default function DriverDetailPage() {
                     {cycle?.additional_loads?.length || 0} entries · {fmt(liveCalc?.additionalTotal || 0)} total · {cycle?.additional_loads?.filter(a => a.is_verified).length || 0} verified
                   </span>
                 </div>
-                <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setAlModal({})}><Plus size={13} /> Add</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <BulkUnlockButton
+                    items={cycle?.additional_loads || []}
+                    currentUserId={user?.id} isAdmin={isAdmin} noun="entry" nounPlural="entries"
+                    onUnlock={async (item) => {
+                      const { data } = await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/additional-loads/${item.id}/finalize`, null, { params: { action: 'remove' } })
+                      patchCycleRow('additional_loads', data)
+                    }}
+                  />
+                  <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setAlModal({})}><Plus size={13} /> Add</button>
+                </div>
               </div>
               {cycle?.additional_loads?.length > 0 ? (
                 <div className="table-wrapper" style={{ marginBottom: 12 }}>
@@ -1118,7 +1141,17 @@ export default function DriverDetailPage() {
                     <span style={{ color: 'var(--text-muted)' }}>Verified: <strong>{cycle?.food_payments?.filter(f => f.is_verified).length || 0}/{cycle?.food_payments?.length || 0}</strong></span>
                   </div>
                 </div>
-                <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setFpModal({})}><Plus size={13} /> Add</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <BulkUnlockButton
+                    items={cycle?.food_payments || []}
+                    currentUserId={user?.id} isAdmin={isAdmin} noun="payment"
+                    onUnlock={async (item) => {
+                      const { data } = await api.patch(`/api/drivers/${driverId}/cycles/${year}/${month}/food-payments/${item.id}/finalize`, null, { params: { action: 'remove' } })
+                      patchCycleRow('food_payments', data)
+                    }}
+                  />
+                  <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setFpModal({})}><Plus size={13} /> Add</button>
+                </div>
               </div>
               {cycle?.food_payments?.length > 0 ? (
                 <div className="table-wrapper">

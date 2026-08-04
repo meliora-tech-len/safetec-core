@@ -10,7 +10,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
 import toast from 'react-hot-toast'
-import { Plus, Search, X, Trash2, Fuel, Save, Upload, Pencil, Lock, RotateCcw, CheckCircle } from 'lucide-react'
+import { Plus, Search, X, Trash2, Fuel, Save, Upload, Pencil, Lock, Unlock, RotateCcw, CheckCircle } from 'lucide-react'
 import ImportDieselModal from '../components/ImportDieselModal'
 import ExportButton from '../components/ExportButton'
 import SearchableSelect from '../components/SearchableSelect'
@@ -112,6 +112,7 @@ export default function DieselFillUpsPage() {
   const [selectedIds,    setSelectedIds]    = useState(new Set())
   const [verifyingBulk,  setVerifyingBulk]  = useState(false)
   const [finalizingBulk, setFinalizingBulk] = useState(false)
+  const [unfinalizingBulk, setUnfinalizingBulk] = useState(false)
   const firstInputRef = useRef(null)
   const { sort, onSort } = useSort('truck_registration', 'asc', 'diesel-fillups')
 
@@ -404,7 +405,13 @@ export default function DieselFillUpsPage() {
   // others can still add ticks to empty steps afterwards.
   const canUserFinalize = (f) => isAdmin && !(f.verified3_by || f.verified3_by_initials)
 
-  const canUserSelect = (f) => canUserVerify(f) || canUserFinalize(f)
+  // The reverse of the above: rows this user can UNLOCK in bulk. Mirrors the
+  // single-row rule in VerifyBadge/apply_finalize_step — only the admin who
+  // applied the final lock can take it off, so rows locked by someone else stay
+  // out of the selection instead of erroring one by one.
+  const canUserUnfinalize = (f) => isAdmin && !!f.verified3_by && f.verified3_by === user?.id
+
+  const canUserSelect = (f) => canUserVerify(f) || canUserFinalize(f) || canUserUnfinalize(f)
 
   const toggleSelect = (id) => setSelectedIds(s => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
@@ -450,6 +457,28 @@ export default function DieselFillUpsPage() {
     setFinalizingBulk(false)
     clearSelection()
     if (ok) toast.success(`Final lock applied to ${ok} log${ok === 1 ? '' : 's'}`)
+  }
+
+  // Take the admin final lock back off the selection — the counterpart of the
+  // above, for when a locked batch turns out to need a correction. Explicit
+  // 'remove' intent, so anything already unlocked is a server-side no-op rather
+  // than an accidental re-lock.
+  const handleUnfinalizeSelected = async () => {
+    const targets = visible.filter(f => selectedIds.has(f.id) && canUserUnfinalize(f))
+    if (!targets.length) return
+    if (!window.confirm(`Remove the final lock from ${targets.length} diesel log${targets.length === 1 ? '' : 's'}? They become editable again (step 1/2 verifications are kept).`)) return
+    setUnfinalizingBulk(true)
+    let ok = 0
+    for (const f of targets) {
+      try {
+        const { data } = await finalizeDieselFillUp(f.id, 'remove')
+        patchFillup(data)
+        ok++
+      } catch (err) { toast.error(errorMessage(err)) }
+    }
+    setUnfinalizingBulk(false)
+    clearSelection()
+    if (ok) toast.success(`Final lock removed from ${ok} log${ok === 1 ? '' : 's'}`)
   }
 
   const handleDelete = (f, e) => {
@@ -542,9 +571,10 @@ export default function DieselFillUpsPage() {
   const selectable         = visible.filter(canUserSelect)
   const selectedVerifiable  = visible.filter(f => selectedIds.has(f.id) && canUserVerify(f))
   const selectedFinalizable = visible.filter(f => selectedIds.has(f.id) && canUserFinalize(f))
+  const selectedUnfinalizable = visible.filter(f => selectedIds.has(f.id) && canUserUnfinalize(f))
   const selectedCount      = visible.filter(f => selectedIds.has(f.id)).length
   const allSelected        = selectable.length > 0 && selectable.every(f => selectedIds.has(f.id))
-  const bulkBusy           = verifyingBulk || finalizingBulk
+  const bulkBusy           = verifyingBulk || finalizingBulk || unfinalizingBulk
   const toggleSelectAll = () => setSelectedIds(s => {
     const n = new Set(s)
     if (allSelected) selectable.forEach(f => n.delete(f.id))
@@ -989,6 +1019,20 @@ export default function DieselFillUpsPage() {
               }}>
               <Lock size={15} />
               {finalizingBulk ? 'Locking…' : `Final lock selected (${selectedFinalizable.length})`}
+            </button>
+          )}
+          {selectedUnfinalizable.length > 0 && (
+            <button
+              onClick={handleUnfinalizeSelected}
+              disabled={bulkBusy}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 7, border: 'none',
+                background: '#d97706', color: '#fff', fontWeight: 600, fontSize: 13,
+                cursor: unfinalizingBulk ? 'default' : 'pointer', opacity: bulkBusy ? 0.6 : 1,
+              }}>
+              <Unlock size={15} />
+              {unfinalizingBulk ? 'Unlocking…' : `Remove final lock (${selectedUnfinalizable.length})`}
             </button>
           )}
           <button onClick={clearSelection} disabled={bulkBusy} className="btn-ghost"

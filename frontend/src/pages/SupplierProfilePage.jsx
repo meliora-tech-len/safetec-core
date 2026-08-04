@@ -15,7 +15,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useLocalState } from '../hooks/useLocalState'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock, Calendar } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock, Unlock, Calendar } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
@@ -924,6 +924,7 @@ export default function SupplierProfilePage() {
   const [verifyingBulk, setVerifyingBulk] = useState(false)
   const [payingBulk, setPayingBulk] = useState(false)
   const [finalizingBulk, setFinalizingBulk] = useState(false)
+  const [unfinalizingBulk, setUnfinalizingBulk] = useState(false)
   const firstInputRef = useRef(null)
   // Physical-invoice attachment: one shared hidden file input, targeted at a row.
   const attachInputRef = useRef(null)
@@ -1358,9 +1359,18 @@ export default function SupplierProfilePage() {
   const canUserFinalize = (inv) =>
     isAdmin && !(inv.verified3_by || inv.verified3_by_initials)
 
+  // The reverse of the above: invoices this user can UNLOCK in bulk. Mirrors the
+  // single-invoice rule in VerifyBadge/apply_finalize_step — only the admin who
+  // applied the final lock can take it off, so invoices locked by someone else
+  // stay out of the selection instead of erroring one by one.
+  const canUserUnfinalize = (inv) =>
+    isAdmin && !!inv.verified3_by && inv.verified3_by === user?.id
+
   // A row is selectable if there's a bulk action it can take part in: a pending
-  // verification tick, a pending final lock, or it's still unpaid (bulk mark-paid).
-  const canUserSelect = (inv) => canUserVerify(inv) || canUserFinalize(inv) || !inv.is_paid
+  // verification tick, a pending final lock, a final lock of this user's to
+  // remove, or it's still unpaid (bulk mark-paid).
+  const canUserSelect = (inv) =>
+    canUserVerify(inv) || canUserFinalize(inv) || canUserUnfinalize(inv) || !inv.is_paid
 
   const toggleSelect = (id) => setSelectedIds(s => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
@@ -1410,6 +1420,29 @@ export default function SupplierProfilePage() {
     setFinalizingBulk(false)
     clearSelection()
     if (ok) toast.success(`Final lock applied to ${ok} invoice${ok === 1 ? '' : 's'}`)
+  }
+
+  // Take the admin final lock back off the selection — the counterpart of the
+  // above, for when a locked batch turns out to need a correction. Explicit
+  // 'remove' intent, so anything already unlocked is a server-side no-op rather
+  // than an accidental re-lock.
+  const handleUnfinalizeSelected = async () => {
+    const targets = groups.flatMap(g => g.invoices)
+      .filter(i => selectedIds.has(i.id) && canUserUnfinalize(i))
+    if (!targets.length) return
+    if (!confirm(`Remove the final lock from ${targets.length} invoice${targets.length === 1 ? '' : 's'}? They become editable again (step 1/2 verifications are kept).`)) return
+    setUnfinalizingBulk(true)
+    let ok = 0
+    for (const inv of targets) {
+      try {
+        const { data } = await finalizeSupplierInvoice(inv.id, 'remove')
+        patchInvoice(data)
+        ok++
+      } catch (e) { toast.error(errorMessage(e)) }
+    }
+    setUnfinalizingBulk(false)
+    clearSelection()
+    if (ok) toast.success(`Final lock removed from ${ok} invoice${ok === 1 ? '' : 's'}`)
   }
 
   // Mark every selected unpaid invoice as paid (a single payment covering many
@@ -1475,7 +1508,8 @@ export default function SupplierProfilePage() {
   const selectedVerifiable  = allInvoices.filter(i => selectedIds.has(i.id) && canUserVerify(i))
   const selectedUnpaid      = allInvoices.filter(i => selectedIds.has(i.id) && !i.is_paid)
   const selectedFinalizable = allInvoices.filter(i => selectedIds.has(i.id) && canUserFinalize(i))
-  const bulkBusy = verifyingBulk || payingBulk || finalizingBulk
+  const selectedUnfinalizable = allInvoices.filter(i => selectedIds.has(i.id) && canUserUnfinalize(i))
+  const bulkBusy = verifyingBulk || payingBulk || finalizingBulk || unfinalizingBulk
   const multiEntity = entities.length > 1
 
   // Map a vehicle registration to its owning subcontractor (display fallback).
@@ -1780,6 +1814,20 @@ export default function SupplierProfilePage() {
               }}>
               <Lock size={15} />
               {finalizingBulk ? 'Locking…' : `Final lock selected (${selectedFinalizable.length})`}
+            </button>
+          )}
+          {selectedUnfinalizable.length > 0 && (
+            <button
+              onClick={handleUnfinalizeSelected}
+              disabled={bulkBusy}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 7, border: 'none',
+                background: '#d97706', color: '#fff', fontWeight: 600, fontSize: 13,
+                cursor: unfinalizingBulk ? 'default' : 'pointer', opacity: bulkBusy ? 0.6 : 1,
+              }}>
+              <Unlock size={15} />
+              {unfinalizingBulk ? 'Unlocking…' : `Remove final lock (${selectedUnfinalizable.length})`}
             </button>
           )}
           {selectedUnpaid.length > 0 && (

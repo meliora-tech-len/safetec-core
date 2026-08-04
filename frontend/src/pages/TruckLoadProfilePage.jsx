@@ -30,6 +30,7 @@ import { errorMessage, dieselTypeForSupplier } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
 import VerifyBadge from '../components/VerifyBadge'
 import VerifiableAmount from '../components/VerifiableAmount'
+import BulkUnlockButton from '../components/BulkUnlockButton'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 import DateInput from '../components/DateInput'
 
@@ -575,7 +576,16 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        {/* Undo a bad batch of final locks on this truck's diesel lines. */}
+        <BulkUnlockButton
+          items={fillups}
+          currentUserId={dieselUser?.id} isAdmin={dieselIsAdmin} noun="entry" nounPlural="entries"
+          onUnlock={async (item) => {
+            const { data } = await finalizeDieselFillUp(item.id, 'remove')
+            patchFillup(data)
+          }}
+        />
         {isBokamosho && (
           <button className="btn btn-ghost" onClick={() => setShowImport(true)}
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1016,14 +1026,27 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
             </span>
           )}
         </div>
-        <button className="btn btn-ghost btn-sm"
-          onClick={() => {
-            setForm({ ...EMPTY_AL, driver_id: selectedDriverId || '' })
-            setAddingNew(v => !v)
-          }}
-          style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <Plus size={13} /> Add
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Undo a bad batch of final locks on these additional-load values. The
+              overlay prefix is shared with the main Loads table, so filter to the
+              :addload: targets — the Loads table has its own button. */}
+          <BulkUnlockButton
+            items={Object.values(alVerif).filter(v => v.target?.includes(':addload:'))}
+            currentUserId={alUser?.id} isAdmin={alIsAdmin} noun="value"
+            onUnlock={async (item) => {
+              const { data } = await finalizeValue(item.target, truck?.entity_id, 'remove')
+              setAlVerif(prev => ({ ...prev, [data.target]: data }))
+            }}
+          />
+          <button className="btn btn-ghost btn-sm"
+            onClick={() => {
+              setForm({ ...EMPTY_AL, driver_id: selectedDriverId || '' })
+              setAddingNew(v => !v)
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Plus size={13} /> Add
+          </button>
+        </div>
       </div>
 
       {addingNew && (
@@ -1636,10 +1659,21 @@ function FoodAllowanceSection({ truck, year, month, drivers, selectedDriverId, a
             {entries.length} {entries.length === 1 ? 'entry' : 'entries'} · {fmt(total)}
           </span>
         )}
-        <button className="btn btn-primary" onClick={handleOpenAdd} disabled={addingNew}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-          <Plus size={14} /> Add Food Allowance
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          {/* Undo a bad batch of final locks on these food allowance lines. */}
+          <BulkUnlockButton
+            items={entries}
+            currentUserId={foodUser?.id} isAdmin={foodIsAdmin} noun="entry" nounPlural="entries"
+            onUnlock={async (item) => {
+              const { data } = await finalizeFoodPayment(item.driver_id, item.pay_year, item.pay_month, item.id, 'remove')
+              patchEntry(data)
+            }}
+          />
+          <button className="btn btn-primary" onClick={handleOpenAdd} disabled={addingNew}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Plus size={14} /> Add Food Allowance
+          </button>
+        </div>
       </div>
 
       {addingNew && (
@@ -2018,6 +2052,15 @@ function ProfitSheetSection({ truck, year, month, summary }) {
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {dirty && <span style={{ fontSize: 12, color: '#d97706' }}>Unsaved changes</span>}
+          {/* Undo a bad batch of final locks across the whole profit sheet. */}
+          <BulkUnlockButton
+            items={Object.values(pVerif)}
+            currentUserId={pvUser?.id} isAdmin={pvIsAdmin} noun="value"
+            onUnlock={async (item) => {
+              const { data: row } = await finalizeValue(item.target, truck?.entity_id, 'remove')
+              setPVerif(prev => ({ ...prev, [row.target]: row }))
+            }}
+          />
           <button className="btn btn-primary" onClick={handleSave} disabled={saving || !dirty}
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Save size={14} /> {saving ? 'Saving…' : 'Save'}
@@ -2829,6 +2872,20 @@ export default function TruckLoadProfilePage() {
               </div>
             ))}
           </div>
+        )}
+
+        {activeTab === 'loads' && (
+          /* Undo a bad batch of final locks on this month's load values. The
+             overlay prefix is shared with Additional Loads, so filter to the
+             :load: targets — that section has its own button. */
+          <BulkUnlockButton
+            items={Object.values(loadVerif).filter(v => v.target?.includes(':load:'))}
+            currentUserId={user?.id} isAdmin={isAdmin} noun="value"
+            onUnlock={async (item) => {
+              const { data } = await finalizeValue(item.target, truck?.entity_id, 'remove')
+              setLoadVerif(prev => ({ ...prev, [data.target]: data }))
+            }}
+          />
         )}
 
         {activeTab === 'loads' && (

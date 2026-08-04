@@ -18,6 +18,7 @@ import toast from 'react-hot-toast'
 import { errorMessage, formatCurrency } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
 import VerifiableAmount from '../components/VerifiableAmount'
+import BulkUnlockButton from '../components/BulkUnlockButton'
 import SearchableSelect from '../components/SearchableSelect'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -1199,6 +1200,15 @@ export default function BudgetsPage() {
                 <ListChecks size={14} /> Manage Constants
               </button>
             )}
+            {/* Undo a bad batch of final locks across every cell on this budget. */}
+            <BulkUnlockButton
+              items={Object.values(verif)}
+              currentUserId={user?.id} isAdmin={isAdmin} noun="cell"
+              onUnlock={async (item) => {
+                const { data } = await finalizeValue(item.target, budget?.entity_id, 'remove')
+                setVerif(prev => ({ ...prev, [data.target]: data }))
+              }}
+            />
             <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
               Tip: fill each box from its own header — <strong>Pull from System</strong> for supplier, sub-contractor and wage figures, <strong>Add</strong> for anything you type yourself. Lines marked <span className="badge badge-sent" style={{ fontSize: 10 }}>auto</span> come from the system — editing a cell pins it. Lines marked <span className="badge badge-paid" style={{ fontSize: 10 }}>fixed</span> are recurring constants you fill in yourself.
             </span>

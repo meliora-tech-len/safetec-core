@@ -16,6 +16,7 @@ import {
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
 import VerifiableAmount from '../components/VerifiableAmount'
+import BulkUnlockButton from '../components/BulkUnlockButton'
 import toast from 'react-hot-toast'
 import {
   ArrowLeft, Plus, Trash2, ChevronLeft, ChevronRight,
@@ -1037,6 +1038,15 @@ export default function SubcontractorProfilePage() {
                   <FileDown size={14} />
                   {exportLoading === 'pdf' ? 'Exporting…' : 'PDF'}
                 </button>
+                {/* Undo a bad batch of final locks across every costing value here. */}
+                <BulkUnlockButton
+                  items={Object.values(verif)}
+                  currentUserId={user?.id} isAdmin={isAdmin} noun="value"
+                  onUnlock={async (item) => {
+                    const { data } = await finalizeValue(item.target, subcontractor?.entity_id, 'remove')
+                    setVerif(prev => ({ ...prev, [data.target]: data }))
+                  }}
+                />
               </div>
             )}
           </div>
