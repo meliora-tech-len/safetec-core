@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, PaymentTermType, Truck, DieselFillUp, BusinessEntity
+from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, PaymentTermType, Truck, TruckLoad, DieselFillUp, BusinessEntity
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
     SupplierInvoicePeriodUpdate,
@@ -30,9 +30,7 @@ from app.services.verification import (
     build_initials_cache, intent_from_action,
 )
 from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
-from app.services.diesel_lock import (
-    is_locked_period, locked_periods, period_for_invoice,
-)
+from app.services.diesel_lock import is_invoice_locked, locked_invoice_ids
 from app.services.supplier_invoice_attachments import (
     MAX_ATTACH_BYTES,
     resolve_attach_type as _resolve_attach_type,
@@ -170,13 +168,9 @@ def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, li: SupplierIn
             fillup = cand
     if not fillup:
         return
-    # Re-pointing a fill-up moves it into the new invoice's diesel month; leave it
-    # alone if either side of that move is a locked month.
-    if is_locked_period(db, invoice.entity_id, period_for_invoice(invoice, line_date)):
-        return
-    old_inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == fillup.supplier_invoice_id).first() \
-        if fillup.supplier_invoice_id else None
-    if is_locked_period(db, fillup.entity_id, period_for_invoice(old_inv, fillup.fillup_date)):
+    # Re-pointing a fill-up moves it off one invoice and onto another; leave it
+    # alone if either side of that move has its diesel locked.
+    if is_invoice_locked(db, invoice.id) or is_invoice_locked(db, fillup.supplier_invoice_id):
         return
     old_inv_id = fillup.supplier_invoice_id
     fillup.supplier_invoice_id = invoice.id
@@ -184,6 +178,59 @@ def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, li: SupplierIn
         fillup.invoice_number = invoice.invoice_number
     db.flush()
     _archive_orphaned_placeholder(db, old_inv_id, invoice.id, user_id, slip=slip_number)
+
+
+def _delete_line_fillups(db: Session, invoice: SupplierInvoice,
+                         li: SupplierInvoiceLineItem, user_id: int) -> int:
+    """Delete the diesel fill-up(s) this invoice line stands for.
+
+    A diesel statement line IS a fill-up: `_maybe_create_line_fillup` and the bulk
+    import create one per line (slip = item_code, truck = unit), and
+    `_link_fillup_from_slip` absorbs a slip already logged in the Diesel module.
+    Deleting the line without them left the log stranded on the Diesel Log with no
+    invoice behind it — the whole-invoice delete already cascades this way.
+
+    Scoped to fill-ups ON THIS INVOICE matching the line's slip (and truck, when the
+    registration resolves), so nothing else can be caught. Note a printed slip that
+    covers several pump transactions (Intsimbi, keyed by Trans ID) has no per-line
+    Trans ID stored, so all of that slip's fill-ups on this invoice go together.
+    """
+    slip = (li.item_code or "").strip()
+    if not slip:
+        return 0
+    q = db.query(DieselFillUp).filter(
+        DieselFillUp.supplier_invoice_id == invoice.id,
+        or_(
+            _slip_eq(slip),
+            func.upper(func.replace(DieselFillUp.slip_number, ' ', '')) == _norm_slip(slip),
+        ),
+    )
+    truck = _resolve_truck_by_reg(db, invoice.entity_id, (li.unit or "").strip())
+    if truck:
+        q = q.filter(DieselFillUp.truck_id == truck.id)
+    fillups = q.all()
+    if not fillups:
+        return 0
+
+    for f in fillups:
+        # Drop the diesel snapshot off any load that was reading from this fill-up
+        if f.truckload_id:
+            tl = db.query(TruckLoad).filter(TruckLoad.id == f.truckload_id).first()
+            if tl:
+                tl.diesel_invoice = None
+                tl.diesel_litres = None
+                tl.diesel_rate = None
+        log_action(
+            db, "diesel_fillup.deleted", user_id=user_id,
+            entity_id=f.entity_id, resource_type="diesel_fillup", resource_id=f.id,
+            description=(
+                f"Deleted diesel fill-up #{f.id} ({f.litres}L, slip {slip}) with line "
+                f"{li.unit or li.item_description or f'#{li.id}'} of invoice "
+                f"{invoice.invoice_number or '(pending)'}"
+            ),
+        )
+        db.delete(f)
+    return len(fillups)
 
 
 def _propagate_invoice_number_to_fillups(db: Session, invoice: SupplierInvoice, user_id: int) -> None:
@@ -228,9 +275,9 @@ def _maybe_create_line_fillup(
     inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
     fillup_date = li.line_date or inv_date
 
-    # The diesel month this would land in is locked — leave the Diesel Log alone.
-    # The invoice and its line still save; only the fill-up side is skipped.
-    if is_locked_period(db, invoice.entity_id, period_for_invoice(invoice, fillup_date)):
+    # This invoice's diesel is locked — leave the Diesel Log alone. The invoice
+    # and its line still save; only the fill-up side is skipped.
+    if is_invoice_locked(db, invoice.id):
         return
 
     # Already a fill-up for this slip on this truck (created earlier, or linked
@@ -384,9 +431,9 @@ def _auto_create_diesel_fillup(
 
         inv_date = supplier_invoice.invoice_date.date() if hasattr(supplier_invoice.invoice_date, 'date') else supplier_invoice.invoice_date
 
-        # Locked diesel month → don't touch the Diesel Log (the invoice itself
-        # still saves; it simply gains no fill-up).
-        if is_locked_period(db, entity_id, period_for_invoice(supplier_invoice, inv_date)):
+        # This invoice's diesel is locked → don't touch the Diesel Log (the invoice
+        # itself still saves; it simply gains no fill-up).
+        if is_invoice_locked(db, supplier_invoice.id):
             return None
 
         slip = (supplier_invoice.invoice_number or "").strip()
@@ -1750,6 +1797,15 @@ def delete_line_item(
     total_before = inv.amount
     snapshot = {"line_id": li.id, **_line_snapshot(li)}
     label = li.unit or li.item_description or f"#{li.id}"
+    # The line's diesel log goes with it. Refuse when that diesel is locked —
+    # otherwise deleting lines would be a way around the invoice lock.
+    if is_invoice_locked(db, inv.id):
+        raise HTTPException(
+            status_code=403,
+            detail=f"The diesel on invoice {inv.invoice_number or f'#{inv.id}'} is locked — "
+                   "unlock it before removing lines.",
+        )
+    fillups_deleted = _delete_line_fillups(db, inv, li, current_user.id)
     db.delete(li)
     db.flush()
     _recalc_invoice_total(db, inv)
@@ -1759,6 +1815,7 @@ def delete_line_item(
         description=(
             f"Deleted line {label} (R{snapshot['amount_incl_vat']}) "
             f"from invoice {inv.invoice_number}: total R{total_before} → R{inv.amount}"
+            + (f"; removed {fillups_deleted} diesel log(s)" if fillups_deleted else "")
         ),
         old_values={
             **snapshot,
@@ -2012,9 +2069,9 @@ def bulk_import_invoices(
     apply_admin_fee = diesel_settings.apply_admin_fee if diesel_settings else False
     entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
     vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
-    # Locked diesel months take no fill-ups — the invoices and their lines still
+    # Locked diesel invoices take no fill-ups — the invoices and their lines still
     # import, only the Diesel Log side is left untouched.
-    diesel_locked = locked_periods(db, payload.entity_id)
+    diesel_locked = locked_invoice_ids(db, payload.entity_id)
 
     for item in payload.invoices:
         num = (item.invoice_number or '').strip()
@@ -2119,9 +2176,11 @@ def bulk_import_invoices(
             if not truck:
                 continue
 
-            # Diesel month lock — skip the fill-up sync entirely (no create, no
-            # relink, no overwrite) for a month that has been closed off.
-            if period_for_invoice(inv, fillup_date) in diesel_locked:
+            # Diesel invoice lock — skip the fill-up sync entirely (no create, no
+            # relink, no overwrite) for an invoice that has been closed off. A row
+            # imported onto a brand-new invoice can't be locked yet, so this only
+            # bites on a re-import over a reconciled invoice.
+            if inv.id in diesel_locked:
                 continue
 
             # Use the rate from the Excel rate column if supplied; fall back to

@@ -1984,6 +1984,10 @@ class DieselFillUpCreate(BaseModel):
     fillup_date: date_type
     litres: Decimal
     rate_per_litre: Decimal = Decimal("0")
+    # Hand-entered fuel amount. When given it wins over litres × rate (the
+    # statement's rand value is the authority; a 4dp rate can't always reproduce
+    # it to the cent) and the fee/VAT/total are computed from it.
+    amount: Optional[Decimal] = None
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
     depot_slip_number: Optional[str] = None
@@ -2002,6 +2006,8 @@ class DieselFillUpUpdate(BaseModel):
     fillup_date: Optional[date_type] = None
     litres: Optional[Decimal] = None
     rate_per_litre: Optional[Decimal] = None
+    # Hand-entered fuel amount — wins over litres × rate (see DieselFillUpCreate)
+    amount: Optional[Decimal] = None
     invoice_number: Optional[str] = None
     slip_number: Optional[str] = None
     depot_slip_number: Optional[str] = None
@@ -2062,25 +2068,25 @@ class DieselFillUpOut(BaseModel):
         from_attributes = True
 
 
-class DieselLockOut(BaseModel):
+class DieselInvoiceLockOut(BaseModel):
+    supplier_invoice_id: int
     entity_id: int
-    month: int
-    year: int
     locked_at: datetime
     locked_by_id: Optional[int] = None
     locked_by_name: Optional[str] = None
+    invoice_number: Optional[str] = None
 
     class Config:
         from_attributes = True
 
 
-class DieselLockUpdate(BaseModel):
-    # True = lock this entity's diesel month (no values in or out);
+class DieselInvoiceLockUpdate(BaseModel):
+    # True = lock the diesel on this supplier invoice (no values in or out);
     # False = unlock it again.
     locked: bool
-    # The date the month was actually closed off (defaults to today). Recorded
-    # for the audit trail and the on-screen badge — unlike the costing "Sent"
-    # date nothing rolls forward, so it never moves values between months.
+    # The date the invoice was actually closed off (defaults to today). Recorded
+    # for the audit trail and the on-screen badge — nothing rolls forward, so it
+    # never moves values between invoices or months.
     locked_date: Optional[date] = None
 
 

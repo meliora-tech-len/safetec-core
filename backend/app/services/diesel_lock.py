@@ -1,135 +1,130 @@
-"""Diesel month lock — shared period + lock helpers.
+"""Diesel invoice lock — shared lock helpers.
 
-A diesel month (entity + month/year) can be LOCKED. While locked no fill-up
-values may be added, changed or removed in that month, and the diesel-settings
-admin-fee re-snapshot leaves it alone. Only a free-text note stays editable —
-notes are awareness only and never part of a total.
+The diesel logged against a supplier invoice can be LOCKED once it reconciles.
+While locked, no fill-up on that invoice may be added, changed or removed, and
+the diesel-settings admin-fee re-snapshot leaves it alone. Only a free-text note
+stays editable — notes are awareness only and never part of a total.
 
-Deliberately simpler than the subcontractor costing "Sent" lock: nothing rolls
-forward into the next month. `locked_at` is recorded purely so the audit trail
-and the on-screen badge can say when the month was closed off.
+Scope is one invoice, not a whole month: diesel is reconciled invoice by invoice
+(filter the Diesel Log to a supplier, close each invoice off as it balances).
+Nothing rolls forward the way the subcontractor costing "Sent" lock does;
+`locked_at` is recorded purely so the audit trail and the on-screen badge can say
+when the invoice was closed off.
 
-The period a fill-up falls in must match what the Diesel Log shows, i.e. the
-statement period of its linked supplier invoice, falling back to the fill-up's
-own date (see `_apply_period_filter` in routes/diesel.py) — otherwise a row
-visible under a locked month could still be edited.
+A fill-up is on the lock when its `supplier_invoice_id` points at a locked
+invoice. Rows with no linked invoice can't be locked — there is nothing to lock
+them by, and they're exactly the ones still awaiting an invoice number.
 """
-from datetime import date as date_type
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
-from app.models.models import DieselFillUp, DieselLock, SupplierInvoice
+from app.models.models import DieselFillUp, DieselInvoiceLock, SupplierInvoice
 
 
-def locked_periods(db: Session, entity_id: int) -> set:
-    """{(year, month), …} — every locked diesel month for this entity."""
-    return {
-        (r.year, r.month)
-        for r in db.query(DieselLock).filter(DieselLock.entity_id == entity_id).all()
-    }
-
-
-def get_lock(db: Session, entity_id: int, month: int, year: int) -> Optional[DieselLock]:
+def get_lock(db: Session, supplier_invoice_id: Optional[int]) -> Optional[DieselInvoiceLock]:
+    if not supplier_invoice_id:
+        return None
     return (
-        db.query(DieselLock)
-        .filter(
-            DieselLock.entity_id == entity_id,
-            DieselLock.month == month,
-            DieselLock.year == year,
-        )
+        db.query(DieselInvoiceLock)
+        .filter(DieselInvoiceLock.supplier_invoice_id == supplier_invoice_id)
         .first()
     )
 
 
-def period_for(db: Session, fillup_date: date_type,
-               supplier_invoice_id: Optional[int] = None) -> Optional[tuple]:
-    """The diesel (year, month) a fill-up belongs to: the statement period of its
-    linked supplier invoice, else the fill-up's own date."""
-    if supplier_invoice_id:
-        row = (
-            db.query(SupplierInvoice.statement_year, SupplierInvoice.statement_month)
-            .filter(SupplierInvoice.id == supplier_invoice_id)
-            .first()
-        )
-        if row and row[0] and row[1]:
-            return (row[0], row[1])
-    if fillup_date is None:
-        return None
-    return (fillup_date.year, fillup_date.month)
+def locked_invoice_ids(db: Session, entity_id: Optional[int] = None) -> set:
+    """{supplier_invoice_id, …} — every locked diesel invoice, optionally scoped
+    to one entity."""
+    q = db.query(DieselInvoiceLock.supplier_invoice_id)
+    if entity_id is not None:
+        q = q.filter(DieselInvoiceLock.entity_id == entity_id)
+    return {r[0] for r in q.all()}
 
 
-def fillup_period(db: Session, f: DieselFillUp) -> Optional[tuple]:
-    return period_for(db, f.fillup_date, f.supplier_invoice_id)
+def is_invoice_locked(db: Session, supplier_invoice_id: Optional[int]) -> bool:
+    return get_lock(db, supplier_invoice_id) is not None
 
 
-def period_for_invoice(inv, fillup_date: Optional[date_type]) -> Optional[tuple]:
-    """Same rule as `period_for`, for callers that already hold the supplier
-    invoice object (it may not be committed yet, so its id can't be looked up)."""
-    year = getattr(inv, "statement_year", None) if inv is not None else None
-    month = getattr(inv, "statement_month", None) if inv is not None else None
-    if year and month:
-        return (year, month)
-    if fillup_date is None:
-        return None
-    return (fillup_date.year, fillup_date.month)
+def invoice_label(db: Session, supplier_invoice_id: Optional[int]) -> str:
+    """The invoice number to name in a lock message, falling back to the id."""
+    if not supplier_invoice_id:
+        return "this invoice"
+    num = (
+        db.query(SupplierInvoice.invoice_number)
+        .filter(SupplierInvoice.id == supplier_invoice_id)
+        .scalar()
+    )
+    return num or f"#{supplier_invoice_id}"
 
 
-def lock_message(month: int, year: int) -> str:
+def lock_message(label: str) -> str:
     return (
-        f"The {month:02d}/{year} diesel month is locked — no values can be added, "
-        "changed or removed. It must be unlocked first."
+        f"The diesel on invoice {label} is locked — no values can be added, changed "
+        "or removed against it. It must be unlocked first."
     )
 
 
-def is_locked_period(db: Session, entity_id: int, period: Optional[tuple]) -> bool:
-    if period is None:
-        return False
-    return get_lock(db, entity_id, period[1], period[0]) is not None
+def ensure_invoice_unlocked(db: Session, supplier_invoice_id: Optional[int]):
+    """Raise 403 when this supplier invoice's diesel is locked."""
+    if is_invoice_locked(db, supplier_invoice_id):
+        raise HTTPException(status_code=403, detail=lock_message(invoice_label(db, supplier_invoice_id)))
 
 
-def ensure_period_unlocked(db: Session, entity_id: int, period: Optional[tuple]):
-    """Raise 403 when this (year, month) is a locked diesel month."""
-    if period is None:
-        return
-    if get_lock(db, entity_id, period[1], period[0]) is not None:
-        raise HTTPException(status_code=403, detail=lock_message(period[1], period[0]))
+def resolve_invoice_id(db: Session, entity_id: int, supplier_id: Optional[int],
+                       supplier_invoice_id: Optional[int],
+                       invoice_number: Optional[str]) -> Optional[int]:
+    """Which supplier invoice a fill-up being captured will end up on: the id if
+    one was passed, else the invoice its number matches for this supplier+entity
+    (the same lookup `_auto_link_or_create_supplier_invoice` uses to link). Lets
+    a new fill-up be blocked from attaching itself to a locked invoice."""
+    if supplier_invoice_id:
+        return supplier_invoice_id
+    num = (invoice_number or "").strip()
+    if not num or not supplier_id:
+        return None
+    return (
+        db.query(SupplierInvoice.id)
+        .filter(
+            SupplierInvoice.supplier_id == supplier_id,
+            SupplierInvoice.invoice_number == num,
+            SupplierInvoice.entity_id == entity_id,
+        )
+        .scalar()
+    )
 
 
 def ensure_fillup_unlocked(db: Session, f: DieselFillUp,
                            updates: dict | None = None,
                            allowed_fields: set | None = None):
-    """Raise 403 when the fill-up sits in a locked diesel month. Pass `updates`
-    + `allowed_fields` to let note-only edits through — mirrors ensure_not_locked.
+    """Raise 403 when the fill-up sits on a locked invoice. Pass `updates` +
+    `allowed_fields` to let note-only edits through — mirrors ensure_not_locked.
 
-    When the edit moves the fill-up (new date or a different supplier invoice)
-    the destination month is checked too, so a locked month can't be filled from
-    an open one.
+    When the edit re-points the fill-up at a different invoice, the destination is
+    checked too, so a locked invoice can't be added to from an open one.
     """
     if updates is not None and allowed_fields is not None and set(updates) <= allowed_fields:
         return
-    ensure_period_unlocked(db, f.entity_id, fillup_period(db, f))
-    if updates and ("fillup_date" in updates or "supplier_invoice_id" in updates):
-        dest = period_for(
-            db,
-            updates.get("fillup_date", f.fillup_date),
-            updates.get("supplier_invoice_id", f.supplier_invoice_id),
-        )
-        ensure_period_unlocked(db, f.entity_id, dest)
+    ensure_invoice_unlocked(db, f.supplier_invoice_id)
+    if updates and "supplier_invoice_id" in updates:
+        ensure_invoice_unlocked(db, updates.get("supplier_invoice_id"))
+    # An invoice number typed onto an unlinked fill-up would auto-link it; don't
+    # let that attach to a locked invoice either.
+    if updates and "invoice_number" in updates and not f.supplier_invoice_id:
+        ensure_invoice_unlocked(db, resolve_invoice_id(
+            db, f.entity_id, updates.get("supplier_id", f.supplier_id), None,
+            updates.get("invoice_number"),
+        ))
 
 
-def exclude_locked_periods(db: Session, q, entity_id: int):
-    """Drop fill-ups that fall in a locked diesel month from a query. Used by the
-    admin-fee re-snapshot so changing the entity's fee % can't rewrite a month
-    that has been closed off."""
-    pairs = locked_periods(db, entity_id)
-    if not pairs:
+def exclude_locked_invoices(db: Session, q, entity_id: Optional[int] = None):
+    """Drop fill-ups on locked invoices from a query. Used by the admin-fee
+    re-snapshot so changing the entity's fee % can't rewrite an invoice that has
+    already been reconciled and closed off."""
+    ids = locked_invoice_ids(db, entity_id)
+    if not ids:
         return q
-    q = q.outerjoin(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
-    eff_year = func.coalesce(SupplierInvoice.statement_year, func.extract("year", DieselFillUp.fillup_date))
-    eff_month = func.coalesce(SupplierInvoice.statement_month, func.extract("month", DieselFillUp.fillup_date))
-    for year, month in pairs:
-        q = q.filter(~and_(eff_year == year, eff_month == month))
-    return q
+    return q.filter(
+        (DieselFillUp.supplier_invoice_id.is_(None))
+        | (~DieselFillUp.supplier_invoice_id.in_(ids))
+    )

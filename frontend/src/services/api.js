@@ -315,9 +315,9 @@ export const archiveDieselFillUp = (id) => api.patch(`/diesel/fillups/${id}/arch
 export const verifyDieselFillUp       = (id, action) => api.patch(`/diesel/fillups/${id}/verify`, null, { params: action ? { action } : {} })
 export const finalizeDieselFillUp     = (id, action) => api.patch(`/diesel/fillups/${id}/finalize`, null, { params: action ? { action } : {} })
 export const getDieselWarnings        = (params = {}) => api.get('/diesel/warnings', { params })
-// Diesel month lock — entity + month/year; locked = no values in or out
-export const getDieselLocks           = (params = {}) => api.get('/diesel/locks', { params })
-export const setDieselLock            = (params = {}, data = {}) => api.put('/diesel/locks', data, { params })
+// Diesel invoice lock — per supplier invoice; locked = no values in or out
+export const getDieselInvoiceLocks    = (params = {}) => api.get('/diesel/invoice-locks', { params })
+export const setDieselInvoiceLock     = (params = {}, data = {}) => api.put('/diesel/invoice-locks', data, { params })
 export const bulkImportSupplierInvoices = (data) => api.post('/supplier-invoices/bulk-import', data)
 export const resolveSupplierDieselConflicts = (resolutions) => api.post('/supplier-invoices/resolve-diesel-conflicts', resolutions)
 export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)

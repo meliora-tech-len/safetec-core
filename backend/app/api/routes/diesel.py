@@ -4,27 +4,27 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, and_, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.database import get_db
 from app.core.security import get_current_user
 from app.models.models import (
-    User, DieselSettings, DieselRate, DieselFillUp, DieselLock,
+    User, DieselSettings, DieselRate, DieselFillUp, DieselInvoiceLock,
     Supplier, Truck, TruckLoad, SupplierInvoice, BusinessEntity,
 )
 from app.schemas.schemas import (
     DieselSettingsOut, DieselSettingsUpdate,
     DieselRateCreate, DieselRateUpdate, DieselRateOut,
     DieselFillUpCreate, DieselFillUpUpdate, DieselFillUpOut,
-    DieselFillUpSummary, DieselLockOut, DieselLockUpdate,
+    DieselFillUpSummary, DieselInvoiceLockOut, DieselInvoiceLockUpdate,
     DieselSummaryByTruck, DieselSupplierReconciliation, DieselAnnualMonthRow,
     DieselInvoiceReconciliationRow,
     DieselImportRequest, DieselImportResult, DieselImportRowResult,
 )
 from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
 from app.services.diesel_lock import (
-    ensure_fillup_unlocked, ensure_period_unlocked, exclude_locked_periods,
-    fillup_period, get_lock, lock_message, locked_periods, period_for,
+    ensure_fillup_unlocked, ensure_invoice_unlocked, exclude_locked_invoices,
+    get_lock, invoice_label, lock_message, locked_invoice_ids, resolve_invoice_id,
 )
 from app.services.audit import log_action
 from app.services.verification import (
@@ -291,8 +291,8 @@ def update_diesel_settings(
     # carrying the pre-change %. A fill-up on a different % holds a fee the supplier
     # itself billed per line (Intsimbi's 1.5%, back-computed from their statement) —
     # that is a real invoiced amount, not our markup, and must survive. Archived and
-    # finally-verified rows are skipped too, as is anything in a locked diesel
-    # month: the locks are what freeze a reconciled month against a later fee change.
+    # finally-verified rows are skipped too, as is anything on a locked diesel
+    # invoice: the locks are what freeze a reconciled invoice against a later fee change.
     new_pct = Decimal(str(payload.admin_fee_pct))
     apply_fee = bool(payload.apply_admin_fee)
     new_effective_pct = new_pct if apply_fee else Decimal("0")
@@ -307,7 +307,7 @@ def update_diesel_settings(
             DieselFillUp.verified3_by.is_(None),
             func.coalesce(DieselFillUp.admin_fee_pct, 0) == old_effective_pct,
         )
-        stale_fillups = exclude_locked_periods(db, stale_q, entity_id).all()
+        stale_fillups = exclude_locked_invoices(db, stale_q, entity_id).all()
         for f in stale_fillups:
             amounts = DieselCalculationService.calculate_fillup_amounts(
                 litres=Decimal(str(f.litres or 0)),
@@ -354,68 +354,78 @@ def update_diesel_settings(
 
 # ── Diesel Month Lock ─────────────────────────────────────────────────────────
 
-def _lock_out(row: DieselLock) -> dict:
+def _lock_out(row: DieselInvoiceLock) -> dict:
     return {
+        "supplier_invoice_id": row.supplier_invoice_id,
         "entity_id": row.entity_id,
-        "month": row.month,
-        "year": row.year,
         "locked_at": row.locked_at,
         "locked_by_id": row.locked_by_id,
         "locked_by_name": row.locked_by.full_name if row.locked_by else None,
+        "invoice_number": row.supplier_invoice.invoice_number if row.supplier_invoice else None,
     }
 
 
-@router.get("/locks", response_model=List[DieselLockOut])
-def list_diesel_locks(
+@router.get("/invoice-locks", response_model=List[DieselInvoiceLockOut])
+def list_diesel_invoice_locks(
     entity_id: Optional[int] = Query(None),
+    supplier_id: Optional[int] = Query(None),
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None, ge=1, le=12),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Locked diesel months, optionally narrowed to one entity/year/month."""
+    """Locked diesel invoices. Narrowed by entity/supplier and, when a period is
+    given, by the invoice's STATEMENT period — the same bucket the Diesel Log
+    filters rows into, so the screen only pulls the locks it can show."""
     accessible = _accessible_entity_ids(current_user)
-    q = db.query(DieselLock)
+    q = (
+        db.query(DieselInvoiceLock)
+        .options(joinedload(DieselInvoiceLock.supplier_invoice),
+                 joinedload(DieselInvoiceLock.locked_by))
+    )
     if accessible is not None:
-        q = q.filter(DieselLock.entity_id.in_(accessible))
+        q = q.filter(DieselInvoiceLock.entity_id.in_(accessible))
     if entity_id:
         _check_entity_access(entity_id, current_user)
-        q = q.filter(DieselLock.entity_id == entity_id)
-    if year:
-        q = q.filter(DieselLock.year == year)
-    if month:
-        q = q.filter(DieselLock.month == month)
-    rows = q.order_by(DieselLock.year.desc(), DieselLock.month.desc()).all()
-    return [_lock_out(r) for r in rows]
+        q = q.filter(DieselInvoiceLock.entity_id == entity_id)
+    if supplier_id or year or month:
+        q = q.join(SupplierInvoice, SupplierInvoice.id == DieselInvoiceLock.supplier_invoice_id)
+        if supplier_id:
+            q = q.filter(SupplierInvoice.supplier_id == supplier_id)
+        if year:
+            q = q.filter(SupplierInvoice.statement_year == year)
+        if month:
+            q = q.filter(SupplierInvoice.statement_month == month)
+    return [_lock_out(r) for r in q.order_by(DieselInvoiceLock.locked_at.desc()).all()]
 
 
-@router.put("/locks", response_model=Optional[DieselLockOut])
-def set_diesel_lock(
-    payload: DieselLockUpdate,
-    entity_id: int = Query(...),
-    month: int = Query(..., ge=1, le=12),
-    year: int = Query(..., ge=2020),
+@router.put("/invoice-locks", response_model=Optional[DieselInvoiceLockOut])
+def set_diesel_invoice_lock(
+    payload: DieselInvoiceLockUpdate,
+    supplier_invoice_id: int = Query(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Lock an entity's diesel month (no values in or out) or unlock it again.
-    The optional locked_date records the date the month was closed off — audit
-    trail and on-screen label only; nothing rolls forward into the next month."""
-    _check_entity_access(entity_id, current_user)
-    entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
-    if not entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
+    """Lock the diesel on one supplier invoice (no values in or out) or unlock it
+    again. The optional locked_date records when the invoice was closed off —
+    audit trail and on-screen label only; nothing rolls forward."""
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == supplier_invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Supplier invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+    label = inv.invoice_number or f"#{inv.id}"
 
-    row = get_lock(db, entity_id, month, year)
+    row = get_lock(db, supplier_invoice_id)
 
     if not payload.locked:
         if not row:
             return None
         db.delete(row)
         log_action(
-            db, "diesel_lock.unlocked", user_id=current_user.id,
-            entity_id=entity_id, resource_type="diesel_lock",
-            description=f"Unlocked the {month:02d}/{year} diesel month for {entity.code}",
+            db, "diesel_invoice_lock.unlocked", user_id=current_user.id,
+            entity_id=inv.entity_id, resource_type="diesel_invoice_lock",
+            resource_id=supplier_invoice_id,
+            description=f"Unlocked the diesel on invoice {label}",
         )
         db.commit()
         return None
@@ -425,7 +435,7 @@ def set_diesel_lock(
 
     now_utc = datetime.now(timezone.utc)
     # Backdated lock: stamp end of that day, so the badge reads as the day the
-    # month was actually closed off.
+    # invoice was actually closed off.
     if payload.locked_date and payload.locked_date != now_utc.date():
         locked_at = datetime(
             payload.locked_date.year, payload.locked_date.month, payload.locked_date.day,
@@ -434,15 +444,16 @@ def set_diesel_lock(
     else:
         locked_at = now_utc
 
-    row = DieselLock(
-        entity_id=entity_id, month=month, year=year,
+    row = DieselInvoiceLock(
+        supplier_invoice_id=supplier_invoice_id, entity_id=inv.entity_id,
         locked_at=locked_at, locked_by_id=current_user.id,
     )
     db.add(row)
     log_action(
-        db, "diesel_lock.locked", user_id=current_user.id,
-        entity_id=entity_id, resource_type="diesel_lock",
-        description=f"Locked the {month:02d}/{year} diesel month for {entity.code}",
+        db, "diesel_invoice_lock.locked", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="diesel_invoice_lock",
+        resource_id=supplier_invoice_id,
+        description=f"Locked the diesel on invoice {label}",
         new_values={"locked_at": locked_at.isoformat()},
     )
     db.commit()
@@ -785,21 +796,25 @@ def create_fillup(
     # placeholder is stored with rate 0 and rate_pending = True. Every other
     # entity must supply a rate up front.
     rate_pending = bool(payload.rate_pending) and is_bkmo
+    # A hand-entered amount is an alternative to the rate — one implies the other,
+    # so either alone is enough (a rate-pending placeholder has neither yet).
+    has_amount = payload.amount is not None and payload.amount > 0 and not rate_pending
     if rate_pending:
         rate_per_litre = Decimal("0")
     else:
         rate_per_litre = payload.rate_per_litre
-        if rate_per_litre <= 0:
-            raise HTTPException(status_code=400, detail="Rate per litre must be greater than 0")
+        if rate_per_litre <= 0 and not has_amount:
+            raise HTTPException(status_code=400, detail="Enter a rate per litre or an amount")
 
     if payload.fillup_date > date.today():
         raise HTTPException(status_code=400, detail="Fill-up date cannot be in the future")
 
-    # Diesel month lock — nothing may be added to a month that was closed off
-    ensure_period_unlocked(
-        db, payload.entity_id,
-        period_for(db, payload.fillup_date, payload.supplier_invoice_id),
-    )
+    # Diesel invoice lock — nothing may be added to an invoice that was closed
+    # off, whether linked by id or by typing its invoice number (which auto-links)
+    ensure_invoice_unlocked(db, resolve_invoice_id(
+        db, payload.entity_id, payload.supplier_id,
+        payload.supplier_invoice_id, payload.invoice_number,
+    ))
 
     # Hard block duplicates (ignore archived records)
     if payload.slip_number and payload.truck_id:
@@ -833,12 +848,20 @@ def create_fillup(
 
     vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
 
+    # A hand-entered amount wins over litres × rate; with no rate typed, derive one
+    # from it so the R/L column still reads sensibly.
+    typed_amount = payload.amount if has_amount else None
+    if typed_amount is not None and rate_per_litre <= 0 and payload.litres > 0:
+        rate_per_litre = (Decimal(str(typed_amount)) / Decimal(str(payload.litres))).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
     amounts = DieselCalculationService.calculate_fillup_amounts(
         litres=payload.litres,
         rate_per_litre=rate_per_litre,
         admin_fee_pct=admin_fee_pct,
         apply_admin_fee=apply_admin_fee,
         vat_rate=vat_rate,
+        amount=typed_amount,
     )
 
     f = DieselFillUp(
@@ -939,9 +962,9 @@ def import_diesel(
     apply_admin_fee = settings.apply_admin_fee if settings else False
     vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
 
-    # Locked diesel months take no imported rows — flagged per row (and in the
+    # Locked diesel invoices take no imported rows — flagged per row (and in the
     # dry-run preview) rather than failing the whole sheet, so the rest still lands.
-    locked = locked_periods(db, payload.entity_id)
+    locked = locked_invoice_ids(db, payload.entity_id)
 
     result = DieselImportResult(total=len(payload.rows), committed=payload.commit)
     unmatched_regs: set[str] = set()
@@ -982,11 +1005,6 @@ def import_diesel(
         rr.truck_registration = truck.registration
         rr.matched_by_temp = by_temp
 
-        row_period = (row.fillup_date.year, row.fillup_date.month) if row.fillup_date else None
-        if row_period in locked:
-            rr.status = "invalid"; rr.message = lock_message(row_period[1], row_period[0])
-            result.invalid += 1; result.rows.append(rr); continue
-
         slip = (row.slip_number or "").strip()
 
         # Rate-pending placeholder resolution (BKMO): a slip was logged before its
@@ -1011,11 +1029,11 @@ def import_diesel(
                 .first()
             )
         if pending is not None:
-            # The placeholder itself may sit in an earlier, already locked month
-            # (its statement period), even though this row's date is open.
-            pend_period = fillup_period(db, pending)
-            if pend_period in locked:
-                rr.status = "invalid"; rr.message = lock_message(pend_period[1], pend_period[0])
+            # The placeholder may already be linked to a locked invoice — filling
+            # its rate in would change values on a closed-off invoice.
+            if pending.supplier_invoice_id in locked:
+                rr.status = "invalid"
+                rr.message = lock_message(invoice_label(db, pending.supplier_invoice_id))
                 result.invalid += 1; result.rows.append(rr); continue
             result.updated += 1
             rr.status = "updated"
@@ -1132,22 +1150,32 @@ def update_fillup(
     # Final-verification lock: a free-text note may still be added/edited
     # (a note-only edit sends just `notes`).
     ensure_not_locked(f, updates, {"notes"})
-    # Diesel month lock — same note-only exception
+    # Diesel invoice lock — same note-only exception
     ensure_fillup_unlocked(db, f, updates, {"notes"})
 
-    # Recalculate amounts if litres or rate changes
+    # Recalculate amounts if litres, rate or the amount itself changes
     litres = Decimal(str(updates.get("litres", f.litres)))
     rate = Decimal(str(updates.get("rate_per_litre", f.rate_per_litre)))
-    if "litres" in updates or "rate_per_litre" in updates:
+    # A hand-entered amount is authoritative for the money; when it's the field that
+    # changed, keep it exactly and rebuild the fee/VAT/total on it.
+    typed_amount = Decimal(str(updates["amount"])) if "amount" in updates else None
+    if typed_amount is not None and typed_amount <= 0:
+        typed_amount = None
+    if "litres" in updates or "rate_per_litre" in updates or typed_amount is not None:
         settings = DieselCalculationService.get_diesel_settings(db, f.entity_id)
         admin_fee_pct = Decimal(str(f.admin_fee_pct))  # keep snapshotted pct
         apply_admin_fee = settings.apply_admin_fee if settings else (admin_fee_pct > 0)
         entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == f.entity_id).first()
         vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
-        amounts = DieselCalculationService.calculate_fillup_amounts(litres, rate, admin_fee_pct, apply_admin_fee, vat_rate)
+        # No rate typed alongside the amount → derive one so R/L still reads sensibly
+        if typed_amount is not None and rate <= 0 and litres > 0:
+            rate = (typed_amount / litres).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+            updates["rate_per_litre"] = rate
+        amounts = DieselCalculationService.calculate_fillup_amounts(
+            litres, rate, admin_fee_pct, apply_admin_fee, vat_rate, amount=typed_amount)
         updates.update(amounts)
-        # A real rate typed in by hand resolves a pending placeholder.
-        if rate > 0 and f.rate_pending and "rate_pending" not in updates:
+        # A real rate (or amount) typed in by hand resolves a pending placeholder.
+        if (rate > 0 or typed_amount is not None) and f.rate_pending and "rate_pending" not in updates:
             updates["rate_pending"] = False
 
     for field, value in updates.items():
@@ -1171,7 +1199,7 @@ def update_fillup(
     # EXCLUDING the internal admin fee (which stays on the fill-up / in costing).
     # Only sync a single-fill-up auto-created invoice — multi-line invoices (e.g.
     # WBG imports) hold per-slip data in line items and must not be overwritten.
-    if ("litres" in updates or "rate_per_litre" in updates) and f.supplier_invoice_id:
+    if ("litres" in updates or "rate_per_litre" in updates or "amount" in updates) and f.supplier_invoice_id:
         inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == f.supplier_invoice_id).first()
         if inv and not inv.is_multi_line:
             linked_count = db.query(func.count(DieselFillUp.id)).filter(

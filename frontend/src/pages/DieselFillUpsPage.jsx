@@ -3,7 +3,7 @@ import {
   getDieselFillUps, getDieselFillUpSummary, createDieselFillUp,
   updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp, finalizeDieselFillUp,
   getCurrentDieselRate, getEntities, getDieselSettings, getSuppliers,
-  getDieselLocks, setDieselLock,
+  getDieselInvoiceLocks, setDieselInvoiceLock,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage, dieselTypeForSupplier } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
@@ -55,8 +55,15 @@ function orderDieselTrucks(list) {
 
 const BLANK = {
   entity_id: '', truck_id: '', supplier_id: '', fillup_date: today,
-  litres: '', rate_per_litre: '', invoice_number: '', slip_number: '', notes: '', diesel_type: 'fillup', rate_pending: false,
+  litres: '', rate_per_litre: '', amount: '', invoice_number: '', slip_number: '', notes: '', diesel_type: 'fillup', rate_pending: false,
 }
+
+// Litres × Rate = Amount. The user may type any two and the third follows: litres
+// or rate recompute the amount, while a typed amount back-computes the rate (litres
+// come off the slip and are never derived). Entering the amount straight off the
+// statement is the point — a 4dp rate can't always reproduce it to the cent, so the
+// backend keeps whichever amount was typed.
+const num = v => { const n = parseFloat(v); return isNaN(n) ? null : n }
 
 export default function DieselFillUpsPage() {
   const { activeEntity, isAdmin, entities: authEntities, user } = useAuth()
@@ -96,9 +103,11 @@ export default function DieselFillUpsPage() {
   const [noteSaving,   setNoteSaving]   = useState(false)
   // Month lock — one row per entity + month/year; locked = no values in or out
   const [locks,        setLocks]        = useState([])
-  const [lockModal,    setLockModal]    = useState(false)
+  const [lockModal,    setLockModal]    = useState(null)  // { invoiceId, invoiceNumber, rows } | null
   const [lockDate,     setLockDate]     = useState(today)
   const [lockSaving,   setLockSaving]   = useState(false)
+  // Panel stays shut by default — the page looks unchanged until locks are needed
+  const [locksOpen,    setLocksOpen]    = useSessionState('diesel:invoice-locks-open', false)
   // Bulk verification — rows ticked for "Verify selected" / "Final lock selected"
   const [selectedIds,    setSelectedIds]    = useState(new Set())
   const [verifyingBulk,  setVerifyingBulk]  = useState(false)
@@ -143,46 +152,49 @@ export default function DieselFillUpsPage() {
 
   useEffect(() => { load() }, [load])
 
-  // Which of the shown months are locked. Fetched for every accessible entity so
-  // rows still read as locked under "All Entities"; the lock control itself needs
-  // a single entity to act on.
+  // Which invoices in the shown period have their diesel locked. Scoped to the
+  // same filters as the rows (the API narrows by the invoice's statement period,
+  // which is the bucket the Diesel Log itself uses).
   const loadLocks = useCallback(() => {
-    getDieselLocks({ year: filterYear, month: filterMonth })
+    const p = { year: filterYear, month: filterMonth }
+    if (filterEntity)   p.entity_id   = filterEntity
+    if (filterSupplier) p.supplier_id = filterSupplier
+    getDieselInvoiceLocks(p)
       .then(r => setLocks(r.data || []))
       .catch(() => setLocks([]))
-  }, [filterYear, filterMonth])
+  }, [filterEntity, filterSupplier, filterYear, filterMonth])
 
   useEffect(() => { loadLocks() }, [loadLocks])
 
-  const lock = useMemo(
-    () => (filterEntity ? locks.find(l => String(l.entity_id) === String(filterEntity)) : null) || null,
-    [locks, filterEntity],
+  const lockByInvoiceId = useMemo(
+    () => new Map(locks.map(l => [l.supplier_invoice_id, l])),
+    [locks],
   )
-  const lockedEntityIds = useMemo(() => new Set(locks.map(l => l.entity_id)), [locks])
-  const isLocked = !!lock
-  const rowLocked = f => lockedEntityIds.has(f.entity_id)
+  // A row is locked when the invoice it's linked to is. Rows still awaiting an
+  // invoice have nothing to lock them by.
+  const rowLocked = f => !!(f.supplier_invoice_id && lockByInvoiceId.has(f.supplier_invoice_id))
 
   const applyLock = async () => {
-    if (!lockDate) { toast.error('Pick the date the month was locked'); return }
+    if (!lockDate) { toast.error('Pick the date the invoice was locked'); return }
     setLockSaving(true)
     try {
-      await setDieselLock(
-        { entity_id: filterEntity, month: filterMonth, year: filterYear },
+      await setDieselInvoiceLock(
+        { supplier_invoice_id: lockModal.invoiceId },
         { locked: true, locked_date: lockDate },
       )
-      toast.success(`${MONTHS[filterMonth]} ${filterYear} diesel locked`)
-      setLockModal(false)
+      toast.success(`Invoice ${lockModal.invoiceNumber} locked`)
+      setLockModal(null)
       setEditingId(null)
       loadLocks()
     } catch (err) { toast.error(errorMessage(err)) }
     finally { setLockSaving(false) }
   }
 
-  const removeLock = async () => {
-    if (!window.confirm(`Unlock the ${MONTHS[filterMonth]} ${filterYear} diesel month? Values can be added and changed again.`)) return
+  const removeLock = async (grp) => {
+    if (!window.confirm(`Unlock the diesel on invoice ${grp.invoiceNumber}? Its ${grp.rows.length} log${grp.rows.length === 1 ? '' : 's'} can be changed again.`)) return
     try {
-      await setDieselLock({ entity_id: filterEntity, month: filterMonth, year: filterYear }, { locked: false })
-      toast.success('Diesel month unlocked')
+      await setDieselInvoiceLock({ supplier_invoice_id: grp.invoiceId }, { locked: false })
+      toast.success('Invoice unlocked')
       loadLocks()
     } catch (err) { toast.error(errorMessage(err)) }
   }
@@ -206,27 +218,62 @@ export default function DieselFillUpsPage() {
       const rate = r.data
       if (rate && !rateEdited) {
         setAutoRate(rate.rate_per_litre)
-        setEditForm(f => ({ ...f, rate_per_litre: parseFloat(rate.rate_per_litre).toFixed(2) }))
+        setEditForm(f => {
+          const r = parseFloat(rate.rate_per_litre)
+          const litres = num(f.litres)
+          const next = { ...f, rate_per_litre: r.toFixed(2) }
+          if (litres && litres > 0) next.amount = (litres * r).toFixed(2)
+          return next
+        })
       }
       if (!rate) setAutoRate(null)
     }).catch(() => {})
   }, [editForm.supplier_id, editForm.entity_id, editForm.fillup_date, rateEdited])
 
-  // Live calc preview
+  // Live calc preview — the amount is whatever the form holds (typed, or computed
+  // from litres × rate); fee, VAT and total are built on it, as the backend does.
   useEffect(() => {
-    const litres = parseFloat(editForm.litres)
-    const rate   = parseFloat(editForm.rate_per_litre)
-    if (isNaN(litres) || isNaN(rate) || litres <= 0 || rate <= 0) {
+    const amount = num(editForm.amount)
+    if (amount === null || amount <= 0) {
       setPreview({ amount: null, fee: null, total: null }); return
     }
-    const amount = litres * rate
     const pct      = dieselSettings ? parseFloat(dieselSettings.admin_fee_pct) : 0
     const applyFee = dieselSettings ? dieselSettings.apply_admin_fee : false
     const feeExcl = applyFee && pct > 0 ? amount * pct : 0
     const feeVat  = feeExcl * 0.15
     const feeIncl = feeExcl + feeVat
     setPreview({ amount: amount.toFixed(2), fee: feeExcl.toFixed(2), feeVat: feeVat.toFixed(2), feeIncl: feeIncl.toFixed(2), total: (amount + feeIncl).toFixed(2) })
-  }, [editForm.litres, editForm.rate_per_litre, dieselSettings])
+  }, [editForm.amount, dieselSettings])
+
+  // The three linked money fields. Each keeps the others consistent.
+  const onLitres = (v) => setEditForm(f => {
+    const litres = num(v), rate = num(f.rate_per_litre)
+    const next = { ...f, litres: v }
+    if (litres && litres > 0 && rate) next.amount = (litres * rate).toFixed(2)
+    return next
+  })
+
+  const onRate = (v) => {
+    setRateEdited(true)
+    setEditForm(f => {
+      const litres = num(f.litres), rate = num(v)
+      const next = { ...f, rate_per_litre: v }
+      if (litres && litres > 0 && rate) next.amount = (litres * rate).toFixed(2)
+      return next
+    })
+  }
+
+  const onAmount = (v) => {
+    setRateEdited(true)   // stop the auto-rate fetch overwriting the derived rate
+    setEditForm(f => {
+      const litres = num(f.litres), amount = num(v)
+      const next = { ...f, amount: v }
+      if (litres && litres > 0 && amount !== null) {
+        next.rate_per_litre = (amount / litres).toFixed(4)
+      }
+      return next
+    })
+  }
 
   // Focus first input when edit opens
   useEffect(() => {
@@ -235,7 +282,6 @@ export default function DieselFillUpsPage() {
 
   const startNew = () => {
     if (editingId !== null) return // guard — must intentionally exit first
-    if (isLocked) return toast.error(`${MONTHS[filterMonth]} ${filterYear} is locked — unlock it to log diesel`)
     setEditForm({ ...BLANK, entity_id: filterEntity || '' })
     setAutoRate(null); setRateEdited(false)
     setEditingId('new')
@@ -251,6 +297,7 @@ export default function DieselFillUpsPage() {
       fillup_date:   f.fillup_date || today,
       litres:        f.litres     != null ? String(f.litres)        : '',
       rate_per_litre: f.rate_per_litre != null ? parseFloat(f.rate_per_litre).toFixed(2) : '',
+      amount:        f.amount     != null ? parseFloat(f.amount).toFixed(2)     : '',
       invoice_number: f.invoice_number || '',
       slip_number:   f.slip_number    || '',
       notes:         f.notes          || '',
@@ -292,7 +339,9 @@ export default function DieselFillUpsPage() {
     if (!f.supplier_id)  return toast.error('Select a supplier')
     if (!f.fillup_date)  return toast.error('Date required')
     if (!f.litres || isNaN(f.litres))           return toast.error('Enter valid litres')
-    if (!f.rate_pending && (!f.rate_per_litre || isNaN(f.rate_per_litre))) return toast.error('Enter valid rate')
+    // Rate and amount imply each other, so either one is enough
+    const amountVal = num(f.amount)
+    if (!f.rate_pending && !num(f.rate_per_litre) && !amountVal) return toast.error('Enter a rate or an amount')
     setSaving(true)
     const payload = {
       entity_id:     parseInt(f.entity_id),
@@ -300,7 +349,8 @@ export default function DieselFillUpsPage() {
       supplier_id:   parseInt(f.supplier_id),
       fillup_date:   f.fillup_date,
       litres:        parseFloat(f.litres),
-      rate_per_litre: f.rate_pending ? 0 : parseFloat(f.rate_per_litre),
+      rate_per_litre: f.rate_pending ? 0 : (num(f.rate_per_litre) || 0),
+      amount:        f.rate_pending ? null : amountVal,
       rate_pending:  !!f.rate_pending,
       invoice_number: f.invoice_number || null,
       slip_number:   f.slip_number    || null,
@@ -452,6 +502,38 @@ export default function DieselFillUpsPage() {
     }
   }, [summary, search, visible])
 
+  // The invoices the shown rows belong to — one entry each, and what a lock acts
+  // on. Rows still awaiting an invoice are simply left out: there's nothing to
+  // key a lock to until they have one.
+  const lockableGroups = useMemo(() => {
+    const byId = new Map()
+    for (const f of visible) {
+      if (!f.supplier_invoice_id) continue
+      let g = byId.get(f.supplier_invoice_id)
+      if (!g) {
+        g = {
+          invoiceId: f.supplier_invoice_id,
+          invoiceNumber: f.supplier_invoice_number || f.invoice_number || `#${f.supplier_invoice_id}`,
+          supplierName: f.supplier_name,
+          rows: [],
+        }
+        byId.set(f.supplier_invoice_id, g)
+      }
+      g.rows.push(f)
+    }
+    const groups = [...byId.values()].sort((a, b) =>
+      (a.supplierName || '').localeCompare(b.supplierName || '')
+      || String(a.invoiceNumber).localeCompare(String(b.invoiceNumber)))
+    for (const g of groups) {
+      g.litres = g.rows.reduce((s, f) => s + (parseFloat(f.litres) || 0), 0)
+      g.total  = g.rows.reduce((s, f) => s + (parseFloat(f.total_amount) || 0), 0)
+      g.lock   = lockByInvoiceId.get(g.invoiceId) || null
+    }
+    return groups
+  }, [visible, lockByInvoiceId])
+
+  const lockedCount = lockableGroups.filter(g => g.lock).length
+
   const multiEntity = entities.length > 1
   const COLS = multiEntity ? 16 : 15
 
@@ -484,32 +566,6 @@ export default function DieselFillUpsPage() {
           <p className="page-subtitle">{fillups.length} records — {MONTHS[filterMonth]} {filterYear}</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {/* Month lock — per entity per month */}
-          {isLocked ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <span
-                title={`Diesel locked${lock.locked_by_name ? ` by ${lock.locked_by_name}` : ''} — no values can be added, changed or removed in this month`}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 800, letterSpacing: 0.5, background: 'rgba(34,197,94,0.15)', color: '#16a34a' }}
-              >
-                <Lock size={11} /> LOCKED {formatDate(lock.locked_at)}
-              </span>
-              <button className="btn-icon btn-ghost" title="Unlock this diesel month" onClick={removeLock} style={{ padding: 2 }}>
-                <RotateCcw size={13} color="var(--text-muted)" />
-              </button>
-            </span>
-          ) : (
-            <button
-              className="btn-ghost btn-sm"
-              onClick={() => { setLockDate(today); setLockModal(true) }}
-              disabled={!filterEntity}
-              title={filterEntity
-                ? `Lock the ${MONTHS[filterMonth]} ${filterYear} diesel month — no values in or out`
-                : 'Pick a single entity to lock its diesel month'}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 }}
-            >
-              <Lock size={12} /> Lock Month
-            </button>
-          )}
           <ExportButton
             title={`Diesel Logs — ${MONTHS[filterMonth]} ${filterYear}`}
             filename={`diesel-${filterYear}-${filterMonth}`}
@@ -533,13 +589,11 @@ export default function DieselFillUpsPage() {
             ]}
           />
           {isBokamosho && (
-            <button className="btn-ghost" onClick={() => setShowImport(true)} disabled={isLocked}
-              title={isLocked ? `${MONTHS[filterMonth]} ${filterYear} is locked` : undefined}>
+            <button className="btn-ghost" onClick={() => setShowImport(true)}>
               <Upload size={15} /> Import
             </button>
           )}
-          <button className="btn-primary" onClick={startNew} disabled={editingId !== null || isLocked}
-            title={isLocked ? `${MONTHS[filterMonth]} ${filterYear} is locked — unlock it to log diesel` : undefined}>
+          <button className="btn-primary" onClick={startNew} disabled={editingId !== null}>
             <Plus size={15} /> Log Diesel
           </button>
         </div>
@@ -637,6 +691,74 @@ export default function DieselFillUpsPage() {
         </div>
       )}
 
+      {/* Invoice locks — collapsed to a single line so the page reads as it always
+          has; open it to lock/unlock each invoice the shown rows belong to. */}
+      {lockableGroups.length > 0 && (
+        <div className="card" style={{ padding: 0, marginBottom: 16, overflow: 'hidden' }}>
+          <div
+            onClick={() => setLocksOpen(v => !v)}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', cursor: 'pointer', userSelect: 'none' }}
+          >
+            <Lock size={13} color="var(--text-muted)" />
+            <span style={{ fontSize: 12, fontWeight: 700 }}>Invoice locks</span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              {lockableGroups.length} invoice{lockableGroups.length === 1 ? '' : 's'} in view
+              {lockedCount > 0 && <> · <span style={{ color: '#16a34a', fontWeight: 700 }}>{lockedCount} locked</span></>}
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+              {locksOpen ? '▲ hide' : '▼ show'}
+            </span>
+          </div>
+
+          {locksOpen && (
+            <div style={{ maxHeight: 260, overflowY: 'auto', borderTop: '1px solid var(--border)' }}>
+              <table className="compact-table">
+                <tbody>
+                  {lockableGroups.map(g => (
+                    <tr key={g.invoiceId} style={g.lock ? { background: 'rgba(34,197,94,0.06)' } : undefined}>
+                      <td style={{ fontFamily: 'monospace', fontWeight: 700, whiteSpace: 'nowrap' }}>{g.invoiceNumber}</td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{g.supplierName || '—'}</td>
+                      <td className="text-right" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {g.rows.length} log{g.rows.length === 1 ? '' : 's'}
+                      </td>
+                      <td className="text-right" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {g.litres.toLocaleString('en-ZA', { minimumFractionDigits: 2 })} L
+                      </td>
+                      <td className="text-right" style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{formatCurrency(g.total)}</td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {g.lock ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <span
+                              title={`Diesel locked${g.lock.locked_by_name ? ` by ${g.lock.locked_by_name}` : ''} — no values can be added, changed or removed against this invoice`}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 9px', borderRadius: 12, fontSize: 11, fontWeight: 800, letterSpacing: 0.5, background: 'rgba(34,197,94,0.15)', color: '#16a34a' }}
+                            >
+                              <Lock size={11} /> LOCKED {formatDate(g.lock.locked_at)}
+                            </span>
+                            <button className="btn-icon btn-ghost" title="Unlock this invoice"
+                              onClick={() => removeLock(g)} style={{ padding: 2 }}>
+                              <RotateCcw size={13} color="var(--text-muted)" />
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            className="btn-ghost btn-sm"
+                            onClick={() => { setLockDate(today); setLockModal(g) }}
+                            title="Lock the diesel on this invoice — no values in or out"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 }}
+                          >
+                            <Lock size={12} /> Lock
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Table — always visible */}
       <div className="table-wrapper" style={{ overflowX: 'auto' }}>
         <table style={{ minWidth: 1100 }}>
@@ -672,6 +794,7 @@ export default function DieselFillUpsPage() {
                 form={editForm} set={set} rowTrucks={rowTrucks} suppliers={rowSuppliers}
                 entities={entities} multiEntity={multiEntity} isNew
                 autoRate={autoRate} rateEdited={rateEdited} setRateEdited={setRateEdited}
+                onLitres={onLitres} onRate={onRate} onAmount={onAmount}
                 preview={preview} saving={saving}
                 onSave={handleSave} onCancel={cancelEdit} onKeyDown={handleKeyDown}
                 firstInputRef={firstInputRef}
@@ -698,6 +821,7 @@ export default function DieselFillUpsPage() {
                   form={editForm} set={set} rowTrucks={rowTrucks} suppliers={rowSuppliers}
                   entities={entities} multiEntity={multiEntity} isNew={false}
                   autoRate={autoRate} rateEdited={rateEdited} setRateEdited={setRateEdited}
+                  onLitres={onLitres} onRate={onRate} onAmount={onAmount}
                   preview={preview} saving={saving}
                   onSave={handleSave} onCancel={cancelEdit} onKeyDown={handleKeyDown}
                   firstInputRef={firstInputRef}
@@ -771,7 +895,7 @@ export default function DieselFillUpsPage() {
                       </button>
                     )}
                     {rowLocked(f) ? (
-                      <span title="This diesel month is locked — unlock it to change or remove values"
+                      <span title="This invoice is locked — unlock it to change or remove values"
                         style={{ display: 'inline-flex', verticalAlign: 'middle' }}>
                         <Lock size={13} color="var(--text-muted)" />
                       </span>
@@ -874,36 +998,89 @@ export default function DieselFillUpsPage() {
         </div>
       )}
 
-      {/* ── Lock Month Modal ── */}
+      {/* ── Lock Invoice Modal ── */}
       {lockModal && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setLockModal(false)}>
-          <div className="modal">
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setLockModal(null)}>
+          <div className="modal modal-lg">
             <div className="modal-header">
               <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
                 <Lock size={16} style={{ color: 'var(--accent)' }} />
-                Lock Diesel — {MONTHS[filterMonth]} {filterYear}
+                Lock Diesel — {lockModal.invoiceNumber}
               </h2>
-              <button className="btn-icon btn-ghost" onClick={() => setLockModal(false)}><X size={16} /></button>
+              <button className="btn-icon btn-ghost" onClick={() => setLockModal(null)}><X size={16} /></button>
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 13, marginTop: 0, lineHeight: 1.5 }}>
-                This locks the <strong>{MONTHS[filterMonth]} {filterYear}</strong> diesel month for{' '}
-                <strong>{entities.find(e => String(e.id) === String(filterEntity))?.code || 'this entity'}</strong> —
-                no logs can be added, changed, imported or removed in it. Notes stay editable.
+                This locks the diesel on invoice <strong>{lockModal.invoiceNumber}</strong>
+                {lockModal.supplierName ? <> (<strong>{lockModal.supplierName}</strong>)</> : null} —{' '}
+                <strong>{lockModal.rows.length} log{lockModal.rows.length === 1 ? '' : 's'}</strong>,{' '}
+                {lockModal.litres.toLocaleString('en-ZA', { minimumFractionDigits: 2 })} L,{' '}
+                {formatCurrency(lockModal.total)}. Nothing can be added, changed, imported or removed
+                against it. Notes and verification ticks stay available.
               </p>
+
+              {/* The logs being locked, so it's clear exactly what's covered */}
+              <div className="table-wrapper" style={{ maxHeight: 300, overflowY: 'auto' }}>
+                <table className="compact-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Truck</th>
+                      <th className="text-right">Litres</th>
+                      <th className="text-right">Rate/L</th>
+                      <th className="text-right">Total</th>
+                      <th>Slip #</th>
+                      <th>Verified</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...lockModal.rows]
+                      .sort((a, b) => String(a.fillup_date).localeCompare(String(b.fillup_date))
+                        || (a.truck_registration || '').localeCompare(b.truck_registration || ''))
+                      .map(f => (
+                        <tr key={f.id}>
+                          <td style={{ whiteSpace: 'nowrap' }}>{formatDate(f.fillup_date)}</td>
+                          <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{f.truck_registration || '—'}</td>
+                          <td className="text-right">{parseFloat(f.litres).toFixed(2)}</td>
+                          <td className="text-right" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {f.rate_pending ? 'pending' : <>R&nbsp;{parseFloat(f.rate_per_litre).toFixed(2)}</>}
+                          </td>
+                          <td className="text-right" style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{formatCurrency(f.total_amount)}</td>
+                          <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{f.slip_number || '—'}</td>
+                          <td style={{ fontSize: 11, whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
+                            {[f.verified_by_initials, f.verified2_by_initials, f.verified3_by_initials]
+                              .filter(Boolean).join(' / ') || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
+                      <td colSpan={2} style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                        {lockModal.rows.length} log{lockModal.rows.length === 1 ? '' : 's'}
+                      </td>
+                      <td className="text-right">{lockModal.litres.toFixed(2)}</td>
+                      <td />
+                      <td className="text-right" style={{ whiteSpace: 'nowrap' }}>{formatCurrency(lockModal.total)}</td>
+                      <td colSpan={2} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
               <div className="form-group">
                 <label>Locked on *</label>
                 <DateInput className="form-input" value={lockDate} onChange={e => setLockDate(e.target.value)} />
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
-                  If the month was actually closed off earlier, pick that date — it's recorded on the lock
-                  and in the audit log. Diesel logged after it simply belongs to a later month.
+                  If the invoice was actually reconciled earlier, pick that date — it's recorded on the
+                  lock and in the audit log. Diesel logged after it belongs to another invoice.
                 </span>
               </div>
             </div>
             <div className="modal-footer">
-              <button type="button" className="btn-ghost" onClick={() => setLockModal(false)}>Cancel</button>
+              <button type="button" className="btn-ghost" onClick={() => setLockModal(null)}>Cancel</button>
               <button type="button" className="btn-primary" onClick={applyLock} disabled={lockSaving}>
-                {lockSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : <><Lock size={14} /> Lock Month</>}
+                {lockSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : <><Lock size={14} /> Lock Invoice</>}
               </button>
             </div>
           </div>
@@ -932,7 +1109,7 @@ export default function DieselFillUpsPage() {
 
 // ── Inline edit row ────────────────────────────────────────────────────────────
 function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew,
-  autoRate, rateEdited, setRateEdited, preview, saving,
+  autoRate, rateEdited, setRateEdited, onLitres, onRate, onAmount, preview, saving,
   onSave, onCancel, onKeyDown, firstInputRef }) {
   const isBokamosho = entities.find(e => String(e.id) === String(form.entity_id))?.code === 'BKMO'
   return (
@@ -987,7 +1164,7 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
       {/* Litres */}
       <td style={S.td}>
         <input type="number" step="0.01" min="0.01" placeholder="0.00" value={form.litres}
-          onChange={e => set('litres', e.target.value)} onKeyDown={onKeyDown}
+          onChange={e => onLitres(e.target.value)} onKeyDown={onKeyDown}
           style={{ ...S.input, width: 72, textAlign: 'right' }} />
       </td>
 
@@ -998,9 +1175,9 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
             color: rateEdited && autoRate ? '#d97706' : '#16a34a' }}>
             {autoRate && !rateEdited ? 'auto' : rateEdited && autoRate ? 'manual' : ''}
           </span>
-          <input type="number" step="0.01" min="0.01" placeholder={form.rate_pending ? 'On import' : '0.00'}
+          <input type="number" step="0.0001" min="0" placeholder={form.rate_pending ? 'On import' : '0.00'}
             value={form.rate_pending ? '' : form.rate_per_litre} disabled={form.rate_pending}
-            onChange={e => { set('rate_per_litre', e.target.value); setRateEdited(true) }} onKeyDown={onKeyDown}
+            onChange={e => onRate(e.target.value)} onKeyDown={onKeyDown}
             style={{ ...S.input, width: 78, textAlign: 'right' }} />
           {isBokamosho && (
             <label title="Log the slip now; the Tradekor import fills the rate in (matched by slip, import litres win)"
@@ -1014,9 +1191,13 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
         </div>
       </td>
 
-      {/* Amount (calc) */}
-      <td style={{ ...S.td, textAlign: 'right', color: 'var(--text-muted)', fontSize: 12, whiteSpace: 'nowrap' }}>
-        {preview.amount ? formatCurrency(preview.amount) : '—'}
+      {/* Amount — editable; typing it back-computes Rate/L from the litres */}
+      <td style={S.td}>
+        <input type="number" step="0.01" min="0" placeholder={form.rate_pending ? 'On import' : '0.00'}
+          value={form.rate_pending ? '' : form.amount} disabled={form.rate_pending}
+          onChange={e => onAmount(e.target.value)} onKeyDown={onKeyDown}
+          title="Amount excl VAT — type the figure off the statement and the rate follows"
+          style={{ ...S.input, width: 90, textAlign: 'right' }} />
       </td>
 
       {/* Admin fee excl (calc) */}

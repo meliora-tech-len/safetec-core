@@ -55,17 +55,26 @@ class DieselCalculationService:
         admin_fee_pct: Decimal,
         apply_admin_fee: bool,
         vat_rate: Decimal = Decimal("0.15"),
+        amount: Optional[Decimal] = None,
     ) -> dict:
         """
         Compute amount, admin_fee_amount (excl VAT), admin_fee_vat, and total_amount.
         All values are rounded to 2 decimal places.
+
+        Pass `amount` to use a hand-entered fuel amount instead of litres × rate.
+        The statement is the authority on the rand value, and litres × rate can
+        only land within a cent of it once the rate is rounded to 4dp — so when the
+        user types the amount off the invoice, that exact figure is kept and the
+        fee/VAT/total are built on it.
         """
         litres = Decimal(str(litres))
         rate_per_litre = Decimal(str(rate_per_litre))
         admin_fee_pct = Decimal(str(admin_fee_pct))
         vat_rate = Decimal(str(vat_rate))
 
-        amount = (litres * rate_per_litre).quantize(TWO_DP, rounding=ROUND_HALF_UP)
+        amount = (
+            Decimal(str(amount)) if amount is not None else litres * rate_per_litre
+        ).quantize(TWO_DP, rounding=ROUND_HALF_UP)
 
         if apply_admin_fee and admin_fee_pct > 0:
             admin_fee_amount = (amount * admin_fee_pct).quantize(TWO_DP, rounding=ROUND_HALF_UP)

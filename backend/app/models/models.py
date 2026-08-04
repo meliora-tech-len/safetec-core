@@ -1308,28 +1308,31 @@ class DieselFillUp(Base):
     creator          = relationship("User", foreign_keys=[created_by])
 
 
-class DieselLock(Base):
-    """Per entity + diesel month: the month is LOCKED. No fill-up values may be
-    added, changed or removed in that month (a free-text note stays editable —
-    it is never part of any total), and the admin-fee re-snapshot skips it.
+class DieselInvoiceLock(Base):
+    """Per supplier invoice: the diesel logged against this invoice is LOCKED.
+    No fill-up on it may be added, changed or removed (a free-text note stays
+    editable — it is never part of any total), and the admin-fee re-snapshot
+    skips it.
 
-    Simpler than the subcontractor costing "Sent" flag: nothing rolls forward.
-    `locked_at` is the recorded lock date — audit trail and on-screen label only.
+    Deliberately narrower than the subcontractor costing "Sent" flag: nothing
+    rolls forward, and the scope is one invoice rather than a whole month —
+    diesel reconciles invoice by invoice. `locked_at` is the recorded lock date,
+    for the audit trail and the on-screen label.
     """
-    __tablename__ = "diesel_locks"
+    __tablename__ = "diesel_invoice_locks"
 
-    id           = Column(Integer, primary_key=True, index=True)
-    entity_id    = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
-    month        = Column(Integer, nullable=False)
-    year         = Column(Integer, nullable=False)
-    locked_at    = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    locked_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    id                  = Column(Integer, primary_key=True, index=True)
+    supplier_invoice_id = Column(Integer, ForeignKey("supplier_invoices.id", ondelete="CASCADE"), nullable=False)
+    entity_id           = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    locked_at           = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    locked_by_id        = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
-    entity    = relationship("BusinessEntity")
-    locked_by = relationship("User")
+    supplier_invoice = relationship("SupplierInvoice")
+    entity           = relationship("BusinessEntity")
+    locked_by        = relationship("User")
 
     __table_args__ = (
-        UniqueConstraint("entity_id", "month", "year", name="uq_diesel_lock_period"),
+        UniqueConstraint("supplier_invoice_id", name="uq_diesel_invoice_lock"),
     )
 
 
