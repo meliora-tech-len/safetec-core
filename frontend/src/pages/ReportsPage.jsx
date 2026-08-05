@@ -253,6 +253,31 @@ export default function ReportsPage() {
       const a = document.createElement('a'); a.href = url
       a.download = `sars-vat-${year}.csv`; a.click()
       URL.revokeObjectURL(url)
+    } else if (tab === 'supplier') {
+      if (!dieselData.length) return
+      // Summary per supplier, then every fill-up behind each supplier's total.
+      const q = (v) => `"${v ?? ''}"`
+      const lines = [
+        ['Supplier', 'Logs', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Fee VAT', 'Grand Total'].map(q).join(','),
+        ...dieselData.map(r => [
+          r.supplier_name, r.fillup_count, r.total_litres, r.total_amount,
+          r.total_admin_fee, r.total_admin_fee_vat, r.grand_total,
+        ].map(q).join(',')),
+        '',
+        ['Supplier', 'Date', 'Truck', 'Slip #', 'Trans ID', 'Invoice #', 'Litres', 'Rate (R/L)', 'Excl. Fee', 'Admin Fee', 'Fee VAT', 'Total', 'Verified'].map(q).join(','),
+        ...dieselData.flatMap(r => (r.fillups || []).map(f => [
+          r.supplier_name, f.fillup_date, f.truck_registration, f.slip_number, f.trans_id,
+          f.invoice_number, f.litres, f.rate_per_litre, f.amount, f.admin_fee_amount,
+          f.admin_fee_vat, f.total_amount, f.verified ? 'Yes' : 'No',
+        ].map(q).join(','))),
+      ]
+      const csv = lines.join('\n')
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url
+      a.download = `diesel-supplier-${year}-${String(month).padStart(2, '0')}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
     } else {
       if (!dieselData.length) return
       const headers = Object.keys(dieselData[0])
@@ -1235,7 +1260,7 @@ export default function ReportsPage() {
           ) : tab === 'truck' ? (
             <TruckReport data={dieselData} />
           ) : tab === 'supplier' ? (
-            <SupplierReport data={dieselData} />
+            <SupplierReport data={dieselData} year={year} month={month} />
           ) : (
             <AnnualReport data={dieselData} year={year} />
           )}
@@ -1621,18 +1646,19 @@ function IncomeExpensesReport({ data, year, onViewDetail }) {
 // ── Monthly by Truck ────────────────────────────────────────────────────────────
 function TruckReport({ data }) {
   const totals = data.reduce((acc, r) => ({
-    fill_up_count: acc.fill_up_count + (r.fill_up_count || 0),
+    fillup_count: acc.fillup_count + (r.fillup_count || 0),
     total_litres: acc.total_litres + Number(r.total_litres || 0),
     total_amount: acc.total_amount + Number(r.total_amount || 0),
     total_admin_fee: acc.total_admin_fee + Number(r.total_admin_fee || 0),
+    total_admin_fee_vat: acc.total_admin_fee_vat + Number(r.total_admin_fee_vat || 0),
     grand_total: acc.grand_total + Number(r.grand_total || 0),
-  }), { fill_up_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, grand_total: 0 })
+  }), { fillup_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, total_admin_fee_vat: 0, grand_total: 0 })
 
   return (
     <table style={styles.table}>
       <thead>
         <tr>
-          {['Truck', 'Logs', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Grand Total', 'Avg Rate (R/L)'].map(h => (
+          {['Truck', 'Logs', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Fee VAT', 'Grand Total', 'Avg Rate (R/L)'].map(h => (
             <th key={h} style={styles.th}>{h}</th>
           ))}
         </tr>
@@ -1641,10 +1667,11 @@ function TruckReport({ data }) {
         {data.map((r, i) => (
           <tr key={i} style={styles.row}>
             <td style={{ ...styles.td, fontWeight: 600 }}>{r.truck_reg || r.truck_id}</td>
-            <td style={styles.td}>{r.fill_up_count}</td>
+            <td style={styles.td}>{r.fillup_count}</td>
             <td style={styles.td}>{fmtL(r.total_litres)}</td>
             <td style={styles.td}>{fmtR(r.total_amount)}</td>
             <td style={styles.td}>{fmtR(r.total_admin_fee)}</td>
+            <td style={styles.td}>{fmtR(r.total_admin_fee_vat)}</td>
             <td style={{ ...styles.td, fontWeight: 700, color: 'var(--text-primary)' }}>{fmtR(r.grand_total)}</td>
             <td style={styles.td}>
               {r.total_litres > 0 ? `R ${fmtN(r.total_amount / r.total_litres)}` : '—'}
@@ -1653,10 +1680,11 @@ function TruckReport({ data }) {
         ))}
         <tr style={styles.totalRow}>
           <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
-          <td style={styles.td}>{totals.fill_up_count}</td>
+          <td style={styles.td}>{totals.fillup_count}</td>
           <td style={styles.td}>{fmtL(totals.total_litres)}</td>
           <td style={styles.td}>{fmtR(totals.total_amount)}</td>
           <td style={styles.td}>{fmtR(totals.total_admin_fee)}</td>
+          <td style={styles.td}>{fmtR(totals.total_admin_fee_vat)}</td>
           <td style={{ ...styles.td, fontWeight: 700 }}>{fmtR(totals.grand_total)}</td>
           <td style={styles.td}>
             {totals.total_litres > 0 ? `R ${fmtN(totals.total_amount / totals.total_litres)}` : '—'}
@@ -1668,60 +1696,185 @@ function TruckReport({ data }) {
 }
 
 // ── Supplier Reconciliation ─────────────────────────────────────────────────────
-function SupplierReport({ data }) {
+// Supplier → every fill-up behind that supplier's monthly total. Rows come from
+// the backend already scoped to the selected month by STATEMENT period (with
+// archived fill-ups excluded), so these figures tie back to the Diesel module.
+function SupplierReport({ data, year, month }) {
+  const [collapsed, setCollapsed] = useState({})
+  const toggle = (id) => setCollapsed(c => ({ ...c, [id]: !c[id] }))
+  const allCollapsed = data.every(r => collapsed[r.supplier_id])
+  const toggleAll = () =>
+    setCollapsed(allCollapsed ? {} : Object.fromEntries(data.map(r => [r.supplier_id, true])))
+
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' }) : '—'
+
   const totals = data.reduce((acc, r) => ({
-    fill_up_count: acc.fill_up_count + (r.fill_up_count || 0),
+    fillup_count: acc.fillup_count + (r.fillup_count || 0),
     total_litres: acc.total_litres + Number(r.total_litres || 0),
     total_amount: acc.total_amount + Number(r.total_amount || 0),
     total_admin_fee: acc.total_admin_fee + Number(r.total_admin_fee || 0),
+    total_admin_fee_vat: acc.total_admin_fee_vat + Number(r.total_admin_fee_vat || 0),
     grand_total: acc.grand_total + Number(r.grand_total || 0),
-  }), { fill_up_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, grand_total: 0 })
+  }), { fillup_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, total_admin_fee_vat: 0, grand_total: 0 })
 
   return (
-    <>
-      <table style={styles.table}>
-        <thead>
-          <tr>
-            {['Supplier', 'Logs', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Grand Total'].map(h => (
-              <th key={h} style={styles.th}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((r, i) => (
-            <tr key={i} style={styles.row}>
-              <td style={{ ...styles.td, fontWeight: 600 }}>{r.supplier_name || r.supplier_id}</td>
-              <td style={styles.td}>{r.fill_up_count}</td>
-              <td style={styles.td}>{fmtL(r.total_litres)}</td>
-              <td style={styles.td}>{fmtR(r.total_amount)}</td>
-              <td style={styles.td}>{fmtR(r.total_admin_fee)}</td>
-              <td style={{ ...styles.td, fontWeight: 700, color: 'var(--text-primary)' }}>{fmtR(r.grand_total)}</td>
-            </tr>
-          ))}
-          <tr style={styles.totalRow}>
-            <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
-            <td style={styles.td}>{totals.fill_up_count}</td>
-            <td style={styles.td}>{fmtL(totals.total_litres)}</td>
-            <td style={styles.td}>{fmtR(totals.total_amount)}</td>
-            <td style={styles.td}>{fmtR(totals.total_admin_fee)}</td>
-            <td style={{ ...styles.td, fontWeight: 700 }}>{fmtR(totals.grand_total)}</td>
-          </tr>
-        </tbody>
-      </table>
-    </>
+    <div>
+      <div style={{ ...styles.card, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+            Diesel by Supplier — {MONTHS[month - 1]} {year}
+          </span>
+          {data.length > 0 && (
+            <button onClick={toggleAll} style={{
+              padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              background: 'var(--bg-hover)', color: 'var(--text-primary)',
+              border: '1px solid var(--border)', borderRadius: 6,
+            }}>
+              {allCollapsed ? 'Expand all' : 'Collapse all'}
+            </button>
+          )}
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Supplier</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Logs</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Total Litres</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Excl. Fee</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Admin Fee</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Fee VAT</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Grand Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map(r => (
+                <tr key={r.supplier_id} style={styles.row}>
+                  <td style={{ ...styles.td, fontWeight: 600 }}>{r.supplier_name || r.supplier_id}</td>
+                  <td style={{ ...styles.td, textAlign: 'right' }}>{r.fillup_count}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtL(r.total_litres)}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtR(r.total_amount)}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtR(r.total_admin_fee)}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtR(r.total_admin_fee_vat)}</td>
+                  <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700, color: 'var(--text-primary)' }}>{fmtR(r.grand_total)}</td>
+                </tr>
+              ))}
+              <tr style={styles.totalRow}>
+                <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
+                <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{totals.fillup_count}</td>
+                <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtL(totals.total_litres)}</td>
+                <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtR(totals.total_amount)}</td>
+                <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtR(totals.total_admin_fee)}</td>
+                <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtR(totals.total_admin_fee_vat)}</td>
+                <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtR(totals.grand_total)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* One card per supplier: every record making up its total */}
+      {data.map(r => {
+        const isCollapsed = !!collapsed[r.supplier_id]
+        const lines = r.fillups || []
+        return (
+          <div key={r.supplier_id} style={{ ...styles.card, marginBottom: 16 }}>
+            <div
+              onClick={() => toggle(r.supplier_id)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 16, padding: '12px 20px', cursor: 'pointer', flexWrap: 'wrap',
+                borderBottom: isCollapsed ? 'none' : '1px solid var(--border)',
+              }}
+            >
+              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                <span style={{ display: 'inline-block', width: 14, color: 'var(--text-muted)' }}>{isCollapsed ? '▸' : '▾'}</span>
+                {r.supplier_name}
+                <span style={{ marginLeft: 8, fontWeight: 500, fontSize: 12, color: 'var(--text-muted)' }}>
+                  {lines.length} record{lines.length === 1 ? '' : 's'}
+                </span>
+              </span>
+              <span style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12 }}>
+                <span><span style={{ color: 'var(--text-muted)' }}>Litres: </span><b>{fmtL(r.total_litres)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Excl. fee: </span><b>{fmtR(r.total_amount)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Admin fee: </span><b>{fmtR(r.total_admin_fee)}</b></span>
+                <span><span style={{ color: 'var(--text-muted)' }}>Total: </span><b>{fmtR(r.grand_total)}</b></span>
+              </span>
+            </div>
+
+            {!isCollapsed && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Date</th>
+                      <th style={styles.th}>Truck</th>
+                      <th style={styles.th}>Slip #</th>
+                      <th style={styles.th}>Trans ID</th>
+                      <th style={styles.th}>Invoice #</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Litres</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Rate (R/L)</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Excl. Fee</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Admin Fee</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Fee VAT</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map(f => (
+                      <tr key={f.id} style={styles.row}>
+                        <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
+                          {fmtDate(f.fillup_date)}
+                          {/* slip dated outside the statement month it was billed under */}
+                          {f.statement_month && (f.statement_month !== month || f.statement_year !== year) && (
+                            <span style={badge}>STMT {MONTHS[f.statement_month - 1]}</span>
+                          )}
+                        </td>
+                        <td style={{ ...styles.td, fontWeight: 600 }}>{f.truck_registration || '—'}</td>
+                        <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>{f.slip_number || '—'}</td>
+                        <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{f.trans_id || '—'}</td>
+                        <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' }}>{f.invoice_number || '—'}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtL(f.litres)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {f.rate_pending ? <span style={{ color: 'var(--text-muted)' }}>pending</span> : `R ${fmtN(f.rate_per_litre, 4)}`}
+                        </td>
+                        <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtR(f.amount)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtR(f.admin_fee_amount)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtR(f.admin_fee_vat)}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{fmtR(f.total_amount)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: 'var(--bg-surface)' }}>
+                      <td style={{ ...styles.td, fontWeight: 700, fontSize: 12 }} colSpan={5}>{r.supplier_name} total ({r.fillup_count})</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtL(r.total_litres)}</td>
+                      <td style={styles.td}></td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtR(r.total_amount)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtR(r.total_admin_fee)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtR(r.total_admin_fee_vat)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>{fmtR(r.grand_total)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
 // ── Annual Summary ──────────────────────────────────────────────────────────────
 function AnnualReport({ data, year }) {
-  // data is array of monthly totals: { month, fill_up_count, total_litres, total_amount, total_admin_fee, grand_total }
+  // data is array of monthly totals: { month, fillup_count, total_litres, total_amount, total_admin_fee, total_admin_fee_vat, grand_total }
   const totals = data.reduce((acc, r) => ({
-    fill_up_count: acc.fill_up_count + (r.fill_up_count || 0),
+    fillup_count: acc.fillup_count + (r.fillup_count || 0),
     total_litres: acc.total_litres + Number(r.total_litres || 0),
     total_amount: acc.total_amount + Number(r.total_amount || 0),
     total_admin_fee: acc.total_admin_fee + Number(r.total_admin_fee || 0),
+    total_admin_fee_vat: acc.total_admin_fee_vat + Number(r.total_admin_fee_vat || 0),
     grand_total: acc.grand_total + Number(r.grand_total || 0),
-  }), { fill_up_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, grand_total: 0 })
+  }), { fillup_count: 0, total_litres: 0, total_amount: 0, total_admin_fee: 0, total_admin_fee_vat: 0, grand_total: 0 })
 
   return (
     <>
@@ -1729,7 +1882,7 @@ function AnnualReport({ data, year }) {
       <table style={styles.table}>
         <thead>
           <tr>
-            {['Month', 'Logs', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Grand Total'].map(h => (
+            {['Month', 'Logs', 'Total Litres', 'Excl. Fee', 'Admin Fee', 'Fee VAT', 'Grand Total'].map(h => (
               <th key={h} style={styles.th}>{h}</th>
             ))}
           </tr>
@@ -1740,19 +1893,21 @@ function AnnualReport({ data, year }) {
               <td style={{ ...styles.td, fontWeight: 600 }}>
                 {MONTHS[(r.month || i + 1) - 1]} {year}
               </td>
-              <td style={styles.td}>{r.fill_up_count}</td>
+              <td style={styles.td}>{r.fillup_count}</td>
               <td style={styles.td}>{fmtL(r.total_litres)}</td>
               <td style={styles.td}>{fmtR(r.total_amount)}</td>
               <td style={styles.td}>{fmtR(r.total_admin_fee)}</td>
+              <td style={styles.td}>{fmtR(r.total_admin_fee_vat)}</td>
               <td style={{ ...styles.td, fontWeight: 700, color: 'var(--text-primary)' }}>{fmtR(r.grand_total)}</td>
             </tr>
           ))}
           <tr style={styles.totalRow}>
             <td style={{ ...styles.td, fontWeight: 700 }}>YEAR TOTAL</td>
-            <td style={styles.td}>{totals.fill_up_count}</td>
+            <td style={styles.td}>{totals.fillup_count}</td>
             <td style={styles.td}>{fmtL(totals.total_litres)}</td>
             <td style={styles.td}>{fmtR(totals.total_amount)}</td>
             <td style={styles.td}>{fmtR(totals.total_admin_fee)}</td>
+            <td style={styles.td}>{fmtR(totals.total_admin_fee_vat)}</td>
             <td style={{ ...styles.td, fontWeight: 700 }}>{fmtR(totals.grand_total)}</td>
           </tr>
         </tbody>

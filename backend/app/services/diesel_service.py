@@ -4,7 +4,9 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 
-from app.models.models import DieselRate, DieselFillUp, DieselSettings, Supplier, Truck
+from app.models.models import (
+    DieselRate, DieselFillUp, DieselSettings, Supplier, SupplierInvoice, Truck,
+)
 
 
 TWO_DP = Decimal("0.01")
@@ -21,6 +23,48 @@ def diesel_type_for_supplier(supplier: Optional[Supplier]) -> str:
     if "merino" in name or "oukop" in name:
         return "topup"
     return "fillup"
+
+
+def fillup_effective_period():
+    """(year, month) expressions for the period a fill-up counts under.
+
+    A fill-up belongs to the STATEMENT period of its linked supplier invoice —
+    the statement it was captured on — and only falls back to its own slip date
+    when it has no linked invoice. That way a June statement line typed as 15/03
+    still counts in June, which is how the Diesel module, costing and the
+    subcontractor report all read it.
+
+    The query must be outer-joined to SupplierInvoice on
+    ``DieselFillUp.supplier_invoice_id`` for these to resolve.
+    """
+    eff_year = func.coalesce(
+        SupplierInvoice.statement_year, func.extract("year", DieselFillUp.fillup_date)
+    )
+    eff_month = func.coalesce(
+        SupplierInvoice.statement_month, func.extract("month", DieselFillUp.fillup_date)
+    )
+    return eff_year, eff_month
+
+
+def apply_fillup_period(q, year: Optional[int] = None, month: Optional[int] = None,
+                        include_archived: bool = False):
+    """Scope a DieselFillUp query to a period and drop archived fill-ups.
+
+    Single source of truth for "which fill-ups make up this month" — archived
+    rows are superseded placeholders and re-linked duplicates, so counting them
+    double-books their value.
+    """
+    if not include_archived:
+        q = q.filter(DieselFillUp.is_archived != True)  # noqa: E712 — SQL boolean
+    if not (year or month):
+        return q
+    q = q.outerjoin(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
+    eff_year, eff_month = fillup_effective_period()
+    if year:
+        q = q.filter(eff_year == year)
+    if month:
+        q = q.filter(eff_month == month)
+    return q
 
 
 class DieselCalculationService:
@@ -114,22 +158,22 @@ class DieselCalculationService:
         year: int,
         month: int,
     ) -> list:
-        """Per-truck monthly diesel summary."""
-        rows = (
+        """Per-truck monthly diesel summary, scoped by statement period."""
+        q = (
             db.query(
                 Truck.registration.label("truck_reg"),
                 func.count(DieselFillUp.id).label("fillup_count"),
                 func.coalesce(func.sum(DieselFillUp.litres), 0).label("total_litres"),
                 func.coalesce(func.sum(DieselFillUp.amount), 0).label("total_amount"),
                 func.coalesce(func.sum(DieselFillUp.admin_fee_amount), 0).label("total_admin_fee"),
+                func.coalesce(func.sum(DieselFillUp.admin_fee_vat), 0).label("total_admin_fee_vat"),
                 func.coalesce(func.sum(DieselFillUp.total_amount), 0).label("grand_total"),
             )
             .join(Truck, DieselFillUp.truck_id == Truck.id)
-            .filter(
-                DieselFillUp.entity_id == entity_id,
-                func.extract("year", DieselFillUp.fillup_date) == year,
-                func.extract("month", DieselFillUp.fillup_date) == month,
-            )
+            .filter(DieselFillUp.entity_id == entity_id)
+        )
+        rows = (
+            apply_fillup_period(q, year, month)
             .group_by(Truck.id, Truck.registration)
             .order_by(Truck.registration)
             .all()
@@ -141,6 +185,7 @@ class DieselCalculationService:
                 "total_litres": Decimal(str(r.total_litres)).quantize(TWO_DP),
                 "total_amount": Decimal(str(r.total_amount)).quantize(TWO_DP),
                 "total_admin_fee": Decimal(str(r.total_admin_fee)).quantize(TWO_DP),
+                "total_admin_fee_vat": Decimal(str(r.total_admin_fee_vat)).quantize(TWO_DP),
                 "grand_total": Decimal(str(r.grand_total)).quantize(TWO_DP),
             }
             for r in rows
@@ -153,64 +198,128 @@ class DieselCalculationService:
         year: int,
         month: int,
     ) -> list:
-        """Supplier reconciliation totals for a given month."""
+        """Per-supplier diesel totals for a month, with the fill-ups behind them.
+
+        Same period rule and archived exclusion as `apply_fillup_period`, spelt
+        out here because the query already outer-joins SupplierInvoice for the
+        statement columns. Every line making up each total is returned so the
+        report can be drilled into and reconciled against the statement.
+        """
+        eff_year, eff_month = fillup_effective_period()
         rows = (
             db.query(
+                DieselFillUp,
+                Supplier.id.label("supplier_id"),
                 Supplier.name.label("supplier_name"),
-                func.count(DieselFillUp.id).label("fillup_count"),
-                func.coalesce(func.sum(DieselFillUp.litres), 0).label("total_litres"),
-                func.coalesce(func.sum(DieselFillUp.amount), 0).label("total_amount"),
-                func.coalesce(func.sum(DieselFillUp.admin_fee_amount), 0).label("total_admin_fee"),
-                func.coalesce(func.sum(DieselFillUp.total_amount), 0).label("grand_total"),
-                func.coalesce(
-                    func.sum(DieselFillUp.total_amount).filter(DieselFillUp.verified == True), 0
-                ).label("verified_amount"),
-                func.coalesce(
-                    func.sum(DieselFillUp.total_amount).filter(DieselFillUp.verified == False), 0
-                ).label("unverified_amount"),
+                Truck.registration.label("truck_registration"),
+                SupplierInvoice.invoice_number.label("statement_invoice_number"),
+                SupplierInvoice.statement_month.label("statement_month"),
+                SupplierInvoice.statement_year.label("statement_year"),
             )
             .join(Supplier, DieselFillUp.supplier_id == Supplier.id)
+            .outerjoin(Truck, DieselFillUp.truck_id == Truck.id)
+            .outerjoin(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
             .filter(
                 DieselFillUp.entity_id == entity_id,
-                func.extract("year", DieselFillUp.fillup_date) == year,
-                func.extract("month", DieselFillUp.fillup_date) == month,
+                DieselFillUp.is_archived != True,
+                eff_year == year,
+                eff_month == month,
             )
-            .group_by(Supplier.id, Supplier.name)
-            .order_by(Supplier.name)
+            .order_by(Supplier.name, DieselFillUp.fillup_date, DieselFillUp.id)
             .all()
         )
-        return [
-            {
-                "supplier_name": r.supplier_name,
-                "fillup_count": r.fillup_count,
-                "total_litres": Decimal(str(r.total_litres)).quantize(TWO_DP),
-                "total_amount": Decimal(str(r.total_amount)).quantize(TWO_DP),
-                "total_admin_fee": Decimal(str(r.total_admin_fee)).quantize(TWO_DP),
-                "grand_total": Decimal(str(r.grand_total)).quantize(TWO_DP),
-                "verified_amount": Decimal(str(r.verified_amount)).quantize(TWO_DP),
-                "unverified_amount": Decimal(str(r.unverified_amount)).quantize(TWO_DP),
-            }
-            for r in rows
-        ]
+
+        groups: dict = {}
+        for f, supplier_id, supplier_name, truck_reg, stmt_inv_no, stmt_m, stmt_y in rows:
+            g = groups.get(supplier_id)
+            if g is None:
+                g = groups[supplier_id] = {
+                    "supplier_id": supplier_id,
+                    "supplier_name": supplier_name,
+                    "fillup_count": 0,
+                    "total_litres": Decimal("0"),
+                    "total_amount": Decimal("0"),
+                    "total_admin_fee": Decimal("0"),
+                    "total_admin_fee_vat": Decimal("0"),
+                    "grand_total": Decimal("0"),
+                    "verified_amount": Decimal("0"),
+                    "unverified_amount": Decimal("0"),
+                    "fillups": [],
+                }
+
+            litres = Decimal(str(f.litres or 0))
+            amount = Decimal(str(f.amount or 0))
+            fee = Decimal(str(f.admin_fee_amount or 0))
+            fee_vat = Decimal(str(f.admin_fee_vat or 0))
+            total = Decimal(str(f.total_amount or 0))
+
+            g["fillup_count"] += 1
+            g["total_litres"] += litres
+            g["total_amount"] += amount
+            g["total_admin_fee"] += fee
+            g["total_admin_fee_vat"] += fee_vat
+            g["grand_total"] += total
+            if f.verified:
+                g["verified_amount"] += total
+            else:
+                g["unverified_amount"] += total
+
+            g["fillups"].append({
+                "id": f.id,
+                "fillup_date": f.fillup_date,
+                "truck_registration": truck_reg,
+                "slip_number": f.depot_slip_number or f.slip_number,
+                "trans_id": f.slip_number,
+                "invoice_number": stmt_inv_no or f.invoice_number,
+                "supplier_invoice_id": f.supplier_invoice_id,
+                "statement_month": stmt_m,
+                "statement_year": stmt_y,
+                "diesel_type": f.diesel_type,
+                "litres": litres.quantize(TWO_DP),
+                "rate_per_litre": Decimal(str(f.rate_per_litre or 0)).quantize(FOUR_DP),
+                "amount": amount.quantize(TWO_DP),
+                "admin_fee_amount": fee.quantize(TWO_DP),
+                "admin_fee_vat": fee_vat.quantize(TWO_DP),
+                "total_amount": total.quantize(TWO_DP),
+                "verified": bool(f.verified),
+                "rate_pending": bool(f.rate_pending),
+            })
+
+        result = []
+        for g in sorted(groups.values(), key=lambda x: (x["supplier_name"] or "").lower()):
+            for k in (
+                "total_litres", "total_amount", "total_admin_fee", "total_admin_fee_vat",
+                "grand_total", "verified_amount", "unverified_amount",
+            ):
+                g[k] = g[k].quantize(TWO_DP)
+            result.append(g)
+        return result
 
     @staticmethod
     def get_annual_summary(db: Session, entity_id: int, year: int) -> list:
-        """Monthly totals for an entire year."""
-        rows = (
+        """Monthly totals for an entire year.
+
+        Each month is the sum of that month's Diesel by Truck / by Supplier
+        report, so the three tabs reconcile: same statement-period rule, same
+        exclusion of archived fill-ups.
+        """
+        _, eff_month = fillup_effective_period()
+        q = (
             db.query(
-                func.extract("month", DieselFillUp.fillup_date).label("month"),
+                eff_month.label("month"),
                 func.count(DieselFillUp.id).label("fillup_count"),
                 func.coalesce(func.sum(DieselFillUp.litres), 0).label("total_litres"),
                 func.coalesce(func.sum(DieselFillUp.amount), 0).label("total_amount"),
                 func.coalesce(func.sum(DieselFillUp.admin_fee_amount), 0).label("total_admin_fee"),
+                func.coalesce(func.sum(DieselFillUp.admin_fee_vat), 0).label("total_admin_fee_vat"),
                 func.coalesce(func.sum(DieselFillUp.total_amount), 0).label("grand_total"),
             )
-            .filter(
-                DieselFillUp.entity_id == entity_id,
-                func.extract("year", DieselFillUp.fillup_date) == year,
-            )
-            .group_by(func.extract("month", DieselFillUp.fillup_date))
-            .order_by(func.extract("month", DieselFillUp.fillup_date))
+            .filter(DieselFillUp.entity_id == entity_id)
+        )
+        rows = (
+            apply_fillup_period(q, year)
+            .group_by(eff_month)
+            .order_by(eff_month)
             .all()
         )
         return [
@@ -220,6 +329,7 @@ class DieselCalculationService:
                 "total_litres": Decimal(str(r.total_litres)).quantize(TWO_DP),
                 "total_amount": Decimal(str(r.total_amount)).quantize(TWO_DP),
                 "total_admin_fee": Decimal(str(r.total_admin_fee)).quantize(TWO_DP),
+                "total_admin_fee_vat": Decimal(str(r.total_admin_fee_vat)).quantize(TWO_DP),
                 "grand_total": Decimal(str(r.grand_total)).quantize(TWO_DP),
             }
             for r in rows

@@ -21,7 +21,9 @@ from app.schemas.schemas import (
     DieselInvoiceReconciliationRow,
     DieselImportRequest, DieselImportResult, DieselImportRowResult,
 )
-from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
+from app.services.diesel_service import (
+    DieselCalculationService, diesel_type_for_supplier, apply_fillup_period,
+)
 from app.services.diesel_lock import (
     ensure_fillup_unlocked, ensure_invoice_unlocked, exclude_locked_invoices,
     get_lock, invoice_label, lock_message, locked_invoice_ids, resolve_invoice_id,
@@ -600,21 +602,11 @@ def update_diesel_rate(
 def _apply_period_filter(q, month: Optional[int], year: Optional[int]):
     """Filter fill-ups by their STATEMENT period rather than the slip date.
 
-    A fill-up belongs to the period of its linked supplier invoice (the
-    statement it was captured under); only when there's no linked invoice do we
-    fall back to the fill-up's own date. This lets a mis-dated slip (e.g. a June
-    statement line typed as 15/03) still fall under the month it was billed in.
+    Thin wrapper over `apply_fillup_period` (services/diesel_service.py), which
+    is the one rule the diesel reports read off too. Archiving is left to the
+    caller here because several of these queries filter it themselves.
     """
-    if not (month or year):
-        return q
-    q = q.outerjoin(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
-    eff_month = func.coalesce(SupplierInvoice.statement_month, func.extract("month", DieselFillUp.fillup_date))
-    eff_year = func.coalesce(SupplierInvoice.statement_year, func.extract("year", DieselFillUp.fillup_date))
-    if year:
-        q = q.filter(eff_year == year)
-    if month:
-        q = q.filter(eff_month == month)
-    return q
+    return apply_fillup_period(q, year, month, include_archived=True)
 
 
 @router.get("/fillups/summary", response_model=DieselFillUpSummary)

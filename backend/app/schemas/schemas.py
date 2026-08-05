@@ -2134,18 +2134,44 @@ class DieselSummaryByTruck(BaseModel):
     total_litres: Decimal
     total_amount: Decimal
     total_admin_fee: Decimal
+    total_admin_fee_vat: Decimal = Decimal("0")
     grand_total: Decimal
 
 
+class DieselSupplierReconciliationLine(BaseModel):
+    """One fill-up behind a supplier's monthly diesel total."""
+    id: int
+    fillup_date: date_type
+    truck_registration: Optional[str] = None
+    slip_number: Optional[str] = None
+    trans_id: Optional[str] = None
+    invoice_number: Optional[str] = None
+    supplier_invoice_id: Optional[int] = None
+    statement_month: Optional[int] = None
+    statement_year: Optional[int] = None
+    diesel_type: Optional[str] = None
+    litres: Decimal
+    rate_per_litre: Decimal
+    amount: Decimal
+    admin_fee_amount: Decimal
+    admin_fee_vat: Decimal
+    total_amount: Decimal
+    verified: bool = False
+    rate_pending: bool = False
+
+
 class DieselSupplierReconciliation(BaseModel):
+    supplier_id: int
     supplier_name: str
     fillup_count: int
     total_litres: Decimal
     total_amount: Decimal
     total_admin_fee: Decimal
+    total_admin_fee_vat: Decimal = Decimal("0")
     grand_total: Decimal
     verified_amount: Decimal
     unverified_amount: Decimal
+    fillups: List[DieselSupplierReconciliationLine] = []
 
 
 class DieselInvoiceReconciliationRow(BaseModel):
@@ -2165,6 +2191,7 @@ class DieselAnnualMonthRow(BaseModel):
     total_litres: Decimal
     total_amount: Decimal
     total_admin_fee: Decimal
+    total_admin_fee_vat: Decimal = Decimal("0")
     grand_total: Decimal
 
 

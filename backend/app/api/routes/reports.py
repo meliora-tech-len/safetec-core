@@ -13,6 +13,7 @@ from app.models.models import (
     Truck, Subcontractor, ReportExclusion, TruckMonthlyExpenses, ProfitSheetReportRow,
 )
 from app.services.audit import log_action
+from app.services.diesel_service import apply_fillup_period
 from app.schemas.schemas import (
     ReportExclusionCreate, ProfitSheetReportSave, ProfitSheetReportOut,
     ProfitSheetReportRowOut, ProfitSheetReportAuto, ProfitSheetReportOverrides,
@@ -1506,15 +1507,16 @@ def profit_sheet_report(
     loads_by_truck = {r.truck_id: r for r in load_rows}
 
     # Diesel is the grand total (fuel + admin fee) — the cost actually carried.
+    # Scoped by statement period like the loads above (and like the Diesel
+    # module), with archived fill-ups excluded so re-linked placeholders don't
+    # double-book against the truck.
     diesel_rows = (
-        db.query(
-            DieselFillUp.truck_id,
-            func.coalesce(func.sum(DieselFillUp.total_amount), 0).label('total'),
-        )
-        .filter(
-            DieselFillUp.truck_id.in_(truck_ids),
-            func.extract('year', DieselFillUp.fillup_date) == year,
-            func.extract('month', DieselFillUp.fillup_date) == month,
+        apply_fillup_period(
+            db.query(
+                DieselFillUp.truck_id,
+                func.coalesce(func.sum(DieselFillUp.total_amount), 0).label('total'),
+            ).filter(DieselFillUp.truck_id.in_(truck_ids)),
+            year, month,
         )
         .group_by(DieselFillUp.truck_id)
         .all()
