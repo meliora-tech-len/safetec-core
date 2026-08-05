@@ -405,6 +405,23 @@ export const viewSupplierInvoiceAttachment = async (id) => {
   setTimeout(() => window.URL.revokeObjectURL(url), 60_000)
 }
 
+// Monthly statement (the supplier's consolidated document + note for a whole
+// statement month, shown on the month header — not tied to a single invoice)
+export const updateSupplierStatementNote = (supplierId, year, month, note) =>
+  api.put(`/supplier-invoices/statements/${supplierId}/${year}/${month}/note`, { note })
+export const uploadSupplierStatementDocument = (supplierId, year, month, formData) =>
+  api.post(`/supplier-invoices/statements/${supplierId}/${year}/${month}/document`, formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } })
+export const deleteSupplierStatementDocument = (supplierId, year, month) =>
+  api.delete(`/supplier-invoices/statements/${supplierId}/${year}/${month}/document`)
+export const viewSupplierStatementDocument = async (supplierId, year, month) => {
+  const res = await api.get(`/supplier-invoices/statements/${supplierId}/${year}/${month}/document`,
+    { responseType: 'blob' })
+  const url = window.URL.createObjectURL(res.data)
+  window.open(url, '_blank')
+  setTimeout(() => window.URL.revokeObjectURL(url), 60_000)
+}
+
 // ── Truck Monthly Expenses (Profit Sheet) ─────────────────────────────────────
 export const getTruckMonthlyExpenses = (truckId, params) =>
   api.get(`/fleet/trucks/${truckId}/monthly-expenses`, { params })

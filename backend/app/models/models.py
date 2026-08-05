@@ -520,6 +520,49 @@ class SupplierInvoiceLineItem(Base):
     invoice = relationship("SupplierInvoice", back_populates="line_items")
 
 
+class SupplierStatement(Base):
+    """The supplier's own month-end statement for one supplier + statement period.
+
+    Distinct from SupplierInvoice.attachment_*, which is the document for a single
+    invoice line: this is the ONE consolidated statement the supplier sends for the
+    whole month, plus a free-text note about that month. Rows are created lazily —
+    a month with neither a document nor a note has no row at all — and keyed on the
+    statement period the Supplier Profile groups by (supplier + month + year), not
+    on entity, so a supplier billing under two entities still has one statement per
+    month, exactly as the profile displays it.
+    """
+    __tablename__ = "supplier_statements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False, index=True)
+    statement_month = Column(Integer, nullable=False)
+    statement_year = Column(Integer, nullable=False)
+
+    note = Column(Text)
+    note_updated_at = Column(DateTime(timezone=True))
+    note_updated_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Stored and streamed exactly like the per-invoice attachment (private bucket /
+    # private uploads dir, never a public URL).
+    attachment_key = Column(String(500))
+    attachment_filename = Column(String(300))
+    attachment_content_type = Column(String(100))
+    attachment_size = Column(Integer)
+    attachment_uploaded_at = Column(DateTime(timezone=True))
+    attachment_uploaded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    supplier = relationship("Supplier")
+    note_updated_by = relationship("User", foreign_keys=[note_updated_by_id])
+    attachment_uploaded_by = relationship("User", foreign_keys=[attachment_uploaded_by_id])
+
+    __table_args__ = (
+        UniqueConstraint("supplier_id", "statement_year", "statement_month", name="uq_supplier_statement_period"),
+    )
+
+
 # ── Audit Log ─────────────────────────────────────────────────────────────────
 
 class AuditLog(Base):

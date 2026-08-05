@@ -11,12 +11,13 @@ from typing import List, Optional
 
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, PaymentTermType, Truck, TruckLoad, DieselFillUp, BusinessEntity
+from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, SupplierStatement, PaymentTermType, Truck, TruckLoad, DieselFillUp, BusinessEntity
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
     SupplierInvoicePeriodUpdate,
     SupplierInvoiceLineItemCreate, SupplierInvoiceLineItemOut,
-    SupplierStatementGroup, SupplierPayablesDashboard, PendingVerificationInvoice,
+    SupplierStatementGroup, SupplierStatementOut, SupplierStatementNoteUpdate,
+    SupplierPayablesDashboard, PendingVerificationInvoice,
     SupplierCurrentPayable, Supplier30DaysPayable, SupplierInvoiceLineSummary,
     BulkImportPayload, BulkImportResult,
     DieselConflict, DieselConflictSide, DieselConflictResolution,
@@ -965,11 +966,19 @@ def list_supplier_invoices(
             groups[key] = []
         groups[key].append(inv)
 
+    # Month-header statements (document + note), keyed the same way as the groups.
+    # Fetched for the whole supplier in one query; months without one stay null.
+    statements = {
+        (st.statement_year, st.statement_month): st
+        for st in db.query(SupplierStatement).filter(SupplierStatement.supplier_id == supplier_id).all()
+    }
+
     result = []
     for (year, month), group_invs in groups.items():
         subtotal = sum(i.amount for i in group_invs)
         due_date = group_invs[0].payment_due_date if group_invs else None
         is_fully_paid = all(i.is_paid for i in group_invs)
+        st = statements.get((year, month))
         result.append(SupplierStatementGroup(
             statement_month=month,
             statement_year=year,
@@ -977,6 +986,7 @@ def list_supplier_invoices(
             subtotal=subtotal,
             payment_due_date=due_date,
             is_fully_paid=is_fully_paid,
+            statement=_statement_out(db, st) if st else None,
         ))
 
     return result
@@ -1680,6 +1690,198 @@ def mark_statement_paid(
     )
     db.commit()
     return {"detail": f"{len(unpaid)} invoice(s) marked as paid"}
+
+
+# ── Monthly statement: document + note ────────────────────────────────────────
+# The supplier's consolidated statement for a whole month, shown on the month
+# header next to the totals. Independent of the per-invoice attachments above and
+# of the verification lock — a statement document/note changes no financial
+# figures, so these endpoints deliberately do NOT call ensure_not_locked.
+
+def _statement_out(db: Session, st: SupplierStatement) -> SupplierStatementOut:
+    """Serialise a statement, resolving the two "by" users to display names."""
+    user_ids = {i for i in (st.note_updated_by_id, st.attachment_uploaded_by_id) if i}
+    names = {}
+    if user_ids:
+        names = {
+            uid: full_name
+            for uid, full_name in db.query(User.id, User.full_name).filter(User.id.in_(user_ids)).all()
+        }
+    return SupplierStatementOut(
+        id=st.id,
+        supplier_id=st.supplier_id,
+        statement_month=st.statement_month,
+        statement_year=st.statement_year,
+        note=st.note,
+        note_updated_at=st.note_updated_at,
+        note_updated_by_name=names.get(st.note_updated_by_id),
+        document_filename=st.attachment_filename,
+        document_uploaded_at=st.attachment_uploaded_at,
+        document_uploaded_by_name=names.get(st.attachment_uploaded_by_id),
+    )
+
+
+def _statement_supplier(db: Session, supplier_id: int, user: User) -> Supplier:
+    supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    _check_entity_access(supplier.entity_id, user)
+    return supplier
+
+
+def _get_statement(db: Session, supplier_id: int, year: int, month: int) -> Optional[SupplierStatement]:
+    return (
+        db.query(SupplierStatement)
+        .filter(
+            SupplierStatement.supplier_id == supplier_id,
+            SupplierStatement.statement_year == year,
+            SupplierStatement.statement_month == month,
+        )
+        .first()
+    )
+
+
+def _get_or_create_statement(db: Session, supplier_id: int, year: int, month: int) -> SupplierStatement:
+    """Statements are created lazily — a month only gets a row once the user
+    actually attaches a document or writes a note for it."""
+    st = _get_statement(db, supplier_id, year, month)
+    if st is None:
+        st = SupplierStatement(supplier_id=supplier_id, statement_year=year, statement_month=month)
+        db.add(st)
+        db.flush()
+    return st
+
+
+@router.put("/statements/{supplier_id}/{year}/{month}/note", response_model=SupplierStatementOut)
+def update_statement_note(
+    supplier_id: int,
+    year: int,
+    month: int,
+    data: SupplierStatementNoteUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add, update or remove the note for a supplier's statement month. A blank
+    note clears it; the row itself stays (it may still hold the document)."""
+    supplier = _statement_supplier(db, supplier_id, current_user)
+
+    note = (data.note or "").strip() or None
+    st = _get_or_create_statement(db, supplier_id, year, month)
+    previous = st.note
+    st.note = note
+    st.note_updated_at = datetime.now(timezone.utc) if note else None
+    st.note_updated_by_id = current_user.id if note else None
+
+    verb = "Removed" if not note else ("Updated" if previous else "Added")
+    log_action(
+        db, "supplier_statement.note_updated", user_id=current_user.id,
+        entity_id=supplier.entity_id, resource_type="supplier_statement", resource_id=st.id,
+        description=f"{verb} statement note for {supplier.name} {month}/{year}",
+        old_values={"note": previous},
+        new_values={"note": note},
+    )
+    db.commit()
+    db.refresh(st)
+    return _statement_out(db, st)
+
+
+@router.post("/statements/{supplier_id}/{year}/{month}/document", response_model=SupplierStatementOut)
+async def upload_statement_document(
+    supplier_id: int,
+    year: int,
+    month: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Upload (or replace) the supplier's statement document for the whole month."""
+    supplier = _statement_supplier(db, supplier_id, current_user)
+
+    ext, content_type = _resolve_attach_type(file.content_type, file.filename)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Only PDF, Excel, JPG, PNG or WebP files are allowed")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_ATTACH_BYTES:
+        raise HTTPException(status_code=400, detail="Statement must be under 25MB")
+
+    st = _get_or_create_statement(db, supplier_id, year, month)
+    # A replacement with a different extension leaves the old object behind —
+    # the key is prefix+id+ext, so only a same-extension re-upload overwrites it.
+    if st.attachment_key:
+        new_key = f"stmt_{st.id}.{ext}"
+        if st.attachment_key != new_key:
+            _attach_delete(st.attachment_key)
+
+    st.attachment_key = _attach_save(st.id, file_bytes, ext, content_type, prefix="stmt")
+    st.attachment_filename = file.filename or f"statement.{ext}"
+    st.attachment_content_type = content_type
+    st.attachment_size = len(file_bytes)
+    st.attachment_uploaded_at = datetime.now(timezone.utc)
+    st.attachment_uploaded_by_id = current_user.id
+
+    log_action(
+        db, "supplier_statement.document_added", user_id=current_user.id,
+        entity_id=supplier.entity_id, resource_type="supplier_statement", resource_id=st.id,
+        description=f"Attached statement '{st.attachment_filename}' to {supplier.name} {month}/{year}",
+    )
+    db.commit()
+    db.refresh(st)
+    return _statement_out(db, st)
+
+
+@router.get("/statements/{supplier_id}/{year}/{month}/document")
+def view_statement_document(
+    supplier_id: int,
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _statement_supplier(db, supplier_id, current_user)
+    st = _get_statement(db, supplier_id, year, month)
+    if not st or not st.attachment_key:
+        raise HTTPException(status_code=404, detail="No statement document for this month")
+
+    file_bytes = _attach_read(st.attachment_key)
+    filename = st.attachment_filename or st.attachment_key
+    return Response(
+        content=file_bytes,
+        media_type=st.attachment_content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.delete("/statements/{supplier_id}/{year}/{month}/document", response_model=SupplierStatementOut)
+def delete_statement_document(
+    supplier_id: int,
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    supplier = _statement_supplier(db, supplier_id, current_user)
+    st = _get_statement(db, supplier_id, year, month)
+    if not st or not st.attachment_key:
+        raise HTTPException(status_code=404, detail="No statement document for this month")
+
+    removed_name = st.attachment_filename
+    _attach_delete(st.attachment_key)
+    st.attachment_key = None
+    st.attachment_filename = None
+    st.attachment_content_type = None
+    st.attachment_size = None
+    st.attachment_uploaded_at = None
+    st.attachment_uploaded_by_id = None
+
+    log_action(
+        db, "supplier_statement.document_removed", user_id=current_user.id,
+        entity_id=supplier.entity_id, resource_type="supplier_statement", resource_id=st.id,
+        description=f"Removed statement '{removed_name}' from {supplier.name} {month}/{year}",
+    )
+    db.commit()
+    db.refresh(st)
+    return _statement_out(db, st)
 
 
 # ── Line item endpoints ───────────────────────────────────────────────────────

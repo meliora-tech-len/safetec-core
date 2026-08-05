@@ -10,6 +10,9 @@ backend/.venv/
 
 # ── Environment / Secrets ─────────────────────────────────────────────────────
 backend/.env
+# The real server file (DB password, service-role key, SMTP password). Only
+# .env.production.example belongs in the repo — never a copy pulled off the box.
+backend/.env.production
 frontend/.env
 frontend/.env.local
 frontend/.env.development

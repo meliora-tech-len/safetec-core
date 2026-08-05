@@ -10,6 +10,8 @@ import {
   finalizeSupplierInvoice, bulkImportSupplierInvoices, resolveSupplierDieselConflicts,
   getVerifications, verifyValue, finalizeValue,
   uploadSupplierInvoiceAttachment, deleteSupplierInvoiceAttachment, viewSupplierInvoiceAttachment,
+  updateSupplierStatementNote, uploadSupplierStatementDocument,
+  deleteSupplierStatementDocument, viewSupplierStatementDocument,
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { useLocalState } from '../hooks/useLocalState'
@@ -890,6 +892,200 @@ function PaymentTermBadge({ term }) {
   )
 }
 
+// ── Month statement bar ───────────────────────────────────────────────────────
+// Sits under each month's totals header. Holds the ONE consolidated statement the
+// supplier sends for the whole month (same upload/view/replace/remove flow as a
+// per-invoice document, just keyed on the period instead of an invoice) plus a
+// free-text note for the month. Rendered whether the month is open or collapsed,
+// so the note stays visible.
+function MonthStatementBar({ supplierId, year, month, statement, onChange }) {
+  const fileRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [editingNote, setEditingNote] = useState(false)
+  const [noteDraft, setNoteDraft] = useState('')
+
+  const hasDoc = !!statement?.has_document
+  const note = statement?.note || ''
+
+  const pickFile = () => {
+    if (fileRef.current) {
+      fileRef.current.value = ''   // allow re-picking the same filename
+      fileRef.current.click()
+    }
+  }
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBusy(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const { data } = await uploadSupplierStatementDocument(supplierId, year, month, formData)
+      onChange(data)
+      toast.success('Statement uploaded')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally { setBusy(false) }
+  }
+
+  const handleView = async () => {
+    try {
+      await viewSupplierStatementDocument(supplierId, year, month)
+    } catch (err) {
+      // The month still loaded fine — only the stored file is unreachable. The
+      // error body is a Blob here, so errorMessage() can't read its detail.
+      if (err?.response?.status === 404) {
+        toast.error('This statement is no longer in storage — re-upload it to restore the file.')
+      } else {
+        toast.error(errorMessage(err))
+      }
+    }
+  }
+
+  const handleRemoveDoc = async () => {
+    if (!confirm('Remove the statement document for this month?')) return
+    setBusy(true)
+    try {
+      const { data } = await deleteSupplierStatementDocument(supplierId, year, month)
+      onChange(data)
+      toast.success('Statement removed')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally { setBusy(false) }
+  }
+
+  const saveNote = async (value) => {
+    setBusy(true)
+    try {
+      const { data } = await updateSupplierStatementNote(supplierId, year, month, value)
+      onChange(data)
+      setEditingNote(false)
+      toast.success(value.trim() ? 'Note saved' : 'Note removed')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally { setBusy(false) }
+  }
+
+  const startEditNote = () => { setNoteDraft(note); setEditingNote(true) }
+
+  const btn = { fontSize: 12, padding: '3px 8px' }
+
+  return (
+    <div
+      onClick={e => e.stopPropagation()}
+      style={{
+        flexBasis: '100%',
+        display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '8px 20px',
+        paddingTop: 8, marginTop: 2, borderTop: '1px dashed var(--border)',
+        fontSize: 12,
+        // The header itself is a click-to-collapse target; this row is not.
+        cursor: 'default', userSelect: 'text',
+      }}
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        accept="application/pdf,image/png,image/jpeg,image/webp,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+        style={{ display: 'none' }}
+        onChange={handleFile}
+      />
+
+      {/* Statement document for the whole month */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 24 }}>
+        <span style={{ color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, fontSize: 10 }}>
+          Statement
+        </span>
+        {hasDoc ? (
+          <>
+            <Paperclip size={12} color="var(--accent)" />
+            <span
+              title={statement.document_uploaded_by_name
+                ? `Uploaded by ${statement.document_uploaded_by_name}${statement.document_uploaded_at ? ` on ${formatDate(statement.document_uploaded_at)}` : ''}`
+                : undefined}
+              style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {statement.document_filename}
+            </span>
+            <button className="btn-ghost" style={btn} onClick={handleView} title="View statement">
+              <Eye size={12} />
+            </button>
+            <button className="btn-ghost" style={btn} disabled={busy} onClick={pickFile} title="Replace statement">
+              <Upload size={12} />
+            </button>
+            <button className="btn-ghost" style={btn} disabled={busy} onClick={handleRemoveDoc} title="Remove statement">
+              <X size={12} color="var(--danger)" />
+            </button>
+          </>
+        ) : (
+          <button className="btn-ghost" style={btn} disabled={busy} onClick={pickFile}>
+            <Upload size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
+            {busy ? 'Uploading…' : 'Upload statement'}
+          </button>
+        )}
+      </div>
+
+      {/* Month note */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flex: 1, minWidth: 260, minHeight: 24 }}>
+        <span style={{ color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, fontSize: 10, paddingTop: 4 }}>
+          Note
+        </span>
+        {editingNote ? (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flex: 1 }}>
+            <textarea
+              autoFocus
+              value={noteDraft}
+              onChange={e => setNoteDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { e.preventDefault(); setEditingNote(false) }
+                // Enter saves; Shift+Enter adds a line (notes are often multi-line).
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveNote(noteDraft) }
+              }}
+              rows={2}
+              placeholder="Note for this month…"
+              style={{
+                flex: 1, minWidth: 200, padding: '4px 8px', fontSize: 12, resize: 'vertical',
+                background: 'var(--bg-input, var(--bg-card))', border: '1px solid var(--border)',
+                borderRadius: 5, color: 'var(--text-primary)', outline: 'none',
+              }}
+            />
+            <button className="btn btn-icon btn-primary" disabled={busy} onClick={() => saveNote(noteDraft)} title="Save (Enter)">
+              <Save size={13} />
+            </button>
+            <button className="btn btn-icon btn-ghost" onClick={() => setEditingNote(false)} title="Cancel (Esc)">
+              <X size={13} />
+            </button>
+          </div>
+        ) : note ? (
+          <>
+            <span
+              onClick={startEditNote}
+              title={statement?.note_updated_by_name
+                ? `Last updated by ${statement.note_updated_by_name}${statement.note_updated_at ? ` on ${formatDate(statement.note_updated_at)}` : ''}`
+                : 'Click to edit'}
+              style={{ flex: 1, cursor: 'pointer', whiteSpace: 'pre-wrap', paddingTop: 3 }}
+            >
+              {note}
+            </span>
+            <button className="btn-ghost" style={btn} onClick={startEditNote} title="Edit note">Edit</button>
+            <button
+              className="btn-ghost" style={btn} disabled={busy} title="Remove note"
+              onClick={() => { if (confirm('Remove the note for this month?')) saveNote('') }}
+            >
+              <X size={12} color="var(--danger)" />
+            </button>
+          </>
+        ) : (
+          <button className="btn-ghost" style={btn} disabled={busy} onClick={startEditNote}>
+            <Plus size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
+            Add note
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function SupplierProfilePage() {
   const { supplierId } = useParams()
   const navigate = useNavigate()
@@ -1331,6 +1527,15 @@ export default function SupplierProfilePage() {
       ...g,
       invoices: g.invoices.map(i => i.id === updated.id ? { ...i, ...updated } : i),
     })))
+
+  // Same idea for a month's statement document/note — the statement endpoints
+  // return the whole statement, so drop it straight onto its group.
+  const patchStatement = (updated) =>
+    setGroups(prev => prev.map(g => (
+      g.statement_year === updated.statement_year && g.statement_month === updated.statement_month
+        ? { ...g, statement: updated }
+        : g
+    )))
 
   const handleVerify = async (inv, intent) => {
     try {
@@ -1964,7 +2169,13 @@ export default function SupplierProfilePage() {
             borderColor: group.is_fully_paid ? 'var(--border)' : unpaidCount > 0 ? '#d97706' : 'var(--border)',
           }}>
             {/* Group header */}
-            <div style={styles.groupHeader} onClick={() => toggleCollapse(key)}>
+            {/* Closed off with a solid rule when the month is open: the invoice
+                table's head shares this section's --bg-surface background, so
+                without it the statement row reads as the table's first line. */}
+            <div
+              style={{ ...styles.groupHeader, ...(isOpen ? { borderBottom: '1px solid var(--border)' } : null) }}
+              onClick={() => toggleCollapse(key)}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 <span style={{ fontWeight: 700, fontSize: 15 }}>
@@ -2005,6 +2216,17 @@ export default function SupplierProfilePage() {
                   </button>
                 )}
               </div>
+
+              {/* Whole-month statement document + note — flexBasis 100% drops it
+                  onto its own line INSIDE the header, so it sits with the month
+                  and its totals rather than reading as a separate strip. */}
+              <MonthStatementBar
+                supplierId={supplierId}
+                year={group.statement_year}
+                month={group.statement_month}
+                statement={group.statement}
+                onChange={patchStatement}
+              />
             </div>
 
             {/* Invoice table */}

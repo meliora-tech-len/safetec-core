@@ -1859,6 +1859,37 @@ class SupplierInvoiceOut(BaseModel):
         from_attributes = True
 
 
+class SupplierStatementOut(BaseModel):
+    """The supplier's whole-month statement: one consolidated document plus a note,
+    attached to the statement period rather than to any single invoice."""
+    id: int
+    supplier_id: int
+    statement_month: int
+    statement_year: int
+    note: Optional[str] = None
+    note_updated_at: Optional[datetime] = None
+    note_updated_by_name: Optional[str] = None
+    # Document metadata only — never the storage key (the bytes are streamed back
+    # through the authenticated endpoint, like the per-invoice attachment).
+    document_filename: Optional[str] = None
+    document_uploaded_at: Optional[datetime] = None
+    document_uploaded_by_name: Optional[str] = None
+
+    @computed_field
+    @property
+    def has_document(self) -> bool:
+        return bool(self.document_filename)
+
+    class Config:
+        from_attributes = True
+
+
+class SupplierStatementNoteUpdate(BaseModel):
+    # Empty/blank clears the note (the "remove" action) — the row itself survives
+    # because it may still hold the statement document.
+    note: Optional[str] = None
+
+
 class SupplierStatementGroup(BaseModel):
     statement_month: int
     statement_year: int
@@ -1866,6 +1897,10 @@ class SupplierStatementGroup(BaseModel):
     subtotal: Decimal
     payment_due_date: Optional[datetime] = None
     is_fully_paid: bool
+    # Null until the user uploads a statement document or writes a note for the
+    # month (rows are created lazily). Defaulted so other producers of this schema
+    # — e.g. the subcontractor profile — keep working unchanged.
+    statement: Optional[SupplierStatementOut] = None
 
 
 class PendingVerificationInvoice(BaseModel):

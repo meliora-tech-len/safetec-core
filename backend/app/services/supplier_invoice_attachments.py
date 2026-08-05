@@ -63,10 +63,15 @@ def resolve_attach_type(content_type: str | None, filename: str | None):
     return None, None
 
 
-def save_attachment(invoice_id: int, file_bytes: bytes, ext: str, content_type: str) -> str:
-    """Persist the file and return its storage key (deterministic per invoice, so a
-    re-upload overwrites the previous file)."""
-    key = f"si_{invoice_id}.{ext}"
+def save_attachment(record_id: int, file_bytes: bytes, ext: str, content_type: str,
+                    prefix: str = "si") -> str:
+    """Persist the file and return its storage key (deterministic per record, so a
+    re-upload overwrites the previous file).
+
+    `prefix` namespaces the key by record type — "si" for a single supplier
+    invoice, "stmt" for a supplier's whole-month statement document — so the two
+    never collide on the same id."""
+    key = f"{prefix}_{record_id}.{ext}"
     if IS_LOCAL:
         LOCAL_ATTACH_DIR.mkdir(parents=True, exist_ok=True)
         (LOCAL_ATTACH_DIR / key).write_bytes(file_bytes)
