@@ -50,6 +50,10 @@ const INCOME_SECTION = 'INCOME'
 // taken off Profit to land on Actual Profit — mirroring Johan's sheet.
 const SFT_PERSONAL_SECTIONS = ['PERSONAL NOT ON TRUCK COSTING', 'BUSINESS NOT ON TRUCK COSTING']
 
+// Entities that carry a Bank Info Summary — every trading entity; SP is dormant.
+// (Mirror the backend BANK_INFO_ENTITIES, which is what seeds the rows.)
+const BANK_INFO_ENTITIES = ['SFT', 'OBHI', 'BTP', 'TP', 'BKMO']
+
 // "vat back trailer" is derived, not typed. Almost every vehicle-finance line
 // carries a note of the VAT that will come back on it — "… 01.03.R26915.38 - VAT
 // BACK R133582.50 - END 01.02.2029" — so the note alone marks a dozen lines and
@@ -672,12 +676,15 @@ export default function BudgetsPage() {
     }
   }, [totals, isObhi, months])
 
-  // Safetec's summary is a profit statement for the BASE month alone, not the
-  // three-month window: it answers "what did May earn and what did May cost".
-  // The two forward columns in the grid are cash-flow planning and stay out of it.
+  // A profit statement for the BASE month alone, not the three-month window: it
+  // answers "what did May earn and what did May cost". The two forward columns in
+  // the grid are cash-flow planning and stay out of it. Safetec shows this as its
+  // summary cards; every entity uses its profit figure in the Bank Info Summary,
+  // so it is computed for all of them (the personal split only means anything to
+  // Safetec, whose sections are the only ones that carry it).
   const isSft = (selectedEntityCode || '').toUpperCase() === 'SFT'
-  const sftSummary = useMemo(() => {
-    if (!budget || !isSft || !months.length) return null
+  const baseSummary = useMemo(() => {
+    if (!budget || !months.length) return null
     const { month: bm, year: by } = months[0]
     let income = 0, expenses = 0, personal = 0
     for (const s of budget.sections) {
@@ -694,7 +701,7 @@ export default function BudgetsPage() {
     }
     const profit = income - expenses
     return { income, expenses, profit, personal, actualProfit: profit - personal, baseLabel: `${MONTHS[bm - 1]} ${by}` }
-  }, [budget, isSft, months])
+  }, [budget, months])
 
   // Numeric fields stored straight on the budget — the typed-in figures (Johan's
   // profit, vat back) and the override columns that pin an otherwise-calculated
@@ -761,13 +768,16 @@ export default function BudgetsPage() {
     }
   }
 
-  // The block's figures. Every calculated one can be pinned by its *_override
-  // column; a blank override falls back to the calculation.
+  // The block's figures — all of them this entity's own: the profit comes off the
+  // budget on screen and the vat back is scanned out of its lines. Every calculated
+  // one can be pinned by its *_override column; a blank override falls back to the
+  // calculation.
+  const hasBankInfo = BANK_INFO_ENTITIES.includes((selectedEntityCode || '').toUpperCase())
   const bankInfo = useMemo(() => {
-    if (!budget || !sftSummary) return null
+    if (!budget || !baseSummary || !hasBankInfo) return null
     const rows = budget.bank_rows || []
     const pick = (o, calc) => (o == null ? calc : parseFloat(o))
-    const profit = pick(budget.bank_profit_override, sftSummary.profit)
+    const profit = pick(budget.bank_profit_override, baseSummary.profit)
 
     // Lines that billed their stated VAT back this month (see VAT_BACK_RE).
     const { month: bm, year: by } = months[0]
@@ -794,7 +804,7 @@ export default function BudgetsPage() {
       profitExclVatBack: pick(budget.profit_excl_vat_back_override, profit + vatBack),
       toBePaidTotal: rows.filter(r => r.kind === 'to_be_paid').reduce((s, r) => s + num(r.amount), 0),
     }
-  }, [budget, sftSummary, months])
+  }, [budget, baseSummary, hasBankInfo, months])
 
   // Render helpers for the bank block. Plain functions, not components, so typing
   // into a cell doesn't remount the input and lose focus on every keystroke.
@@ -968,23 +978,23 @@ export default function BudgetsPage() {
           {/* Summary — Safetec shows a base-month profit statement; OBHI reconciles
               per month-group (income vs the expenses that income has to cover);
               every other entity uses the single window total. */}
-          {isSft && sftSummary ? (
+          {isSft && baseSummary ? (
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16 }}>
                 {[
-                  { label: 'Income', value: sftSummary.income },
-                  { label: 'Expenses', value: sftSummary.expenses,
+                  { label: 'Income', value: baseSummary.income },
+                  { label: 'Expenses', value: baseSummary.expenses,
                     hint: 'Every expense section, To Pay + Paid' },
-                  { label: 'Profit', value: sftSummary.profit, big: true,
+                  { label: 'Profit', value: baseSummary.profit, big: true,
                     hint: 'Income − Expenses',
-                    cls: sftSummary.profit < 0 ? ' text-danger' : ' text-success' },
+                    cls: baseSummary.profit < 0 ? ' text-danger' : ' text-success' },
                   { label: "Profit — Johan's Profit Sheet", value: budget.external_profit,
                     hint: 'Click to enter', editable: true },
-                  { label: 'Personal Expenses', value: sftSummary.personal,
+                  { label: 'Personal Expenses', value: baseSummary.personal,
                     hint: 'Personal + Business not on truck costing' },
-                  { label: 'Actual Profit', value: sftSummary.actualProfit, big: true,
+                  { label: 'Actual Profit', value: baseSummary.actualProfit, big: true,
                     hint: 'Profit − Personal Expenses',
-                    cls: sftSummary.actualProfit < 0 ? ' text-danger' : ' text-success' },
+                    cls: baseSummary.actualProfit < 0 ? ' text-danger' : ' text-success' },
                 ].map(c => (
                   <div
                     key={c.label} className="stat-card"
@@ -1016,131 +1026,8 @@ export default function BudgetsPage() {
                 ))}
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
-                {sftSummary.baseLabel} only — the two months that follow are shown in the grid for cash-flow planning and don&apos;t affect these figures.
+                {baseSummary.baseLabel} only — the two months that follow are shown in the grid for cash-flow planning and don&apos;t affect these figures.
               </div>
-
-              {/* Bank Info Summary — account balances are read off the banking system
-                  by hand; the profit line below them is pulled from this budget. */}
-              {bankInfo && (
-                <div className="card" style={{ marginTop: 16, padding: 16 }}>
-                  <button
-                    onClick={() => setBankInfoOpen(o => !o)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none',
-                      padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit',
-                      fontWeight: 700, fontSize: 15, marginBottom: bankInfoOpen ? 12 : 0, width: '100%',
-                    }}
-                    aria-expanded={bankInfoOpen}
-                  >
-                    {bankInfoOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    <span style={{ textDecoration: 'underline' }}>Bank Info Summary</span>
-                    {!bankInfoOpen && (
-                      <span style={{ marginLeft: 'auto', fontWeight: 600, fontSize: 13, color: 'var(--text-muted)' }}>
-                        Profit {formatCurrency(bankInfo.profit)}
-                      </span>
-                    )}
-                  </button>
-
-                  {bankInfoOpen && (<>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <tbody>
-                      {bankInfo.accounts.map(row => (
-                        <tr key={row.id}>
-                          <td style={{ padding: '4px 8px 4px 0', whiteSpace: 'nowrap' }}>{bankCell(row, 'label')}</td>
-                          <td style={{ padding: '4px 8px', width: '45%', color: 'var(--text-muted)', fontSize: 12 }}>
-                            {bankCell(row, 'note', { placeholder: '+ note', style: { fontSize: 12 } })}
-                          </td>
-                          <td style={{ padding: '4px 0', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>
-                            {bankCell(row, 'amount')}
-                          </td>
-                          <td style={{ width: 28, textAlign: 'right' }}>
-                            <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
-                              <Trash2 size={13} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('bank')}>
-                    <Plus size={13} /> Add account
-                  </button>
-
-                  {/* Profit — pulled from the budget above, then adjusted for the VAT back. */}
-                  <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-                      <span style={{ fontSize: 17, fontWeight: 700, textTransform: 'uppercase' }}>
-                        Profit for {sftSummary.baseLabel}
-                      </span>
-                      {overridableAmount('bank_profit_override', bankInfo.profit, { fontSize: 17, fontWeight: 700 })}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                      Pulled from this budget — Income − Expenses
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12,
-                      background: 'rgba(150, 190, 90, 0.22)', padding: '6px 8px', margin: '10px 0 0',
-                      fontStyle: 'italic', fontWeight: 600,
-                    }}
-                  >
-                    <span>vat back trailer</span>
-                    {overridableAmount('vat_back_trailer', bankInfo.vatBack, { fontWeight: 700, fontStyle: 'normal' })}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', margin: '3px 8px 0' }}>
-                    {budget.vat_back_trailer != null
-                      ? 'Typed in — blank it to go back to the lines below'
-                      : bankInfo.vatBackHits.length
-                        ? `Pulled from ${bankInfo.vatBackHits.length} line${bankInfo.vatBackHits.length > 1 ? 's' : ''} billing their stated VAT back this month: ${bankInfo.vatBackHits.map(h => h.name.split(' - ')[0]).join(', ')}`
-                        : 'No line billed its stated VAT back this month — click to enter one'}
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '8px 8px 0' }}>
-                    <span>profit would have been without vat back</span>
-                    {overridableAmount('profit_excl_vat_back_override', bankInfo.profitExclVatBack, { fontWeight: 700 })}
-                  </div>
-
-                  {/* TO BE PAID */}
-                  <div style={{ border: '1px solid var(--border)', padding: 12, marginTop: 16 }}>
-                    <div style={{ fontWeight: 700, fontStyle: 'italic', textDecoration: 'underline', marginBottom: 6 }}>
-                      TO BE PAID:
-                    </div>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                      <tbody>
-                        {bankInfo.toBePaid.map(row => (
-                          <tr key={row.id}>
-                            <td style={{ padding: '3px 8px 3px 0' }}>{bankCell(row, 'label')}</td>
-                            <td style={{ padding: '3px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                              {bankCell(row, 'amount')}
-                            </td>
-                            <td style={{ width: 28, textAlign: 'right' }}>
-                              <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
-                                <Trash2 size={13} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                        <tr>
-                          <td style={{ padding: '6px 8px 0 0' }} />
-                          <td style={{
-                            padding: '6px 0 0', textAlign: 'right', fontWeight: 700, fontStyle: 'italic',
-                            borderTop: '1px solid var(--border)', whiteSpace: 'nowrap',
-                          }}>
-                            {formatCurrency(bankInfo.toBePaidTotal)}
-                          </td>
-                          <td />
-                        </tr>
-                      </tbody>
-                    </table>
-                    <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('to_be_paid')}>
-                      <Plus size={13} /> Add line
-                    </button>
-                  </div>
-                  </>)}
-                </div>
-              )}
             </div>
           ) : isObhi && obhiSplit ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 24 }}>
@@ -1180,6 +1067,135 @@ export default function BudgetsPage() {
                   <div className={`stat-card-value${c.cls || ''}`} style={{ fontSize: 24 }}>{formatCurrency(c.value)}</div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Bank Info Summary — this entity's account balances, read off the
+              banking system by hand; the profit line below them is pulled from
+              the budget on screen. Rows are the user's to rename or delete. */}
+          {bankInfo && (
+            <div className="card" style={{ marginBottom: 24, padding: 16 }}>
+              <button
+                onClick={() => setBankInfoOpen(o => !o)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none',
+                  padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit',
+                  fontWeight: 700, fontSize: 15, marginBottom: bankInfoOpen ? 12 : 0, width: '100%',
+                }}
+                aria-expanded={bankInfoOpen}
+              >
+                {bankInfoOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                <span style={{ textDecoration: 'underline' }}>Bank Info Summary</span>
+                {!bankInfoOpen && isSft && (
+                  <span style={{ marginLeft: 'auto', fontWeight: 600, fontSize: 13, color: 'var(--text-muted)' }}>
+                    Profit {formatCurrency(bankInfo.profit)}
+                  </span>
+                )}
+              </button>
+
+              {bankInfoOpen && (<>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <tbody>
+                  {bankInfo.accounts.map(row => (
+                    <tr key={row.id}>
+                      <td style={{ padding: '4px 8px 4px 0', whiteSpace: 'nowrap' }}>{bankCell(row, 'label')}</td>
+                      <td style={{ padding: '4px 8px', width: '45%', color: 'var(--text-muted)', fontSize: 12 }}>
+                        {bankCell(row, 'note', { placeholder: '+ note', style: { fontSize: 12 } })}
+                      </td>
+                      <td style={{ padding: '4px 0', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                        {bankCell(row, 'amount')}
+                      </td>
+                      <td style={{ width: 28, textAlign: 'right' }}>
+                        <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('bank')}>
+                <Plus size={13} /> Add account
+              </button>
+
+              {/* Everything below the account list is Safetec's sheet: the profit
+                  line, the trailer VAT-back adjustment off it, and the TO BE PAID
+                  block. The other entities keep the account balances only. */}
+              {isSft && (<>
+              {/* Profit — pulled from the budget above, then adjusted for the VAT back. */}
+              <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                  <span style={{ fontSize: 17, fontWeight: 700, textTransform: 'uppercase' }}>
+                    Profit for {baseSummary.baseLabel}
+                  </span>
+                  {overridableAmount('bank_profit_override', bankInfo.profit, { fontSize: 17, fontWeight: 700 })}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                  Pulled from this budget — Income − Expenses
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12,
+                  background: 'rgba(150, 190, 90, 0.22)', padding: '6px 8px', margin: '10px 0 0',
+                  fontStyle: 'italic', fontWeight: 600,
+                }}
+              >
+                <span>vat back trailer</span>
+                {overridableAmount('vat_back_trailer', bankInfo.vatBack, { fontWeight: 700, fontStyle: 'normal' })}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', margin: '3px 8px 0' }}>
+                {budget.vat_back_trailer != null
+                  ? 'Typed in — blank it to go back to the lines below'
+                  : bankInfo.vatBackHits.length
+                    ? `Pulled from ${bankInfo.vatBackHits.length} line${bankInfo.vatBackHits.length > 1 ? 's' : ''} billing their stated VAT back this month: ${bankInfo.vatBackHits.map(h => h.name.split(' - ')[0]).join(', ')}`
+                    : 'No line billed its stated VAT back this month — click to enter one'}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '8px 8px 0' }}>
+                <span>profit would have been without vat back</span>
+                {overridableAmount('profit_excl_vat_back_override', bankInfo.profitExclVatBack, { fontWeight: 700 })}
+              </div>
+
+              {/* TO BE PAID */}
+              <div style={{ border: '1px solid var(--border)', padding: 12, marginTop: 16 }}>
+                <div style={{ fontWeight: 700, fontStyle: 'italic', textDecoration: 'underline', marginBottom: 6 }}>
+                  TO BE PAID:
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <tbody>
+                    {bankInfo.toBePaid.map(row => (
+                      <tr key={row.id}>
+                        <td style={{ padding: '3px 8px 3px 0' }}>{bankCell(row, 'label')}</td>
+                        <td style={{ padding: '3px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {bankCell(row, 'amount')}
+                        </td>
+                        <td style={{ width: 28, textAlign: 'right' }}>
+                          <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
+                            <Trash2 size={13} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td style={{ padding: '6px 8px 0 0' }} />
+                      <td style={{
+                        padding: '6px 0 0', textAlign: 'right', fontWeight: 700, fontStyle: 'italic',
+                        borderTop: '1px solid var(--border)', whiteSpace: 'nowrap',
+                      }}>
+                        {formatCurrency(bankInfo.toBePaidTotal)}
+                      </td>
+                      <td />
+                    </tr>
+                  </tbody>
+                </table>
+                <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('to_be_paid')}>
+                  <Plus size={13} /> Add line
+                </button>
+              </div>
+              </>)}
+              </>)}
             </div>
           )}
 

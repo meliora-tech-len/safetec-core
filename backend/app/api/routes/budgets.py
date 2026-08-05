@@ -70,11 +70,13 @@ def _sections_for_entity(entity) -> list:
     return [(name, st) for (name, st) in DEFAULT_SECTIONS if name not in excluded]
 
 
-# Bank Info Summary — Safetec only, same gate as the profit summary above it. Labels
-# come from Larissa's sheet; amounts are read off the banking system by hand, so a
-# new budget starts with the rows present and empty. The rows are freely
-# editable/deletable afterwards, so this is a starting point, not a fixed schema.
-BANK_INFO_ENTITIES = {"SFT"}
+# Bank Info Summary — every trading entity keeps its own account balances, so the
+# block is seeded for all of them (SP, the dormant one, is left out). Labels come
+# from Larissa's Safetec sheet and are seeded as a STARTING POINT for the others:
+# amounts are read off the banking system by hand, so a new budget starts with the
+# rows present and empty, and every row is freely renamable/deletable afterwards —
+# an entity that has no money market accounts just deletes those rows.
+BANK_INFO_ENTITIES = {"SFT", "OBHI", "BTP", "TP", "BKMO"}
 DEFAULT_BANK_ROWS = [
     ("bank", "CURRENT ACC"),
     ("bank", "MONEY MARKET 001"),
@@ -88,18 +90,26 @@ DEFAULT_BANK_ROWS = [
 ]
 BANK_ROW_KINDS = {"bank", "to_be_paid"}
 
+# The 'to_be_paid' list, the profit line and the vat-back adjustment under it are
+# Safetec's sheet alone; the other entities show the account balances only, so they
+# are seeded with the 'bank' rows and nothing else.
+FULL_BANK_BLOCK_ENTITIES = {"SFT"}
+
 
 def _seed_bank_rows(budget: Budget, entity, db: Session) -> int:
-    """Seed the Bank Info Summary rows (labels only) on a new Safetec budget."""
-    if (entity.code or "").upper() not in BANK_INFO_ENTITIES:
+    """Seed the Bank Info Summary rows (labels only) on a new budget."""
+    code = (entity.code or "").upper()
+    if code not in BANK_INFO_ENTITIES:
         return 0
     existing = db.query(BudgetBankRow).filter(BudgetBankRow.budget_id == budget.id).count()
     if existing:
         return 0
-    for order, (kind, label) in enumerate(DEFAULT_BANK_ROWS):
+    rows = [(k, l) for (k, l) in DEFAULT_BANK_ROWS
+            if k == "bank" or code in FULL_BANK_BLOCK_ENTITIES]
+    for order, (kind, label) in enumerate(rows):
         db.add(BudgetBankRow(budget_id=budget.id, kind=kind, label=label, sort_order=order))
     db.flush()
-    return len(DEFAULT_BANK_ROWS)
+    return len(rows)
 
 
 # ── Permission helpers ────────────────────────────────────────────────────────
