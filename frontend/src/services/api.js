@@ -461,6 +461,10 @@ export const deleteBudget = (id) => api.delete(`/budgets/${id}`)
 export const addBudgetSection = (budgetId, data) => api.post(`/budgets/${budgetId}/sections`, data)
 export const updateBudgetSection = (sectionId, data) => api.patch(`/budgets/sections/${sectionId}`, data)
 export const deleteBudgetSection = (sectionId) => api.delete(`/budgets/sections/${sectionId}`)
+// Put back standard sections the budget is missing (deleted by mistake, or added to
+// the defaults later). Omit `names` to restore all of them. Structure only — empty.
+export const restoreBudgetSections = (budgetId, names = null) =>
+  api.post(`/budgets/${budgetId}/sections/restore`, names ? { names } : {})
 export const addBudgetLine = (sectionId, data) => api.post(`/budgets/sections/${sectionId}/lines`, data)
 export const updateBudgetLine = (lineId, data) => api.patch(`/budgets/lines/${lineId}`, data)
 export const deleteBudgetLine = (lineId) => api.delete(`/budgets/lines/${lineId}`)

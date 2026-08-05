@@ -14,7 +14,7 @@ from app.models.models import (
 from app.schemas.schemas import (
     BudgetCreate, BudgetUpdate, BudgetOut, BudgetDetailOut,
     BudgetBankRowCreate, BudgetBankRowUpdate, BudgetBankRowOut,
-    BudgetSectionCreate, BudgetSectionUpdate, BudgetSectionOut,
+    BudgetSectionCreate, BudgetSectionUpdate, BudgetSectionOut, BudgetSectionRestore,
     BudgetLineCreate, BudgetLineUpdate, BudgetLineOut,
     BudgetLineValueIn, BudgetLineValueOut,
     BudgetLineTemplateCreate, BudgetLineTemplateUpdate, BudgetLineTemplateOut,
@@ -159,11 +159,27 @@ def _get_line_checked(line_id: int, user: User, db: Session) -> BudgetLine:
     return line
 
 
+def _missing_default_sections(budget: Budget) -> list:
+    """The entity's standard sections this budget hasn't got, in default order.
+
+    A deleted section leaves no trace of itself, so the page needs to be told what
+    *should* be there — that's what drives the "restore" prompt."""
+    have = {(s.name or "").strip().upper() for s in budget.sections}
+    return [(name, stype) for (name, stype) in _sections_for_entity(budget.entity)
+            if name.upper() not in have]
+
+
 def _load_detail(budget_id: int, db: Session) -> Budget:
-    return db.query(Budget).options(
+    budget = db.query(Budget).options(
         joinedload(Budget.sections).joinedload(BudgetSection.lines).joinedload(BudgetLine.values),
         joinedload(Budget.bank_rows),
     ).filter(Budget.id == budget_id).first()
+    if budget:
+        # Not a mapped column — attached for the response schema to pick up.
+        budget.missing_sections = [
+            {"name": n, "section_type": t} for (n, t) in _missing_default_sections(budget)
+        ]
+    return budget
 
 
 def _rolling_months(month: int, year: int, n: int = ROLLING_MONTHS):
@@ -1133,9 +1149,7 @@ def get_budget(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    budget = db.query(Budget).options(
-        joinedload(Budget.sections).joinedload(BudgetSection.lines).joinedload(BudgetLine.values)
-    ).filter(Budget.id == budget_id).first()
+    budget = _load_detail(budget_id, db)
     if not budget:
         raise HTTPException(status_code=404, detail="Budget not found")
     ensure_budget_access(current_user, budget.entity_id, db)
@@ -1217,6 +1231,98 @@ def update_section(
     return section
 
 
+@router.post("/{budget_id}/sections/restore", response_model=BudgetDetailOut)
+def restore_sections(
+    budget_id: int,
+    payload: Optional[BudgetSectionRestore] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Put back a standard section this budget is missing — the one that was there
+    when the budget was created and has since been deleted.
+
+    Structure only: the section comes back empty, in its usual place, with its usual
+    type, so the normal "Pull from System" / income modal can refill it. The lines and
+    amounts that were in it when it was deleted are NOT recovered here — for auto lines
+    a pull brings identical figures back, but hand-typed ones are gone.
+    """
+    budget = _get_budget_checked(budget_id, current_user, db)
+    missing = _missing_default_sections(budget)
+    if payload and payload.names:
+        wanted = {n.strip().upper() for n in payload.names}
+        unknown = wanted - {n.upper() for (n, _) in missing}
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Not a missing standard section for this budget: {', '.join(sorted(unknown))}",
+            )
+        missing = [(n, t) for (n, t) in missing if n.upper() in wanted]
+    if not missing:
+        raise HTTPException(status_code=400, detail="This budget already has every standard section")
+
+    # Where a restored section belongs: ahead of the first section that comes after
+    # it in the default layout. Everything else keeps its current relative order, so
+    # a hand-added section the user positioned themselves is never shuffled.
+    default_rank = {name.upper(): i for i, (name, _) in enumerate(_sections_for_entity(budget.entity))}
+    ordered = sorted(budget.sections, key=lambda s: (s.sort_order or 0, s.id))
+    for name, section_type in missing:
+        section = BudgetSection(budget_id=budget.id, name=name, section_type=section_type)
+        rank = default_rank[name.upper()]
+        at = len(ordered)
+        for i, s in enumerate(ordered):
+            other = default_rank.get((s.name or "").strip().upper())
+            if other is not None and other > rank:
+                at = i
+                break
+        ordered.insert(at, section)
+        db.add(section)
+    for i, s in enumerate(ordered):
+        s.sort_order = i
+    db.flush()
+
+    names = ", ".join(n for (n, _) in missing)
+    log_action(
+        db, "budget.section_restored", user_id=current_user.id,
+        resource_type="budget", resource_id=budget.id,
+        description=f"Restored missing section(s) {names} "
+                    f"on budget {budget.period_month}/{budget.period_year}",
+    )
+    db.commit()
+    return _load_detail(budget_id, db)
+
+
+def _section_snapshot(section: BudgetSection) -> dict:
+    """Everything a deleted section held, small enough to park in the audit log.
+
+    Deleting a section cascades through its lines and their amounts, so without this
+    the only record of what was lost is the user's memory."""
+    return {
+        "name": section.name,
+        "section_type": section.section_type,
+        "sort_order": section.sort_order,
+        "lines": [
+            {
+                "name": l.name,
+                "notes": l.notes,
+                "source": l.source,
+                "source_key": l.source_key,
+                "sort_order": l.sort_order,
+                "name_overridden": l.name_overridden,
+                "values": [
+                    {
+                        "month": v.month, "year": v.year,
+                        "amount_due": str(v.amount_due) if v.amount_due is not None else None,
+                        "amount_paid": str(v.amount_paid) if v.amount_paid is not None else None,
+                        "is_overridden": v.is_overridden,
+                    }
+                    for v in l.values
+                ],
+            }
+            for l in section.lines
+        ],
+    }
+
+
 @router.delete("/sections/{section_id}")
 def delete_section(
     section_id: int,
@@ -1224,6 +1330,14 @@ def delete_section(
     current_user: User = Depends(get_current_user),
 ):
     section = _get_section_checked(section_id, current_user, db)
+    budget = section.budget
+    log_action(
+        db, "budget.section_deleted", user_id=current_user.id,
+        resource_type="budget", resource_id=budget.id,
+        description=f"Deleted section {section.name} ({len(section.lines)} line(s)) "
+                    f"from budget {budget.period_month}/{budget.period_year}",
+        old_values=_section_snapshot(section),
+    )
     db.delete(section)
     db.commit()
     return {"detail": "Section deleted"}

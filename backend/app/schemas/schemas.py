@@ -2634,6 +2634,18 @@ class BudgetSectionOut(BaseModel):
         from_attributes = True
 
 
+class BudgetMissingSectionOut(BaseModel):
+    """A standard section this budget should have but hasn't got — deleted, or added
+    to the defaults after the budget was created. Drives the "restore" prompt."""
+    name: str
+    section_type: str
+
+
+class BudgetSectionRestore(BaseModel):
+    """Which missing standard sections to put back. None/empty = all of them."""
+    names: Optional[List[str]] = None
+
+
 class BudgetCreate(BaseModel):
     entity_id: int
     period_month: int
@@ -2703,6 +2715,8 @@ class BudgetOut(BaseModel):
 class BudgetDetailOut(BudgetOut):
     sections: List[BudgetSectionOut] = []
     bank_rows: List[BudgetBankRowOut] = []
+    # Standard sections this budget is missing (see BudgetMissingSectionOut).
+    missing_sections: List[BudgetMissingSectionOut] = []
 
 
 # ── Income selection ──────────────────────────────────────────────────────────

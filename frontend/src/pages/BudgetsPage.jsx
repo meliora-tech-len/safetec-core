@@ -5,7 +5,7 @@ import { useSessionState } from '../hooks/useSessionState'
 import { useLocalState } from '../hooks/useLocalState'
 import {
   getBudgets, getBudget, createBudget, deleteBudget,
-  addBudgetSection, updateBudgetSection, deleteBudgetSection,
+  addBudgetSection, updateBudgetSection, deleteBudgetSection, restoreBudgetSections,
   addBudgetLine, updateBudgetLine, deleteBudgetLine, upsertBudgetLineValue, updateBudget,
   addBudgetBankRow, updateBudgetBankRow, deleteBudgetBankRow,
   pullBudgetSection, getBudgetIncomeCandidates, setBudgetIncomeLines, replicateBudget,
@@ -154,6 +154,8 @@ export default function BudgetsPage() {
   const [cellEdits, setCellEdits] = useState({})   // `${lineId}:${m}:${y}:${field}` -> string
   const [nameEdits, setNameEdits] = useState({})   // lineId -> string (absent = not editing)
   const [newSection, setNewSection] = useState(null) // null | { name, section_type }
+  const [confirmDeleteSection, setConfirmDeleteSection] = useState(null) // section object
+  const [restoring, setRestoring] = useState(false)  // "Restore <section>" in flight
   const [pulling, setPulling] = useState({})       // sectionId -> boolean (in flight)
   const [replicating, setReplicating] = useState(false)
   // "Match exactly" — remembered per session, and the preview of what it will remove.
@@ -505,12 +507,34 @@ export default function BudgetsPage() {
     }
   }
 
-  const handleDeleteSection = async (section) => {
+  const handleDeleteSection = async () => {
+    const section = confirmDeleteSection
+    if (!section) return
     try {
       await deleteBudgetSection(section.id)
-      setBudget(b => ({ ...b, sections: b.sections.filter(s => s.id !== section.id) }))
+      // The backend recomputes which standard sections are now missing, so reload
+      // rather than splicing — that's what puts the "Restore <section>" button up.
+      const res = await getBudget(budget.id)
+      setBudget(res.data)
+      setConfirmDeleteSection(null)
+      toast.success(`Deleted ${section.name}`)
     } catch (e) {
       toast.error(errorMessage(e, 'Failed to delete section'))
+    }
+  }
+
+  // Put back a standard section that was deleted (or never existed on an older
+  // budget). Comes back empty — the figures are refilled from its own header.
+  const handleRestoreSections = async (names = null) => {
+    setRestoring(true)
+    try {
+      const res = await restoreBudgetSections(budget.id, names)
+      setBudget(res.data)
+      toast.success(names?.length === 1 ? `${names[0]} restored` : 'Missing sections restored')
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to restore the section'))
+    } finally {
+      setRestoring(false)
     }
   }
 
@@ -1297,7 +1321,7 @@ export default function BudgetsPage() {
                       </button>
                     )}
 
-                    <button className="btn-icon" onClick={() => handleDeleteSection(section)} title="Delete section"
+                    <button className="btn-icon" onClick={() => setConfirmDeleteSection(section)} title="Delete section"
                       style={{ color: 'var(--danger)' }}>
                       <Trash2 size={14} />
                     </button>
@@ -1503,9 +1527,23 @@ export default function BudgetsPage() {
                 <button className="btn-ghost btn-sm" onClick={() => setNewSection(null)}>Cancel</button>
               </div>
             ) : (
-              <button className="btn-ghost btn-sm" onClick={() => setNewSection({ name: '', section_type: 'expense' })}>
-                <Plus size={13} /> Add Section
-              </button>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn-ghost btn-sm" onClick={() => setNewSection({ name: '', section_type: 'expense' })}>
+                  <Plus size={13} /> Add Section
+                </button>
+
+                {/* A standard section this budget hasn't got — deleted by mistake, pruned
+                    when it was empty, or added to the defaults after the budget was made.
+                    Offered by name rather than left to retyping: the name has to match
+                    exactly for Pull from System and the income modal to find the section. */}
+                {(budget.missing_sections || []).map(s => (
+                  <button key={s.name} className="btn-ghost btn-sm" disabled={restoring}
+                    onClick={() => handleRestoreSections([s.name])}
+                    title={`Put the ${s.name} section back where it belongs, empty — then fill it from its own header. Amounts it used to hold are not recovered.`}>
+                    <RefreshCw size={13} className={restoring ? 'spin' : undefined} /> Restore {s.name}
+                  </button>
+                ))}
+              </div>
             )}
 
             <button className="btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setConfirmDelete(budget)}>
@@ -1514,6 +1552,21 @@ export default function BudgetsPage() {
           </div>
         </>
       )}
+
+      {/* Deleting a section takes every line and amount in it with it, and there is no
+          undo — so it asks first, and says how much is about to go. */}
+      <DeleteModal
+        isOpen={!!confirmDeleteSection}
+        onClose={() => setConfirmDeleteSection(null)}
+        onDelete={handleDeleteSection}
+        title="Delete Section"
+        description={confirmDeleteSection
+          ? `Delete the ${confirmDeleteSection.name} section? Its ${confirmDeleteSection.lines?.length || 0} line(s) and all their amounts go with it. `
+            + (CONSTANT_SECTION_OPTIONS.includes(confirmDeleteSection.name)
+                ? `A "Restore ${confirmDeleteSection.name}" button appears afterwards to put the empty section back, but the amounts are not recovered.`
+                : 'This is not one of the standard sections, so there is no Restore button for it — you would have to add it again by hand.')
+          : ''}
+      />
 
       <DeleteModal
         isOpen={!!confirmDelete}
