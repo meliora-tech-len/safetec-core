@@ -2658,6 +2658,8 @@ class BudgetIncomeCandidateOut(BaseModel):
     source_key: str
     line_name: str
     invoice_number: Optional[str] = None   # invoice number(s) to flag — comma-joined on a PO row
+    po_number: Optional[str] = None        # None on a row that has no PO
+    customer_name: Optional[str] = None
     values: List[BudgetIncomeCandidateValue] = []
     total: Decimal                 # sum across the budget's whole window
     selected: bool = False         # already a line in this budget

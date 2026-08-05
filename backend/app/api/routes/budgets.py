@@ -607,6 +607,8 @@ def list_income_candidates(
             source_key=c["source_key"],
             line_name=c["line_name"],
             invoice_number=c.get("invoice_number"),
+            po_number=c.get("po_number"),
+            customer_name=c.get("customer_name"),
             values=[{"month": m, "year": y, "amount_due": v["due"]} for (m, y), v in values],
             total=sum((v["due"] for v in c["values"].values()), Decimal("0")),
             selected=c["source_key"] in existing,

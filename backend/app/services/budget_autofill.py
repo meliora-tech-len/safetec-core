@@ -160,9 +160,11 @@ def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dic
 
     Every spec carries an "invoice_number" for the modal to flag: the single
     number on a per-invoice row, and the comma-joined list of the underlying
-    invoice numbers on a PO row (a PO may bundle several invoices).
+    invoice numbers on a PO row (a PO may bundle several invoices). The label
+    leads with that invoice number, then the PO, then the customer — the invoice
+    number is what the user reconciles against, so it comes first.
 
-    PO rows sort first by name; the individual invoice rows sort after them.
+    Rows sort by invoice number.
     """
     db = SessionLocal()
     try:
@@ -185,22 +187,23 @@ def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dic
             for inv_id, inv_number, po, customer_name, total in rows:
                 if po:
                     # A PO groups all its invoices into one row — labelled by the
-                    # PO, plus every invoice number that falls under it.
+                    # invoice number(s) that fall under it, then the PO.
                     key = f"income:po:{po}"
-                    name = f"{po} — {customer_name}" if customer_name else po
                 else:
                     # No PO (hand-keyed invoices never carry a POH) — one row per
                     # invoice, labelled by its number so the user knows which it is.
                     key = f"income:inv:{inv_id}"
-                    name = f"{inv_number} — {customer_name}" if customer_name else inv_number
                 spec = grouped.get(key)
                 if spec is None:
                     spec = {
                         "section_name": SEC_INCOME[0], "section_type": SEC_INCOME[1],
-                        "source_key": key, "line_name": name,
+                        "source_key": key, "line_name": "",
+                        "po_number": po or None, "customer_name": customer_name,
                         "_inv_numbers": set(), "values": {},
                     }
                     grouped[key] = spec
+                if customer_name and not spec["customer_name"]:
+                    spec["customer_name"] = customer_name
                 if inv_number:
                     # Windows overlap (an invoice can land in two months) — the set
                     # dedupes so a number is never listed twice.
@@ -211,10 +214,14 @@ def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dic
         for spec in grouped.values():
             nums = spec.pop("_inv_numbers")
             spec["invoice_number"] = ", ".join(sorted(nums)) if nums else None
+            # Invoice number first, then the PO, then the customer — whichever
+            # of those the row actually has.
+            parts = [p for p in (spec["invoice_number"], spec["po_number"], spec["customer_name"]) if p]
+            spec["line_name"] = " — ".join(parts) or spec["source_key"]
 
         return sorted(
             grouped.values(),
-            key=lambda s: (not s["source_key"].startswith("income:po:"), s["line_name"]),
+            key=lambda s: (s["invoice_number"] or "", s["line_name"]),
         )
     finally:
         db.close()

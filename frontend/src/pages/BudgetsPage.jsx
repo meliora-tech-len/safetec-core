@@ -20,6 +20,7 @@ import DeleteModal from '../components/DeleteModal'
 import VerifiableAmount from '../components/VerifiableAmount'
 import BulkUnlockButton from '../components/BulkUnlockButton'
 import SearchableSelect from '../components/SearchableSelect'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -122,6 +123,21 @@ function periodMonths(month, year, statementMode = false) {
 
 const num = (v) => (v == null || v === '' ? 0 : parseFloat(v) || 0)
 
+// Income modal columns → the value each one sorts on.
+const incomeSortVal = (c, col) => {
+  switch (col) {
+    case 'invoice': return c.invoice_number || ''
+    case 'po': return c.po_number || ''
+    case 'customer': return c.customer_name || ''
+    case 'months': {
+      const v = c.values?.[0]
+      return v ? v.year * 12 + v.month : 0
+    }
+    case 'total': return num(c.total)
+    default: return ''
+  }
+}
+
 export default function BudgetsPage() {
   const { user, isAdmin, entities } = useAuth()
   const now = new Date()
@@ -151,6 +167,8 @@ export default function BudgetsPage() {
   // Income picker: null | { loading, candidates, picked: Set<source_key>, saving }
   const [incomeModal, setIncomeModal] = useState(null)
   const [incomeSearch, setIncomeSearch] = useState('')
+  // Opens on invoice number; no persistence key — a modal always opens on its default order.
+  const { sort: incomeSort, onSort: onIncomeSort } = useSort('invoice', 'asc')
   const [exclSaving, setExclSaving] = useState({}) // supplierId -> boolean (in flight)
   const [exclSearch, setExclSearch] = useState('')
   const [showConstants, setShowConstants] = useState(false)
@@ -1687,7 +1705,7 @@ export default function BudgetsPage() {
       {incomeModal && (
         <div className="modal-overlay" onClick={() => !incomeModal.saving && setIncomeModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}
-            style={{ width: '100%', maxWidth: 600, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
+            style={{ width: '100%', maxWidth: 820, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
 
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
@@ -1714,7 +1732,7 @@ export default function BudgetsPage() {
                   <Search size={14} />
                   <input
                     autoFocus
-                    placeholder="Search PO or invoice number…"
+                    placeholder="Search invoice number, PO or customer…"
                     value={incomeSearch}
                     onChange={e => setIncomeSearch(e.target.value)}
                   />
@@ -1724,11 +1742,12 @@ export default function BudgetsPage() {
 
               {!incomeModal.loading && (() => {
                 const q = incomeSearch.trim().toLowerCase()
-                const shown = q
+                const filtered = q
                   ? incomeModal.candidates.filter(c =>
                       c.line_name.toLowerCase().includes(q) ||
                       (c.invoice_number || '').toLowerCase().includes(q))
                   : incomeModal.candidates
+                const shown = applySort(filtered, incomeSort, incomeSortVal)
                 const shownKeys = shown.map(c => c.source_key)
                 const allOn = shown.length > 0 && shownKeys.every(k => incomeModal.picked.has(k))
                 return (
@@ -1745,53 +1764,65 @@ export default function BudgetsPage() {
                       )}
                     </div>
 
-                    <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, minHeight: 180 }}>
-                      {incomeModal.candidates.length === 0 && (
-                        <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
-                          No income on the system for this period
-                        </div>
-                      )}
-                      {incomeModal.candidates.length > 0 && shown.length === 0 && (
-                        <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
-                          Nothing matches &quot;{incomeSearch}&quot;
-                        </div>
-                      )}
-                      {shown.map((c, i) => {
-                        const on = incomeModal.picked.has(c.source_key)
-                        return (
-                          <label
-                            key={c.source_key}
-                            style={{
-                              display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
-                              borderBottom: i < shown.length - 1 ? '1px solid var(--border)' : 'none',
-                              fontSize: 13, cursor: 'pointer',
-                              background: on ? 'var(--accent-bg, rgba(37,99,235,0.06))' : 'transparent',
-                            }}
-                          >
-                            <input
-                              type="checkbox" checked={on}
-                              onChange={() => toggleIncomePick(c.source_key)}
-                              style={{ width: 15, height: 15, flexShrink: 0, cursor: 'pointer' }}
-                            />
-                            <span style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.line_name}>
-                              {c.invoice_number ? (
-                                <>
-                                  <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{c.invoice_number}</span>
-                                  {c.line_name.startsWith(c.invoice_number)
-                                    ? c.line_name.slice(c.invoice_number.length)
-                                    : ` — ${c.line_name}`}
-                                </>
-                              ) : c.line_name}
-                            </span>
-                            <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                              {c.values.map(v => MONTHS[v.month - 1]).join(', ')}
-                            </span>
-                            <span style={{ fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap', minWidth: 100, textAlign: 'right' }}>
-                              {formatCurrency(c.total)}
-                            </span>
-                          </label>
-                        )
-                      })}
+                    <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 8, minHeight: 180 }}>
+                      <table className="compact-table" style={{ width: '100%' }}>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-card)' }}>
+                          <tr>
+                            <th style={{ width: 30 }}></th>
+                            <SortableHeader label="Invoice #" col="invoice" sort={incomeSort} onSort={onIncomeSort} />
+                            <SortableHeader label="PO Number" col="po" sort={incomeSort} onSort={onIncomeSort} />
+                            <SortableHeader label="Customer" col="customer" sort={incomeSort} onSort={onIncomeSort} />
+                            <SortableHeader label="Month" col="months" sort={incomeSort} onSort={onIncomeSort} />
+                            <SortableHeader label="Amount" col="total" sort={incomeSort} onSort={onIncomeSort} style={{ textAlign: 'right' }} />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {incomeModal.candidates.length === 0 && (
+                            <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+                              No income on the system for this period
+                            </td></tr>
+                          )}
+                          {incomeModal.candidates.length > 0 && shown.length === 0 && (
+                            <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+                              Nothing matches &quot;{incomeSearch}&quot;
+                            </td></tr>
+                          )}
+                          {shown.map(c => {
+                            const on = incomeModal.picked.has(c.source_key)
+                            return (
+                              <tr
+                                key={c.source_key}
+                                onClick={() => toggleIncomePick(c.source_key)}
+                                style={{ cursor: 'pointer', background: on ? 'var(--accent-bg, rgba(37,99,235,0.06))' : 'transparent' }}
+                              >
+                                <td>
+                                  <input
+                                    type="checkbox" checked={on}
+                                    onChange={() => toggleIncomePick(c.source_key)}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ width: 15, height: 15, cursor: 'pointer' }}
+                                  />
+                                </td>
+                                <td style={{ color: 'var(--accent)', fontWeight: 600, maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                  title={c.invoice_number || ''}>
+                                  {c.invoice_number || '—'}
+                                </td>
+                                <td style={{ whiteSpace: 'nowrap', fontWeight: on ? 600 : 400 }}>{c.po_number || '—'}</td>
+                                <td style={{ maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                  title={c.customer_name || ''}>
+                                  {c.customer_name || '—'}
+                                </td>
+                                <td style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                  {c.values.map(v => MONTHS[v.month - 1]).join(', ')}
+                                </td>
+                                <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                  {formatCurrency(c.total)}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
                     </div>
 
                     {/* Totals the whole selection, not just what the search shows,
