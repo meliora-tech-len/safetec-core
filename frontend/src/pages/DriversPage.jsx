@@ -329,6 +329,39 @@ export default function DriversPage() {
   // it covers — those figures follow the picker, not today's date.
   const periodLabel = `${MONTHS[month]} ${year}`
 
+  // Casual export mirrors the hand-kept "CASUAL DRIVERS CTC REPORT" sheet:
+  // rand columns come off the pay cycle (not the load list) so Net Pay and
+  // CTC reconcile with the payslip; CTC column is plus VAT (×1.15).
+  const rand = v => Number(parseFloat(v || 0).toFixed(2))
+  const casualExport = filterType === 'casual'
+  const exportColumns = casualExport
+    ? [
+        { header: 'Employee #',   key: 'employee_number' },
+        { header: 'First Name',   key: 'first_name' },
+        { header: 'Last Name',    key: 'last_name' },
+        { header: `Loads (${periodLabel})`,          value: r => r.cycle_loads_this_month || 0 },
+        { header: 'LOADS TOTAL',  value: r => rand(r.loads_total_this_month) },
+        { header: 'DEDUCTION',    value: r => rand(r.deduction_this_month) },
+        { header: `Food Allowance (${periodLabel})`, value: r => rand(r.food_total_this_month) },
+        { header: 'LOAD BONUS',   value: r => rand(r.mine_bonus_this_month) },
+        { header: 'BACK LOADS',   value: r => rand(r.back_loads_this_month) },
+        { header: `Net Pay (${periodLabel})`,        value: r => rand(r.net_pay_this_month) },
+        { header: 'CTC (PLUS VAT)', value: r => rand(parseFloat(r.ctc_this_month || 0) * 1.15) },
+      ]
+    : [
+        { header: 'Employee #',   key: 'employee_number' },
+        { header: 'First Name',   key: 'first_name' },
+        { header: 'Last Name',    key: 'last_name' },
+        { header: 'Type',         key: 'driver_type' },
+        { header: 'Entity',       value: r => entityCode(r.entity_id) },
+        { header: 'Truck',        key: 'truck_registration' },
+        { header: 'Subcontractor', key: 'subcontractor_name' },
+        { header: `Loads (${periodLabel})`,          key: 'load_count_this_month' },
+        { header: `Food Allowance (${periodLabel})`, value: r => parseFloat(r.food_total_this_month || 0).toFixed(2) },
+        { header: `Net Pay (${periodLabel})`,        value: r => parseFloat(r.net_pay_this_month || 0).toFixed(2) },
+        { header: 'Status',       value: r => r.is_active ? 'Active' : 'Inactive' },
+      ]
+
   return (
     <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
       <div className="page-header">
@@ -341,22 +374,14 @@ export default function DriversPage() {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <ExportButton
-            title={`Drivers Report — ${periodLabel}`}
-            filename={`drivers-${year}-${String(month).padStart(2, '0')}`}
+            title={casualExport
+              ? `Casual Drivers CTC Report — ${periodLabel}`
+              : `Drivers Report — ${periodLabel}`}
+            filename={casualExport
+              ? `casual-drivers-ctc-${year}-${String(month).padStart(2, '0')}`
+              : `drivers-${year}-${String(month).padStart(2, '0')}`}
             data={sortedDrivers}
-            columns={[
-              { header: 'Employee #',   key: 'employee_number' },
-              { header: 'First Name',   key: 'first_name' },
-              { header: 'Last Name',    key: 'last_name' },
-              { header: 'Type',         key: 'driver_type' },
-              { header: 'Entity',       value: r => entityCode(r.entity_id) },
-              { header: 'Truck',        key: 'truck_registration' },
-              { header: 'Subcontractor', key: 'subcontractor_name' },
-              { header: `Loads (${periodLabel})`,          key: 'load_count_this_month' },
-              { header: `Food Allowance (${periodLabel})`, value: r => parseFloat(r.food_total_this_month || 0).toFixed(2) },
-              { header: `Net Pay (${periodLabel})`,        value: r => parseFloat(r.net_pay_this_month || 0).toFixed(2) },
-              { header: 'Status',       value: r => r.is_active ? 'Active' : 'Inactive' },
-            ]}
+            columns={exportColumns}
           />
           <button className="btn-primary" onClick={() => setModal({ mode: 'create' })}>
             <Plus size={15} /> Add Driver

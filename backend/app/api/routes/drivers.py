@@ -108,6 +108,14 @@ def _month_cycle_totals(db: Session, driver_ids: List[int], month_start: date) -
         totals[cycle.driver_id] = {
             "net_pay": calc["net_payable"],
             "food": calc["food_deduction"],
+            # CTC-report figures (casual export) — same calc the payslip prints,
+            # so the exported rand columns always reconcile with the pay cycle.
+            "cycle_loads": calc["grand_total_loads"],
+            "load_earnings": calc["load_earnings"],
+            "other_deductions": calc["loan_deduction"] + calc["cash_deduction"],
+            "mine_bonus": calc["assmang_bonus"],
+            "back_loads": calc["additional_loads_total"],
+            "ctc": calc["ctc"],
         }
     return totals
 
@@ -194,6 +202,12 @@ def _build_summary(driver: Driver, month_start: date, db: Session, cycle_map: di
         "load_count_this_month": load_count + split_halves,
         "net_pay_this_month": cycle_map.get(driver.id, {}).get("net_pay", Decimal("0")),
         "food_total_this_month": cycle_map.get(driver.id, {}).get("food", Decimal("0")),
+        "cycle_loads_this_month": float(cycle_map.get(driver.id, {}).get("cycle_loads", 0)),
+        "loads_total_this_month": cycle_map.get(driver.id, {}).get("load_earnings", Decimal("0")),
+        "deduction_this_month": cycle_map.get(driver.id, {}).get("other_deductions", Decimal("0")),
+        "mine_bonus_this_month": cycle_map.get(driver.id, {}).get("mine_bonus", Decimal("0")),
+        "back_loads_this_month": cycle_map.get(driver.id, {}).get("back_loads", Decimal("0")),
+        "ctc_this_month": cycle_map.get(driver.id, {}).get("ctc", Decimal("0")),
         "casual_assignments": casual_assignments,
     }
 

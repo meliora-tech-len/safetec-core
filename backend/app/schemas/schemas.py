@@ -1067,6 +1067,14 @@ class DriverSummary(BaseModel):
     # (the list's month/year params, defaulting to the current month).
     net_pay_this_month: Decimal = Decimal("0")
     food_total_this_month: Decimal = Decimal("0")
+    # CTC-report figures for the casual export — pulled off the pay cycle's calc
+    # so the exported rand columns reconcile with the payslip, not the load list.
+    cycle_loads_this_month: float = 0
+    loads_total_this_month: Decimal = Decimal("0")
+    deduction_this_month: Decimal = Decimal("0")
+    mine_bonus_this_month: Decimal = Decimal("0")
+    back_loads_this_month: Decimal = Decimal("0")
+    ctc_this_month: Decimal = Decimal("0")
     casual_assignments: List['CasualTruckAssignmentOut'] = []
 
     class Config:
