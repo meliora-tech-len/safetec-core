@@ -483,12 +483,12 @@ export const pullBudgetSection = (budgetId, sectionId) =>
   api.post(`/budgets/${budgetId}/sections/${sectionId}/pull`)
 
 // Income is chosen, not pulled: list the candidates (one per PO, plus one per
-// invoice that has no PO), then set the budget's income lines to exactly the
-// ticked source_keys.
+// invoice that has no PO), then assign each ticked row to one of the two generic
+// income lines: assignments = { source_key: 'tradekor' | 'other' }.
 export const getBudgetIncomeCandidates = (budgetId) =>
   api.get(`/budgets/${budgetId}/income-candidates`)
-export const setBudgetIncomeLines = (budgetId, sourceKeys) =>
-  api.put(`/budgets/${budgetId}/income-lines`, { source_keys: sourceKeys })
+export const setBudgetIncomeLines = (budgetId, assignments) =>
+  api.put(`/budgets/${budgetId}/income-lines`, { assignments })
 
 // Carry this budget forward into the next month, creating it if needed. Figures
 // keep their absolute month, so only those still inside the next month's window

@@ -1632,6 +1632,26 @@ class Budget(Base):
     __table_args__ = (UniqueConstraint("entity_id", "period_month", "period_year"),)
 
 
+class BudgetIncomeAssignment(Base):
+    """Which generic income line a ticked income candidate feeds.
+
+    The INCOME section holds two generic lines (TRADEKOR INCOME ONLY / OTHER
+    INCOME) whose figures are the SUM of the candidates assigned to them, so the
+    per-candidate choice can't be recovered from the lines themselves — this
+    table is what lets the income modal reopen exactly as it was left.
+    source_key matches income_candidates (e.g. "income:po:POH123").
+    """
+    __tablename__ = "budget_income_assignments"
+
+    id         = Column(Integer, primary_key=True)
+    budget_id  = Column(Integer, ForeignKey("budgets.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_key = Column(String(120), nullable=False)
+    bucket     = Column(String(20), nullable=False)   # tradekor | other
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("budget_id", "source_key"),)
+
+
 class BudgetBankRow(Base):
     """One labelled amount in the Bank Info Summary block (Safetec).
 

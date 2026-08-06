@@ -15,8 +15,10 @@ Sources (each lands in its own section):
 
 INCOME is deliberately NOT one of them. Income is chosen, not pulled: the user
 opens a modal, sees one candidate row per PO plus one row per invoice that has no
-PO (each labelled by its invoice number), and ticks what belongs in the budget.
-See income_candidates() — the budgets route materialises exactly the ticked set.
+PO (each labelled by its invoice number), and assigns what belongs in the budget
+to one of the two generic income lines (TRADEKOR INCOME ONLY / OTHER INCOME).
+See income_candidates() — the budgets route sums the assigned candidates into
+those two lines (INCOME_BUCKETS in routes/budgets.py).
 
 Robustness: every source runs in its OWN throwaway read session (never the caller's
 write transaction). So a slow/heavy read or a dropped pooled connection can neither

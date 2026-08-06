@@ -44,6 +44,11 @@ const CONSTANT_SECTION_OPTIONS = [
 
 const INCOME_SECTION = 'INCOME'
 
+// The two generic INCOME lines the modal assigns rows into — [bucket, short
+// label]. Mirrors INCOME_BUCKETS in the backend budgets route, which owns the
+// full line names (TRADEKOR INCOME ONLY / OTHER INCOME).
+const INCOME_BUCKETS = [['tradekor', 'Tradekor'], ['other', 'Other']]
+
 // Safetec's summary splits its expenses in two: what the trucks cost, and what was
 // paid out of the same account but sits outside truck costing (the owners' personal
 // spend and the non-truck business spend). Both still count as money that left, so
@@ -54,6 +59,12 @@ const SFT_PERSONAL_SECTIONS = ['PERSONAL NOT ON TRUCK COSTING', 'BUSINESS NOT ON
 // Entities that carry a Bank Info Summary — every trading entity; SP is dormant.
 // (Mirror the backend BANK_INFO_ENTITIES, which is what seeds the rows.)
 const BANK_INFO_ENTITIES = ['SFT', 'OBHI', 'BTP', 'TP', 'BKMO']
+
+// A bank row labelled "Cash Flow Total" is computed, not captured: it shows the
+// sum of the account rows above it. Typing an amount pins it (June's figure
+// includes a refund the accounts alone don't carry); blanking the box goes back
+// to the sum. (Mirror the backend CASH_FLOW_TOTAL_RE.)
+const CASH_FLOW_TOTAL_RE = /cash\s*flow\s*total/i
 
 // Entities whose summary is the two per-month-group cards (base month on its own;
 // next month's income against next + following month's expenses) instead of the
@@ -348,16 +359,18 @@ export default function BudgetsPage() {
   }
 
   // ── Income picker ───────────────────────────────────────────────────────────
+  // `picked` maps source_key -> 'tradekor' | 'other': which of the two generic
+  // income lines a ticked row feeds. Absent key = not counted at all.
   const openIncomeModal = async () => {
     if (!budget) return
     setIncomeSearch('')
-    setIncomeModal({ loading: true, candidates: [], picked: new Set(), saving: false })
+    setIncomeModal({ loading: true, candidates: [], picked: {}, saving: false })
     try {
       const { data } = await getBudgetIncomeCandidates(budget.id)
       setIncomeModal({
         loading: false,
         candidates: data || [],
-        picked: new Set((data || []).filter(c => c.selected).map(c => c.source_key)),
+        picked: Object.fromEntries((data || []).filter(c => c.selected).map(c => [c.source_key, c.bucket])),
         saving: false,
       })
     } catch (e) {
@@ -367,20 +380,27 @@ export default function BudgetsPage() {
   }
 
   const toggleIncomePick = (key) => setIncomeModal(m => {
-    const picked = new Set(m.picked)
-    if (picked.has(key)) picked.delete(key)
-    else picked.add(key)
+    const picked = { ...m.picked }
+    if (key in picked) delete picked[key]
+    else picked[key] = m.candidates.find(c => c.source_key === key)?.bucket || 'other'
     return { ...m, picked }
   })
 
+  // Assigning a row to a line ticks it too — choosing where it goes is choosing it.
+  const setIncomeBucket = (key, bucket) => setIncomeModal(m => (
+    { ...m, picked: { ...m.picked, [key]: bucket } }
+  ))
+
   // Bulk tick/untick acts on what's currently visible, so a search narrows what
   // "Select all" means — a real period can run to 70+ POs, and ticking those one
-  // at a time is not a reasonable ask.
+  // at a time is not a reasonable ask. Ticking keeps an existing assignment and
+  // defaults the rest (Tradekor customers → Tradekor line, others → Other).
   const setIncomePicks = (keys, on) => setIncomeModal(m => {
-    const picked = new Set(m.picked)
+    const picked = { ...m.picked }
+    const defaults = Object.fromEntries(m.candidates.map(c => [c.source_key, c.bucket]))
     for (const k of keys) {
-      if (on) picked.add(k)
-      else picked.delete(k)
+      if (on) picked[k] = picked[k] || defaults[k] || 'other'
+      else delete picked[k]
     }
     return { ...m, picked }
   })
@@ -388,7 +408,7 @@ export default function BudgetsPage() {
   const submitIncome = async () => {
     setIncomeModal(m => ({ ...m, saving: true }))
     try {
-      const res = await setBudgetIncomeLines(budget.id, [...incomeModal.picked])
+      const res = await setBudgetIncomeLines(budget.id, incomeModal.picked)
       setBudget(res.data)
       setCellEdits({})
       setNameEdits({})
@@ -841,8 +861,17 @@ export default function BudgetsPage() {
     }
     const vatBackPulled = vatBackHits.reduce((s, h) => s + h.amount, 0)
     const vatBack = pick(budget.vat_back_trailer, vatBackPulled)
+
+    // The Cash Flow Total row sits apart from the accounts it sums. Rendered
+    // last regardless of its stored order, so an account added after it still
+    // counts — the total is always "everything above".
+    const bankRows = rows.filter(r => r.kind === 'bank')
+    const cashFlowRow = bankRows.find(r => CASH_FLOW_TOTAL_RE.test(r.label || '')) || null
+    const accounts = bankRows.filter(r => r !== cashFlowRow)
     return {
-      accounts: rows.filter(r => r.kind === 'bank'),
+      accounts,
+      cashFlowRow,
+      cashFlowCalc: accounts.reduce((s, r) => s + num(r.amount), 0),
       toBePaid: rows.filter(r => r.kind === 'to_be_paid'),
       profit,
       vatBack,
@@ -856,7 +885,10 @@ export default function BudgetsPage() {
 
   // Render helpers for the bank block. Plain functions, not components, so typing
   // into a cell doesn't remount the input and lose focus on every keystroke.
-  const bankCell = (row, field, { placeholder, style } = {}) => {
+  // `calculated` (amounts only) turns the cell into a computed-but-pinnable one:
+  // a blank amount shows the calculated figure, a typed amount pins it, and
+  // blanking the box goes back to the calculation — the Cash Flow Total row.
+  const bankCell = (row, field, { placeholder, style, calculated } = {}) => {
     const key = `${row.id}:${field}`
     const editing = bankEdits[key] != null
     const isAmount = field === 'amount'
@@ -877,18 +909,26 @@ export default function BudgetsPage() {
       )
     }
     const raw = row[field]
+    const hasCalc = isAmount && calculated !== undefined
     const shown = isAmount
-      ? (raw == null ? '—' : formatCurrency(raw))
+      ? (raw == null ? (hasCalc ? formatCurrency(calculated) : '—') : formatCurrency(raw))
       : (raw || placeholder || '—')
     return (
       <span
         onClick={() => setBankEdits(p => ({
           ...p, [key]: raw == null ? '' : (isAmount ? String(parseFloat(raw)) : String(raw)),
         }))}
-        style={{ cursor: 'pointer', color: raw ? undefined : 'var(--text-muted)', ...style }}
-        title="Click to edit"
+        style={{ cursor: 'pointer', color: raw || hasCalc ? undefined : 'var(--text-muted)', ...style }}
+        title={hasCalc
+          ? (raw != null
+            ? 'Typed in by hand — blank it to go back to the sum of the accounts above'
+            : 'Sum of the accounts above — click to type your own figure')
+          : 'Click to edit'}
       >
         {shown}
+        {hasCalc && raw != null && (
+          <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>edited</span>
+        )}
       </span>
     )
   }
@@ -1160,6 +1200,26 @@ export default function BudgetsPage() {
                       </td>
                     </tr>
                   ))}
+
+                  {/* Cash Flow Total — computed off the rows above; typing pins it. */}
+                  {bankInfo.cashFlowRow && (
+                    <tr>
+                      <td style={{ padding: '7px 8px 4px 0', whiteSpace: 'nowrap', fontWeight: 700, borderTop: '1px solid var(--border)' }}>
+                        {bankCell(bankInfo.cashFlowRow, 'label')}
+                      </td>
+                      <td style={{ padding: '7px 8px 4px', color: 'var(--text-muted)', fontSize: 11, borderTop: '1px solid var(--border)' }}>
+                        {bankInfo.cashFlowRow.amount == null && 'Sum of the accounts above'}
+                      </td>
+                      <td style={{ padding: '7px 0 4px', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700, borderTop: '1px solid var(--border)' }}>
+                        {bankCell(bankInfo.cashFlowRow, 'amount', { calculated: bankInfo.cashFlowCalc })}
+                      </td>
+                      <td style={{ width: 28, textAlign: 'right', borderTop: '1px solid var(--border)' }}>
+                        <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(bankInfo.cashFlowRow)}>
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
               <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('bank')}>
@@ -1787,6 +1847,15 @@ export default function BudgetsPage() {
               )}
 
               {!incomeModal.loading && incomeModal.candidates.length > 0 && (
+                <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  Tick the income that belongs in this budget and choose which line each row counts
+                  toward. The INCOME section shows just the two generic lines — <strong>TRADEKOR
+                  INCOME ONLY</strong> and <strong>OTHER INCOME</strong> — each totalling its
+                  assigned rows.
+                </p>
+              )}
+
+              {!incomeModal.loading && incomeModal.candidates.length > 0 && (
                 <div className="search-bar">
                   <Search size={14} />
                   <input
@@ -1808,12 +1877,13 @@ export default function BudgetsPage() {
                   : incomeModal.candidates
                 const shown = applySort(filtered, incomeSort, incomeSortVal)
                 const shownKeys = shown.map(c => c.source_key)
-                const allOn = shown.length > 0 && shownKeys.every(k => incomeModal.picked.has(k))
+                const allOn = shown.length > 0 && shownKeys.every(k => k in incomeModal.picked)
+                const pickedCount = Object.keys(incomeModal.picked).length
                 return (
                   <>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
                       <span>
-                        {shown.length} of {incomeModal.candidates.length} shown · <strong style={{ color: 'var(--accent)' }}>{incomeModal.picked.size} selected</strong>
+                        {shown.length} of {incomeModal.candidates.length} shown · <strong style={{ color: 'var(--accent)' }}>{pickedCount} selected</strong>
                       </span>
                       {shown.length > 0 && (
                         <button className="btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 8px' }}
@@ -1832,22 +1902,24 @@ export default function BudgetsPage() {
                             <SortableHeader label="PO Number" col="po" sort={incomeSort} onSort={onIncomeSort} />
                             <SortableHeader label="Customer" col="customer" sort={incomeSort} onSort={onIncomeSort} />
                             <SortableHeader label="Month" col="months" sort={incomeSort} onSort={onIncomeSort} />
+                            <th>Income Line</th>
                             <SortableHeader label="Amount" col="total" sort={incomeSort} onSort={onIncomeSort} style={{ textAlign: 'right' }} />
                           </tr>
                         </thead>
                         <tbody>
                           {incomeModal.candidates.length === 0 && (
-                            <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+                            <tr><td colSpan={7} style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
                               No income on the system for this period
                             </td></tr>
                           )}
                           {incomeModal.candidates.length > 0 && shown.length === 0 && (
-                            <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+                            <tr><td colSpan={7} style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
                               Nothing matches &quot;{incomeSearch}&quot;
                             </td></tr>
                           )}
                           {shown.map(c => {
-                            const on = incomeModal.picked.has(c.source_key)
+                            const bucket = incomeModal.picked[c.source_key]
+                            const on = bucket != null
                             return (
                               <tr
                                 key={c.source_key}
@@ -1874,6 +1946,27 @@ export default function BudgetsPage() {
                                 <td style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                                   {c.values.map(v => MONTHS[v.month - 1]).join(', ')}
                                 </td>
+                                {/* Which generic line this row feeds. Clicking a side
+                                    ticks the row too — assigning it is choosing it. */}
+                                <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                                  <div style={{ display: 'inline-flex', borderRadius: 5, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                                    {INCOME_BUCKETS.map(([b, label]) => (
+                                      <button
+                                        key={b} type="button"
+                                        onClick={() => setIncomeBucket(c.source_key, b)}
+                                        title={`Count this row in ${b === 'tradekor' ? 'TRADEKOR INCOME ONLY' : 'OTHER INCOME'}`}
+                                        style={{
+                                          padding: '3px 9px', fontSize: 11, fontWeight: 600, border: 'none', cursor: 'pointer',
+                                          background: (bucket ?? c.bucket) === b && on ? 'var(--accent)' : 'var(--bg-surface)',
+                                          color: (bucket ?? c.bucket) === b && on ? '#fff' : 'var(--text-muted)',
+                                          transition: 'all 0.15s',
+                                        }}
+                                      >
+                                        {label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </td>
                                 <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
                                   {formatCurrency(c.total)}
                                 </td>
@@ -1885,15 +1978,32 @@ export default function BudgetsPage() {
                     </div>
 
                     {/* Totals the whole selection, not just what the search shows,
-                        so a filter can't make the figure look wrong. */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700 }}>
-                      <span>Selected total</span>
-                      <span>{formatCurrency(
-                        incomeModal.candidates
-                          .filter(c => incomeModal.picked.has(c.source_key))
-                          .reduce((sum, c) => sum + num(c.total), 0)
-                      )}</span>
-                    </div>
+                        so a filter can't make the figure look wrong. One total per
+                        generic income line — these are the figures the budget's
+                        TRADEKOR INCOME ONLY and OTHER INCOME lines will carry. */}
+                    {(() => {
+                      const bucketTotal = (b) => incomeModal.candidates
+                        .filter(c => incomeModal.picked[c.source_key] === b)
+                        .reduce((sum, c) => sum + num(c.total), 0)
+                      const tradekor = bucketTotal('tradekor')
+                      const other = bucketTotal('other')
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12.5 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Tradekor Income Only</span>
+                            <span style={{ fontWeight: 600 }}>{formatCurrency(tradekor)}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Other Income</span>
+                            <span style={{ fontWeight: 600 }}>{formatCurrency(other)}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 13, borderTop: '1px solid var(--border)', paddingTop: 4 }}>
+                            <span>Selected total</span>
+                            <span>{formatCurrency(tradekor + other)}</span>
+                          </div>
+                        </div>
+                      )
+                    })()}
                   </>
                 )
               })()}

@@ -1,3 +1,4 @@
+import re
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
@@ -9,7 +10,7 @@ from app.core.security import get_current_user
 from app.models.models import (
     User, UserEntityAccess, BusinessEntity,
     Budget, BudgetSection, BudgetLine, BudgetLineValue, BudgetLineTemplate,
-    BudgetBankRow,
+    BudgetBankRow, BudgetIncomeAssignment,
 )
 from app.schemas.schemas import (
     BudgetCreate, BudgetUpdate, BudgetOut, BudgetDetailOut,
@@ -84,11 +85,17 @@ DEFAULT_BANK_ROWS = [
     ("bank", "MONEY MARKET 003 - BUILD UP"),
     ("bank", "MONEY MARKET 004 - INTEREST"),
     ("bank", "MONEY MARKET 005"),
+    ("bank", "CASH FLOW TOTAL"),
     ("to_be_paid", "30days"),
     ("to_be_paid", "current"),
     ("to_be_paid", "KRIP & 7CS"),
 ]
 BANK_ROW_KINDS = {"bank", "to_be_paid"}
+
+# The CASH FLOW TOTAL row is computed, not captured: the page shows the sum of the
+# account rows above it (typing an amount pins it; blanking goes back to the sum).
+# Matched by label so the user's own June row counts, however it was typed.
+CASH_FLOW_TOTAL_RE = re.compile(r"cash\s*flow\s*total", re.IGNORECASE)
 
 # The 'to_be_paid' list, the profit line and the vat-back adjustment under it are
 # Safetec's sheet alone; the other entities show the account balances only, so they
@@ -589,6 +596,22 @@ def pull_section_from_system(
     return _load_detail(budget_id, db)
 
 
+# The INCOME section carries two GENERIC lines; the modal assigns each income
+# candidate to one of them and the line's figure is the sum of its candidates.
+# Keyed by bucket → (auto-line source_key, line name). The names match the ones
+# on the June Safetec sheet, so existing lines with those names are adopted.
+INCOME_BUCKETS = {
+    "tradekor": ("income:bucket:tradekor", "TRADEKOR INCOME ONLY"),
+    "other": ("income:bucket:other", "OTHER INCOME"),
+}
+
+
+def _default_bucket(candidate: dict) -> str:
+    """Where a candidate lands when the user hasn't chosen: Tradekor customers
+    into TRADEKOR INCOME ONLY, everything else into OTHER INCOME."""
+    return "tradekor" if "tradekor" in (candidate.get("customer_name") or "").lower() else "other"
+
+
 @router.get("/{budget_id}/income-candidates", response_model=List[BudgetIncomeCandidateOut])
 def list_income_candidates(
     budget_id: int,
@@ -597,12 +620,23 @@ def list_income_candidates(
 ):
     """Every income row the system can offer this budget: one per PO, plus one
     per invoice that has no PO (labelled by its invoice number). `selected` marks
-    the ones already in the budget so the modal opens with them ticked."""
+    the ones already counted in the budget's income and `bucket` says which
+    generic line each feeds, so the modal opens exactly as it was left."""
     budget = _get_budget_checked(budget_id, current_user, db)
     code = (budget.entity.code or "").upper()
     months = _budget_window(code, budget.period_month, budget.period_year)
     candidates = income_candidates(budget.entity_id, months)
 
+    assignments = {
+        a.source_key: a.bucket
+        for a in db.query(BudgetIncomeAssignment).filter(
+            BudgetIncomeAssignment.budget_id == budget_id).all()
+    }
+
+    # Legacy budgets: income picked before the generic lines existed left one
+    # auto line per candidate and no stored assignments. Those keys still count
+    # as selected (in their default bucket) so nothing looks unticked until the
+    # selection is re-applied.
     section = db.query(BudgetSection).filter(
         BudgetSection.budget_id == budget_id,
         BudgetSection.name == SEC_INCOME[0],
@@ -619,15 +653,17 @@ def list_income_candidates(
     out = []
     for c in candidates:
         values = sorted(c["values"].items(), key=lambda kv: (kv[0][1], kv[0][0]))
+        key = c["source_key"]
         out.append(BudgetIncomeCandidateOut(
-            source_key=c["source_key"],
+            source_key=key,
             line_name=c["line_name"],
             invoice_number=c.get("invoice_number"),
             po_number=c.get("po_number"),
             customer_name=c.get("customer_name"),
             values=[{"month": m, "year": y, "amount_due": v["due"]} for (m, y), v in values],
             total=sum((v["due"] for v in c["values"].values()), Decimal("0")),
-            selected=c["source_key"] in existing,
+            selected=key in assignments or key in existing,
+            bucket=assignments.get(key) or _default_bucket(c),
         ))
     return out
 
@@ -639,25 +675,65 @@ def set_income_lines(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Set the budget's income lines to exactly the ticked candidates.
+    """Set the budget's income to the assigned candidates, aggregated into the
+    two generic income lines (TRADEKOR INCOME ONLY / OTHER INCOME).
 
-    Authoritative for AUTO income lines only: a ticked key is created (or has its
-    figures refreshed), an unticked one is removed. Manually added income lines
-    are never touched — they aren't candidates and have no source_key.
+    Each generic line's monthly figure is the SUM of the candidates assigned to
+    it; the per-candidate choices are stored so the modal reopens as it was
+    left. Authoritative for AUTO income lines only: a bucket with candidates is
+    created/refreshed, an empty one is removed, and any old per-PO auto lines
+    are folded away. A hand-added line already NAMED like a generic line (June's
+    OTHER INCOME) is adopted rather than duplicated, keeping its id, pinned
+    cells and verification marks. Other manual income lines are never touched.
     """
     budget = _get_budget_checked(budget_id, current_user, db)
     code = (budget.entity.code or "").upper()
     months = _budget_window(code, budget.period_month, budget.period_year)
 
-    wanted = set(payload.source_keys)
     candidates = income_candidates(budget.entity_id, months)
-    known = {c["source_key"] for c in candidates}
-    unknown = wanted - known
+    by_key = {c["source_key"]: c for c in candidates}
+
+    assignments = dict(payload.assignments or {})
+    # Legacy shape: bare source_keys land in their default bucket.
+    for k in payload.source_keys or []:
+        assignments.setdefault(k, _default_bucket(by_key.get(k, {})))
+
+    unknown = set(assignments) - set(by_key)
     if unknown:
         raise HTTPException(
             status_code=400,
             detail=f"No such income for this period: {', '.join(sorted(unknown))}",
         )
+    bad = sorted({b for b in assignments.values() if b not in INCOME_BUCKETS})
+    if bad:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown income line: {', '.join(bad)} — use one of {', '.join(INCOME_BUCKETS)}",
+        )
+
+    # This payload is the whole selection, so the stored choices are replaced.
+    db.query(BudgetIncomeAssignment).filter(
+        BudgetIncomeAssignment.budget_id == budget_id).delete()
+    for k, b in assignments.items():
+        db.add(BudgetIncomeAssignment(budget_id=budget_id, source_key=k, bucket=b))
+    db.flush()
+
+    # One spec per non-empty bucket: its candidates' figures summed per month.
+    specs = []
+    for bucket, (skey, line_name) in INCOME_BUCKETS.items():
+        members = [by_key[k] for k, b in assignments.items() if b == bucket]
+        if not members:
+            continue
+        values: dict = {}
+        for c in members:
+            for (m, y), amts in c["values"].items():
+                cell = values.setdefault((m, y), {"due": Decimal("0"), "paid": None})
+                cell["due"] += amts["due"]
+        specs.append({
+            "section_name": SEC_INCOME[0], "section_type": SEC_INCOME[1],
+            "source_key": skey, "line_name": line_name, "values": values,
+        })
+    wanted = {s["source_key"] for s in specs}
 
     section = db.query(BudgetSection).filter(
         BudgetSection.budget_id == budget_id,
@@ -665,23 +741,36 @@ def set_income_lines(
     ).first()
     removed = 0
     if section:
-        for line in db.query(BudgetLine).filter(
-            BudgetLine.section_id == section.id,
-            BudgetLine.source == "auto",
-        ).all():
-            if line.source_key not in wanted:
+        lines = db.query(BudgetLine).filter(BudgetLine.section_id == section.id).all()
+        by_src = {l.source_key: l for l in lines if l.source == "auto" and l.source_key}
+        by_name: dict = {}
+        for l in sorted(lines, key=lambda l: (l.sort_order or 0, l.id)):
+            by_name.setdefault((l.name or "").strip().upper(), l)
+        # Adopt before pruning: an existing line named like a generic line
+        # becomes that line (only when the bucket is actually wanted — adopting
+        # for an empty bucket would hand a manual line to the delete pass).
+        for bucket, (skey, line_name) in INCOME_BUCKETS.items():
+            if skey not in wanted or skey in by_src:
+                continue
+            match = by_name.get(line_name.upper())
+            if match is not None and match.source_key != skey:
+                match.source = "auto"
+                match.source_key = skey
+                by_src[skey] = match
+        db.flush()
+        for line in lines:
+            if line.source == "auto" and line.source_key not in wanted:
                 db.delete(line)   # values cascade
                 removed += 1
         db.flush()
 
-    specs = [c for c in candidates if c["source_key"] in wanted]
     _apply_autofill(budget, db, current_user, section_names={SEC_INCOME[0]}, specs=specs)
 
     log_action(
         db, "budget.income_selected", user_id=current_user.id,
         resource_type="budget", resource_id=budget_id,
-        description=f"Set income to {len(specs)} line(s)"
-                    + (f", removed {removed}" if removed else "")
+        description=f"Assigned {len(assignments)} income row(s) into {len(specs)} generic line(s)"
+                    + (f", removed {removed} old line(s)" if removed else "")
                     + f" on budget {budget.period_month}/{budget.period_year}",
     )
     db.commit()
@@ -832,19 +921,23 @@ def _replicate_bank_rows(db: Session, source: Budget, target: Budget):
 
     rows_added = amounts_filled = 0
     for src in src_rows:
+        # CASH FLOW TOTAL is computed on the page from the rows above it — carrying
+        # last month's figure would pin the new month at a stale total, so the row
+        # comes over but its amount stays blank (= auto-sum).
+        carry_amount = None if CASH_FLOW_TOTAL_RE.search(src.label or "") else src.amount
         bucket = pool.get(_bank_ident(src))
         tgt = bucket.pop(0) if bucket else None
         if tgt is None:
             order = next_order.get(src.kind, 0)
             next_order[src.kind] = order + 1
             db.add(BudgetBankRow(budget_id=target.id, kind=src.kind, label=src.label,
-                                 note=src.note, amount=src.amount, sort_order=order))
+                                 note=src.note, amount=carry_amount, sort_order=order))
             rows_added += 1
-            if src.amount is not None:
+            if carry_amount is not None:
                 amounts_filled += 1
             continue
-        if tgt.amount is None and src.amount is not None:
-            tgt.amount = src.amount
+        if tgt.amount is None and carry_amount is not None:
+            tgt.amount = carry_amount
             amounts_filled += 1
         if not (tgt.note or "").strip() and src.note:
             tgt.note = src.note

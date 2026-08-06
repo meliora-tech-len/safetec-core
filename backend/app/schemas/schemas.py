@@ -2747,12 +2747,18 @@ class BudgetIncomeCandidateOut(BaseModel):
     customer_name: Optional[str] = None
     values: List[BudgetIncomeCandidateValue] = []
     total: Decimal                 # sum across the budget's whole window
-    selected: bool = False         # already a line in this budget
+    selected: bool = False         # already assigned into this budget's income
+    # Which generic income line this candidate feeds: 'tradekor' | 'other'.
+    # The stored assignment if one exists, else a default off the customer name.
+    bucket: str = "other"
 
 
 class BudgetIncomeSelection(BaseModel):
-    """The income lines this budget should have, as source_keys. Authoritative:
-    a key that's present is created/refreshed, one that's absent is removed."""
+    """The income this budget should count, as {source_key: bucket} where bucket
+    is 'tradekor' or 'other'. Authoritative: an assigned candidate feeds its
+    generic line's total, an absent one is dropped. `source_keys` is the legacy
+    shape — keys sent that way land in their default bucket."""
+    assignments: Dict[str, str] = {}
     source_keys: List[str] = []
 
 
