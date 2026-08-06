@@ -1,5 +1,6 @@
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import extract
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from app.db.database import get_db
@@ -44,6 +45,8 @@ def _load(stmt_id: int, db: Session) -> Statement:
 def list_statements(
     entity_id:      Optional[int] = Query(None),
     statement_type: Optional[str] = Query(None),
+    month:          Optional[int] = Query(None, ge=1, le=12),
+    year:           Optional[int] = Query(None, ge=2000, le=2100),
     db:             Session       = Depends(get_db),
     current_user:   User          = Depends(get_current_user),
 ):
@@ -59,6 +62,10 @@ def list_statements(
         q = q.filter(Statement.entity_id.in_(ids))
     if statement_type:
         q = q.filter(Statement.statement_type == statement_type)
+    if month:
+        q = q.filter(extract("month", Statement.statement_date) == month)
+    if year:
+        q = q.filter(extract("year", Statement.statement_date) == year)
     return q.order_by(Statement.statement_date.desc(), Statement.id.desc()).all()
 
 

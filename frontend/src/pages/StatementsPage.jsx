@@ -4,9 +4,17 @@ import { Plus, FileSpreadsheet, FileText, Pencil, Trash2, LayoutList } from 'luc
 import toast from 'react-hot-toast'
 import { format, parseISO, isValid } from 'date-fns'
 import { useAuth } from '../hooks/useAuth'
+import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
+import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 import { getStatements, deleteStatement, exportStatementPdf, exportStatementExcel, saveBlob } from '../services/api'
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+const now = new Date()
+const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const YEARS = []
+for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) YEARS.push(y)
 
 const entityChip = {
   background: 'var(--accent-dim)', color: 'var(--accent)',
@@ -27,23 +35,35 @@ function fmtAmt(val) {
 }
 
 
+function stmtTotal(stmt) {
+  const t = parseFloat(stmt.total)
+  return Number.isFinite(t) ? t : (stmt.lines || []).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0)
+}
+
 export default function StatementsPage() {
   const navigate = useNavigate()
-  const { isAdmin, activeEntity } = useAuth()
+  const { isAdmin, entities } = useAuth()
 
   const [statements, setStatements] = useState([])
   const [loading, setLoading]       = useState(true)
   const [exporting, setExporting]   = useState(null) // statement id + fmt being exported
 
+  const [filterEntity, setFilterEntity] = useEntityFilter()
+  const [filterMonth, setFilterMonth] = useSessionState('period:statements:month', now.getMonth() + 1) // '' = all months
+  const [filterYear, setFilterYear] = useSessionState('period:statements:year', now.getFullYear())
+  const { sort, onSort } = useSort('statement_date', 'desc', 'statements')
+
   useEffect(() => {
     load()
-  }, [activeEntity])
+  }, [filterEntity, filterMonth, filterYear])
 
   async function load() {
     setLoading(true)
     try {
       const params = {}
-      if (!isAdmin && activeEntity) params.entity_id = activeEntity.id
+      if (filterEntity) params.entity_id = filterEntity
+      if (filterMonth) params.month = filterMonth
+      if (filterYear) params.year = filterYear
       const res = await getStatements(params)
       setStatements(res.data || [])
     } catch {
@@ -52,6 +72,12 @@ export default function StatementsPage() {
       setLoading(false)
     }
   }
+
+  const sorted = applySort(statements, sort, (s, col) => {
+    if (col === 'lines') return (s.lines || []).length
+    if (col === 'total') return stmtTotal(s)
+    return s[col]
+  })
 
   async function handleDelete(stmt) {
     if (!window.confirm(`Delete "${stmt.title || 'this statement'}"?`)) return
@@ -108,23 +134,42 @@ export default function StatementsPage() {
             <LayoutList size={22} style={{ color: 'var(--accent)' }} />
             Statements
           </div>
-          <div className="page-subtitle">{statements.length} statement{statements.length !== 1 ? 's' : ''}</div>
+          <div className="page-subtitle">
+            {statements.length} statement{statements.length !== 1 ? 's' : ''} — {filterMonth ? `${MONTHS[filterMonth]} ` : ''}{filterYear}
+          </div>
         </div>
         <button className="btn-primary" onClick={() => navigate('/statements/new')}>
           <Plus size={15} /> New Statement
         </button>
       </div>
 
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        {isAdmin && (
+          <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
+            <option value="">All Entities</option>
+            {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        )}
+        <select value={filterMonth} onChange={e => setFilterMonth(e.target.value ? parseInt(e.target.value) : '')} style={{ width: 130 }}>
+          <option value="">All Months</option>
+          {MONTHS.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+        </select>
+        <select value={filterYear} onChange={e => setFilterYear(parseInt(e.target.value))} style={{ width: 90 }}>
+          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
       <div className="table-wrapper">
         <table>
           <thead>
             <tr>
-              <th>Date</th>
-              {isAdmin && <th>Entity</th>}
-              <th>Customer</th>
-              <th>Title</th>
-              <th style={{ textAlign: 'right' }}>Lines</th>
-              <th style={{ textAlign: 'right' }}>Amount Due (R)</th>
+              <SortableHeader label="Date" col="statement_date" sort={sort} onSort={onSort} />
+              {isAdmin && <SortableHeader label="Entity" col="entity_code" sort={sort} onSort={onSort} />}
+              <SortableHeader label="Customer" col="customer_name" sort={sort} onSort={onSort} />
+              <SortableHeader label="Title" col="title" sort={sort} onSort={onSort} />
+              <SortableHeader label="Lines" col="lines" sort={sort} onSort={onSort} style={{ textAlign: 'right' }} />
+              <SortableHeader label="Amount Due (R)" col="total" sort={sort} onSort={onSort} style={{ textAlign: 'right' }} />
               <th style={{ width: 130 }}>Export</th>
               <th style={{ width: 80 }}>Actions</th>
             </tr>
@@ -138,10 +183,10 @@ export default function StatementsPage() {
               <tr><td colSpan={isAdmin ? 8 : 7}>
                 <div className="empty-state">
                   <LayoutList size={32} />
-                  <p>No statements yet — create one to get started</p>
+                  <p>No statements for this period — adjust the filters or create one</p>
                 </div>
               </td></tr>
-            ) : statements.map(stmt => (
+            ) : sorted.map(stmt => (
               <tr key={stmt.id}>
                 <td style={{ fontSize: 13 }}>{fmtDate(stmt.statement_date)}</td>
                 {isAdmin && (
@@ -155,7 +200,7 @@ export default function StatementsPage() {
                 <td style={{ color: 'var(--text-secondary)' }}>{stmt.title || '—'}</td>
                 <td style={{ textAlign: 'right', color: 'var(--text-muted)', fontSize: 12 }}>{(stmt.lines || []).length}</td>
                 <td style={{ textAlign: 'right', fontWeight: 600, fontFamily: 'monospace' }}>
-                  {fmtAmt(stmt.total ?? (stmt.lines || []).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0))}
+                  {fmtAmt(stmtTotal(stmt))}
                 </td>
                 <td>
                   <div style={{ display: 'flex', gap: 4 }}>
