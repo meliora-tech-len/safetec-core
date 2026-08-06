@@ -55,6 +55,11 @@ const SFT_PERSONAL_SECTIONS = ['PERSONAL NOT ON TRUCK COSTING', 'BUSINESS NOT ON
 // (Mirror the backend BANK_INFO_ENTITIES, which is what seeds the rows.)
 const BANK_INFO_ENTITIES = ['SFT', 'OBHI', 'BTP', 'TP', 'BKMO']
 
+// Entities whose summary is the two per-month-group cards (base month on its own;
+// next month's income against next + following month's expenses) instead of the
+// single window total.
+const MONTH_SPLIT_ENTITIES = ['OBHI', 'BTP', 'TP']
+
 // "vat back trailer" is derived, not typed. Almost every vehicle-finance line
 // carries a note of the VAT that will come back on it — "… 01.03.R26915.38 - VAT
 // BACK R133582.50 - END 01.02.2029" — so the note alone marks a dozen lines and
@@ -697,12 +702,13 @@ export default function BudgetsPage() {
     return { income, expensesDue, expensesPaid, leftOver: income - expensesDue - expensesPaid, incomeByKey, expenseByKey }
   }, [budget, months])
 
-  // OBHI reconciles month by month, not across the whole window: the base month's
-  // income covers only its own expenses, while the next month's income covers that
-  // month AND the one after it (mirrors the OBHI budget sheet's APRIL / MAY columns).
-  const isObhi = (selectedEntityCode || '').toUpperCase() === 'OBHI'
-  const obhiSplit = useMemo(() => {
-    if (!totals || !isObhi || months.length < 3) return null
+  // OBHI, BTP and TP reconcile month by month, not across the whole window: the
+  // base month's income covers only its own expenses, while the next month's income
+  // covers that month AND the one after it (mirrors the OBHI budget sheet's
+  // APRIL / MAY columns; BTP and TP follow the same layout).
+  const hasMonthSplit = MONTH_SPLIT_ENTITIES.includes((selectedEntityCode || '').toUpperCase())
+  const monthSplit = useMemo(() => {
+    if (!totals || !hasMonthSplit || months.length < 3) return null
     const key = (o) => `${o.month}:${o.year}`
     const [m0, m1, m2] = months
     const nm = (o) => `${MONTHS[o.month - 1]} ${o.year}`
@@ -716,7 +722,7 @@ export default function BudgetsPage() {
       g2: { title: nm(m1), sub: `${MONTHS[m1.month - 1]} income − ${MONTHS[m1.month - 1]} & ${MONTHS[m2.month - 1]} expenses`,
             income: g2Income, expenses: g2Exp, leftOver: g2Income - g2Exp },
     }
-  }, [totals, isObhi, months])
+  }, [totals, hasMonthSplit, months])
 
   // A profit statement for the BASE month alone, not the three-month window: it
   // answers "what did May earn and what did May cost". The two forward columns in
@@ -1017,9 +1023,9 @@ export default function BudgetsPage() {
       {/* Budget grid */}
       {entityId && !noAccess && !loading && budget && (
         <>
-          {/* Summary — Safetec shows a base-month profit statement; OBHI reconciles
-              per month-group (income vs the expenses that income has to cover);
-              every other entity uses the single window total. */}
+          {/* Summary — Safetec shows a base-month profit statement; OBHI, BTP and
+              TP reconcile per month-group (income vs the expenses that income has
+              to cover); every other entity uses the single window total. */}
           {isSft && baseSummary ? (
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16 }}>
@@ -1071,9 +1077,9 @@ export default function BudgetsPage() {
                 {baseSummary.baseLabel} only — the two months that follow are shown in the grid for cash-flow planning and don&apos;t affect these figures.
               </div>
             </div>
-          ) : isObhi && obhiSplit ? (
+          ) : hasMonthSplit && monthSplit ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 24 }}>
-              {[obhiSplit.g1, obhiSplit.g2].map(g => (
+              {[monthSplit.g1, monthSplit.g2].map(g => (
                 <div key={g.title} className="stat-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div>
                     <div className="stat-card-label" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{g.title}</div>
