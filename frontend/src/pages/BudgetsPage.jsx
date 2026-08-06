@@ -2067,12 +2067,14 @@ const cellInputOverridden = {
 }
 
 // A value locked by final verification — not editable until the lock is removed.
+// Green (not the brand accent) so the owner can spot final-verified figures at a glance.
 const cellInputLocked = {
   ...cellInputStyle,
   cursor: 'not-allowed',
-  color: 'var(--text-secondary)',
-  background: 'var(--bg-surface)',
-  borderColor: 'transparent',
+  color: 'var(--text-primary)',
+  fontWeight: 600,
+  background: 'rgba(34, 197, 94, 0.08)',
+  border: '1px solid var(--success)',
 }
 
 // Line names wrap over as many rows as they need, so they're edited in a textarea
