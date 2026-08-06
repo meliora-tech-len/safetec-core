@@ -780,26 +780,26 @@ export default function ReportsPage() {
     // Sheet 1: one row per PO → truck, invoiced against loads
     const ws1 = XLSX.utils.aoa_to_sheet([
       [title], [`Generated: ${now}`], [],
-      ['PO Number', 'Invoice(s)', 'Registration', 'Invoiced Loads', 'Invoiced Tonnes', 'Invoiced Amount',
+      ['PO Number', 'Invoice(s)', 'Registration', 'Invoiced Loads', 'Invoiced Tonnes', 'Invoiced Excl VAT', 'Invoiced Incl VAT',
        'Load Count', 'Load Tonnes', 'Load Amount', 'Diff Loads', 'Diff Tonnes', 'Diff Amount', 'Issues'],
       ...pos.flatMap(p => [
         ...p.trucks.map(t => [
           p.po_number, p.invoices.map(i => i.invoice_number).join(', '), t.registration,
-          t.totals.invoiced_loads, t.totals.invoiced_tonnes, t.totals.invoiced_amount,
+          t.totals.invoiced_loads, t.totals.invoiced_tonnes, t.totals.invoiced_amount, t.totals.invoiced_amount_incl,
           t.totals.load_loads, t.totals.load_tonnes, t.totals.load_amount,
           t.totals.diff_loads, t.totals.diff_tonnes, t.totals.diff_amount,
           t.issue_count ? `${t.issue_count} line(s)` : '',
         ]),
-        [`${p.po_number} TOTAL`, '', '', p.totals.invoiced_loads, p.totals.invoiced_tonnes, p.totals.invoiced_amount,
+        [`${p.po_number} TOTAL`, '', '', p.totals.invoiced_loads, p.totals.invoiced_tonnes, p.totals.invoiced_amount, p.totals.invoiced_amount_incl,
          p.totals.load_loads, p.totals.load_tonnes, p.totals.load_amount,
          p.totals.diff_loads, p.totals.diff_tonnes, p.totals.diff_amount, ''],
         [],
       ]),
-      ['GRAND TOTAL', '', '', totals.invoiced_loads, totals.invoiced_tonnes, totals.invoiced_amount,
+      ['GRAND TOTAL', '', '', totals.invoiced_loads, totals.invoiced_tonnes, totals.invoiced_amount, totals.invoiced_amount_incl,
        totals.load_loads, totals.load_tonnes, totals.load_amount,
        totals.diff_loads, totals.diff_tonnes, totals.diff_amount, ''],
     ])
-    ws1['!cols'] = [{ wch: 22 }, { wch: 20 }, { wch: 14 }, { wch: 13 }, { wch: 14 }, { wch: 16 },
+    ws1['!cols'] = [{ wch: 22 }, { wch: 20 }, { wch: 14 }, { wch: 13 }, { wch: 14 }, { wch: 16 }, { wch: 16 },
                     { wch: 11 }, { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 11 }, { wch: 14 }, { wch: 16 }]
     XLSX.utils.book_append_sheet(wb, ws1, 'Summary')
 
@@ -856,30 +856,32 @@ export default function ReportsPage() {
     doc.setTextColor(0)
 
     autoTable(doc, {
-      head: [['PO Number', 'Registration', 'Inv Loads', 'Inv Tonnes', 'Inv Amount',
+      head: [['PO Number', 'Registration', 'Inv Loads', 'Inv Tonnes', 'Excl VAT', 'Incl VAT',
               'Loads', 'Load Tonnes', 'Load Amount', 'Diff Amount', 'Issues']],
       body: [
         ...pos.flatMap(p => [
           ...p.trucks.map((t, i) => [
             i === 0 ? p.po_number : '', t.registration,
-            t.totals.invoiced_loads, fmtT(t.totals.invoiced_tonnes), fmtAmt(t.totals.invoiced_amount),
+            t.totals.invoiced_loads, fmtT(t.totals.invoiced_tonnes), fmtAmt(t.totals.invoiced_amount), fmtAmt(t.totals.invoiced_amount_incl),
             t.totals.load_loads, fmtT(t.totals.load_tonnes), fmtAmt(t.totals.load_amount),
             fmtAmt(t.totals.diff_amount), t.issue_count || '',
           ]),
           [`${p.po_number} subtotal`, '', p.totals.invoiced_loads, fmtT(p.totals.invoiced_tonnes), fmtAmt(p.totals.invoiced_amount),
+           fmtAmt(p.totals.invoiced_amount_incl),
            p.totals.load_loads, fmtT(p.totals.load_tonnes), fmtAmt(p.totals.load_amount), fmtAmt(p.totals.diff_amount), ''],
         ]),
         ['GRAND TOTAL', '', totals.invoiced_loads, fmtT(totals.invoiced_tonnes), fmtAmt(totals.invoiced_amount),
+         fmtAmt(totals.invoiced_amount_incl),
          totals.load_loads, fmtT(totals.load_tonnes), fmtAmt(totals.load_amount), fmtAmt(totals.diff_amount), ''],
       ],
       startY: 26,
       styles: { fontSize: 7.5, cellPadding: 1.8 },
       headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold' },
       columnStyles: {
-        0: { cellWidth: 40 }, 1: { cellWidth: 24 },
+        0: { cellWidth: 38 }, 1: { cellWidth: 22 },
         2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' },
         5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' },
-        8: { halign: 'right' }, 9: { halign: 'right' },
+        8: { halign: 'right' }, 9: { halign: 'right' }, 10: { halign: 'right' },
       },
       didParseCell: (d) => {
         if (d.section !== 'body') return
