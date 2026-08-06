@@ -1015,6 +1015,7 @@ def _line_tonnes(quantity) -> float:
 def _zero_recon_totals() -> dict:
     return {
         'invoiced_loads': 0, 'invoiced_tonnes': 0.0, 'invoiced_amount': 0.0,
+        'invoiced_amount_incl': 0.0,
         'load_loads': 0, 'load_tonnes': 0.0, 'load_amount': 0.0,
     }
 
@@ -1025,6 +1026,7 @@ def _recon_with_diff(t: dict) -> dict:
         'invoiced_tonnes': round(t['invoiced_tonnes'], 3),
         'load_tonnes': round(t['load_tonnes'], 3),
         'invoiced_amount': round(t['invoiced_amount'], 2),
+        'invoiced_amount_incl': round(t['invoiced_amount_incl'], 2),
         'load_amount': round(t['load_amount'], 2),
     }
     out['diff_loads'] = out['invoiced_loads'] - out['load_loads']
@@ -1130,6 +1132,11 @@ def po_load_reconciliation_report(
             'status': inv.status.value if inv.status else None,
         })
 
+        # Line amounts are excl-VAT; the incl total uses this invoice's own rate.
+        vat_factor = 1.0 if inv.is_vat_exempt else 1.0 + float(
+            inv.vat_rate if inv.vat_rate is not None else 0.15
+        )
+
         for li in sorted(inv.line_items, key=lambda x: (x.sort_order or 0, x.id)):
             if li.line_type != 'item':
                 continue
@@ -1209,6 +1216,7 @@ def po_load_reconciliation_report(
 
             row_totals = {
                 'invoiced_loads': 1, 'invoiced_tonnes': inv_tonnes, 'invoiced_amount': inv_amount,
+                'invoiced_amount_incl': inv_amount * vat_factor,
                 'load_loads': 1 if match is not None else 0,
                 'load_tonnes': load_tonnes, 'load_amount': load_amount,
             }
