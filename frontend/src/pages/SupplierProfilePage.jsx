@@ -1317,7 +1317,7 @@ export default function SupplierProfilePage() {
         const incl = parseFloat(li.amount_incl_vat) || 0
         // A line is non-VAT when its incl == excl; default new/zero lines to VAT.
         const _vat = excl > 0 ? incl > excl : true
-        return { ...li, _key: li.id, _vat, _rate: qty > 0 ? String(Math.round(excl / qty * 10000) / 10000) : '', line_date: li.line_date ? String(li.line_date).slice(0, 10) : '' }
+        return { ...li, _key: li.id, _vat, _rate: qty > 0 ? String(Math.round(excl / qty * 100) / 100) : '', line_date: li.line_date ? String(li.line_date).slice(0, 10) : '' }
       }) : [],
       statement_month: inv.statement_month || currentMonth(),
       statement_year: inv.statement_year || currentYear(),
@@ -3197,19 +3197,32 @@ function LineItemsEditor({ items, onChange, showReg = false, trucks = [], amount
   const multOf = (li) => (lineVat(li) ? 1.15 : 1)
   const addLine = () => onChange([...items, blankLineItem()])
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
+  const r2 = (n) => Math.round(n * 100) / 100
   const updateLine = (idx, field, value) => {
     const updated = { ...items[idx], [field]: value }
     const vatMult = multOf(updated)
-    // Excl and incl are both entered directly; editing one derives the other
-    // from the line's own VAT flag. Other fields (qty, code, …) just store.
-    if (field === 'amount_excl_vat') {
+    // Qty × Rate drives the excl amount; typing excl or incl directly instead
+    // back-derives the rate. Either way the dependent amount comes from the
+    // line's own VAT flag. Other fields (code, reg, …) just store.
+    if (field === 'quantity' || field === '_rate') {
+      const qty = parseFloat(updated.quantity) || 0
+      const rate = parseFloat(updated._rate) || 0
+      if (qty && rate) {
+        const excl = r2(qty * rate)
+        updated.amount_excl_vat = String(excl)
+        updated.amount_incl_vat = String(r2(excl * vatMult))
+      }
+    } else if (field === 'amount_excl_vat') {
       const excl = parseFloat(value) || 0
-      updated.amount_excl_vat = value
-      updated.amount_incl_vat = excl ? String(Math.round(excl * vatMult * 100) / 100) : ''
+      updated.amount_incl_vat = excl ? String(r2(excl * vatMult)) : ''
+      const qty = parseFloat(updated.quantity) || 0
+      if (qty > 0) updated._rate = excl ? String(r2(excl / qty)) : ''
     } else if (field === 'amount_incl_vat') {
       const incl = parseFloat(value) || 0
-      updated.amount_incl_vat = value
-      updated.amount_excl_vat = incl ? String(Math.round(incl / vatMult * 100) / 100) : ''
+      const excl = incl ? r2(incl / vatMult) : 0
+      updated.amount_excl_vat = excl ? String(excl) : ''
+      const qty = parseFloat(updated.quantity) || 0
+      if (qty > 0) updated._rate = excl ? String(r2(excl / qty)) : ''
     }
     onChange(items.map((li, i) => i === idx ? updated : li))
   }
@@ -3239,6 +3252,7 @@ function LineItemsEditor({ items, onChange, showReg = false, trucks = [], amount
           <col />
           {showReg && <col style={{ width: 120 }} />}
           {!amountInclOnly && <col style={{ width: 70 }} />}
+          {!amountInclOnly && <col style={{ width: 90 }} />}
           {!amountInclOnly && <col style={{ width: 110 }} />}
           <col style={{ width: amountInclOnly ? 130 : 110 }} />
           <col style={{ width: 44 }} />
@@ -3250,6 +3264,7 @@ function LineItemsEditor({ items, onChange, showReg = false, trucks = [], amount
             <th style={liStyles.th}>Description</th>
             {showReg && <th style={liStyles.th}>Reg</th>}
             {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>}
+            {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>}
             {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>}
             <th style={{ ...liStyles.th, textAlign: 'right' }}>{amountInclOnly ? 'Amount (incl. VAT)' : 'Incl. VAT'}</th>
             <th style={{ ...liStyles.th, textAlign: 'center' }} title="VAT applies to this line">VAT</th>
@@ -3297,6 +3312,13 @@ function LineItemsEditor({ items, onChange, showReg = false, trucks = [], amount
               )}
               {!amountInclOnly && (
                 <td style={liStyles.td}>
+                  <input type="number" step="0.01" value={li._rate ?? ''} placeholder="0.00"
+                    onChange={e => updateLine(idx, '_rate', e.target.value)}
+                    style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
+                </td>
+              )}
+              {!amountInclOnly && (
+                <td style={liStyles.td}>
                   <input type="number" step="0.01" value={li.amount_excl_vat ?? ''} placeholder="0.00"
                     onChange={e => updateLine(idx, 'amount_excl_vat', e.target.value)}
                     style={{ ...liStyles.input, width: '100%', textAlign: 'right' }} />
@@ -3331,7 +3353,7 @@ function LineItemsEditor({ items, onChange, showReg = false, trucks = [], amount
                 <Plus size={13} /> Add line
               </button>
             </td>
-            {!amountInclOnly && <td style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>}
+            {!amountInclOnly && <td colSpan={2} style={{ ...liStyles.td, fontWeight: 700, textAlign: 'right' }}>Total:</td>}
             {!amountInclOnly && (
               <td style={{ ...liStyles.td, textAlign: 'right', fontWeight: 700, fontFamily: 'monospace' }}>
                 {totalExcl.toFixed(2)}
@@ -3380,6 +3402,10 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
   // Per-line verification (lines with a reg only): user ticks once the amount
   // is confirmed on that subcontractor's costing sheet
   const canVerify = (li) => !!(onVerify && verifTarget && (li.unit || '').trim())
+  // Any table showing verify badges needs the wide left-aligned amount column
+  // (not just equal splits) so the step ticks never run off the table
+  const hasVerify = !!(onVerify && verifTarget) && items.some(li => (li.unit || '').trim())
+  const badgeCol = isEqualSplit || hasVerify
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -3395,9 +3421,9 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
           {!amountInclOnly && !isEqualSplit && <col style={{ width: 65 }} />}
           {!amountInclOnly && <col style={{ width: 105 }} />}
           {!amountInclOnly && <col style={{ width: 95 }} />}
-          {/* Equal splits carry the verify badge beside the amount — wider
-              column, left-aligned so the ticks never run off the table */}
-          <col style={{ width: isEqualSplit ? 190 : amountInclOnly ? 130 : 120 }} />
+          {/* Verify badges sit beside the amount — wider column, left-aligned
+              so the ticks never run off the table */}
+          <col style={{ width: badgeCol ? 200 : amountInclOnly ? 130 : 120 }} />
         </colgroup>
         <thead>
           <tr style={{ background: 'var(--bg-surface)' }}>
@@ -3411,7 +3437,7 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
             {!amountInclOnly && !isEqualSplit && <th style={{ ...liStyles.th, textAlign: 'right' }}>Qty</th>}
             {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Rate</th>}
             {!amountInclOnly && <th style={{ ...liStyles.th, textAlign: 'right' }}>Excl. VAT</th>}
-            <th style={{ ...liStyles.th, textAlign: isEqualSplit ? 'left' : 'right' }}>{amountInclOnly ? 'Amount (incl. VAT)' : 'Incl. VAT'}</th>
+            <th style={{ ...liStyles.th, textAlign: badgeCol ? 'left' : 'right' }}>{amountInclOnly ? 'Amount (incl. VAT)' : 'Incl. VAT'}</th>
           </tr>
         </thead>
         <tbody>
@@ -3445,7 +3471,7 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
                 {!amountInclOnly && !isEqualSplit && <td style={{ ...liStyles.td, textAlign: 'right' }}>{qty || '—'}</td>}
                 {!amountInclOnly && (
                   <td style={{ ...liStyles.td, textAlign: 'right', fontFamily: 'monospace' }}>
-                    {rate != null ? rate.toFixed(4) : '—'}
+                    {rate != null ? rate.toFixed(2) : '—'}
                   </td>
                 )}
                 {!amountInclOnly && (
@@ -3453,7 +3479,7 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
                     R&nbsp;{excl.toFixed(2)}
                   </td>
                 )}
-                <td style={{ ...liStyles.td, textAlign: isEqualSplit ? 'left' : 'right', fontFamily: 'monospace' }}>
+                <td style={{ ...liStyles.td, textAlign: badgeCol ? 'left' : 'right', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
                   {canVerify(li) ? (
                     <VerifiableAmount target={verifTarget(li)} state={verif[verifTarget(li)]}
                       onVerify={onVerify} onFinalize={onFinalize}
@@ -3477,7 +3503,7 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
                 R&nbsp;{totalExcl.toFixed(2)}
               </td>
             )}
-            <td style={{ ...liStyles.td, textAlign: isEqualSplit ? 'left' : 'right', fontWeight: 700, fontFamily: 'monospace' }}>
+            <td style={{ ...liStyles.td, textAlign: badgeCol ? 'left' : 'right', fontWeight: 700, fontFamily: 'monospace' }}>
               R&nbsp;{parseFloat(total ?? 0).toFixed(2)}
             </td>
           </tr>

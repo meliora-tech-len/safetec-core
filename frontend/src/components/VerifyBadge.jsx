@@ -144,7 +144,7 @@ export default function VerifyBadge({
             <CheckCircle size={15} style={{ color: step1Done ? '#16a34a' : 'var(--border)', flexShrink: 0 }} />
             {step1Done && item.verified_by_initials
               ? badge(item.verified_by_initials, item.verified_by_date)
-              : <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Step 1</span>
+              : <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Step 1</span>
             }
             {step1Done && !step2Done && isSteps12Locked && !step3Done && (
               <Lock size={9} style={{ color: 'var(--text-muted)', marginLeft: 2 }} />
@@ -159,7 +159,7 @@ export default function VerifyBadge({
               }
               {step2Done && item.verified2_by_initials
                 ? badge(item.verified2_by_initials, item.verified2_by_date)
-                : <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Step 2</span>
+                : <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Step 2</span>
               }
               {step2Done && isSteps12Locked && !step3Done && (
                 <Lock size={9} style={{ color: 'var(--text-muted)', marginLeft: 2 }} />
@@ -187,8 +187,8 @@ export default function VerifyBadge({
             />
             {step3Done && item.verified3_by_initials
               ? badge(item.verified3_by_initials, item.verified3_by_date)
-              : <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                  {step3Done ? 'Locked' : 'Final Verification'}
+              : <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                  {step3Done ? 'Locked' : 'Final lock'}
                 </span>
             }
           </div>
