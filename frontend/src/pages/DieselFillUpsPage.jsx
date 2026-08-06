@@ -3,7 +3,7 @@ import {
   getDieselFillUps, getDieselFillUpSummary, createDieselFillUp,
   updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp, finalizeDieselFillUp,
   getCurrentDieselRate, getEntities, getDieselSettings, getSuppliers,
-  getDieselInvoiceLocks, setDieselInvoiceLock,
+  getDieselInvoiceLocks, setDieselInvoiceLock, setDieselInvoiceLocksBulk,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage, dieselTypeForSupplier } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
@@ -103,9 +103,11 @@ export default function DieselFillUpsPage() {
   const [noteSaving,   setNoteSaving]   = useState(false)
   // Month lock — one row per entity + month/year; locked = no values in or out
   const [locks,        setLocks]        = useState([])
-  const [lockModal,    setLockModal]    = useState(null)  // { invoiceId, invoiceNumber, rows } | null
+  const [lockModal,    setLockModal]    = useState(null)  // { groups: [{ invoiceId, invoiceNumber, rows, … }] } | null
   const [lockDate,     setLockDate]     = useState(today)
   const [lockSaving,   setLockSaving]   = useState(false)
+  // Invoices ticked in the locks panel for "Lock selected"
+  const [lockChecked,  setLockChecked]  = useState(new Set())
   // Panel stays shut by default — the page looks unchanged until locks are needed
   const [locksOpen,    setLocksOpen]    = useSessionState('diesel:invoice-locks-open', false)
   // Bulk verification — rows ticked for "Verify selected" / "Final lock selected"
@@ -160,6 +162,8 @@ export default function DieselFillUpsPage() {
     const p = { year: filterYear, month: filterMonth }
     if (filterEntity)   p.entity_id   = filterEntity
     if (filterSupplier) p.supplier_id = filterSupplier
+    // A new filter shows a different set of invoices — drop stale ticks with it
+    setLockChecked(new Set())
     getDieselInvoiceLocks(p)
       .then(r => setLocks(r.data || []))
       .catch(() => setLocks([]))
@@ -176,16 +180,20 @@ export default function DieselFillUpsPage() {
   const rowLocked = f => !!(f.supplier_invoice_id && lockByInvoiceId.has(f.supplier_invoice_id))
 
   const applyLock = async () => {
-    if (!lockDate) { toast.error('Pick the date the invoice was locked'); return }
+    if (!lockDate) { toast.error('Pick the date the invoices were locked'); return }
+    const groups = lockModal.groups
     setLockSaving(true)
     try {
-      await setDieselInvoiceLock(
-        { supplier_invoice_id: lockModal.invoiceId },
-        { locked: true, locked_date: lockDate },
-      )
-      toast.success(`Invoice ${lockModal.invoiceNumber} locked`)
+      await setDieselInvoiceLocksBulk({
+        supplier_invoice_ids: groups.map(g => g.invoiceId),
+        locked_date: lockDate,
+      })
+      toast.success(groups.length === 1
+        ? `Invoice ${groups[0].invoiceNumber} locked`
+        : `${groups.length} invoices locked`)
       setLockModal(null)
       setEditingId(null)
+      setLockChecked(new Set())
       loadLocks()
     } catch (err) { toast.error(errorMessage(err)) }
     finally { setLockSaving(false) }
@@ -562,6 +570,9 @@ export default function DieselFillUpsPage() {
   }, [visible, lockByInvoiceId])
 
   const lockedCount = lockableGroups.filter(g => g.lock).length
+  const unlockedGroups = lockableGroups.filter(g => !g.lock)
+  const checkedLockGroups = unlockedGroups.filter(g => lockChecked.has(g.invoiceId))
+  const allLocksChecked = unlockedGroups.length > 0 && unlockedGroups.every(g => lockChecked.has(g.invoiceId))
 
   const multiEntity = entities.length > 1
   const COLS = multiEntity ? 16 : 15
@@ -735,7 +746,20 @@ export default function DieselFillUpsPage() {
               {lockableGroups.length} invoice{lockableGroups.length === 1 ? '' : 's'} in view
               {lockedCount > 0 && <> · <span style={{ color: '#16a34a', fontWeight: 700 }}>{lockedCount} locked</span></>}
             </span>
-            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+            {locksOpen && checkedLockGroups.length > 0 && (
+              <button
+                onClick={e => { e.stopPropagation(); setLockDate(today); setLockModal({ groups: checkedLockGroups }) }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto',
+                  padding: '4px 12px', borderRadius: 7, border: 'none',
+                  background: 'var(--accent)', color: '#fff', fontWeight: 600, fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                <Lock size={13} /> Lock selected ({checkedLockGroups.length})
+              </button>
+            )}
+            <span style={{ marginLeft: checkedLockGroups.length > 0 && locksOpen ? 0 : 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
               {locksOpen ? '▲ hide' : '▼ show'}
             </span>
           </div>
@@ -743,9 +767,50 @@ export default function DieselFillUpsPage() {
           {locksOpen && (
             <div style={{ maxHeight: 260, overflowY: 'auto', borderTop: '1px solid var(--border)' }}>
               <table className="compact-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 28, textAlign: 'center' }}>
+                      {unlockedGroups.length > 0 && (
+                        <input
+                          type="checkbox"
+                          checked={allLocksChecked}
+                          onChange={() => setLockChecked(s => {
+                            const n = new Set(s)
+                            if (allLocksChecked) unlockedGroups.forEach(g => n.delete(g.invoiceId))
+                            else unlockedGroups.forEach(g => n.add(g.invoiceId))
+                            return n
+                          })}
+                          title="Select all unlocked invoices"
+                          style={{ cursor: 'pointer' }}
+                        />
+                      )}
+                    </th>
+                    <th>Invoice #</th>
+                    <th>Supplier</th>
+                    <th className="text-right">Logs</th>
+                    <th className="text-right">Litres</th>
+                    <th className="text-right">Total</th>
+                    <th></th>
+                  </tr>
+                </thead>
                 <tbody>
                   {lockableGroups.map(g => (
                     <tr key={g.invoiceId} style={g.lock ? { background: 'rgba(34,197,94,0.06)' } : undefined}>
+                      <td style={{ width: 28, textAlign: 'center' }}>
+                        {!g.lock && (
+                          <input
+                            type="checkbox"
+                            checked={lockChecked.has(g.invoiceId)}
+                            onChange={() => setLockChecked(s => {
+                              const n = new Set(s)
+                              if (n.has(g.invoiceId)) n.delete(g.invoiceId)
+                              else n.add(g.invoiceId)
+                              return n
+                            })}
+                            style={{ cursor: 'pointer' }}
+                          />
+                        )}
+                      </td>
                       <td style={{ fontFamily: 'monospace', fontWeight: 700, whiteSpace: 'nowrap' }}>{g.invoiceNumber}</td>
                       <td style={{ color: 'var(--text-secondary)' }}>{g.supplierName || '—'}</td>
                       <td className="text-right" style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
@@ -772,7 +837,7 @@ export default function DieselFillUpsPage() {
                         ) : (
                           <button
                             className="btn-ghost btn-sm"
-                            onClick={() => { setLockDate(today); setLockModal(g) }}
+                            onClick={() => { setLockDate(today); setLockModal({ groups: [g] }) }}
                             title="Lock the diesel on this invoice — no values in or out"
                             style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 }}
                           >
@@ -901,7 +966,20 @@ export default function DieselFillUpsPage() {
                     </span>
                   </td>
                   <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.invoice_number || '—'}</td>
-                  <td style={{ fontSize: 12, fontFamily: 'monospace' }}>{f.slip_number || '—'}</td>
+                  <td style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                    {f.slip_number
+                      || (f.supplier_invoice_id && !f.depot_slip_number ? (
+                        <span
+                          title="Captured off the invoice without a depot slip — add the Slip # to the invoice line when you have it"
+                          style={{
+                            padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                            whiteSpace: 'nowrap', fontFamily: 'var(--font-body, inherit)',
+                            background: 'rgba(245,158,11,0.15)', color: '#d97706',
+                          }}>
+                          No slip
+                        </span>
+                      ) : '—')}
+                  </td>
                   {/* Bulk-select checkbox */}
                   <td style={{ width: 28, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                     {canUserSelect(f) && (
@@ -1042,25 +1120,38 @@ export default function DieselFillUpsPage() {
         </div>
       )}
 
-      {/* ── Lock Invoice Modal ── */}
-      {lockModal && (
+      {/* ── Lock Invoice Modal (one or several invoices, one shared date) ── */}
+      {lockModal && (() => {
+        const groups = lockModal.groups
+        const multi = groups.length > 1
+        const rowCount = groups.reduce((s, g) => s + g.rows.length, 0)
+        const litresSum = groups.reduce((s, g) => s + g.litres, 0)
+        const totalSum = groups.reduce((s, g) => s + g.total, 0)
+        const allRows = groups.flatMap(g => g.rows.map(f => ({ ...f, _invoiceNumber: g.invoiceNumber })))
+          .sort((a, b) => String(a._invoiceNumber).localeCompare(String(b._invoiceNumber))
+            || String(a.fillup_date).localeCompare(String(b.fillup_date))
+            || (a.truck_registration || '').localeCompare(b.truck_registration || ''))
+        return (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setLockModal(null)}>
           <div className="modal modal-lg">
             <div className="modal-header">
               <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
                 <Lock size={16} style={{ color: 'var(--accent)' }} />
-                Lock Diesel — {lockModal.invoiceNumber}
+                Lock Diesel — {multi ? `${groups.length} invoices` : groups[0].invoiceNumber}
               </h2>
               <button className="btn-icon btn-ghost" onClick={() => setLockModal(null)}><X size={16} /></button>
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 13, marginTop: 0, lineHeight: 1.5 }}>
-                This locks the diesel on invoice <strong>{lockModal.invoiceNumber}</strong>
-                {lockModal.supplierName ? <> (<strong>{lockModal.supplierName}</strong>)</> : null} —{' '}
-                <strong>{lockModal.rows.length} log{lockModal.rows.length === 1 ? '' : 's'}</strong>,{' '}
-                {lockModal.litres.toLocaleString('en-ZA', { minimumFractionDigits: 2 })} L,{' '}
-                {formatCurrency(lockModal.total)}. Nothing can be added, changed, imported or removed
-                against it. Notes and verification ticks stay available.
+                This locks the diesel on{' '}
+                {multi
+                  ? <><strong>{groups.length} invoices</strong> ({groups.map(g => g.invoiceNumber).join(', ')})</>
+                  : <>invoice <strong>{groups[0].invoiceNumber}</strong>
+                      {groups[0].supplierName ? <> (<strong>{groups[0].supplierName}</strong>)</> : null}</>}
+                {' '}— <strong>{rowCount} log{rowCount === 1 ? '' : 's'}</strong>,{' '}
+                {litresSum.toLocaleString('en-ZA', { minimumFractionDigits: 2 })} L,{' '}
+                {formatCurrency(totalSum)}. Nothing can be added, changed, imported or removed
+                against {multi ? 'them' : 'it'}. Notes and verification ticks stay available.
               </p>
 
               {/* The logs being locked, so it's clear exactly what's covered */}
@@ -1068,6 +1159,7 @@ export default function DieselFillUpsPage() {
                 <table className="compact-table">
                   <thead>
                     <tr>
+                      {multi && <th>Invoice</th>}
                       <th>Date</th>
                       <th>Truck</th>
                       <th className="text-right">Litres</th>
@@ -1078,11 +1170,9 @@ export default function DieselFillUpsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {[...lockModal.rows]
-                      .sort((a, b) => String(a.fillup_date).localeCompare(String(b.fillup_date))
-                        || (a.truck_registration || '').localeCompare(b.truck_registration || ''))
-                      .map(f => (
+                    {allRows.map(f => (
                         <tr key={f.id}>
+                          {multi && <td style={{ fontFamily: 'monospace', fontSize: 11, whiteSpace: 'nowrap' }}>{f._invoiceNumber}</td>}
                           <td style={{ whiteSpace: 'nowrap' }}>{formatDate(f.fillup_date)}</td>
                           <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{f.truck_registration || '—'}</td>
                           <td className="text-right">{parseFloat(f.litres).toFixed(2)}</td>
@@ -1100,12 +1190,13 @@ export default function DieselFillUpsPage() {
                   </tbody>
                   <tfoot>
                     <tr style={{ background: 'var(--bg-surface)', fontWeight: 700 }}>
-                      <td colSpan={2} style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                        {lockModal.rows.length} log{lockModal.rows.length === 1 ? '' : 's'}
+                      <td colSpan={multi ? 3 : 2} style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                        {rowCount} log{rowCount === 1 ? '' : 's'}
+                        {multi ? ` on ${groups.length} invoices` : ''}
                       </td>
-                      <td className="text-right">{lockModal.litres.toFixed(2)}</td>
+                      <td className="text-right">{litresSum.toFixed(2)}</td>
                       <td />
-                      <td className="text-right" style={{ whiteSpace: 'nowrap' }}>{formatCurrency(lockModal.total)}</td>
+                      <td className="text-right" style={{ whiteSpace: 'nowrap' }}>{formatCurrency(totalSum)}</td>
                       <td colSpan={2} />
                     </tr>
                   </tfoot>
@@ -1116,20 +1207,24 @@ export default function DieselFillUpsPage() {
                 <label>Locked on *</label>
                 <DateInput className="form-input" value={lockDate} onChange={e => setLockDate(e.target.value)} />
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
-                  If the invoice was actually reconciled earlier, pick that date — it's recorded on the
-                  lock and in the audit log. Diesel logged after it belongs to another invoice.
+                  If the invoice{multi ? 's were' : ' was'} actually reconciled earlier, pick that date — it's
+                  recorded on {multi ? 'each lock' : 'the lock'} and in the audit log. Diesel logged after it
+                  belongs to another invoice.
                 </span>
               </div>
             </div>
             <div className="modal-footer">
               <button type="button" className="btn-ghost" onClick={() => setLockModal(null)}>Cancel</button>
               <button type="button" className="btn-primary" onClick={applyLock} disabled={lockSaving}>
-                {lockSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : <><Lock size={14} /> Lock Invoice</>}
+                {lockSaving
+                  ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</>
+                  : <><Lock size={14} /> {multi ? `Lock ${groups.length} Invoices` : 'Lock Invoice'}</>}
               </button>
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
 
       <DeleteModal
         isOpen={!!deleteTarget}
@@ -1259,20 +1354,18 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
         {preview.total ? formatCurrency(preview.total) : '—'}
       </td>
 
-      {/* Type toggle */}
+      {/* Type — fixed per supplier (Merino & Oukop = top-up, everyone else = fill-up),
+          shown for information only; the server derives it and ignores the client's value */}
       <td style={S.td}>
-        <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
-          {[['fillup', 'Fill-up'], ['topup', 'Top-up']].map(([val, label]) => (
-            <button key={val} type="button" onClick={() => set('diesel_type', val)}
-              style={{
-                padding: '3px 9px', fontSize: 11, border: 'none', cursor: 'pointer',
-                background: form.diesel_type === val ? 'var(--accent)' : 'transparent',
-                color: form.diesel_type === val ? '#fff' : 'var(--text-secondary)',
-              }}>
-              {label}
-            </button>
-          ))}
-        </div>
+        <span
+          title="Set by the supplier: Merino & Oukop are always top-up, all other suppliers fill-up"
+          style={{
+            padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap',
+            background: form.diesel_type === 'topup' ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)',
+            color: form.diesel_type === 'topup' ? '#d97706' : '#16a34a',
+          }}>
+          {form.diesel_type === 'topup' ? 'Top-up' : 'Fill-up'}
+        </span>
       </td>
 
       {/* Invoice # */}

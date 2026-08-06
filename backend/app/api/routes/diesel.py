@@ -17,6 +17,7 @@ from app.schemas.schemas import (
     DieselRateCreate, DieselRateUpdate, DieselRateOut,
     DieselFillUpCreate, DieselFillUpUpdate, DieselFillUpOut,
     DieselFillUpSummary, DieselInvoiceLockOut, DieselInvoiceLockUpdate,
+    DieselInvoiceLockBulkCreate,
     DieselSummaryByTruck, DieselSupplierReconciliation, DieselAnnualMonthRow,
     DieselInvoiceReconciliationRow,
     DieselImportRequest, DieselImportResult, DieselImportRowResult,
@@ -356,6 +357,18 @@ def update_diesel_settings(
 
 # ── Diesel Month Lock ─────────────────────────────────────────────────────────
 
+def _lock_timestamp(locked_date) -> datetime:
+    """Timestamp for a new lock. A backdated lock stamps the end of that day,
+    so the badge reads as the day the invoice was actually closed off."""
+    now_utc = datetime.now(timezone.utc)
+    if locked_date and locked_date != now_utc.date():
+        return datetime(
+            locked_date.year, locked_date.month, locked_date.day,
+            23, 59, 59, tzinfo=timezone.utc,
+        )
+    return now_utc
+
+
 def _lock_out(row: DieselInvoiceLock) -> dict:
     return {
         "supplier_invoice_id": row.supplier_invoice_id,
@@ -435,16 +448,7 @@ def set_diesel_invoice_lock(
     if row:
         return _lock_out(row)
 
-    now_utc = datetime.now(timezone.utc)
-    # Backdated lock: stamp end of that day, so the badge reads as the day the
-    # invoice was actually closed off.
-    if payload.locked_date and payload.locked_date != now_utc.date():
-        locked_at = datetime(
-            payload.locked_date.year, payload.locked_date.month, payload.locked_date.day,
-            23, 59, 59, tzinfo=timezone.utc,
-        )
-    else:
-        locked_at = now_utc
+    locked_at = _lock_timestamp(payload.locked_date)
 
     row = DieselInvoiceLock(
         supplier_invoice_id=supplier_invoice_id, entity_id=inv.entity_id,
@@ -461,6 +465,56 @@ def set_diesel_invoice_lock(
     db.commit()
     db.refresh(row)
     return _lock_out(row)
+
+
+@router.put("/invoice-locks/bulk", response_model=List[DieselInvoiceLockOut])
+def set_diesel_invoice_locks_bulk(
+    payload: DieselInvoiceLockBulkCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lock the diesel on several supplier invoices at once — one shared
+    locked-on date, one audit entry per invoice. Invoices already locked are
+    left untouched; their existing lock is returned as-is. Unlocking stays
+    per-invoice on PUT /invoice-locks."""
+    ids = list(dict.fromkeys(payload.supplier_invoice_ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="No invoices given to lock")
+
+    invoices = db.query(SupplierInvoice).filter(SupplierInvoice.id.in_(ids)).all()
+    by_id = {inv.id: inv for inv in invoices}
+    missing = [i for i in ids if i not in by_id]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Supplier invoice(s) not found: {', '.join(str(i) for i in missing)}",
+        )
+    for inv in invoices:
+        _check_entity_access(inv.entity_id, current_user)
+
+    locked_at = _lock_timestamp(payload.locked_date)
+    rows = []
+    for inv_id in ids:
+        inv = by_id[inv_id]
+        row = get_lock(db, inv_id)
+        if not row:
+            row = DieselInvoiceLock(
+                supplier_invoice_id=inv_id, entity_id=inv.entity_id,
+                locked_at=locked_at, locked_by_id=current_user.id,
+            )
+            db.add(row)
+            log_action(
+                db, "diesel_invoice_lock.locked", user_id=current_user.id,
+                entity_id=inv.entity_id, resource_type="diesel_invoice_lock",
+                resource_id=inv_id,
+                description=f"Locked the diesel on invoice {inv.invoice_number or f'#{inv.id}'}",
+                new_values={"locked_at": locked_at.isoformat()},
+            )
+        rows.append(row)
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return [_lock_out(r) for r in rows]
 
 
 # ── Diesel Rates ──────────────────────────────────────────────────────────────
@@ -856,6 +910,10 @@ def create_fillup(
         amount=typed_amount,
     )
 
+    # The tag is fixed per supplier (Merino & Oukop = top-up, everyone else =
+    # fill-up) — derived here, never taken from the client.
+    supplier_obj = db.query(Supplier).filter(Supplier.id == payload.supplier_id).first()
+
     f = DieselFillUp(
         entity_id=payload.entity_id,
         truck_id=payload.truck_id,
@@ -864,6 +922,7 @@ def create_fillup(
         litres=payload.litres,
         rate_per_litre=rate_per_litre,
         rate_pending=rate_pending,
+        diesel_type=diesel_type_for_supplier(supplier_obj),
         invoice_number=payload.invoice_number,
         slip_number=payload.slip_number,
         depot_slip_number=payload.depot_slip_number or payload.slip_number,
@@ -1139,11 +1198,20 @@ def update_fillup(
 
     updates = payload.model_dump(exclude_none=True)
 
+    # The tag is fixed per supplier (Merino & Oukop = top-up, everyone else =
+    # fill-up) — never taken from the client. Re-derived below only when the
+    # supplier changes, so a notes-only edit doesn't trip the locks.
+    updates.pop("diesel_type", None)
+
     # Final-verification lock: a free-text note may still be added/edited
     # (a note-only edit sends just `notes`).
     ensure_not_locked(f, updates, {"notes"})
     # Diesel invoice lock — same note-only exception
     ensure_fillup_unlocked(db, f, updates, {"notes"})
+
+    if "supplier_id" in updates:
+        new_supplier = db.query(Supplier).filter(Supplier.id == updates["supplier_id"]).first()
+        updates["diesel_type"] = diesel_type_for_supplier(new_supplier)
 
     # Recalculate amounts if litres, rate or the amount itself changes
     litres = Decimal(str(updates.get("litres", f.litres)))

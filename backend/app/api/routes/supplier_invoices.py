@@ -181,6 +181,20 @@ def _link_fillup_from_slip(db: Session, invoice: SupplierInvoice, li: SupplierIn
     _archive_orphaned_placeholder(db, old_inv_id, invoice.id, user_id, slip=slip_number)
 
 
+def _slipless_line_fillups(db: Session, invoice: SupplierInvoice, truck_id: int):
+    """Query for the fill-up(s) created from slip-less lines of this invoice for
+    one truck. Identified by carrying no slip at all — no other creation path
+    leaves both slip fields empty on an invoice-linked fill-up, so this is the
+    key that stands in for the missing slip (the invoice + the truck)."""
+    return db.query(DieselFillUp).filter(
+        DieselFillUp.supplier_invoice_id == invoice.id,
+        DieselFillUp.truck_id == truck_id,
+        DieselFillUp.is_archived != True,  # noqa: E712 — SQL boolean
+        func.coalesce(DieselFillUp.slip_number, '') == '',
+        func.coalesce(DieselFillUp.depot_slip_number, '') == '',
+    )
+
+
 def _delete_line_fillups(db: Session, invoice: SupplierInvoice,
                          li: SupplierInvoiceLineItem, user_id: int) -> int:
     """Delete the diesel fill-up(s) this invoice line stands for.
@@ -195,20 +209,27 @@ def _delete_line_fillups(db: Session, invoice: SupplierInvoice,
     registration resolves), so nothing else can be caught. Note a printed slip that
     covers several pump transactions (Intsimbi, keyed by Trans ID) has no per-line
     Trans ID stored, so all of that slip's fill-ups on this invoice go together.
+
+    A slip-less line's fill-up (created keyed on the invoice itself, see
+    _maybe_create_line_fillup) goes with its line too — matched on this invoice +
+    the line's truck + no slip.
     """
     slip = (li.item_code or "").strip()
-    if not slip:
-        return 0
-    q = db.query(DieselFillUp).filter(
-        DieselFillUp.supplier_invoice_id == invoice.id,
-        or_(
-            _slip_eq(slip),
-            func.upper(func.replace(DieselFillUp.slip_number, ' ', '')) == _norm_slip(slip),
-        ),
-    )
     truck = _resolve_truck_by_reg(db, invoice.entity_id, (li.unit or "").strip())
-    if truck:
-        q = q.filter(DieselFillUp.truck_id == truck.id)
+    if slip:
+        q = db.query(DieselFillUp).filter(
+            DieselFillUp.supplier_invoice_id == invoice.id,
+            or_(
+                _slip_eq(slip),
+                func.upper(func.replace(DieselFillUp.slip_number, ' ', '')) == _norm_slip(slip),
+            ),
+        )
+        if truck:
+            q = q.filter(DieselFillUp.truck_id == truck.id)
+    elif truck:
+        q = _slipless_line_fillups(db, invoice, truck.id)
+    else:
+        return 0
     fillups = q.all()
     if not fillups:
         return 0
@@ -225,13 +246,173 @@ def _delete_line_fillups(db: Session, invoice: SupplierInvoice,
             db, "diesel_fillup.deleted", user_id=user_id,
             entity_id=f.entity_id, resource_type="diesel_fillup", resource_id=f.id,
             description=(
-                f"Deleted diesel fill-up #{f.id} ({f.litres}L, slip {slip}) with line "
+                f"Deleted diesel fill-up #{f.id} ({f.litres}L, "
+                f"{f'slip {slip}' if slip else 'no slip'}) with line "
                 f"{li.unit or li.item_description or f'#{li.id}'} of invoice "
                 f"{invoice.invoice_number or '(pending)'}"
             ),
         )
         db.delete(f)
     return len(fillups)
+
+
+def _sync_line_fillup(db: Session, invoice: SupplierInvoice,
+                      li: SupplierInvoiceLineItem, user_id: int) -> None:
+    """Push an edited line's values onto the diesel fill-up it stands for.
+
+    A diesel statement line IS a fill-up (see _delete_line_fillups), but editing
+    the line on the Supplier Profile used to leave the fill-up on its original
+    figures — the Diesel Log then showed a rate/amount the statement no longer
+    carried. The statement is the authority on the rand value, so the line's
+    amount is kept exactly and the rate derived from it, mirroring the
+    hand-entered-amount rule in update_fillup.
+
+    Scoped exactly like _delete_line_fillups: fill-ups ON THIS INVOICE matching
+    the line's slip (and truck, when the registration resolves). A printed slip
+    covering several pump transactions (Intsimbi) matches more than one fill-up —
+    there is no way to know which one the edit means, so those are left alone.
+    A finally-verified fill-up is locked and is left alone too.
+
+    A slip-less line's fill-up (keyed on the invoice itself, flagged "No slip"
+    in the Diesel Log) syncs the same way, matched on invoice + truck + no slip.
+    """
+    slip = (li.item_code or "").strip()
+    if not li.quantity or li.quantity <= 0:
+        return
+    if not li.amount_excl_vat or li.amount_excl_vat <= 0:
+        return
+
+    truck = _resolve_truck_by_reg(db, invoice.entity_id, (li.unit or "").strip())
+    if slip:
+        q = db.query(DieselFillUp).filter(
+            DieselFillUp.supplier_invoice_id == invoice.id,
+            DieselFillUp.is_archived != True,  # noqa: E712 — SQL boolean
+            or_(
+                _slip_eq(slip),
+                func.upper(func.replace(DieselFillUp.slip_number, ' ', '')) == _norm_slip(slip),
+            ),
+        )
+        if truck:
+            q = q.filter(DieselFillUp.truck_id == truck.id)
+    elif truck:
+        q = _slipless_line_fillups(db, invoice, truck.id)
+    else:
+        return
+    fillups = q.all()
+    if len(fillups) != 1:
+        return
+    f = fillups[0]
+    if f.verified3_by:
+        return
+
+    inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
+    new_date = li.line_date or inv_date
+    litres = Decimal(str(li.quantity))
+    excl = Decimal(str(li.amount_excl_vat))
+
+    if (
+        Decimal(str(f.litres or 0)) == litres
+        and Decimal(str(f.amount or 0)) == excl
+        and f.fillup_date == new_date
+    ):
+        return
+
+    rate = (excl / litres).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    settings = DieselCalculationService.get_diesel_settings(db, invoice.entity_id)
+    admin_fee_pct = Decimal(str(f.admin_fee_pct or 0))  # keep snapshotted pct
+    apply_admin_fee = settings.apply_admin_fee if settings else (admin_fee_pct > 0)
+    entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == invoice.entity_id).first()
+    vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
+    amounts = DieselCalculationService.calculate_fillup_amounts(
+        litres=litres, rate_per_litre=rate, admin_fee_pct=admin_fee_pct,
+        apply_admin_fee=apply_admin_fee, vat_rate=vat_rate, amount=excl,
+    )
+
+    old_desc = f"{f.litres}L @ R{f.rate_per_litre}"
+    f.fillup_date = new_date
+    f.litres = litres
+    f.rate_per_litre = rate
+    f.rate_pending = False
+    for k, v in amounts.items():
+        setattr(f, k, v)
+
+    # Keep the load's diesel snapshot reading what the fill-up now says
+    if f.truckload_id:
+        tl = db.query(TruckLoad).filter(TruckLoad.id == f.truckload_id).first()
+        if tl:
+            tl.diesel_litres = f.litres
+            tl.diesel_rate = f.rate_per_litre
+
+    log_action(
+        db, "diesel_fillup.updated", user_id=user_id,
+        entity_id=f.entity_id, resource_type="diesel_fillup", resource_id=f.id,
+        description=(
+            f"Synced diesel fill-up #{f.id} ({f'slip {slip}' if slip else 'no slip'}) "
+            f"from edited line of invoice "
+            f"{invoice.invoice_number or '(pending)'}: {old_desc} → {litres}L @ R{rate}"
+        ),
+    )
+
+
+def _sync_single_invoice_fillup(db: Session, invoice: SupplierInvoice, user_id: int) -> None:
+    """Single-line counterpart of _sync_line_fillup: push an edited single-line
+    diesel invoice's litres/amount/date onto its auto-created fill-up, so the
+    Diesel Log keeps reading what the invoice now says."""
+    fillups = db.query(DieselFillUp).filter(
+        DieselFillUp.supplier_invoice_id == invoice.id,
+        DieselFillUp.is_archived != True,  # noqa: E712 — SQL boolean
+    ).all()
+    if len(fillups) != 1:
+        return
+    f = fillups[0]
+    if f.verified3_by:
+        return
+    if not invoice.litres or invoice.litres <= 0 or not invoice.amount or invoice.amount <= 0:
+        return
+
+    inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
+    litres = Decimal(str(invoice.litres))
+    excl = Decimal(str(invoice.amount))
+    if (
+        Decimal(str(f.litres or 0)) == litres
+        and Decimal(str(f.amount or 0)) == excl
+        and f.fillup_date == inv_date
+    ):
+        return
+
+    rate = (excl / litres).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    settings = DieselCalculationService.get_diesel_settings(db, invoice.entity_id)
+    admin_fee_pct = Decimal(str(f.admin_fee_pct or 0))  # keep snapshotted pct
+    apply_admin_fee = settings.apply_admin_fee if settings else (admin_fee_pct > 0)
+    entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == invoice.entity_id).first()
+    vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
+    amounts = DieselCalculationService.calculate_fillup_amounts(
+        litres=litres, rate_per_litre=rate, admin_fee_pct=admin_fee_pct,
+        apply_admin_fee=apply_admin_fee, vat_rate=vat_rate, amount=excl,
+    )
+
+    old_desc = f"{f.litres}L @ R{f.rate_per_litre}"
+    f.fillup_date = inv_date
+    f.litres = litres
+    f.rate_per_litre = rate
+    f.rate_pending = False
+    for k, v in amounts.items():
+        setattr(f, k, v)
+
+    if f.truckload_id:
+        tl = db.query(TruckLoad).filter(TruckLoad.id == f.truckload_id).first()
+        if tl:
+            tl.diesel_litres = f.litres
+            tl.diesel_rate = f.rate_per_litre
+
+    log_action(
+        db, "diesel_fillup.updated", user_id=user_id,
+        entity_id=f.entity_id, resource_type="diesel_fillup", resource_id=f.id,
+        description=(
+            f"Synced diesel fill-up #{f.id} from edited invoice "
+            f"{invoice.invoice_number or '(pending)'}: {old_desc} → {litres}L @ R{rate}"
+        ),
+    )
 
 
 def _propagate_invoice_number_to_fillups(db: Session, invoice: SupplierInvoice, user_id: int) -> None:
@@ -254,10 +435,17 @@ def _maybe_create_line_fillup(
     were never imported as fill-ups — previously their manually-keyed lines
     linked to nothing and never showed under the truck. Mirrors the per-line
     creation in bulk_import_invoices.
+
+    A line WITHOUT a slip number still gets a fill-up, keyed on the invoice's
+    own number and date instead — a manually captured statement whose slips
+    weren't typed in (e.g. WBG on Safetec) must still reach the Diesel Log.
+    Those rows carry a "No slip" flag there until the slip is added to the
+    line, at which point the same fill-up adopts it (never a duplicate).
+    Limitation: two slip-less lines for the SAME truck on one invoice can't be
+    told apart, so only the first creates a fill-up — type the slips in when a
+    truck fills more than once on a statement.
     """
     slip = (li.item_code or "").strip()
-    if not slip:
-        return
     supplier = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
     if not supplier or not supplier.is_diesel_supplier:
         return
@@ -281,31 +469,45 @@ def _maybe_create_line_fillup(
     if is_invoice_locked(db, invoice.id):
         return
 
-    # Already a fill-up for this slip on this truck (created earlier, or linked
-    # just now by _link_fillup_from_slip)? Then only ensure it points at this
-    # invoice — never duplicate. A slip number is NOT unique (depots recycle them),
-    # so the same slip on a *different date* is a genuinely different fill-up and
-    # must not collapse into this one — hence the date match. The second clause
-    # still catches a fill-up _link_fillup_from_slip just re-pointed to this
-    # invoice (which may sit on a nearby date), so we don't duplicate it.
-    existing = (
-        db.query(DieselFillUp)
-        .filter(
-            _slip_eq(slip),
-            DieselFillUp.truck_id == truck.id,
-            DieselFillUp.entity_id == invoice.entity_id,
-            DieselFillUp.is_archived != True,
-            or_(
-                DieselFillUp.fillup_date == fillup_date,
-                DieselFillUp.supplier_invoice_id == invoice.id,
-            ),
+    if slip:
+        # Already a fill-up for this slip on this truck (created earlier, or linked
+        # just now by _link_fillup_from_slip)? Then only ensure it points at this
+        # invoice — never duplicate. A slip number is NOT unique (depots recycle them),
+        # so the same slip on a *different date* is a genuinely different fill-up and
+        # must not collapse into this one — hence the date match. The second clause
+        # still catches a fill-up _link_fillup_from_slip just re-pointed to this
+        # invoice (which may sit on a nearby date), so we don't duplicate it.
+        existing = (
+            db.query(DieselFillUp)
+            .filter(
+                _slip_eq(slip),
+                DieselFillUp.truck_id == truck.id,
+                DieselFillUp.entity_id == invoice.entity_id,
+                DieselFillUp.is_archived != True,
+                or_(
+                    DieselFillUp.fillup_date == fillup_date,
+                    DieselFillUp.supplier_invoice_id == invoice.id,
+                ),
+            )
+            .first()
         )
-        .first()
-    )
-    if existing:
-        if not existing.supplier_invoice_id:
-            existing.supplier_invoice_id = invoice.id
-        return
+        if existing:
+            if not existing.supplier_invoice_id:
+                existing.supplier_invoice_id = invoice.id
+            return
+        # The line may have been captured without its slip first — its fill-up
+        # then carries no slip at all. Adopt that one and stamp the slip on it,
+        # rather than duplicating the same fuel transaction.
+        slipless = _slipless_line_fillups(db, invoice, truck.id).first()
+        if slipless:
+            slipless.slip_number = slip
+            slipless.depot_slip_number = slip
+            return
+    else:
+        # No slip on the line: the fill-up is keyed on the invoice itself, so
+        # one already created for this truck under this invoice IS this line's.
+        if _slipless_line_fillups(db, invoice, truck.id).first():
+            return
 
     litres_d = Decimal(str(li.quantity))
     excl_d = Decimal(str(li.amount_excl_vat))
@@ -329,8 +531,8 @@ def _maybe_create_line_fillup(
         litres=litres_d,
         rate_per_litre=rate_d,
         invoice_number=invoice.invoice_number,
-        slip_number=slip,
-        depot_slip_number=slip,
+        slip_number=slip or None,
+        depot_slip_number=slip or None,
         supplier_invoice_id=invoice.id,
         admin_fee_pct=admin_fee_pct,
         diesel_type=diesel_type_for_supplier(supplier),
@@ -343,7 +545,7 @@ def _maybe_create_line_fillup(
         description=(
             f"Auto-created diesel fill-up from invoice "
             f"{invoice.invoice_number or '(pending)'} line for {truck.registration} "
-            f"({litres_d}L, slip {slip})"
+            f"({litres_d}L, {f'slip {slip}' if slip else 'no slip'})"
         ),
     )
 
@@ -1312,6 +1514,20 @@ def update_supplier_invoice(
 
     old_values, new_values = _changed_values(inv, updates)
 
+    # A single-line diesel invoice's fuel values flow onto its fill-up — refuse
+    # changing them while its diesel is locked, the same way line edits and
+    # deletes on a multi-line statement refuse.
+    if (
+        not inv.is_multi_line
+        and any(k in new_values for k in ("litres", "amount", "vehicle_reg", "invoice_date"))
+        and is_invoice_locked(db, inv.id)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"The diesel on invoice {inv.invoice_number or f'#{inv.id}'} is locked — "
+                   "unlock it before changing its values.",
+        )
+
     for field, value in updates.items():
         setattr(inv, field, value)
 
@@ -1351,6 +1567,9 @@ def update_supplier_invoice(
                     entity_id=inv.entity_id,
                     user_id=current_user.id,
                 )
+            elif any(k in new_values for k in ("litres", "amount", "invoice_date")):
+                _sync_single_invoice_fillup(db, inv, current_user.id)
+                db.commit()
 
     return inv
 
@@ -1907,6 +2126,9 @@ def add_line_item(
     if data.item_code:
         _link_fillup_from_slip(db, inv, li, current_user.id)
     _maybe_create_line_fillup(db, inv, li, current_user.id)
+    # A pre-logged fill-up absorbed by this line may carry different figures —
+    # the statement line is the authority, so bring the fill-up onto it.
+    _sync_line_fillup(db, inv, li, current_user.id)
     _recalc_invoice_total(db, inv)
     log_action(
         db, "supplier_invoice.line_added", user_id=current_user.id,
@@ -1950,12 +2172,29 @@ def update_line_item(
     inv = li.invoice
     total_before = inv.amount
 
+    # The line's values flow onto its diesel fill-up. Refuse a value change when
+    # that diesel is locked — same rule as deleting the line; otherwise editing
+    # lines would be a way around the invoice lock. (The edit form re-PUTs every
+    # line on save, so only refuse when a fuel-relevant field actually changed.)
+    if (
+        any(k in new_values for k in (
+            "quantity", "amount_excl_vat", "amount_incl_vat", "item_code", "unit", "line_date",
+        ))
+        and is_invoice_locked(db, inv.id)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"The diesel on invoice {inv.invoice_number or f'#{inv.id}'} is locked — "
+                   "unlock it before changing lines.",
+        )
+
     for k, v in updates.items():
         setattr(li, k, v)
     db.flush()
     if data.item_code:
         _link_fillup_from_slip(db, inv, li, current_user.id)
     _maybe_create_line_fillup(db, inv, li, current_user.id)
+    _sync_line_fillup(db, inv, li, current_user.id)
     _recalc_invoice_total(db, inv)
     # The edit form re-PUTs every line with re-indexed sort_order on each save —
     # only log when something other than sort_order actually changed.

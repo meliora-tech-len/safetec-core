@@ -2163,6 +2163,15 @@ class DieselInvoiceLockUpdate(BaseModel):
     locked_date: Optional[date] = None
 
 
+class DieselInvoiceLockBulkCreate(BaseModel):
+    # Lock the diesel on several supplier invoices in one go — same semantics as
+    # DieselInvoiceLockUpdate(locked=True) per invoice; already-locked invoices
+    # are left as they are. Unlocking stays one-at-a-time (deliberate: it undoes
+    # a reconciliation and should be considered per invoice).
+    supplier_invoice_ids: List[int]
+    locked_date: Optional[date] = None
+
+
 class DieselSummaryByTruck(BaseModel):
     truck_reg: str
     fillup_count: int

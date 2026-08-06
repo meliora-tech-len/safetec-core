@@ -318,6 +318,7 @@ export const getDieselWarnings        = (params = {}) => api.get('/diesel/warnin
 // Diesel invoice lock — per supplier invoice; locked = no values in or out
 export const getDieselInvoiceLocks    = (params = {}) => api.get('/diesel/invoice-locks', { params })
 export const setDieselInvoiceLock     = (params = {}, data = {}) => api.put('/diesel/invoice-locks', data, { params })
+export const setDieselInvoiceLocksBulk = (data) => api.put('/diesel/invoice-locks/bulk', data)
 export const bulkImportSupplierInvoices = (data) => api.post('/supplier-invoices/bulk-import', data)
 export const resolveSupplierDieselConflicts = (resolutions) => api.post('/supplier-invoices/resolve-diesel-conflicts', resolutions)
 export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)
