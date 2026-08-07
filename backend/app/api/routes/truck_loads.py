@@ -95,8 +95,21 @@ def _compute_subcontractor_amounts(load: TruckLoad, db: Optional[Session] = None
         load.subcontractor_amount_incl_vat = (excl * VAT_RATE if sub_vat_registered else excl).quantize(Decimal("0.01"))
 
 
-def _resolve_rate(db: Session, mine_id: int, entity_id: int) -> Optional[Decimal]:
-    """Return the currently active MineRate for mine+entity, or None."""
+def _resolve_rate(db: Session, mine_id: int, entity_id: int, on_date=None) -> Optional[Decimal]:
+    """Return the MineRate for mine+entity effective on `on_date` (falls back to
+    the currently open rate when no dated window matches, e.g. loads predating
+    the rate history)."""
+    if on_date is not None:
+        rate = db.query(MineRate).filter(
+            and_(
+                MineRate.mine_id == mine_id,
+                MineRate.entity_id == entity_id,
+                MineRate.effective_from <= on_date,
+                or_(MineRate.effective_to.is_(None), MineRate.effective_to > on_date),
+            )
+        ).order_by(MineRate.effective_from.desc()).first()
+        if rate:
+            return rate.rate_per_ton
     rate = db.query(MineRate).filter(
         and_(
             MineRate.mine_id == mine_id,
@@ -720,7 +733,7 @@ def create_truck_load(
 
     rate = payload.rate_per_ton
     if rate is None:
-        rate = _resolve_rate(db, payload.mine_id, payload.entity_id)
+        rate = _resolve_rate(db, payload.mine_id, payload.entity_id, payload.load_date)
         if rate is None:
             if payload.is_projection:
                 rate = Decimal("0")
@@ -780,7 +793,7 @@ def bulk_create_truck_loads(
 
         rate = item.rate_per_ton
         if rate is None:
-            rate = _resolve_rate(db, item.mine_id, item.entity_id)
+            rate = _resolve_rate(db, item.mine_id, item.entity_id, item.load_date)
             if rate is None:
                 raise HTTPException(
                     status_code=400,
@@ -868,7 +881,7 @@ def create_split_load(
 
     rate = item.rate_per_ton
     if rate is None:
-        rate = _resolve_rate(db, item.mine_id, item.entity_id)
+        rate = _resolve_rate(db, item.mine_id, item.entity_id, item.load_date)
         if rate is None:
             if item.is_projection:
                 rate = Decimal("0")  # projections are placeholders — tonnes/rate unknown

@@ -109,13 +109,18 @@ function InlineRateForm({ mineId, entityId, currentRate, onSave, onCancel }) {
     e.preventDefault()
     setSaving(true)
     try {
-      await addMineRate(mineId, {
+      const res = await addMineRate(mineId, {
         entity_id: entityId,
         rate_per_ton: parseFloat(rate),
         effective_from: new Date(effectiveFrom).toISOString(),
         notes: null,
       })
-      toast.success('Rate updated')
+      const n = res?.data?.retro_updated_loads
+      const skipped = res?.data?.retro_skipped_paid
+      toast.success(
+        `Rate updated${n ? ` — ${n} existing load${n === 1 ? '' : 's'} re-rated` : ''}` +
+        `${skipped ? ` (${skipped} paid load${skipped === 1 ? '' : 's'} left unchanged)` : ''}`
+      )
       onSave()
     } catch (err) {
       toast.error(errorMessage(err, 'Failed to update rate'))

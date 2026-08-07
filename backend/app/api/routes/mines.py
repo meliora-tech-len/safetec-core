@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Mine, MineRate
+from app.models.models import User, Mine, MineRate, TruckLoad, Truck, BusinessEntity
 from app.schemas.schemas import (
     MineCreate, MineUpdate, MineOut,
     MineRateCreate, MineRateOut,
@@ -159,11 +159,59 @@ def add_mine_rate(
         **payload.model_dump(),
     )
     db.add(new_rate)
+
+    # Re-rate loads already captured on/after the effective date that still carry
+    # the superseded auto rate. Hand-typed rates (≠ old rate) are left alone, as
+    # are paid loads — those are reported back so the user can review them.
+    updated_loads = 0
+    skipped_paid = 0
+    if open_rate is not None:
+        from app.api.routes.truck_loads import _compute_amounts, _compute_subcontractor_amounts
+
+        affected = db.query(TruckLoad).filter(
+            and_(
+                TruckLoad.mine_id == mine_id,
+                TruckLoad.entity_id == payload.entity_id,
+                TruckLoad.is_archived.isnot(True),
+                TruckLoad.is_projection.isnot(True),
+                TruckLoad.load_date >= payload.effective_from,
+                TruckLoad.rate_per_ton == open_rate.rate_per_ton,
+            )
+        ).all()
+
+        entity = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
+        vat_reg = entity.vat_registered if entity else True
+        _sub_vat_cache: dict = {}
+
+        for load in affected:
+            if load.is_paid:
+                skipped_paid += 1
+                continue
+            load.rate_per_ton = payload.rate_per_ton
+            _compute_amounts(load, vat_registered=vat_reg)
+            if load.subcontractor_admin_fee_per_ton is not None:
+                if load.truck_id not in _sub_vat_cache:
+                    truck = db.query(Truck).filter(Truck.id == load.truck_id).first()
+                    sub_vat = True
+                    if truck and truck.entity_id:
+                        t_ent = db.query(BusinessEntity).filter(BusinessEntity.id == truck.entity_id).first()
+                        sub_vat = t_ent.vat_registered if t_ent else True
+                    _sub_vat_cache[load.truck_id] = sub_vat
+                _compute_subcontractor_amounts(load, sub_vat_registered=_sub_vat_cache[load.truck_id])
+            updated_loads += 1
+
     log_action(
         db, "mine_rate.created", user_id=current_user.id,
         resource_type="mine_rate",
-        description=f"Added rate R{payload.rate_per_ton}/t for mine {mine.name} entity {payload.entity_id}",
+        description=(
+            f"Added rate R{payload.rate_per_ton}/t for mine {mine.name} entity {payload.entity_id}; "
+            f"re-rated {updated_loads} load(s) dated on/after the effective date"
+            + (f", skipped {skipped_paid} paid" if skipped_paid else "")
+        ),
     )
     db.commit()
     db.refresh(new_rate)
-    return new_rate
+    out = MineRateOut.model_validate(new_rate)
+    out.retro_updated_loads = updated_loads
+    out.retro_skipped_paid = skipped_paid
+    return out

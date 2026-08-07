@@ -1420,6 +1420,9 @@ class MineRateOut(MineRateBase):
     mine_id: int
     effective_to: Optional[datetime] = None
     created_at: datetime
+    # Set on POST only: how many existing loads were re-rated / skipped (paid)
+    retro_updated_loads: Optional[int] = None
+    retro_skipped_paid: Optional[int] = None
 
     class Config:
         from_attributes = True
