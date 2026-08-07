@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, SupplierStatement, PaymentTermType, Truck, TruckLoad, DieselFillUp, BusinessEntity
+from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, SupplierStatement, PaymentTermType, Truck, TruckLoad, DieselFillUp, BusinessEntity, ValueVerification
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
     SupplierInvoicePeriodUpdate,
@@ -25,6 +25,7 @@ from app.schemas.schemas import (
 from app.services.audit import log_action
 from app.services.costing_sent import (
     ensure_not_on_sent_costing, build_sent_map, natural_invoice_period, roll_past_sent,
+    invoice_costing_targets,
 )
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
@@ -1641,8 +1642,16 @@ def move_supplier_invoice_periods(
         updates["statement_year"] = payload.statement_year
 
     old_values, new_values = _changed_values(inv, updates)
+    # A final-locked invoice carries its lock through to the costing sheet's
+    # per-invoice tick; a period move re-homes that tick to the new month.
+    old_targets = invoice_costing_targets(db, inv) if inv.verified3_by else []
     for field, value in updates.items():
         setattr(inv, field, value)
+    if inv.verified3_by:
+        new_targets = invoice_costing_targets(db, inv)
+        _sync_costing_value_locks(db, inv, current_user, False,
+                                  targets=[t for t in old_targets if t not in new_targets])
+        _sync_costing_value_locks(db, inv, current_user, True, targets=new_targets)
 
     log_action(
         db, "supplier_invoice.periods_moved", user_id=current_user.id,
@@ -1698,6 +1707,41 @@ def verify_supplier_invoice(
     return d
 
 
+def _sync_costing_value_locks(db: Session, inv: SupplierInvoice, current_user: User,
+                              locked: bool, targets: Optional[list] = None):
+    """Mirror the invoice's final lock onto the costing sheet's per-invoice
+    verification rows (value_verifications), so a final-locked supplier invoice
+    shows as final-locked on every OBHI/subcontractor costing it appears on —
+    and the lock lifts there too when the invoice is unlocked. A costing value
+    already locked by hand is left as-is when applying."""
+    if targets is None:
+        targets = invoice_costing_targets(db, inv)
+    for target in targets:
+        row = db.query(ValueVerification).filter(ValueVerification.target == target).first()
+        if locked:
+            if row is None:
+                row = ValueVerification(target=target, entity_id=inv.entity_id)
+                db.add(row)
+                db.flush()
+            if row.verified3_by:
+                continue
+            row.verified3_by = current_user.id
+            row.verified3_at = inv.verified3_at or datetime.now(tz=timezone.utc)
+        else:
+            if row is None or not row.verified3_by:
+                continue
+            row.verified3_by = None
+            row.verified3_at = None
+        log_action(
+            db, "value.finalized" if locked else "value.unfinalized",
+            user_id=current_user.id,
+            entity_id=inv.entity_id, resource_type="value_verification",
+            resource_id=row.id,
+            description=(f"{'Final lock on' if locked else 'Removed final lock on'} value {target} "
+                         f"(via supplier invoice {inv.invoice_number or inv.id})"),
+        )
+
+
 @router.patch("/{invoice_id}/finalize")
 def finalize_supplier_invoice(
     invoice_id: int,
@@ -1726,6 +1770,9 @@ def finalize_supplier_invoice(
             description=(f"Applied final lock on supplier invoice {inv.invoice_number}" if locked
                          else f"Removed final lock on supplier invoice {inv.invoice_number}"),
         )
+        # Pull the lock through to the costing sheet: the same invoice's row on
+        # any subcontractor costing gets (or loses) its final-lock tick.
+        _sync_costing_value_locks(db, inv, current_user, locked)
     db.commit()
     db.refresh(inv)
     d = {c.name: getattr(inv, c.name) for c in inv.__table__.columns}

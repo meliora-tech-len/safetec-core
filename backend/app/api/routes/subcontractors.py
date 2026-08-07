@@ -22,7 +22,10 @@ from app.schemas.schemas import (
     TruckCostingIncomeOut, TruckCostingIncomeCreate,
 )
 from app.services.audit import log_action
-from app.services.costing_sent import build_sent_map, natural_invoice_period, period_add, roll_past_sent, costing_override_period
+from app.services.costing_sent import (
+    build_sent_map, natural_invoice_period, period_add, roll_past_sent, costing_override_period,
+    truck_regs as _truck_regs, truck_invoice_contribution as _truck_invoice_contribution,
+)
 from app.services.verification import get_verification_display
 
 router = APIRouter(prefix="/api/subcontractors", tags=["subcontractors"])
@@ -323,77 +326,6 @@ def _enrich_invoice(db: Session, inv: SupplierInvoice) -> SupplierInvoiceOut:
 
 def _norm_reg(reg) -> str:
     return (reg or "").replace(" ", "").strip().upper()
-
-
-def _truck_regs(truck: Truck) -> set:
-    """Every registration this truck is known by: the real plate plus any
-    temp/old plate, so invoices captured under either stay with the truck
-    after a registration change."""
-    return {r for r in (_norm_reg(truck.registration), _norm_reg(truck.temp_registration)) if r}
-
-
-def _truck_invoice_contribution(inv: SupplierInvoice, truck_regs: set):
-    """How much of a non-diesel supplier invoice is attributable to one truck,
-    split into a non-VAT (excl) and a VAT (incl) bucket.
-
-    Returns (matched, excl_nonvat, incl_vat). `matched` is True only when a
-    positive amount applies to this truck. The caller sums both buckets into the
-    truck's expenses; the split only drives the Excl-VAT vs Incl-VAT columns.
-
-    - Matching is against ALL the truck's known regs (real + temp plate).
-    - Multi-line / split invoices whose sub-lines carry a per-line vehicle reg
-      (stored in ``unit``) are matched per sub-line, and each line is bucketed by
-      its OWN VAT status (a line is zero-rated when incl == excl), so a single
-      invoice can now mix VAT and non-VAT lines.
-    - Single-line invoices (and legacy multi-line invoices with no per-line reg)
-      fall back to the main-line ``vehicle_reg`` and the invoice-level VAT flag.
-
-    Diesel-supplier invoices are included so that their NON-fuel lines (parking,
-    maintenance — no slip in ``item_code``) still cost against the truck. Their
-    fuel lines carry a slip and are already costed via the truck's DieselFillUp
-    rows, so we skip any line with a slip here to avoid double-counting; a diesel
-    single-line invoice is fuel by nature, so it contributes nothing on this path.
-    """
-    D0 = Decimal("0")
-    if not truck_regs:
-        return False, D0, D0
-    is_diesel = bool(inv.supplier and inv.supplier.is_diesel_supplier)
-
-    if inv.is_multi_line and inv.line_items:
-        has_line_reg = any((li.unit or "").strip() for li in inv.line_items)
-        if has_line_reg:
-            excl_nonvat, incl_vat = D0, D0
-            matched = False
-            for li in inv.line_items:
-                if _norm_reg(li.unit) not in truck_regs:
-                    continue
-                # A slipped line on a diesel statement is fuel — costed via its
-                # DieselFillUp, not here. Non-fuel lines (no slip) fall through.
-                if is_diesel and (li.item_code or "").strip():
-                    continue
-                e = Decimal(str(li.amount_excl_vat or 0))
-                i = Decimal(str(li.amount_incl_vat or 0))
-                if e == 0 and i == 0:
-                    continue
-                matched = True
-                if i > e:          # line carries VAT
-                    incl_vat += i
-                else:              # zero-rated / non-VAT line (incl == excl)
-                    excl_nonvat += e
-            return matched, excl_nonvat, incl_vat
-
-    if is_diesel:
-        # Single-line / legacy diesel invoice: fuel, already costed via fill-ups.
-        return False, D0, D0
-
-    if _norm_reg(inv.vehicle_reg) in truck_regs:
-        amt = Decimal(str(inv.amount))
-        if amt == 0:
-            return False, D0, D0
-        if inv.vat_applicable:
-            return True, D0, amt
-        return True, amt, D0
-    return False, D0, D0
 
 
 def _income_split(amount, vat_applicable):

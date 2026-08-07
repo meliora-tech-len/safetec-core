@@ -11,6 +11,7 @@ rules flow from that flag:
    may no longer be amended, archived or deleted.
 """
 from datetime import timezone
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import HTTPException
@@ -104,6 +105,109 @@ def natural_invoice_period(inv: SupplierInvoice, is_safetec: bool) -> Optional[t
 
 def _norm_reg(reg) -> str:
     return (reg or "").replace(" ", "").strip().upper()
+
+
+def truck_regs(truck: Truck) -> set:
+    """Every registration this truck is known by: the real plate plus any
+    temp/old plate, so invoices captured under either stay with the truck
+    after a registration change."""
+    return {r for r in (_norm_reg(truck.registration), _norm_reg(truck.temp_registration)) if r}
+
+
+def truck_invoice_contribution(inv: SupplierInvoice, regs: set):
+    """How much of a non-diesel supplier invoice is attributable to one truck,
+    split into a non-VAT (excl) and a VAT (incl) bucket.
+
+    Returns (matched, excl_nonvat, incl_vat). `matched` is True only when a
+    positive amount applies to this truck. The caller sums both buckets into the
+    truck's expenses; the split only drives the Excl-VAT vs Incl-VAT columns.
+
+    - Matching is against ALL the truck's known regs (real + temp plate).
+    - Multi-line / split invoices whose sub-lines carry a per-line vehicle reg
+      (stored in ``unit``) are matched per sub-line, and each line is bucketed by
+      its OWN VAT status (a line is zero-rated when incl == excl), so a single
+      invoice can now mix VAT and non-VAT lines.
+    - Single-line invoices (and legacy multi-line invoices with no per-line reg)
+      fall back to the main-line ``vehicle_reg`` and the invoice-level VAT flag.
+
+    Diesel-supplier invoices are included so that their NON-fuel lines (parking,
+    maintenance — no slip in ``item_code``) still cost against the truck. Their
+    fuel lines carry a slip and are already costed via the truck's DieselFillUp
+    rows, so we skip any line with a slip here to avoid double-counting; a diesel
+    single-line invoice is fuel by nature, so it contributes nothing on this path.
+    """
+    D0 = Decimal("0")
+    if not regs:
+        return False, D0, D0
+    is_diesel = bool(inv.supplier and inv.supplier.is_diesel_supplier)
+
+    if inv.is_multi_line and inv.line_items:
+        has_line_reg = any((li.unit or "").strip() for li in inv.line_items)
+        if has_line_reg:
+            excl_nonvat, incl_vat = D0, D0
+            matched = False
+            for li in inv.line_items:
+                if _norm_reg(li.unit) not in regs:
+                    continue
+                # A slipped line on a diesel statement is fuel — costed via its
+                # DieselFillUp, not here. Non-fuel lines (no slip) fall through.
+                if is_diesel and (li.item_code or "").strip():
+                    continue
+                e = Decimal(str(li.amount_excl_vat or 0))
+                i = Decimal(str(li.amount_incl_vat or 0))
+                if e == 0 and i == 0:
+                    continue
+                matched = True
+                if i > e:          # line carries VAT
+                    incl_vat += i
+                else:              # zero-rated / non-VAT line (incl == excl)
+                    excl_nonvat += e
+            return matched, excl_nonvat, incl_vat
+
+    if is_diesel:
+        # Single-line / legacy diesel invoice: fuel, already costed via fill-ups.
+        return False, D0, D0
+
+    if _norm_reg(inv.vehicle_reg) in regs:
+        amt = Decimal(str(inv.amount))
+        if amt == 0:
+            return False, D0, D0
+        if inv.vat_applicable:
+            return True, D0, amt
+        return True, amt, D0
+    return False, D0, D0
+
+
+def invoice_costing_targets(db: Session, inv: SupplierInvoice) -> list:
+    """Value-verification targets for every costing row this invoice shows on:
+    one `costing:{sub}:{YYYY-MM}:truck:{id}:invoice:{id}:amount` key per truck
+    the invoice contributes to, in that truck's effective costing period — the
+    same key the costing UI binds its per-invoice verification tick to."""
+    trucks = (
+        db.query(Truck)
+        .join(Subcontractor, Subcontractor.id == Truck.subcontractor_id)
+        .filter(Subcontractor.entity_id == inv.entity_id)
+        .all()
+    )
+    matched = [t for t in trucks if truck_invoice_contribution(inv, truck_regs(t))[0]]
+    if not matched:
+        return []
+
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == inv.entity_id).first()
+    is_safetec = bool(entity and (entity.code or "").upper() == "SFT")
+    natural = natural_invoice_period(inv, is_safetec)
+    if natural is None:
+        return []
+
+    sent_map = build_sent_map(db, [t.id for t in matched])
+    pinned = inv.is_fixed_expense or costing_override_period(inv) is not None
+    targets = []
+    for t in matched:
+        eff = natural if pinned else roll_past_sent(natural, t.id, inv.created_at, sent_map)
+        targets.append(
+            f"costing:{t.subcontractor_id}:{eff[0]}-{eff[1]:02d}:truck:{t.id}:invoice:{inv.id}:amount"
+        )
+    return targets
 
 
 def invoice_sent_lock_message(db: Session, inv: SupplierInvoice,
