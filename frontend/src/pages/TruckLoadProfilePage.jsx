@@ -149,6 +149,32 @@ function TruckSwitcher({ trucks, currentId, currentLabel, entities, onSelect }) 
   )
 }
 
+// Rate effective on the load's date (falls back to the open rate when the date
+// is blank or predates the rate history) — mirrors backend _resolve_rate.
+const mineRateForDate = (mine, entityId, dateStr) => {
+  const rates = (mine?.rates || []).filter(r => r.entity_id === entityId)
+  if (!rates.length) return null
+  const open = rates.find(r => !r.effective_to) || null
+  if (!dateStr) return open
+  const d = new Date(dateStr.slice(0, 10) + 'T12:00:00')
+  const dated = rates
+    .filter(r => new Date(r.effective_from) <= d && (!r.effective_to || new Date(r.effective_to) > d))
+    .sort((a, b) => new Date(b.effective_from) - new Date(a.effective_from))[0]
+  return dated || open
+}
+
+// A statement year more than a year away from the load date (or today, when the
+// date is blank) is almost certainly a typo — e.g. 2024 captured on a 2026 load
+// via the number input's scroll/arrow decrement. Flagged, not blocked.
+const statementYearSuspect = (year, loadDate) => {
+  const y = parseInt(year)
+  if (!y) return false
+  const ref = loadDate
+    ? new Date(loadDate.slice(0, 10) + 'T12:00:00').getFullYear()
+    : new Date().getFullYear()
+  return Number.isFinite(ref) && Math.abs(y - ref) > 1
+}
+
 const EMPTY_LOAD = {
   load_date: '', slip_number: '', po_number: '',
   driver_id: null, driver_name: '',
@@ -211,8 +237,13 @@ function LoadForm({ editForm, setEditForm, mines, drivers, vatRate, rateSource, 
             <select value={editForm.statement_month || ''} onChange={e => set('statement_month', parseInt(e.target.value))} style={{ ...inp, width: 60, padding: '5px 4px' }}>
               {MONTHS.map((m, i) => <option key={i + 1} value={i + 1}>{m.slice(0, 3)}</option>)}
             </select>
-            <input type="number" min="2020" max="2099" value={editForm.statement_year || ''} onChange={e => set('statement_year', parseInt(e.target.value))} onKeyDown={onKey} style={{ ...inp, width: 64 }} />
+            <input type="number" min="2020" max="2099" value={editForm.statement_year || ''} onChange={e => set('statement_year', parseInt(e.target.value))} onKeyDown={onKey}
+              title={statementYearSuspect(editForm.statement_year, editForm.load_date) ? 'Year is far from the load date — check for a typo' : undefined}
+              style={{ ...inp, width: 64, ...(statementYearSuspect(editForm.statement_year, editForm.load_date) ? { border: '1px solid #dc2626', color: '#dc2626', fontWeight: 700 } : {}) }} />
           </div>
+          {statementYearSuspect(editForm.statement_year, editForm.load_date) && (
+            <div style={{ fontSize: 10, color: '#dc2626', fontWeight: 600, marginTop: 2 }}>Check year</div>
+          )}
         </div>
         <div>
           <div style={lbl}>Slip #</div>
@@ -316,7 +347,8 @@ function EditRow({ form, setForm, mines, drivers, haulageSuppliers, vatRate, rat
           <input type="number" min="2020" max="2099"
             value={form.statement_year || ''}
             onChange={e => set('statement_year', parseInt(e.target.value))} onKeyDown={handleKey}
-            style={{ ...S.input, width: 44 }} />
+            title={statementYearSuspect(form.statement_year, form.load_date) ? 'Year is far from the load date — check for a typo' : undefined}
+            style={{ ...S.input, width: 44, ...(statementYearSuspect(form.statement_year, form.load_date) ? { border: '1px solid #dc2626', color: '#dc2626', fontWeight: 700 } : {}) }} />
         </div>
       </td>
       <td style={S.td}>
@@ -2388,17 +2420,17 @@ export default function TruckLoadProfilePage() {
       idx === 0 ? { ...x, driver_id: parseInt(selectedDriverId) } : x))
   }, [splitModalOpen, selectedDriverId, drivers, splitDrivers])
 
-  // ── Auto-fill rate from mine ─────────────────────────────────────────────────
+  // ── Auto-fill rate from mine (rate effective on the load's date) ─────────────
   useEffect(() => {
     if (!editForm.mine_id || !truck || rateSource === 'manual') return
     const mine = mines.find(m => m.id === parseInt(editForm.mine_id))
     if (!mine) return
-    const rate = mine.rates?.find(r => r.entity_id === truck.entity_id && !r.effective_to)
+    const rate = mineRateForDate(mine, truck.entity_id, editForm.load_date)
     if (rate) {
       setEditForm(f => ({ ...f, rate_per_ton: String(rate.rate_per_ton) }))
       setRateSource('mine')
     }
-  }, [editForm.mine_id, mines, truck])
+  }, [editForm.mine_id, editForm.load_date, mines, truck])
 
   // ── Month navigation ─────────────────────────────────────────────────────────
   const prevMonth = () => { if (month === 1) { setMonth(12); setYear(y => y - 1) } else setMonth(m => m - 1) }
@@ -3376,7 +3408,7 @@ export default function TruckLoadProfilePage() {
                   value={String(splitForm.mine_id || '')}
                   onChange={v => {
                     const mine = mines.find(m => String(m.id) === v)
-                    const rate = mine?.rates?.find(r => r.entity_id === truck.entity_id && !r.effective_to)
+                    const rate = mineRateForDate(mine, truck.entity_id, splitForm.load_date)
                     setSplitForm(prev => ({ ...prev, mine_id: v, ...(rate ? { rate_per_ton: String(rate.rate_per_ton) } : {}) }))
                     setSplitDrivers(prev => prev.map(d => d.mine_id ? d : { ...d, mine_id: v }))
                   }}
@@ -3401,7 +3433,7 @@ export default function TruckLoadProfilePage() {
               <div>
                 <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>
                   Rate/t
-                  {!splitForm.is_projection && splitForm.mine_id && splitForm.rate_per_ton && mines.find(m => String(m.id) === String(splitForm.mine_id))?.rates?.find(r => r.entity_id === truck.entity_id && !r.effective_to && String(r.rate_per_ton) === String(splitForm.rate_per_ton)) && (
+                  {!splitForm.is_projection && splitForm.mine_id && splitForm.rate_per_ton && String(mineRateForDate(mines.find(m => String(m.id) === String(splitForm.mine_id)), truck.entity_id, splitForm.load_date)?.rate_per_ton) === String(splitForm.rate_per_ton) && (
                     <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: 'var(--accent)' }}>auto</span>
                   )}
                 </label>
