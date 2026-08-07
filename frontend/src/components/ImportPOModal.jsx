@@ -31,6 +31,57 @@ function toDateStr(val) {
   return ''
 }
 
+// A truck-reg cell once whitespace is removed: letters, digits, letters
+// (KRL704EC, JZS095EC, MW33SNGP). Product codes (TRANSPORT0000000126), totals,
+// "Page 1 of 2" and address cells all fail this.
+const REG_CELL_PAT = /^[A-Z]{1,3}\d{2,4}[A-Z]{2,4}$/
+
+function stripTrailingDate(s) {
+  return s.replace(/\s+\d{4}[\/\-]\d{2}[\/\-]\d{2}\s*$/, '').trim()
+}
+
+function looksLikeReg(val) {
+  return REG_CELL_PAT.test(stripTrailingDate(String(val ?? '').trim()).replace(/\s+/g, '').toUpperCase())
+}
+
+function isDateCell(val) {
+  if (typeof val === 'number') return val >= 40000 && val <= 60000 // Excel serial, ~2009–2064
+  return /\d{4}[\/\-]\d{2}[\/\-]\d{2}/.test(String(val ?? ''))
+}
+
+// WB cells sometimes arrive merged with a carried-over page total
+// ("1 911 318,30\n1590557") — the ticket number is the last long digit run.
+function lastIntToken(val) {
+  const runs = String(val ?? '').match(/\d{4,}/g)
+  return runs ? runs[runs.length - 1] : String(val ?? '').trim()
+}
+
+// Content-anchored rescue for pages where the converted sheet's header labels
+// sit in different columns than the data (page 1 and page 2 of the same PO can
+// disagree), or where the headers are crammed into a single cell. Anchor on the
+// reg-shaped cell; the populated cells after it always follow the printed order:
+// Load Date, Load WB Tckt, Delivery Date, WB Ticket, Quantity, Price, Net Value.
+function parseRowBySequence(row) {
+  const regIdx = row.findIndex(looksLikeReg)
+  if (regIdx < 0) return null
+  const after = []
+  for (let j = regIdx + 1; j < row.length; j++) {
+    if (String(row[j] ?? '').trim() !== '') after.push(row[j])
+  }
+  const d1 = after.findIndex(isDateCell)
+  if (d1 < 0) return null
+  let d2 = after.slice(d1 + 1).findIndex(isDateCell)
+  d2 = d2 < 0 ? -1 : d1 + 1 + d2
+  const load_wb   = d2 > d1 + 1 ? lastIntToken(after[d1 + 1]) : ''
+  const wb_ticket = d2 >= 0 && d2 + 1 < after.length ? lastIntToken(after[d2 + 1]) : ''
+  const tail = after.slice(d2 >= 0 ? d2 + 2 : d1 + 1).map(cleanNum).filter(v => v !== '')
+  const [quantity, price, net_value] =
+    tail.length >= 3 ? [tail[0], tail[1], tail[2]]
+    : tail.length === 2 ? [tail[0], '', tail[1]]
+    : ['', '', tail[0] ?? '']
+  return { horse_reg: stripTrailingDate(String(row[regIdx]).trim()), load_wb, wb_ticket, quantity, price, net_value }
+}
+
 function extractRoute(description) {
   if (!description) return ''
   const lower = description.toLowerCase()
@@ -110,15 +161,26 @@ function buildColMap(headerRow) {
 function parseDataRow(row, colMap) {
   let horse_reg     = String(row[colMap.horse_reg   ?? 2] || '').trim()
   let description   = String(row[colMap.description ?? 1] || '').trim()
-  const quantity    = cleanNum(row[colMap.quantity   ?? 7])
-  const price       = cleanNum(row[colMap.price      ?? 8])
-  const net_value   = cleanNum(row[colMap.net_value  ?? 9])
-  const load_wb     = String(row[colMap.load_wb      ?? 4] || '').trim()
-  const wb_ticket   = String(row[colMap.wb_ticket    ?? 6] || '').trim()
+  let quantity      = cleanNum(row[colMap.quantity   ?? 7])
+  let price         = cleanNum(row[colMap.price      ?? 8])
+  let net_value     = cleanNum(row[colMap.net_value  ?? 9])
+  let load_wb       = String(row[colMap.load_wb      ?? 4] || '').trim()
+  let wb_ticket     = String(row[colMap.wb_ticket    ?? 6] || '').trim()
 
   // PDF→Excel sometimes merges the "Load Date" into the "Horse Reg" cell
   // ("MW33SNGP   2026/04/14") — strip a trailing date so the reg stays clean.
-  horse_reg = horse_reg.replace(/\s+\d{4}[\/\-]\d{2}[\/\-]\d{2}\s*$/, '').trim()
+  horse_reg = stripTrailingDate(horse_reg)
+
+  // …and sometimes a page's header labels don't line up with its data columns
+  // at all — the header says "Horse Reg" in column A while the regs sit in
+  // column D. Trusting the header then imports the Product text as the "reg"
+  // (loads without reg numbers) or drops the row entirely (skipped pages).
+  // If the mapped cell isn't reg-shaped, re-read the row anchored on the reg
+  // cell itself.
+  if (!looksLikeReg(horse_reg)) {
+    const seq = parseRowBySequence(row)
+    if (seq) ({ horse_reg, load_wb, wb_ticket, quantity, price, net_value } = seq)
+  }
 
   // …and sometimes merges "Product"+"Description" into one cell (or shifts the
   // Description column), leaving the mapped Description empty — which made the
