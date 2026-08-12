@@ -9,13 +9,13 @@ import {
   addBudgetLine, updateBudgetLine, deleteBudgetLine, upsertBudgetLineValue, updateBudget,
   addBudgetBankRow, updateBudgetBankRow, deleteBudgetBankRow,
   pullBudgetSection, getBudgetIncomeCandidates, setBudgetIncomeLines, replicateBudget,
-  getReplicatePreview,
+  getReplicatePreview, setBudgetLock, downloadBudgetPdf, downloadBudgetExcel,
   getVerifications, verifyValue, finalizeValue, getSuppliers, updateSupplier,
   getBudgetLineTemplates, createBudgetLineTemplate, updateBudgetLineTemplate, deleteBudgetLineTemplate,
 } from '../services/api'
-import { Wallet, Plus, Trash2, Lock, X, RefreshCw, TrendingUp, ChevronUp, ChevronDown, ChevronsUpDown, Ban, Search, ListChecks, CopyPlus } from 'lucide-react'
+import { Wallet, Plus, Trash2, Lock, Unlock, X, RefreshCw, TrendingUp, ChevronUp, ChevronDown, ChevronsUpDown, Ban, Search, ListChecks, CopyPlus, FileDown, FileSpreadsheet } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { errorMessage, formatCurrency } from '../utils/helpers'
+import { errorMessage, formatCurrency, formatDate } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
 import VerifiableAmount from '../components/VerifiableAmount'
 import BulkUnlockButton from '../components/BulkUnlockButton'
@@ -200,6 +200,12 @@ export default function BudgetsPage() {
   const [bankEdits, setBankEdits] = useState({})
   // sessionStorage-backed so the block stays as the user left it across navigation.
   const [bankInfoOpen, setBankInfoOpen] = useSessionState('budgets.bankInfoOpen', true)
+  const [lockSaving, setLockSaving] = useState(false)
+  const [exportLoading, setExportLoading] = useState(null)  // 'pdf' | 'excel' | null
+
+  // A locked budget is final (mirrors the costing "Sent" lock): every editing
+  // control below hides or goes read-only, and the server enforces it anyway.
+  const isLocked = !!budget?.locked_at
 
   // Entities this user can see budgets for (admin: all)
   const budgetEntities = useMemo(() => {
@@ -355,6 +361,52 @@ export default function BudgetsPage() {
       toast.error(errorMessage(e, 'Failed to check next month'))
     } finally {
       setReplicating(false)
+    }
+  }
+
+  // ── Lock & export (mirror the costing Sent flag + PDF/Excel export) ─────────
+  const handleLockToggle = async () => {
+    if (!budget) return
+    const label = `${MONTHS[budget.period_month - 1]} ${budget.period_year} budget for ${selectedEntity?.code || 'this entity'}`
+    const ok = isLocked
+      ? window.confirm(`Unlock the ${label}? Its figures can be changed again.`)
+      : window.confirm(`Lock the ${label}? Nothing can be added or changed until it is unlocked.`)
+    if (!ok) return
+    setLockSaving(true)
+    try {
+      const { data } = await setBudgetLock(budget.id, !isLocked)
+      setBudget(b => ({ ...b, locked_at: data.locked_at, locked_by_name: data.locked_by_name }))
+      setCellEdits({})
+      setNameEdits({})
+      toast.success(data.locked_at ? 'Budget locked' : 'Budget unlocked')
+    } catch (e) {
+      toast.error(errorMessage(e, 'Failed to update the lock'))
+    } finally {
+      setLockSaving(false)
+    }
+  }
+
+  const handleExport = async (type) => {
+    if (!budget) return
+    setExportLoading(type)
+    try {
+      const fn = type === 'pdf' ? downloadBudgetPdf : downloadBudgetExcel
+      const r = await fn(budget.id)
+      const ext = type === 'pdf' ? 'pdf' : 'xlsx'
+      const mime = type === 'pdf'
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      const base = `budget-${(selectedEntity?.code || 'entity').toLowerCase()}-${budget.period_year}-${String(budget.period_month).padStart(2, '0')}`
+      const url = URL.createObjectURL(new Blob([r.data], { type: mime }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${base}.${ext}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error(`Failed to export ${type.toUpperCase()}`)
+    } finally {
+      setExportLoading(null)
     }
   }
 
@@ -915,11 +967,12 @@ export default function BudgetsPage() {
       : (raw || placeholder || '—')
     return (
       <span
-        onClick={() => setBankEdits(p => ({
+        onClick={() => { if (isLocked) return; setBankEdits(p => ({
           ...p, [key]: raw == null ? '' : (isAmount ? String(parseFloat(raw)) : String(raw)),
-        }))}
-        style={{ cursor: 'pointer', color: raw || hasCalc ? undefined : 'var(--text-muted)', ...style }}
-        title={hasCalc
+        })) }}
+        style={{ cursor: isLocked ? 'default' : 'pointer', color: raw || hasCalc ? undefined : 'var(--text-muted)', ...style }}
+        title={isLocked ? 'Budget is locked'
+          : hasCalc
           ? (raw != null
             ? 'Typed in by hand — blank it to go back to the sum of the accounts above'
             : 'Sum of the accounts above — click to type your own figure')
@@ -954,8 +1007,10 @@ export default function BudgetsPage() {
     }
     return (
       <span
-        onClick={() => startBudgetFieldEdit(field)} style={{ cursor: 'pointer', ...style }}
-        title={pinned ? 'Edited by hand — blank it to go back to the calculated figure' : 'Click to edit'}
+        onClick={() => { if (!isLocked) startBudgetFieldEdit(field) }}
+        style={{ cursor: isLocked ? 'default' : 'pointer', ...style }}
+        title={isLocked ? 'Budget is locked'
+          : pinned ? 'Edited by hand — blank it to go back to the calculated figure' : 'Click to edit'}
       >
         {formatCurrency(calculated)}
         {pinned && <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 4 }}>edited</span>}
@@ -1063,6 +1118,29 @@ export default function BudgetsPage() {
       {/* Budget grid */}
       {entityId && !noAccess && !loading && budget && (
         <>
+          {/* Locked banner — the whole budget is read-only until it is unlocked. */}
+          {isLocked && (
+            <div
+              className="card"
+              style={{
+                marginBottom: 16, padding: '10px 14px', display: 'flex', alignItems: 'center',
+                gap: 10, flexWrap: 'wrap', border: '1px solid var(--success)',
+                background: 'rgba(34, 197, 94, 0.08)',
+              }}
+            >
+              <Lock size={15} style={{ color: 'var(--success)', flexShrink: 0 }} />
+              <span style={{ fontSize: 13 }}>
+                <strong>Locked</strong>
+                {budget.locked_by_name ? ` by ${budget.locked_by_name}` : ''} on {formatDate(budget.locked_at)} —
+                nothing can be added or changed. Exporting still works.
+              </span>
+              <button className="btn-ghost btn-sm" style={{ marginLeft: 'auto' }}
+                onClick={handleLockToggle} disabled={lockSaving}>
+                <Unlock size={13} /> {lockSaving ? 'Unlocking…' : 'Unlock'}
+              </button>
+            </div>
+          )}
+
           {/* Summary — Safetec shows a base-month profit statement; OBHI, BTP and
               TP reconcile per month-group (income vs the expenses that income has
               to cover); every other entity uses the single window total. */}
@@ -1086,8 +1164,8 @@ export default function BudgetsPage() {
                 ].map(c => (
                   <div
                     key={c.label} className="stat-card"
-                    style={c.editable ? { cursor: 'pointer' } : undefined}
-                    onClick={c.editable && budgetFieldEdits.external_profit == null
+                    style={c.editable && !isLocked ? { cursor: 'pointer' } : undefined}
+                    onClick={c.editable && !isLocked && budgetFieldEdits.external_profit == null
                       ? () => startBudgetFieldEdit('external_profit')
                       : undefined}
                   >
@@ -1194,9 +1272,11 @@ export default function BudgetsPage() {
                         {bankCell(row, 'amount')}
                       </td>
                       <td style={{ width: 28, textAlign: 'right' }}>
-                        <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
-                          <Trash2 size={13} />
-                        </button>
+                        {!isLocked && (
+                          <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1214,17 +1294,21 @@ export default function BudgetsPage() {
                         {bankCell(bankInfo.cashFlowRow, 'amount', { calculated: bankInfo.cashFlowCalc })}
                       </td>
                       <td style={{ width: 28, textAlign: 'right', borderTop: '1px solid var(--border)' }}>
-                        <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(bankInfo.cashFlowRow)}>
-                          <Trash2 size={13} />
-                        </button>
+                        {!isLocked && (
+                          <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(bankInfo.cashFlowRow)}>
+                            <Trash2 size={13} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
-              <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('bank')}>
-                <Plus size={13} /> Add account
-              </button>
+              {!isLocked && (
+                <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('bank')}>
+                  <Plus size={13} /> Add account
+                </button>
+              )}
 
               {/* Everything below the account list is Safetec's sheet: the profit
                   line, the trailer VAT-back adjustment off it, and the TO BE PAID
@@ -1280,9 +1364,11 @@ export default function BudgetsPage() {
                           {bankCell(row, 'amount')}
                         </td>
                         <td style={{ width: 28, textAlign: 'right' }}>
-                          <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
-                            <Trash2 size={13} />
-                          </button>
+                          {!isLocked && (
+                            <button className="btn-icon" title="Delete row" onClick={() => handleDeleteBankRow(row)}>
+                              <Trash2 size={13} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1298,9 +1384,11 @@ export default function BudgetsPage() {
                     </tr>
                   </tbody>
                 </table>
-                <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('to_be_paid')}>
-                  <Plus size={13} /> Add line
-                </button>
+                {!isLocked && (
+                  <button className="btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => handleAddBankRow('to_be_paid')}>
+                    <Plus size={13} /> Add line
+                  </button>
+                )}
               </div>
               </>)}
               </>)}
@@ -1326,6 +1414,20 @@ export default function BudgetsPage() {
             {isAdmin && (
               <button className="btn-ghost btn-sm" onClick={openConstants}>
                 <ListChecks size={14} /> Manage Constants
+              </button>
+            )}
+            <button className="btn-ghost btn-sm" onClick={() => handleExport('excel')} disabled={!!exportLoading}
+              title="Download this budget as a branded Excel sheet">
+              <FileSpreadsheet size={14} /> {exportLoading === 'excel' ? 'Exporting…' : 'Excel'}
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => handleExport('pdf')} disabled={!!exportLoading}
+              title="Download this budget as a branded PDF">
+              <FileDown size={14} /> {exportLoading === 'pdf' ? 'Exporting…' : 'PDF'}
+            </button>
+            {!isLocked && (
+              <button className="btn-ghost btn-sm" onClick={handleLockToggle} disabled={lockSaving}
+                title="Lock this budget — nothing can be added or changed until it is unlocked. Works like the costing Sent flag.">
+                <Lock size={14} /> {lockSaving ? 'Locking…' : 'Lock Budget'}
               </button>
             )}
             {/* Undo a bad batch of final locks across every cell on this budget. */}
@@ -1358,6 +1460,8 @@ export default function BudgetsPage() {
                       {isIncome ? 'Income' : 'Expense'}
                     </span>
                   </div>
+                  {/* All editing controls disappear while the budget is locked. */}
+                  {!isLocked && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <button className="btn-ghost btn-sm" onClick={() => openQuickAdd(section.section_type, section.id)}
                       title={`Add a line to ${section.name} that you fill in yourself`}>
@@ -1392,6 +1496,7 @@ export default function BudgetsPage() {
                       <Trash2 size={14} />
                     </button>
                   </div>
+                  )}
                 </div>
 
                 {/* Quick add — sits in the section its "Add" was clicked from, so
@@ -1481,9 +1586,10 @@ export default function BudgetsPage() {
                               />
                             ) : (
                               <span
-                                onClick={() => setNameEdits(p => ({ ...p, [line.id]: line.name }))}
-                                style={{ cursor: 'text', wordBreak: 'break-word' }}
-                                title={line.name_overridden ? 'Renamed by hand — a pull keeps this name. Click to edit'
+                                onClick={() => { if (!isLocked) setNameEdits(p => ({ ...p, [line.id]: line.name })) }}
+                                style={{ cursor: isLocked ? 'default' : 'text', wordBreak: 'break-word' }}
+                                title={isLocked ? 'Budget is locked'
+                                  : line.name_overridden ? 'Renamed by hand — a pull keeps this name. Click to edit'
                                   : 'Click to edit'}
                               >
                                 {line.name}
@@ -1516,14 +1622,15 @@ export default function BudgetsPage() {
                                     onChange={e => setCellEdits(p => ({ ...p, [cellKey(line.id, m, y, field)]: e.target.value }))}
                                     onBlur={() => commitCell(line, m, y, field)}
                                     onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
-                                    readOnly={locked}
-                                    placeholder="0.00"
-                                    title={locked ? 'Locked by final verification — remove the lock to edit'
+                                    readOnly={locked || isLocked}
+                                    placeholder={isLocked ? '' : '0.00'}
+                                    title={isLocked ? 'Budget is locked — nothing can be changed until it is unlocked'
+                                      : locked ? 'Locked by final verification — remove the lock to edit'
                                       : overridden ? (isIncome
                                         ? 'Manually edited — a system refresh will not change this. Clear the box to go back to the system figure.'
                                         : 'Manually edited — a system refresh will not change this. Clear both boxes for this month to go back to the system figure.')
                                       : undefined}
-                                    style={locked ? cellInputLocked : overridden ? cellInputOverridden : cellInputStyle}
+                                    style={isLocked ? cellInputBudgetLocked : locked ? cellInputLocked : overridden ? cellInputOverridden : cellInputStyle}
                                   />
                                 </VerifiableAmount>
                               </td>
@@ -1531,10 +1638,12 @@ export default function BudgetsPage() {
                             })
                           })}
                           <td style={{ textAlign: 'center' }}>
-                            <button className="btn-icon" onClick={() => handleDeleteLine(section, line)} title="Delete line"
-                              style={{ color: 'var(--text-muted)', padding: 3 }}>
-                              <X size={13} />
-                            </button>
+                            {!isLocked && (
+                              <button className="btn-icon" onClick={() => handleDeleteLine(section, line)} title="Delete line"
+                                style={{ color: 'var(--text-muted)', padding: 3 }}>
+                                <X size={13} />
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1572,7 +1681,8 @@ export default function BudgetsPage() {
             )
           })}
 
-          {/* Add section + delete budget */}
+          {/* Add section + delete budget — none of it while the budget is locked. */}
+          {!isLocked && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
             {newSection ? (
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1616,6 +1726,7 @@ export default function BudgetsPage() {
               <Trash2 size={13} /> Delete Budget
             </button>
           </div>
+          )}
         </>
       )}
 
@@ -2185,6 +2296,15 @@ const cellInputLocked = {
   fontWeight: 600,
   background: 'rgba(34, 197, 94, 0.08)',
   border: '1px solid var(--success)',
+}
+
+// A cell on a LOCKED budget — the whole sheet is read-only, so the cells drop
+// their input look and read as plain figures.
+const cellInputBudgetLocked = {
+  ...cellInputStyle,
+  cursor: 'not-allowed',
+  background: 'transparent',
+  border: '1px solid transparent',
 }
 
 // Line names wrap over as many rows as they need, so they're edited in a textarea

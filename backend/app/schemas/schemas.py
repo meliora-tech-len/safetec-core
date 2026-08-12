@@ -2686,6 +2686,11 @@ class BudgetUpdate(BaseModel):
     profit_excl_vat_back_override: Optional[Decimal] = None
 
 
+class BudgetLockUpdate(BaseModel):
+    """Lock or unlock a budget (mirrors the costing "Sent" flag)."""
+    locked: bool
+
+
 class BudgetBankRowCreate(BaseModel):
     kind: str = "bank"          # bank | to_be_paid
     label: str
@@ -2726,6 +2731,10 @@ class BudgetOut(BaseModel):
     vat_back_trailer: Optional[Decimal] = None
     bank_profit_override: Optional[Decimal] = None
     profit_excl_vat_back_override: Optional[Decimal] = None
+    # Lock state — NULL locked_at = unlocked. locked_by_name comes off a model
+    # property so it serialises on every path (list and detail alike).
+    locked_at: Optional[datetime] = None
+    locked_by_name: Optional[str] = None
     created_at: Optional[datetime] = None
 
     class Config:

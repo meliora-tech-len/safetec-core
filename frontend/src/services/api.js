@@ -502,6 +502,14 @@ export const replicateBudget = (budgetId, prune = false) =>
 // What a pruning replicate would remove from next month. Read-only.
 export const getReplicatePreview = (budgetId) => api.get(`/budgets/${budgetId}/replicate-preview`)
 
+// Lock/unlock the budget (mirrors the costing "Sent" flag). Locked = final:
+// nothing can be added, changed or removed until it is unlocked.
+export const setBudgetLock = (budgetId, locked) => api.put(`/budgets/${budgetId}/lock`, { locked })
+
+// Server-side branded exports of the whole budget sheet.
+export const downloadBudgetPdf   = (budgetId) => api.get(`/budgets/${budgetId}/export/pdf`,   { responseType: 'blob' })
+export const downloadBudgetExcel = (budgetId) => api.get(`/budgets/${budgetId}/export/excel`, { responseType: 'blob' })
+
 // Budget "constants" — recurring lines (e.g. Travel & Accom) seeded into every
 // budget's matching section on creation, and into a section when it's pulled.
 export const getBudgetLineTemplates = () => api.get('/budgets/line-templates')

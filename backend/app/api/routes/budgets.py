@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timezone
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
@@ -13,7 +14,7 @@ from app.models.models import (
     BudgetBankRow, BudgetIncomeAssignment,
 )
 from app.schemas.schemas import (
-    BudgetCreate, BudgetUpdate, BudgetOut, BudgetDetailOut,
+    BudgetCreate, BudgetUpdate, BudgetOut, BudgetDetailOut, BudgetLockUpdate,
     BudgetBankRowCreate, BudgetBankRowUpdate, BudgetBankRowOut,
     BudgetSectionCreate, BudgetSectionUpdate, BudgetSectionOut, BudgetSectionRestore,
     BudgetLineCreate, BudgetLineUpdate, BudgetLineOut,
@@ -148,6 +149,18 @@ def _get_budget_checked(budget_id: int, user: User, db: Session) -> Budget:
         raise HTTPException(status_code=404, detail="Budget not found")
     ensure_budget_access(user, budget.entity_id, db)
     return budget
+
+
+def ensure_budget_not_locked(budget: Budget):
+    """A locked budget is final (mirrors the costing "Sent" lock): nothing may
+    be added, changed or removed. Every mutating budget endpoint funnels
+    through here — the lock toggle itself is the one exception."""
+    if budget.locked_at is not None:
+        raise HTTPException(
+            status_code=403,
+            detail=f"The {budget.period_month:02d}/{budget.period_year} budget is locked — "
+                   "nothing can be added or changed. It must be unlocked first.",
+        )
 
 
 def _get_section_checked(section_id: int, user: User, db: Session) -> BudgetSection:
@@ -568,6 +581,7 @@ def pull_section_from_system(
     """Pull system data into ONE section's auto lines. Manual lines, hand-edited
     (overridden) cells, and every other section are left untouched."""
     budget = _get_budget_checked(budget_id, current_user, db)
+    ensure_budget_not_locked(budget)
     section = db.query(BudgetSection).filter(
         BudgetSection.id == section_id,
         BudgetSection.budget_id == budget_id,
@@ -687,6 +701,7 @@ def set_income_lines(
     cells and verification marks. Other manual income lines are never touched.
     """
     budget = _get_budget_checked(budget_id, current_user, db)
+    ensure_budget_not_locked(budget)
     code = (budget.entity.code or "").upper()
     months = _budget_window(code, budget.period_month, budget.period_year)
 
@@ -1099,6 +1114,10 @@ def replicate_budget(
         Budget.period_year == ty,
     ).first()
     created = target is None
+    if not created:
+        # Replicating FROM a locked month is fine (it only reads the source);
+        # replicating INTO a locked month would change it, so that is blocked.
+        ensure_budget_not_locked(target)
     if created:
         target = Budget(
             entity_id=source.entity_id,
@@ -1257,6 +1276,7 @@ def update_budget(
     current_user: User = Depends(get_current_user),
 ):
     budget = _get_budget_checked(budget_id, current_user, db)
+    ensure_budget_not_locked(budget)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(budget, field, value)
     log_action(
@@ -1269,6 +1289,93 @@ def update_budget(
     return budget
 
 
+@router.put("/{budget_id}/lock", response_model=BudgetOut)
+def set_budget_lock(
+    budget_id: int,
+    payload: BudgetLockUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lock or unlock this budget (mirrors the costing "Sent" flag). Locked =
+    final: no sections, lines, amounts or bank rows may be added, changed or
+    removed — enforced server-side on every mutating endpoint. Anyone with
+    budget access for the entity may toggle it; every toggle is audited."""
+    budget = _get_budget_checked(budget_id, current_user, db)
+
+    if payload.locked and budget.locked_at is None:
+        budget.locked_at = datetime.now(timezone.utc)
+        budget.locked_by_id = current_user.id
+        log_action(
+            db, "budget.locked", user_id=current_user.id,
+            resource_type="budget", resource_id=budget.id,
+            description=f"Locked budget {budget.period_month}/{budget.period_year} "
+                        f"(entity {budget.entity_id}) — no values can be added or changed",
+            new_values={"locked_at": budget.locked_at.isoformat()},
+        )
+        db.commit()
+    elif not payload.locked and budget.locked_at is not None:
+        log_action(
+            db, "budget.unlocked", user_id=current_user.id,
+            resource_type="budget", resource_id=budget.id,
+            description=f"Unlocked budget {budget.period_month}/{budget.period_year} "
+                        f"(entity {budget.entity_id})",
+        )
+        budget.locked_at = None
+        budget.locked_by_id = None
+        db.commit()
+
+    db.refresh(budget)
+    return budget
+
+
+@router.get("/{budget_id}/export/pdf")
+def export_budget_pdf(
+    budget_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    import io
+    from fastapi.responses import StreamingResponse
+    from app.services.budget_exports import generate_budget_pdf
+
+    _get_budget_checked(budget_id, current_user, db)
+    budget = _load_detail(budget_id, db)
+    months = _budget_window(budget.entity.code, budget.period_month, budget.period_year)
+
+    pdf_bytes = generate_budget_pdf(budget, budget.entity, months)
+    code = (budget.entity.code or "entity").lower()
+    filename = f"budget-{code}-{budget.period_year}-{budget.period_month:02d}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{budget_id}/export/excel")
+def export_budget_excel(
+    budget_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    import io
+    from fastapi.responses import StreamingResponse
+    from app.services.budget_exports import generate_budget_excel
+
+    _get_budget_checked(budget_id, current_user, db)
+    budget = _load_detail(budget_id, db)
+    months = _budget_window(budget.entity.code, budget.period_month, budget.period_year)
+
+    xl_bytes = generate_budget_excel(budget, budget.entity, months)
+    code = (budget.entity.code or "entity").lower()
+    filename = f"budget-{code}-{budget.period_year}-{budget.period_month:02d}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(xl_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.delete("/{budget_id}")
 def delete_budget(
     budget_id: int,
@@ -1276,6 +1383,7 @@ def delete_budget(
     current_user: User = Depends(get_current_user),
 ):
     budget = _get_budget_checked(budget_id, current_user, db)
+    ensure_budget_not_locked(budget)
     log_action(
         db, "budget.deleted", user_id=current_user.id,
         resource_type="budget", resource_id=budget_id,
@@ -1296,6 +1404,7 @@ def add_section(
     current_user: User = Depends(get_current_user),
 ):
     budget = _get_budget_checked(budget_id, current_user, db)
+    ensure_budget_not_locked(budget)
     max_order = max([s.sort_order or 0 for s in budget.sections], default=-1)
     section = BudgetSection(
         budget_id=budget.id,
@@ -1317,6 +1426,7 @@ def update_section(
     current_user: User = Depends(get_current_user),
 ):
     section = _get_section_checked(section_id, current_user, db)
+    ensure_budget_not_locked(section.budget)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(section, field, value)
     db.commit()
@@ -1340,6 +1450,7 @@ def restore_sections(
     a pull brings identical figures back, but hand-typed ones are gone.
     """
     budget = _get_budget_checked(budget_id, current_user, db)
+    ensure_budget_not_locked(budget)
     missing = _missing_default_sections(budget)
     if payload and payload.names:
         wanted = {n.strip().upper() for n in payload.names}
@@ -1424,6 +1535,7 @@ def delete_section(
 ):
     section = _get_section_checked(section_id, current_user, db)
     budget = section.budget
+    ensure_budget_not_locked(budget)
     log_action(
         db, "budget.section_deleted", user_id=current_user.id,
         resource_type="budget", resource_id=budget.id,
@@ -1446,6 +1558,7 @@ def add_line(
     current_user: User = Depends(get_current_user),
 ):
     section = _get_section_checked(section_id, current_user, db)
+    ensure_budget_not_locked(section.budget)
     max_order = max([l.sort_order or 0 for l in section.lines], default=-1)
     line = BudgetLine(
         section_id=section.id,
@@ -1467,6 +1580,7 @@ def update_line(
     current_user: User = Depends(get_current_user),
 ):
     line = _get_line_checked(line_id, current_user, db)
+    ensure_budget_not_locked(line.section.budget)
     changes = payload.model_dump(exclude_unset=True)
     if "name" in changes:
         name = (changes["name"] or "").strip()
@@ -1490,6 +1604,7 @@ def delete_line(
     current_user: User = Depends(get_current_user),
 ):
     line = _get_line_checked(line_id, current_user, db)
+    ensure_budget_not_locked(line.section.budget)
     db.delete(line)
     db.commit()
     return {"detail": "Line deleted"}
@@ -1516,6 +1631,7 @@ def add_bank_row(
     current_user: User = Depends(get_current_user),
 ):
     budget = _get_budget_checked(budget_id, current_user, db)
+    ensure_budget_not_locked(budget)
     if payload.kind not in BANK_ROW_KINDS:
         raise HTTPException(status_code=400, detail=f"kind must be one of {sorted(BANK_ROW_KINDS)}")
     # Order within the row's own list, so adding an account never lands it in the
@@ -1543,6 +1659,7 @@ def update_bank_row(
     current_user: User = Depends(get_current_user),
 ):
     row = _get_bank_row_checked(row_id, current_user, db)
+    ensure_budget_not_locked(row.budget)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(row, field, value)
     db.commit()
@@ -1557,6 +1674,7 @@ def delete_bank_row(
     current_user: User = Depends(get_current_user),
 ):
     row = _get_bank_row_checked(row_id, current_user, db)
+    ensure_budget_not_locked(row.budget)
     db.delete(row)
     db.commit()
     return {"detail": "Bank row deleted"}
@@ -1572,6 +1690,7 @@ def upsert_line_value(
     current_user: User = Depends(get_current_user),
 ):
     line = _get_line_checked(line_id, current_user, db)
+    ensure_budget_not_locked(line.section.budget)
     if not (1 <= payload.month <= 12):
         raise HTTPException(status_code=400, detail="month must be 1-12")
 

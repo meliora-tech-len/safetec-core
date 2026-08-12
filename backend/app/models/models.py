@@ -1619,11 +1619,23 @@ class Budget(Base):
     bank_profit_override          = Column(Numeric(15, 2), nullable=True)
     profit_excl_vat_back_override = Column(Numeric(15, 2), nullable=True)
 
+    # Lock (mirrors the costing "Sent" lock): a locked budget is final — no
+    # sections, lines, amounts or bank rows may be added, changed or removed
+    # until it is unlocked. NULL = unlocked.
+    locked_at    = Column(DateTime(timezone=True), nullable=True)
+    locked_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     updated_at    = Column(DateTime(timezone=True), onupdate=func.now())
 
-    entity   = relationship("BusinessEntity")
+    entity    = relationship("BusinessEntity")
+    locked_by = relationship("User", foreign_keys=[locked_by_id])
+
+    @property
+    def locked_by_name(self):
+        return self.locked_by.full_name if self.locked_by else None
+
     sections = relationship("BudgetSection", back_populates="budget",
                             cascade="all, delete-orphan", order_by="BudgetSection.sort_order")
     bank_rows = relationship("BudgetBankRow", back_populates="budget",
