@@ -32,9 +32,10 @@ function toDateStr(val) {
 }
 
 // A truck-reg cell once whitespace is removed: letters, digits, letters
-// (KRL704EC, JZS095EC, MW33SNGP). Product codes (TRANSPORT0000000126), totals,
-// "Page 1 of 2" and address cells all fail this.
-const REG_CELL_PAT = /^[A-Z]{1,3}\d{2,4}[A-Z]{2,4}$/
+// (KRL704EC, JZS095EC, MW33SNGP) or the digit-first EC format: digits, letters
+// (529FHREC, 907JLTEC, 207JGXEC). Product codes (TRANSPORT0000000126), totals,
+// "Page 1 of 2" and address cells all fail both alternatives.
+const REG_CELL_PAT = /^(?:[A-Z]{1,3}\d{2,4}[A-Z]{2,4}|\d{2,4}[A-Z]{3}[A-Z]{2})$/
 
 function stripTrailingDate(s) {
   return s.replace(/\s+\d{4}[\/\-]\d{2}[\/\-]\d{2}\s*$/, '').trim()
@@ -80,6 +81,32 @@ function parseRowBySequence(row) {
     : tail.length === 2 ? [tail[0], '', tail[1]]
     : ['', '', tail[0] ?? '']
   return { horse_reg: stripTrailingDate(String(row[regIdx]).trim()), load_wb, wb_ticket, quantity, price, net_value }
+}
+
+// Last-resort rescue when the conversion crams several printed columns into ONE
+// cell ("TRANSPORT0000000126 Mokala to PE KTS596EC 2026/08/06 933934 …") — then
+// no cell on its own is reg-shaped and parseRowBySequence has nothing to anchor
+// on. Flatten the row into whitespace tokens and walk the printed order from the
+// reg token: Load Date, Load WB, Delivery Date, WB Ticket, Quantity, Price,
+// Net Value (a thousand-grouped net value splits into tokens — rejoin the tail).
+function parseRowByTokens(row) {
+  const tokens = row.flatMap(c => String(c ?? '').trim().split(/\s+/)).filter(Boolean)
+  const regIdx = tokens.findIndex(t => REG_CELL_PAT.test(t.toUpperCase()))
+  if (regIdx < 0) return null
+  const isDateTok = t => /^\d{4}[\/\-]\d{2}[\/\-]\d{2}$/.test(t)
+  const after = tokens.slice(regIdx + 1)
+  const d1 = after.findIndex(isDateTok)
+  if (d1 < 0) return null
+  let d2 = after.slice(d1 + 1).findIndex(isDateTok)
+  d2 = d2 < 0 ? -1 : d1 + 1 + d2
+  const load_wb   = d2 > d1 + 1 ? lastIntToken(after.slice(d1 + 1, d2).join(' ')) : ''
+  const wb_ticket = d2 >= 0 && d2 + 1 < after.length ? lastIntToken(after[d2 + 1]) : ''
+  const tail = after.slice(d2 >= 0 ? d2 + 2 : d1 + 1).map(cleanNum).filter(v => v !== '')
+  const [quantity, price, net_value] =
+    tail.length >= 3 ? [tail[0], tail[1], tail.slice(2).join('')]
+    : tail.length === 2 ? [tail[0], '', tail[1]]
+    : ['', '', tail[0] ?? '']
+  return { horse_reg: tokens[regIdx], load_wb, wb_ticket, quantity, price, net_value }
 }
 
 function extractRoute(description) {
@@ -178,15 +205,17 @@ function parseDataRow(row, colMap) {
   // If the mapped cell isn't reg-shaped, re-read the row anchored on the reg
   // cell itself.
   if (!looksLikeReg(horse_reg)) {
-    const seq = parseRowBySequence(row)
+    const seq = parseRowBySequence(row) || parseRowByTokens(row)
     if (seq) ({ horse_reg, load_wb, wb_ticket, quantity, price, net_value } = seq)
   }
 
   // …and sometimes merges "Product"+"Description" into one cell (or shifts the
-  // Description column), leaving the mapped Description empty — which made the
-  // header fall back to the truck reg instead of the mine. Recover the route
-  // ("<mine> to PE") by scanning every cell for an "X to Y" pattern.
-  if (!description) {
+  // Description column), leaving the mapped Description empty or holding the
+  // wrong column's text (the reg, or a whole merged row) — which put the truck
+  // reg or raw row text on the invoice instead of the mine. A real route never
+  // contains digits, so recover the route ("<mine> to PE") by scanning every
+  // cell for an "X to Y" pattern whenever the mapped cell has any.
+  if (!description || /\d/.test(description)) {
     for (const c of row) {
       const rm = String(c ?? '').match(/([A-Za-z][A-Za-z/]*\s+to\s+[A-Za-z][A-Za-z/]*)/i)
       if (rm) { description = rm[1].trim(); break }
