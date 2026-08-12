@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 
@@ -1041,6 +1041,9 @@ def import_diesel(
     ps_lock_cache: dict = {}
     # slips already seen in this batch (avoid in-file duplicates), keyed by (truck, supplier, slip)
     seen_batch: set[tuple] = set()
+    # pending placeholders already resolved by an earlier row in this batch —
+    # each placeholder may absorb exactly one imported row
+    consumed_pending: set[int] = set()
 
     for row in payload.rows:
         litres = Decimal(str(row.litres or 0))
@@ -1098,8 +1101,8 @@ def import_diesel(
         pending = None
         if slip:
             norm_slip = slip.replace(" ", "").upper()
-            pending = (
-                db.query(DieselFillUp)
+            pending = next((
+                p for p in db.query(DieselFillUp)
                 .filter(
                     DieselFillUp.truck_id == truck.id,
                     DieselFillUp.rate_pending == True,  # noqa: E712
@@ -1110,8 +1113,40 @@ def import_diesel(
                     ),
                 )
                 .order_by(DieselFillUp.fillup_date.desc())
-                .first()
+                .all()
+                if p.id not in consumed_pending
+            ), None)
+
+        # Litres fallback: the placeholder's captured slip is the depot's pump
+        # slip, which rarely matches the summary's transaction id (and a
+        # placeholder may have no slip at all). Match the nearest still-pending
+        # placeholder on truck + supplier with litres within 0.5 L and date
+        # within 3 days — pump printouts drift a few hundredths of a litre and
+        # a day or two from the statement.
+        matched_by_litres = False
+        if pending is None:
+            window = timedelta(days=3)
+            candidates = [
+                p for p in db.query(DieselFillUp).filter(
+                    DieselFillUp.truck_id == truck.id,
+                    DieselFillUp.supplier_id == supplier_id,
+                    DieselFillUp.rate_pending == True,  # noqa: E712
+                    DieselFillUp.is_archived == False,
+                    DieselFillUp.litres >= litres - Decimal("0.5"),
+                    DieselFillUp.litres <= litres + Decimal("0.5"),
+                    DieselFillUp.fillup_date >= row.fillup_date - window,
+                    DieselFillUp.fillup_date <= row.fillup_date + window,
+                ).all()
+                if p.id not in consumed_pending
+            ]
+            pending = min(
+                candidates,
+                key=lambda p: (abs((p.fillup_date - row.fillup_date).days),
+                               abs(Decimal(str(p.litres)) - litres)),
+                default=None,
             )
+            matched_by_litres = pending is not None
+
         if pending is not None:
             # The placeholder may already be linked to a locked invoice — filling
             # its rate in would change values on a closed-off invoice.
@@ -1119,9 +1154,14 @@ def import_diesel(
                 rr.status = "invalid"
                 rr.message = lock_message(invoice_label(db, pending.supplier_invoice_id))
                 result.invalid += 1; result.rows.append(rr); continue
+            consumed_pending.add(pending.id)
             result.updated += 1
             rr.status = "updated"
-            rr.message = "Filled rate into a pending slip; litres taken from the import"
+            rr.message = (
+                "Filled rate into a pending slip (matched by litres + date); litres taken from the import"
+                if matched_by_litres else
+                "Filled rate into a pending slip; litres taken from the import"
+            )
             if payload.commit:
                 amounts = DieselCalculationService.calculate_fillup_amounts(
                     litres=litres, rate_per_litre=rate,
@@ -1133,8 +1173,14 @@ def import_diesel(
                 pending.rate_per_litre  = rate
                 pending.admin_fee_pct   = admin_fee_pct
                 pending.diesel_type     = diesel_type_for_supplier(supplier_objs.get(supplier_id))
-                if not pending.depot_slip_number:
-                    pending.depot_slip_number = slip or None
+                if slip:
+                    # The captured pump slip stays as the depot Slip #; the
+                    # summary's transaction id becomes the Trans ID, so a
+                    # re-import of the same sheet dedupes instead of
+                    # re-creating this row as a fresh fill-up.
+                    if not pending.depot_slip_number:
+                        pending.depot_slip_number = pending.slip_number or slip
+                    pending.slip_number = slip
                 for k, v in amounts.items():
                     setattr(pending, k, v)
                 pending.rate_pending = False

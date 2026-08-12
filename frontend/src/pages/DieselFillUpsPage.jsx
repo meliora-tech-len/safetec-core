@@ -1319,7 +1319,7 @@ function EditRow({ form, set, rowTrucks, suppliers, entities, multiEntity, isNew
             onChange={e => onRate(e.target.value)} onKeyDown={onKeyDown}
             style={{ ...S.input, width: 78, textAlign: 'right' }} />
           {isBokamosho && (
-            <label title="Log the slip now; the Tradekor import fills the rate in (matched by slip, import litres win)"
+            <label title="Log it now — slip # optional; the diesel import fills the rate in (matched by slip #, or by litres + date when the slip doesn't match)"
               style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, color: 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               <input type="checkbox" checked={!!form.rate_pending}
                 onChange={e => { set('rate_pending', e.target.checked); if (e.target.checked) { set('rate_per_litre', ''); setRateEdited(false) } }}
