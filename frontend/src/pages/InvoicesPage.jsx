@@ -253,6 +253,8 @@ export default function InvoicesPage({ docType = 'invoice' }) {
   })
   const selected = displayedInvoices.filter(i => selectedIds.has(i.id))
   const selectedPayable = selected.filter(canMarkPaid)
+  const selectedTotal = selected.reduce((s, i) => s + Number(i.total || 0), 0)
+  const selectedPayableTotal = selectedPayable.reduce((s, i) => s + Number(i.total || 0), 0)
 
   // Bulk PDF download — merge=false → ZIP of separate PDFs, merge=true → one merged PDF.
   const handleBulkDownload = async (ids, merge) => {
@@ -619,7 +621,11 @@ export default function InvoicesPage({ docType = 'invoice' }) {
           borderRadius: 10, padding: '10px 16px',
           boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
         }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.length} selected</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>
+            {selected.length} selected
+            <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}> · </span>
+            {formatCurrency(selectedTotal)}
+          </span>
           <button
             onClick={() => handleBulkDownload(selectedIds, false)}
             disabled={downloadingBulk}
@@ -657,7 +663,7 @@ export default function InvoicesPage({ docType = 'invoice' }) {
                 cursor: payingBulk ? 'default' : 'pointer', opacity: payingBulk ? 0.6 : 1,
               }}>
               <CheckCircle size={15} />
-              {payingBulk ? 'Marking…' : `Mark paid (${selectedPayable.length})`}
+              {payingBulk ? 'Marking…' : `Mark paid (${selectedPayable.length} · ${formatCurrency(selectedPayableTotal)})`}
             </button>
           )}
           <button

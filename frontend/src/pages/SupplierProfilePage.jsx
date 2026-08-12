@@ -1712,6 +1712,8 @@ export default function SupplierProfilePage() {
   const allInvoices = groups.flatMap(g => g.invoices)
   const selectedVerifiable  = allInvoices.filter(i => selectedIds.has(i.id) && canUserVerify(i))
   const selectedUnpaid      = allInvoices.filter(i => selectedIds.has(i.id) && !i.is_paid)
+  const selectedTotal       = allInvoices.filter(i => selectedIds.has(i.id)).reduce((s, i) => s + Number(i.amount || 0), 0)
+  const selectedUnpaidTotal = selectedUnpaid.reduce((s, i) => s + Number(i.amount || 0), 0)
   const selectedFinalizable = allInvoices.filter(i => selectedIds.has(i.id) && canUserFinalize(i))
   const selectedUnfinalizable = allInvoices.filter(i => selectedIds.has(i.id) && canUserUnfinalize(i))
   const bulkBusy = verifyingBulk || payingBulk || finalizingBulk || unfinalizingBulk
@@ -1992,6 +1994,8 @@ export default function SupplierProfilePage() {
         }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>
             {selectedIds.size} selected
+            <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}> · </span>
+            {formatCurrency(selectedTotal)}
           </span>
           {selectedVerifiable.length > 0 && (
             <button
@@ -2046,7 +2050,7 @@ export default function SupplierProfilePage() {
                 cursor: payingBulk ? 'default' : 'pointer', opacity: bulkBusy ? 0.6 : 1,
               }}>
               <CheckCircle size={15} />
-              {payingBulk ? 'Marking…' : `Mark paid (${selectedUnpaid.length})`}
+              {payingBulk ? 'Marking…' : `Mark paid (${selectedUnpaid.length} · ${formatCurrency(selectedUnpaidTotal)})`}
             </button>
           )}
           <button
