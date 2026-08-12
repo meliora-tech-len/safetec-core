@@ -27,6 +27,9 @@ from app.services.costing_sent import (
     ensure_not_on_sent_costing, build_sent_map, natural_invoice_period, roll_past_sent,
     invoice_costing_targets,
 )
+from app.services.profit_sheet_lock import (
+    ensure_invoice_not_profit_locked, ensure_reg_month_open,
+)
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
     build_initials_cache, intent_from_action,
@@ -1441,6 +1444,10 @@ def create_supplier_invoice(
         created_by_id=current_user.id,
     )
     db.add(inv)
+    db.flush()
+    # Profit Sheet final lock: an expense against a reg whose sheet month is
+    # locked may not be captured.
+    ensure_invoice_not_profit_locked(db, inv)
     supplier_label = supplier.name if supplier else custom_name
     log_action(
         db, "supplier_invoice.created", user_id=current_user.id,
@@ -1498,6 +1505,12 @@ def update_supplier_invoice(
     # subcontractor — its values may not change. Workflow-status fields and the
     # invoice number (Pending → confirmed) stay editable.
     ensure_not_on_sent_costing(db, inv, updates, {"is_paid", "paid_date", "payment_reference", "notes", "invoice_number"})
+    # Profit Sheet final lock: same workflow-status whitelist as the locks above.
+    ensure_invoice_not_profit_locked(
+        db, inv, extra_reg=updates.get("vehicle_reg"),
+        updates=updates,
+        allowed_fields={"is_paid", "paid_date", "payment_reference", "notes"},
+    )
 
     # Auto-set verified_at when marking verified
     if updates.get("is_verified") is True and not inv.is_verified:
@@ -1531,6 +1544,11 @@ def update_supplier_invoice(
 
     for field, value in updates.items():
         setattr(inv, field, value)
+
+    # Moving the expense onto a locked reg-month is blocked the same as
+    # editing one already there.
+    if {"invoice_date", "statement_month", "statement_year", "vehicle_reg"} & set(updates):
+        ensure_invoice_not_profit_locked(db, inv)
 
     # When invoice_number is filled in (e.g. Pending → confirmed), push to linked fill-ups
     if "invoice_number" in updates and inv.is_multi_line:
@@ -1642,11 +1660,17 @@ def move_supplier_invoice_periods(
         updates["statement_year"] = payload.statement_year
 
     old_values, new_values = _changed_values(inv, updates)
+    # Profit Sheet final lock: unlike the sent/verification locks, a period
+    # move may NOT touch a locked reg-month — neither pulling an expense out of
+    # it (checked here, on the current periods) nor pinning one into it
+    # (checked again after the move below).
+    ensure_invoice_not_profit_locked(db, inv)
     # A final-locked invoice carries its lock through to the costing sheet's
     # per-invoice tick; a period move re-homes that tick to the new month.
     old_targets = invoice_costing_targets(db, inv) if inv.verified3_by else []
     for field, value in updates.items():
         setattr(inv, field, value)
+    ensure_invoice_not_profit_locked(db, inv)
     if inv.verified3_by:
         new_targets = invoice_costing_targets(db, inv)
         _sync_costing_value_locks(db, inv, current_user, False,
@@ -1795,6 +1819,7 @@ def archive_supplier_invoice(
     _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
     ensure_not_on_sent_costing(db, inv)
+    ensure_invoice_not_profit_locked(db, inv)
 
     inv.is_archived = True
     log_action(
@@ -1820,6 +1845,7 @@ def delete_supplier_invoice(
     _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
     ensure_not_on_sent_costing(db, inv)
+    ensure_invoice_not_profit_locked(db, inv)
 
     log_action(
         db, "supplier_invoice.deleted", user_id=current_user.id,
@@ -2165,6 +2191,7 @@ def add_line_item(
     _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
     ensure_not_on_sent_costing(db, inv, extra_reg=data.unit)
+    ensure_invoice_not_profit_locked(db, inv, extra_reg=data.unit)
 
     total_before = inv.amount
     li = SupplierInvoiceLineItem(invoice_id=invoice_id, **data.model_dump())
@@ -2213,6 +2240,7 @@ def update_line_item(
     _check_entity_access(li.invoice.entity_id, current_user)
     ensure_not_locked(li.invoice)
     ensure_not_on_sent_costing(db, li.invoice, extra_reg=data.unit)
+    ensure_invoice_not_profit_locked(db, li.invoice, extra_reg=data.unit)
 
     updates = data.model_dump(exclude_unset=True)
     old_values, new_values = _changed_values(li, updates)
@@ -2282,6 +2310,7 @@ def delete_line_item(
     _check_invoice_access(inv, current_user)
     ensure_not_locked(inv)
     ensure_not_on_sent_costing(db, inv)
+    ensure_invoice_not_profit_locked(db, inv)
     total_before = inv.amount
     snapshot = {"line_id": li.id, **_line_snapshot(li)}
     label = li.unit or li.item_description or f"#{li.id}"
@@ -2589,6 +2618,12 @@ def bulk_import_invoices(
                 skipped += 1
                 skipped_numbers.append(f"(no number, {inv_date.isoformat()})")
                 continue
+
+        # Profit Sheet final lock: a statement line against a reg whose sheet
+        # month is locked blocks the whole import (nothing is committed yet).
+        for li in item.line_items:
+            if li.unit:
+                ensure_reg_month_open(db, li.unit, stmt_year, stmt_month)
 
         inv = SupplierInvoice(
             supplier_id=payload.supplier_id,

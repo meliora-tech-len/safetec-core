@@ -15,6 +15,7 @@ from app.schemas.schemas import (
     TruckWashCreate, TruckWashUpdate, TruckWashOut,
 )
 from app.services.audit import log_action
+from app.services.profit_sheet_lock import ensure_truck_month_open
 from app.services.verification import build_initials_cache, get_verification_display
 
 router = APIRouter(prefix="/api/fleet", tags=["fleet"])
@@ -852,6 +853,8 @@ def upsert_monthly_expenses(
     if not truck:
         raise HTTPException(404, "Truck not found")
     _check_entity_access(truck.entity_id, current_user)
+    # Profit Sheet final lock: this tab feeds the report's profit column.
+    ensure_truck_month_open(db, truck, year, month)
 
     record = db.query(TruckMonthlyExpenses).filter(
         TruckMonthlyExpenses.truck_id == truck_id,

@@ -1401,6 +1401,31 @@ class DieselInvoiceLock(Base):
     )
 
 
+class ProfitSheetLock(Base):
+    """Per entity-month: the admin has final-locked the Profit Sheet report.
+
+    Locking the sheet freezes capture for EVERY reg of that entity for that
+    month — truck loads, food allowance, diesel fill-ups and truck-linked
+    supplier-invoice expenses all refuse new or changed records until the admin
+    unlocks. `locked_by_id` lets the block screen tell the user who to ask.
+    """
+    __tablename__ = "profit_sheet_locks"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    entity_id    = Column(Integer, ForeignKey("business_entities.id", ondelete="CASCADE"), nullable=False)
+    year         = Column(Integer, nullable=False)
+    month        = Column(Integer, nullable=False)
+    locked_at    = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    locked_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    entity    = relationship("BusinessEntity")
+    locked_by = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("entity_id", "year", "month", name="uq_profit_sheet_lock"),
+    )
+
+
 # ── Payroll Entries (auto-draft workflow) ─────────────────────────────────────
 
 class PayrollEntry(Base):

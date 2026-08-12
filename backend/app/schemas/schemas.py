@@ -2901,11 +2901,25 @@ class ProfitSheetReportRowOut(BaseModel):
     overrides: ProfitSheetReportOverrides
 
 
+class ProfitSheetLockSet(BaseModel):
+    """Explicit desired state — 'locked: true' from a stale tab can never
+    accidentally unlock (the intent convention the other locks use)."""
+    locked: bool
+
+
+class ProfitSheetLockOut(BaseModel):
+    """Final-lock state of one entity-month Profit Sheet."""
+    locked: bool = False
+    locked_at: Optional[datetime] = None
+    locked_by_name: Optional[str] = None
+
+
 class ProfitSheetReportOut(BaseModel):
     entity_id: int
     year: int
     month: int
     rows: List[ProfitSheetReportRowOut]
+    lock: ProfitSheetLockOut = ProfitSheetLockOut()
 
 
 class ProfitSheetReportRowIn(BaseModel):

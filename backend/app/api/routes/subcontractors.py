@@ -22,6 +22,7 @@ from app.schemas.schemas import (
     TruckCostingIncomeOut, TruckCostingIncomeCreate,
 )
 from app.services.audit import log_action
+from app.services.profit_sheet_lock import ensure_invoice_not_profit_locked
 from app.services.costing_sent import (
     build_sent_map, natural_invoice_period, period_add, roll_past_sent, costing_override_period,
     truck_regs as _truck_regs, truck_invoice_contribution as _truck_invoice_contribution,
@@ -296,6 +297,9 @@ def create_subcontractor_invoice(
         created_by_id=current_user.id,
     )
     db.add(inv)
+    db.flush()
+    # Profit Sheet final lock — the typed reg may be an own-fleet truck's.
+    ensure_invoice_not_profit_locked(db, inv)
     log_action(
         db, "subcontractor_invoice.created", user_id=current_user.id,
         entity_id=sub.entity_id, resource_type="supplier_invoice",

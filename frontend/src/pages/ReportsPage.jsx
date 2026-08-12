@@ -9,7 +9,7 @@ import {
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
   getSubcontractorLoadsReport, getPoLoadReconciliationReport, lookupPoLoadSlip,
   createReportExclusion, deleteReportExclusion,
-  getProfitSheetReport, saveProfitSheetReport,
+  getProfitSheetReport, saveProfitSheetReport, setProfitSheetLock,
 } from '../services/api'
 import { errorMessage } from '../utils/helpers'
 import toast from 'react-hot-toast'
@@ -113,6 +113,9 @@ export default function ReportsPage() {
   const [profitRows, setProfitRows]   = useState(null)
   const [profitDirty, setProfitDirty] = useState(false)
   const [profitSaving, setProfitSaving] = useState(false)
+  // Final lock state for the loaded entity-month ({locked, locked_at, locked_by_name}).
+  const [profitLock, setProfitLock]   = useState(null)
+  const [profitLockSaving, setProfitLockSaving] = useState(false)
   // Sorting is a view on the same rows — it never rewrites the saved order, but
   // the exports do follow it, since they print what is on screen. The order is
   // frozen as a list of row keys when a header is clicked rather than recomputed
@@ -198,6 +201,7 @@ export default function ReportsPage() {
     setProfitDirty(false)
     setShowHiddenProfit(false)
     setProfitOrder(null)
+    setProfitLock(null)
     try {
       if (tab === 'income') {
         const res = await getIncomeExpensesReport({ entity_id: entityId, year })
@@ -205,6 +209,7 @@ export default function ReportsPage() {
       } else if (tab === 'profit') {
         const res = await getProfitSheetReport({ entity_id: entityId, year, month })
         setProfitRows(res.data.rows.map(r => ({ ...r, key: r.truck_id ?? `custom-${crypto.randomUUID()}` })))
+        setProfitLock(res.data.lock || null)
       } else if (tab === 'subloads') {
         const res = await getSubcontractorLoadsReport({ entity_id: entityId, year, month })
         setSubData(res.data)
@@ -1015,6 +1020,7 @@ export default function ReportsPage() {
       }
       const res = await saveProfitSheetReport({ entity_id: entityId, year, month }, payload)
       setProfitRows(res.data.rows.map(r => ({ ...r, key: r.truck_id ?? `custom-${crypto.randomUUID()}` })))
+      setProfitLock(res.data.lock || null)
       setProfitDirty(false)
       toast.success('Profit sheet report saved')
     } catch (err) {
@@ -1023,6 +1029,27 @@ export default function ReportsPage() {
       setProfitSaving(false)
     }
   }, [profitRows, entityId, year, month])
+
+  // Final lock (admin only): freezes the sheet AND all capture for its regs
+  // this month — truck loads, food allowance, diesel, supplier invoices.
+  const toggleProfitLock = useCallback(async () => {
+    const locking = !profitLock?.locked
+    const label = `${MONTHS[month - 1]} ${year}`
+    const msg = locking
+      ? `Final lock the Profit Sheet for ${label}?\n\nNothing more can be captured or changed for ANY of its regs under this month — truck loads, food allowance, diesel and supplier invoices are all frozen until the lock is removed.`
+      : `Remove the final lock on the Profit Sheet for ${label}?\n\nCapture for its regs opens up again.`
+    if (!window.confirm(msg)) return
+    setProfitLockSaving(true)
+    try {
+      const res = await setProfitSheetLock({ entity_id: entityId, year, month }, locking)
+      setProfitLock(res.data)
+      toast.success(locking ? 'Profit Sheet final locked' : 'Final lock removed')
+    } catch (err) {
+      toast.error(errorMessage(err, 'Failed to change the final lock'))
+    } finally {
+      setProfitLockSaving(false)
+    }
+  }, [profitLock, entityId, year, month])
 
   const profitTitle = `Profit Sheet — ${MONTHS[month - 1]} ${year}`
   const profitSlug  = `profit-sheet-${year}-${String(month).padStart(2, '0')}`
@@ -1128,20 +1155,46 @@ export default function ReportsPage() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {tab === 'profit' && (
                 <>
-                  {profitDirty && <span style={{ fontSize: 12, color: '#d97706' }}>Unsaved changes</span>}
-                  <button
-                    onClick={saveProfitSheet}
-                    disabled={profitSaving || !profitDirty}
-                    style={{
-                      ...styles.btnSecondary,
-                      background: profitDirty ? 'var(--accent)' : 'var(--bg-hover)',
-                      color: profitDirty ? '#fff' : 'var(--text-primary)',
-                      borderColor: profitDirty ? 'var(--accent)' : 'var(--border)',
-                      cursor: profitSaving || !profitDirty ? 'default' : 'pointer',
+                  {profitLock?.locked && (
+                    <span style={{
+                      fontSize: 12, fontWeight: 600, color: '#d97706',
+                      background: 'rgba(217,119,6,0.12)', border: '1px solid rgba(217,119,6,0.35)',
+                      borderRadius: 6, padding: '4px 10px', whiteSpace: 'nowrap',
                     }}
-                  >
-                    {profitSaving ? 'Saving…' : 'Save'}
-                  </button>
+                      title={`Nothing can be captured for this month's regs — truck loads, food allowance, diesel and supplier invoices are frozen.`}
+                    >
+                      🔒 Final locked {profitLock.locked_at ? new Date(profitLock.locked_at).toLocaleDateString('en-ZA') : ''}
+                      {profitLock.locked_by_name ? ` by ${profitLock.locked_by_name}` : ''}
+                    </span>
+                  )}
+                  {isAdmin && profitRows && (
+                    <button
+                      onClick={toggleProfitLock}
+                      disabled={profitLockSaving}
+                      style={{ ...styles.btnSecondary, cursor: profitLockSaving ? 'default' : 'pointer' }}
+                      title={profitLock?.locked
+                        ? 'Reopen capture for this month'
+                        : 'Freeze this month: no more truck loads, food allowance, diesel or supplier invoices for its regs'}
+                    >
+                      {profitLockSaving ? 'Working…' : profitLock?.locked ? 'Remove Final Lock' : 'Final Lock'}
+                    </button>
+                  )}
+                  {profitDirty && !profitLock?.locked && <span style={{ fontSize: 12, color: '#d97706' }}>Unsaved changes</span>}
+                  {!profitLock?.locked && (
+                    <button
+                      onClick={saveProfitSheet}
+                      disabled={profitSaving || !profitDirty}
+                      style={{
+                        ...styles.btnSecondary,
+                        background: profitDirty ? 'var(--accent)' : 'var(--bg-hover)',
+                        color: profitDirty ? '#fff' : 'var(--text-primary)',
+                        borderColor: profitDirty ? 'var(--accent)' : 'var(--border)',
+                        cursor: profitSaving || !profitDirty ? 'default' : 'pointer',
+                      }}
+                    >
+                      {profitSaving ? 'Saving…' : 'Save'}
+                    </button>
+                  )}
                 </>
               )}
               <button
@@ -1242,6 +1295,7 @@ export default function ReportsPage() {
               onAddRow={addProfitRow}
               onRemoveRow={removeProfitRow}
               onRestoreRow={restoreProfitRow}
+              locked={!!profitLock?.locked}
             />
       ) : tab === 'subloads' ? (
         !subData
@@ -1280,7 +1334,7 @@ export default function ReportsPage() {
 // deleted off the report, listed under the table so they can be put back.
 function ProfitSheetReport({
   rows, hiddenRows = [], showHidden, onToggleHidden,
-  sort, onSort, onChange, onAddRow, onRemoveRow, onRestoreRow,
+  sort, onSort, onChange, onAddRow, onRemoveRow, onRestoreRow, locked = false,
 }) {
   const totals = psTotals(rows)
 
@@ -1303,11 +1357,12 @@ function ProfitSheetReport({
         type={type}
         step={type === 'number' ? '0.01' : undefined}
         value={shown(r, field, autoText)}
-        onChange={e => setOverride(r, field, e.target.value)}
-        onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+        readOnly={locked}
+        onChange={e => !locked && setOverride(r, field, e.target.value)}
+        onFocus={e => { if (!locked) e.target.style.borderColor = 'var(--accent)' }}
         onBlur={e => {
           e.target.style.borderColor = 'transparent'
-          if (e.target.value === '') setOverride(r, field, null)
+          if (!locked && e.target.value === '') setOverride(r, field, null)
         }}
         style={{
           width: '100%', minWidth: type === 'number' ? 86 : 96,
@@ -1324,12 +1379,20 @@ function ProfitSheetReport({
 
   return (
     <div style={styles.card}>
-      <div style={{ ...styles.reconNote, background: 'rgba(59,130,246,0.08)', borderBottom: '1px solid rgba(59,130,246,0.25)', color: 'var(--text-secondary)', fontWeight: 500 }}>
-        Every cell is editable. Figures fill in from loads, diesel and each truck's Profit Sheet —
-        type over any of them to correct it, or clear a cell to go back to the calculated value.
-        Edited cells are highlighted. Click a column heading to sort, and × to take a line off the
-        report. Remember to Save before you leave the page.
-      </div>
+      {locked ? (
+        <div style={{ ...styles.reconNote, background: 'rgba(217,119,6,0.10)', borderBottom: '1px solid rgba(217,119,6,0.3)', color: 'var(--text-secondary)', fontWeight: 500 }}>
+          🔒 This month is final locked. The totals are frozen, and nothing can be captured for
+          these regs under this month — truck loads, food allowance, diesel and supplier invoices
+          all refuse new records until an admin removes the lock.
+        </div>
+      ) : (
+        <div style={{ ...styles.reconNote, background: 'rgba(59,130,246,0.08)', borderBottom: '1px solid rgba(59,130,246,0.25)', color: 'var(--text-secondary)', fontWeight: 500 }}>
+          Every cell is editable. Figures fill in from loads, diesel and each truck's Profit Sheet —
+          type over any of them to correct it, or clear a cell to go back to the calculated value.
+          Edited cells are highlighted. Click a column heading to sort, and × to take a line off the
+          report. Remember to Save before you leave the page.
+        </div>
+      )}
       <div style={{ overflowX: 'auto' }}>
         <table style={{ ...styles.table, minWidth: 1180 }}>
           <thead>
@@ -1380,8 +1443,9 @@ function ProfitSheetReport({
                     <input
                       type="text"
                       value={r.notes ?? ''}
-                      onChange={e => onChange(r.key, { notes: e.target.value })}
-                      placeholder="Notes"
+                      readOnly={locked}
+                      onChange={e => !locked && onChange(r.key, { notes: e.target.value })}
+                      placeholder={locked ? '' : 'Notes'}
                       style={{
                         width: '100%', minWidth: 240, padding: '5px 7px', fontSize: 12.5,
                         color: 'var(--text-secondary)', background: 'transparent',
@@ -1395,16 +1459,18 @@ function ProfitSheetReport({
                     {/* A hand-added line is gone for good; a truck line is only
                         taken off the report and can be restored below, since it
                         is rebuilt from live data on every load. */}
-                    <button
-                      onClick={() => onRemoveRow(r.key)}
-                      title={r.is_custom
-                        ? 'Delete this line'
-                        : 'Take this line off the report (it can be restored below)'}
-                      style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        color: 'var(--text-muted)', fontSize: 16, lineHeight: 1, padding: 2,
-                      }}
-                    >×</button>
+                    {!locked && (
+                      <button
+                        onClick={() => onRemoveRow(r.key)}
+                        title={r.is_custom
+                          ? 'Delete this line'
+                          : 'Take this line off the report (it can be restored below)'}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: 'var(--text-muted)', fontSize: 16, lineHeight: 1, padding: 2,
+                        }}
+                      >×</button>
+                    )}
                   </td>
                 </tr>
               )
@@ -1444,14 +1510,16 @@ function ProfitSheetReport({
                   Removed from the report
                 </td>
                 <td style={{ ...styles.td, textAlign: 'center' }}>
-                  <button
-                    onClick={() => onRestoreRow(r.key)}
-                    title="Put this line back on the report"
-                    style={{
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      color: 'var(--accent)', fontSize: 14, lineHeight: 1, padding: 2,
-                    }}
-                  >↺</button>
+                  {!locked && (
+                    <button
+                      onClick={() => onRestoreRow(r.key)}
+                      title="Put this line back on the report"
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: 'var(--accent)', fontSize: 14, lineHeight: 1, padding: 2,
+                      }}
+                    >↺</button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -1459,9 +1527,11 @@ function ProfitSheetReport({
         </table>
       </div>
       <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10, alignItems: 'center' }}>
-        <button onClick={onAddRow} style={{ ...styles.btnSecondary, padding: '6px 12px', fontSize: 12 }}>
-          + Add line
-        </button>
+        {!locked && (
+          <button onClick={onAddRow} style={{ ...styles.btnSecondary, padding: '6px 12px', fontSize: 12 }}>
+            + Add line
+          </button>
+        )}
         {hiddenRows.length > 0 && (
           <button
             onClick={onToggleHidden}

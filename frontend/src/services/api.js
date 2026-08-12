@@ -26,6 +26,13 @@ api.interceptors.response.use(
         window.location.replace('/login')
       }
     }
+    // Profit Sheet final lock (423) — show the dedicated block screen from one
+    // place instead of teaching every capture form about it. The caller still
+    // gets the rejection (errorMessage(detail) renders detail.message).
+    const detail = err.response?.data?.detail
+    if (err.response?.status === 423 && detail?.code === 'profit_sheet_locked') {
+      window.dispatchEvent(new CustomEvent('profit-sheet-locked', { detail }))
+    }
     return Promise.reject(err)
   }
 )
@@ -354,6 +361,7 @@ export const getPoLoadReconciliationReport = (params) => api.get('/reports/po-lo
 export const lookupPoLoadSlip = (params) => api.get('/reports/po-load-slip-lookup', { params })
 export const getProfitSheetReport = (params) => api.get('/reports/profit-sheet', { params })
 export const saveProfitSheetReport = (params, data) => api.put('/reports/profit-sheet', data, { params })
+export const setProfitSheetLock = (params, locked) => api.put('/reports/profit-sheet/lock', { locked }, { params })
 export const createReportExclusion = (data) => api.post('/reports/exclusions', data)
 export const deleteReportExclusion = (recordType, recordId) => api.delete(`/reports/exclusions/${recordType}/${recordId}`)
 export const getPayrollEntries = (params = {}) => api.get('/payroll-entries/', { params })

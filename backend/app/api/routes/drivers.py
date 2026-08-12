@@ -30,6 +30,7 @@ from app.schemas.schemas import (
 from app.services.audit import log_action
 from app.services.load_bonus import bonus_mine_ids
 from app.services.payroll_calculator import calculate_pay_cycle
+from app.services.profit_sheet_lock import ensure_truck_month_open
 from app.services.payslip_generator import generate_payslip_pdf
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
@@ -1204,6 +1205,9 @@ def add_food_payment(
         raise HTTPException(status_code=400, detail="Select the truck this food allowance belongs to")
     if not db.query(Truck.id).filter(Truck.id == data["truck_id"]).first():
         raise HTTPException(status_code=404, detail="Truck not found")
+    # Profit Sheet final lock: the truck's sheet month (the pay-cycle month)
+    # must still be open for new food allowance.
+    ensure_truck_month_open(db, data["truck_id"], year, month)
     entry = DriverFoodPayment(pay_cycle_id=cycle.id, **data)
     db.add(entry)
     db.flush()
@@ -1237,11 +1241,16 @@ def update_food_payment(
     # verification state — and a wrong truck is exactly the kind of mistake only
     # noticed after the row was locked.
     ensure_not_locked(entry, updates, {"notes", "truck_id"})
+    # Profit Sheet final lock: only a free-text note may change once the truck's
+    # month is locked — amounts, dates and re-attribution are all frozen.
+    if not set(updates) <= {"notes"}:
+        ensure_truck_month_open(db, entry.truck_id, year, month)
     old_truck_id = entry.truck_id
     if "truck_id" in updates and updates["truck_id"] != old_truck_id:
         new_truck = db.query(Truck).filter(Truck.id == updates["truck_id"]).first()
         if not new_truck:
             raise HTTPException(status_code=404, detail="Truck not found")
+        ensure_truck_month_open(db, new_truck, year, month)
     for field, value in updates.items():
         setattr(entry, field, value)
     description = f"Updated food payment #{payment_id} for {driver.first_name} {driver.last_name}"
@@ -1273,6 +1282,7 @@ def delete_food_payment(
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
     ensure_not_locked(entry)
+    ensure_truck_month_open(db, entry.truck_id, year, month)
     log_action(db, "food_payment.deleted", user_id=current_user.id,
                entity_id=driver.entity_id, resource_type="food_payment",
                resource_id=payment_id,

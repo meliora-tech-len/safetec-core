@@ -30,12 +30,28 @@ from app.services.diesel_lock import (
     get_lock, invoice_label, lock_message, locked_invoice_ids, resolve_invoice_id,
 )
 from app.services.audit import log_action
+from app.services.profit_sheet_lock import ensure_truck_month_open
 from app.services.verification import (
     apply_verify_step, apply_finalize_step, get_verification_display, ensure_not_locked,
     intent_from_action,
 )
 
 router = APIRouter(prefix="/api/diesel", tags=["diesel"])
+
+
+def _ensure_fillup_month_open(db: Session, truck_id, supplier_invoice_id, fillup_date):
+    """Profit Sheet final lock: a fill-up counts under its linked invoice's
+    statement period, falling back to the slip date (fillup_effective_period) —
+    that period's sheet must still be open for the truck."""
+    year = month = None
+    if supplier_invoice_id:
+        inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == supplier_invoice_id).first()
+        if inv and inv.statement_year and inv.statement_month:
+            year, month = inv.statement_year, inv.statement_month
+    if year is None and fillup_date is not None:
+        year, month = fillup_date.year, fillup_date.month
+    if year is not None:
+        ensure_truck_month_open(db, truck_id, year, month)
 
 
 def _sync_truckload_diesel(db: Session, truckload_id: int, fillup: DieselFillUp) -> None:
@@ -857,10 +873,12 @@ def create_fillup(
 
     # Diesel invoice lock — nothing may be added to an invoice that was closed
     # off, whether linked by id or by typing its invoice number (which auto-links)
-    ensure_invoice_unlocked(db, resolve_invoice_id(
+    resolved_invoice_id = resolve_invoice_id(
         db, payload.entity_id, payload.supplier_id,
         payload.supplier_invoice_id, payload.invoice_number,
-    ))
+    )
+    ensure_invoice_unlocked(db, resolved_invoice_id)
+    _ensure_fillup_month_open(db, payload.truck_id, resolved_invoice_id, payload.fillup_date)
 
     # Hard block duplicates (ignore archived records)
     if payload.slip_number and payload.truck_id:
@@ -1019,6 +1037,8 @@ def import_diesel(
 
     result = DieselImportResult(total=len(payload.rows), committed=payload.commit)
     unmatched_regs: set[str] = set()
+    # Profit Sheet lock state per (truck, year, month) — None = open, str = message
+    ps_lock_cache: dict = {}
     # slips already seen in this batch (avoid in-file duplicates), keyed by (truck, supplier, slip)
     seen_batch: set[tuple] = set()
 
@@ -1055,6 +1075,19 @@ def import_diesel(
         rr.truck_id = truck.id
         rr.truck_registration = truck.registration
         rr.matched_by_temp = by_temp
+
+        # Profit Sheet final lock — flagged per row like the diesel invoice
+        # lock, so the rest of the sheet still lands.
+        ps_key = (truck.id, row.fillup_date.year, row.fillup_date.month)
+        if ps_key not in ps_lock_cache:
+            try:
+                ensure_truck_month_open(db, truck, row.fillup_date.year, row.fillup_date.month)
+                ps_lock_cache[ps_key] = None
+            except HTTPException as exc:
+                ps_lock_cache[ps_key] = exc.detail.get("message") if isinstance(exc.detail, dict) else str(exc.detail)
+        if ps_lock_cache[ps_key]:
+            rr.status = "invalid"; rr.message = ps_lock_cache[ps_key]
+            result.invalid += 1; result.rows.append(rr); continue
 
         slip = (row.slip_number or "").strip()
 
@@ -1208,6 +1241,17 @@ def update_fillup(
     ensure_not_locked(f, updates, {"notes"})
     # Diesel invoice lock — same note-only exception
     ensure_fillup_unlocked(db, f, updates, {"notes"})
+    # Profit Sheet final lock — same note-only exception, on both the current
+    # period and (when the truck, date or invoice link moves) the target one.
+    if not set(updates) <= {"notes"}:
+        _ensure_fillup_month_open(db, f.truck_id, f.supplier_invoice_id, f.fillup_date)
+        if {"truck_id", "fillup_date", "supplier_invoice_id"} & set(updates):
+            _ensure_fillup_month_open(
+                db,
+                updates.get("truck_id", f.truck_id),
+                updates.get("supplier_invoice_id", f.supplier_invoice_id),
+                updates.get("fillup_date", f.fillup_date),
+            )
 
     if "supplier_id" in updates:
         new_supplier = db.query(Supplier).filter(Supplier.id == updates["supplier_id"]).first()
@@ -1296,6 +1340,7 @@ def archive_fillup(
     _check_entity_access(f.entity_id, current_user)
     ensure_not_locked(f)
     ensure_fillup_unlocked(db, f)
+    _ensure_fillup_month_open(db, f.truck_id, f.supplier_invoice_id, f.fillup_date)
 
     f.is_archived = True
     log_action(
@@ -1319,6 +1364,7 @@ def delete_fillup(
     _check_entity_access(f.entity_id, current_user)
     ensure_not_locked(f)
     ensure_fillup_unlocked(db, f)
+    _ensure_fillup_month_open(db, f.truck_id, f.supplier_invoice_id, f.fillup_date)
 
     if f.verified and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Cannot delete a verified fill-up. Contact an admin.")

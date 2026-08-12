@@ -11,12 +11,17 @@ from app.models.models import (
     DriverPayCycle, Driver, PayrollSettings, PayrollEntry, Supplier, PaymentTermType,
     Invoice, InvoiceLineItem, Customer, DocumentType, InvoiceStatus, BusinessEntity,
     Truck, Subcontractor, ReportExclusion, TruckMonthlyExpenses, ProfitSheetReportRow,
+    ProfitSheetLock,
 )
 from app.services.audit import log_action
 from app.services.diesel_service import apply_fillup_period
+from app.services.profit_sheet_lock import (
+    get_profit_sheet_lock, profit_sheet_lock_detail,
+)
 from app.schemas.schemas import (
     ReportExclusionCreate, ProfitSheetReportSave, ProfitSheetReportOut,
     ProfitSheetReportRowOut, ProfitSheetReportAuto, ProfitSheetReportOverrides,
+    ProfitSheetLockOut, ProfitSheetLockSet,
 )
 from app.services.payroll_calculator import calculate_pay_cycle
 
@@ -1640,7 +1645,15 @@ def profit_sheet_report(
         ))
 
     rows.sort(key=lambda r: (r.sort_order, r.auto.reg_no or ''))
-    return ProfitSheetReportOut(entity_id=entity_id, year=year, month=month, rows=rows)
+    lock = get_profit_sheet_lock(db, entity_id, year, month)
+    return ProfitSheetReportOut(
+        entity_id=entity_id, year=year, month=month, rows=rows,
+        lock=ProfitSheetLockOut(
+            locked=lock is not None,
+            locked_at=lock.locked_at if lock else None,
+            locked_by_name=(lock.locked_by.full_name if lock and lock.locked_by else None),
+        ),
+    )
 
 
 @router.put("/profit-sheet", response_model=ProfitSheetReportOut)
@@ -1656,6 +1669,13 @@ def save_profit_sheet_report(
     the user typed nothing is dropped rather than written as a wall of NULLs, so
     the report keeps tracking live data until she actually changes something."""
     _check_entity_access(entity_id, current_user)
+
+    lock = get_profit_sheet_lock(db, entity_id, year, month)
+    if lock is not None:
+        raise HTTPException(
+            status_code=423,
+            detail=profit_sheet_lock_detail(db, lock, None, year, month),
+        )
 
     db.query(ProfitSheetReportRow).filter(
         ProfitSheetReportRow.entity_id == entity_id,
@@ -1707,3 +1727,55 @@ def save_profit_sheet_report(
     db.commit()
     return profit_sheet_report(entity_id=entity_id, year=year, month=month,
                                db=db, current_user=current_user)
+
+
+@router.put("/profit-sheet/lock", response_model=ProfitSheetLockOut)
+def set_profit_sheet_lock(
+    payload: ProfitSheetLockSet,
+    entity_id: int = Query(...),
+    year: int = Query(..., ge=2020),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Final-lock (or unlock) the Profit Sheet for one entity-month. Admin only.
+
+    While locked, every reg on the sheet is closed for that month — truck
+    loads, food allowance, diesel and truck-linked supplier-invoice expenses
+    all refuse new or changed records, and the sheet's own overrides can no
+    longer be saved.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403,
+                            detail="Only administrators can final lock the Profit Sheet.")
+    _check_entity_access(entity_id, current_user)
+
+    lock = get_profit_sheet_lock(db, entity_id, year, month)
+    period = f"{MONTH_NAMES[month - 1]} {year}"
+
+    if payload.locked and lock is None:
+        lock = ProfitSheetLock(entity_id=entity_id, year=year, month=month,
+                               locked_by_id=current_user.id)
+        db.add(lock)
+        log_action(
+            db, "report.profit_sheet_locked", user_id=current_user.id, entity_id=entity_id,
+            resource_type="profit_sheet_report",
+            description=f"Final locked the Profit Sheet for {period}",
+        )
+        db.commit()
+        db.refresh(lock)
+    elif not payload.locked and lock is not None:
+        db.delete(lock)
+        log_action(
+            db, "report.profit_sheet_unlocked", user_id=current_user.id, entity_id=entity_id,
+            resource_type="profit_sheet_report",
+            description=f"Removed the Profit Sheet final lock for {period}",
+        )
+        db.commit()
+        lock = None
+
+    return ProfitSheetLockOut(
+        locked=lock is not None,
+        locked_at=lock.locked_at if lock else None,
+        locked_by_name=(lock.locked_by.full_name if lock and lock.locked_by else None),
+    )

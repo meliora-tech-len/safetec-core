@@ -22,6 +22,7 @@ from app.schemas.schemas import (
 )
 from app.services.audit import log_action
 from app.services.load_bonus import bonus_mine_ids
+from app.services.profit_sheet_lock import ensure_truck_month_open
 
 router = APIRouter(prefix="/api/truck-loads", tags=["truck-loads"])
 
@@ -378,6 +379,20 @@ def _load_effective_period(load: TruckLoad) -> tuple:
     return load.load_date.year, load.load_date.month
 
 
+def _ensure_load_month_open(db: Session, truck_id, load_date,
+                            statement_year=None, statement_month=None):
+    """Profit Sheet final lock: no load may be captured or changed for a truck
+    whose sheet month is locked. Same period rule as the report — statement
+    period first, load date otherwise."""
+    if statement_year and statement_month:
+        year, month = statement_year, statement_month
+    elif load_date is not None:
+        year, month = load_date.year, load_date.month
+    else:
+        return
+    ensure_truck_month_open(db, truck_id, year, month)
+
+
 def _sync_split_driver(driver_id: int, year: int, month: int, db: Session):
     """Re-sync split-load credit for a driver from their truck_load_driver_splits lines.
 
@@ -730,6 +745,9 @@ def create_truck_load(
     current_user: User = Depends(get_current_user),
 ):
     _check_entity_access(payload.entity_id, current_user)
+    _ensure_load_month_open(db, payload.truck_id, payload.load_date,
+                            getattr(payload, "statement_year", None),
+                            getattr(payload, "statement_month", None))
 
     rate = payload.rate_per_ton
     if rate is None:
@@ -790,6 +808,9 @@ def bulk_create_truck_loads(
     created = []
     for item in payload.loads:
         _check_entity_access(item.entity_id, current_user)
+        _ensure_load_month_open(db, item.truck_id, item.load_date,
+                                getattr(item, "statement_year", None),
+                                getattr(item, "statement_month", None))
 
         rate = item.rate_per_ton
         if rate is None:
@@ -878,6 +899,9 @@ def create_split_load(
     line credits 0.5 of a load to that driver's payroll — tonnes play no role."""
     item = payload.load
     _check_entity_access(item.entity_id, current_user)
+    _ensure_load_month_open(db, item.truck_id, item.load_date,
+                            getattr(item, "statement_year", None),
+                            getattr(item, "statement_month", None))
 
     rate = item.rate_per_ton
     if rate is None:
@@ -952,9 +976,16 @@ def update_truck_load(
     old_driver_id  = load.driver_id
     old_split_period = _load_effective_period(load)
 
+    # Profit Sheet final lock: the load's current month must be open ...
+    ensure_truck_month_open(db, old_truck_id, *old_split_period)
+
     updated_fields = payload.model_dump(exclude_none=True)
     for field, value in updated_fields.items():
         setattr(load, field, value)
+
+    # ... and so must the month/truck it is being moved onto.
+    if {"truck_id", "load_date", "statement_year", "statement_month"} & set(updated_fields):
+        ensure_truck_month_open(db, load.truck_id, *_load_effective_period(load))
 
     # When a load is marked paid and its load_date is in a previous month,
     # flag driver_already_paid so the pay-cycle sync excludes it — the driver's
@@ -1053,6 +1084,7 @@ def archive_truck_load(
     if not load:
         raise HTTPException(status_code=404, detail="Truck load not found")
     _check_entity_access(load.entity_id, current_user)
+    ensure_truck_month_open(db, load.truck_id, *_load_effective_period(load))
 
     load.is_archived = True
     log_action(
@@ -1077,6 +1109,7 @@ def delete_truck_load(
     load = db.query(TruckLoad).filter(TruckLoad.id == load_id).first()
     if not load:
         raise HTTPException(status_code=404, detail="Truck load not found")
+    ensure_truck_month_open(db, load.truck_id, *_load_effective_period(load))
 
     truck_id   = load.truck_id
     load_date  = load.load_date

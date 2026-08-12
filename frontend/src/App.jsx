@@ -36,6 +36,7 @@ import CustomersPage from './pages/CustomersPage'
 import InvoiceTemplatesPage from './pages/InvoiceTemplatesPage'
 import InvoiceTemplateFormPage from './pages/InvoiceTemplateFormPage'
 import BudgetsPage from './pages/BudgetsPage'
+import ProfitSheetLockedModal from './components/ProfitSheetLockedModal'
 import { isNoTruckEntity } from './utils/helpers'
 import './styles/globals.css'
 
@@ -146,6 +147,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
+        <ProfitSheetLockedModal />
       </BrowserRouter>
     </AuthProvider>
     </ThemeProvider>
