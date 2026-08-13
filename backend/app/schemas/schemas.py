@@ -2759,6 +2759,11 @@ class BudgetIncomeCandidateValue(BaseModel):
     amount_due: Decimal
 
 
+class BudgetIncomeIssueMonth(BaseModel):
+    month: int
+    year: int
+
+
 class BudgetIncomeCandidateOut(BaseModel):
     source_key: str
     line_name: str
@@ -2766,6 +2771,10 @@ class BudgetIncomeCandidateOut(BaseModel):
     po_number: Optional[str] = None        # None on a row that has no PO
     customer_name: Optional[str] = None
     values: List[BudgetIncomeCandidateValue] = []
+    # Actual issue month(s) of the underlying invoice(s) — what the modal's Month
+    # column shows. `values` months are the (overlapping) window months the figure
+    # lands in, so an early-month invoice would otherwise display two months.
+    issue_months: List[BudgetIncomeIssueMonth] = []
     total: Decimal                 # sum across the budget's whole window
     selected: bool = False         # already assigned into this budget's income
     # Which generic income line this candidate feeds: 'tradekor' | 'other'.

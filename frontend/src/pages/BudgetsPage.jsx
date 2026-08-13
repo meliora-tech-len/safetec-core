@@ -146,7 +146,7 @@ const incomeSortVal = (c, col) => {
     case 'po': return c.po_number || ''
     case 'customer': return c.customer_name || ''
     case 'months': {
-      const v = c.values?.[0]
+      const v = c.issue_months?.[0] || c.values?.[0]
       return v ? v.year * 12 + v.month : 0
     }
     case 'total': return num(c.total)
@@ -2054,8 +2054,11 @@ export default function BudgetsPage() {
                                   title={c.customer_name || ''}>
                                   {c.customer_name || '—'}
                                 </td>
+                                {/* The month the invoice was actually issued — not the
+                                    window months the figure lands in, which overlap for
+                                    arrears entities and would show two months. */}
                                 <td style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                                  {c.values.map(v => MONTHS[v.month - 1]).join(', ')}
+                                  {(c.issue_months?.length ? c.issue_months : c.values).map(v => MONTHS[v.month - 1]).join(', ')}
                                 </td>
                                 {/* Which generic line this row feeds. Clicking a side
                                     ticks the row too — assigning it is choosing it. */}

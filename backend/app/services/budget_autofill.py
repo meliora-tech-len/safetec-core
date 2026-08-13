@@ -176,7 +176,8 @@ def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dic
         grouped: Dict[str, dict] = {}
         for (m, y) in months:
             rows = (
-                db.query(Invoice.id, Invoice.invoice_number, Invoice.po_number, Customer.name, Invoice.total)
+                db.query(Invoice.id, Invoice.invoice_number, Invoice.po_number, Customer.name, Invoice.total,
+                         Invoice.issue_date)
                 .outerjoin(Customer, Invoice.customer_id == Customer.id)
                 .filter(
                     Invoice.entity_id == entity_id,
@@ -186,7 +187,7 @@ def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dic
                 )
                 .all()
             )
-            for inv_id, inv_number, po, customer_name, total in rows:
+            for inv_id, inv_number, po, customer_name, total, issue_date in rows:
                 if po:
                     # A PO groups all its invoices into one row — labelled by the
                     # invoice number(s) that fall under it, then the PO.
@@ -201,7 +202,7 @@ def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dic
                         "section_name": SEC_INCOME[0], "section_type": SEC_INCOME[1],
                         "source_key": key, "line_name": "",
                         "po_number": po or None, "customer_name": customer_name,
-                        "_inv_numbers": set(), "values": {},
+                        "_inv_numbers": set(), "_issue_months": set(), "values": {},
                     }
                     grouped[key] = spec
                 if customer_name and not spec["customer_name"]:
@@ -210,12 +211,20 @@ def income_candidates(entity_id: int, months: List[Tuple[int, int]]) -> List[dic
                     # Windows overlap (an invoice can land in two months) — the set
                     # dedupes so a number is never listed twice.
                     spec["_inv_numbers"].add(inv_number)
+                if issue_date:
+                    # The month the invoice was actually issued — the modal shows
+                    # this, not the (overlapping) window months the value lands in.
+                    spec["_issue_months"].add((issue_date.year, issue_date.month))
                 cell = spec["values"].setdefault((m, y), {"due": Decimal("0"), "paid": None})
                 cell["due"] += _d(total)
 
         for spec in grouped.values():
             nums = spec.pop("_inv_numbers")
             spec["invoice_number"] = ", ".join(sorted(nums)) if nums else None
+            spec["issue_months"] = [
+                {"month": m, "year": y}
+                for (y, m) in sorted(spec.pop("_issue_months"))
+            ]
             # Invoice number first, then the PO, then the customer — whichever
             # of those the row actually has.
             parts = [p for p in (spec["invoice_number"], spec["po_number"], spec["customer_name"]) if p]

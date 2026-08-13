@@ -675,6 +675,7 @@ def list_income_candidates(
             po_number=c.get("po_number"),
             customer_name=c.get("customer_name"),
             values=[{"month": m, "year": y, "amount_due": v["due"]} for (m, y), v in values],
+            issue_months=c.get("issue_months") or [],
             total=sum((v["due"] for v in c["values"].values()), Decimal("0")),
             selected=key in assignments or key in existing,
             bucket=assignments.get(key) or _default_bucket(c),
