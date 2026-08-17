@@ -26,6 +26,7 @@ from app.schemas.schemas import (
 from app.services.audit import log_action
 from app.services.budget_autofill import (
     compute_autofill, income_candidates, SECTION_SOURCES, SEC_INCOME,
+    _prev_month, _next_month,
 )
 
 router = APIRouter(prefix="/api/budgets", tags=["budgets"])
@@ -211,14 +212,6 @@ def _rolling_months(month: int, year: int, n: int = ROLLING_MONTHS):
         idx = y * 12 + (m - 1) + 1
         y, m = idx // 12, idx % 12 + 1
     return out
-
-
-def _prev_month(month: int, year: int):
-    return (12, year - 1) if month == 1 else (month - 1, year)
-
-
-def _next_month(month: int, year: int):
-    return (1, year + 1) if month == 12 else (month + 1, year)
 
 
 def _statement_window(month: int, year: int):

@@ -8,10 +8,7 @@ import DrilldownModal from '../components/DrilldownModal'
 import { formatCurrency, formatDate, statusBadgeClass } from '../utils/helpers'
 import { TrendingUp, TrendingDown, AlertCircle, FileText, Clock, Building2, ChevronRight, ChevronDown, CreditCard, Fuel, Scale, ClipboardCheck, Users } from 'lucide-react'
 
-const MONTH_NAMES = [
-  '', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+import { MONTHS_LONG_1 as MONTH_NAMES } from '../utils/helpers'
 
 export default function DashboardPage() {
   const { entities, activeEntity, setActiveEntity, isAdmin } = useAuth()

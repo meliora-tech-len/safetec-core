@@ -28,16 +28,12 @@ from app.services.costing_sent import (
     truck_regs as _truck_regs, truck_invoice_contribution as _truck_invoice_contribution,
 )
 from app.services.verification import get_verification_display
+from app.services.vat import entity_vat_rate, DEFAULT_VAT_RATE
 
 router = APIRouter(prefix="/api/subcontractors", tags=["subcontractors"])
 
 
-def _check_entity_access(entity_id: int, user: User):
-    if user.role == "admin":
-        return
-    access_ids = [a.entity_id for a in user.entity_access]
-    if entity_id not in access_ids:
-        raise HTTPException(status_code=403, detail="Access denied to this entity")
+from app.core.security import check_entity_access as _check_entity_access
 
 
 @router.get("/", response_model=List[SubcontractorOut])
@@ -332,13 +328,13 @@ def _norm_reg(reg) -> str:
     return (reg or "").replace(" ", "").strip().upper()
 
 
-def _income_split(amount, vat_applicable):
+def _income_split(amount, vat_applicable, vat_rate=DEFAULT_VAT_RATE):
     """Resolve a manual costing-income amount into (excl, incl) figures, mirroring
     the general-expense VAT rule: a VAT-applicable amount IS the inclusive value
-    (excl = amount / 1.15); otherwise excl == incl == amount (no VAT)."""
+    (excl = amount / (1 + vat_rate)); otherwise excl == incl == amount (no VAT)."""
     amt = Decimal(str(amount or 0))
     if vat_applicable:
-        excl = (amt / Decimal("1.15")).quantize(Decimal("0.01"))
+        excl = (amt / (Decimal("1") + vat_rate)).quantize(Decimal("0.01"))
         return excl, amt
     return amt, amt
 
@@ -429,6 +425,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     if not sub:
         raise HTTPException(status_code=404, detail="Subcontractor not found")
     _check_entity_access(sub.entity_id, current_user)
+    vat_rate = entity_vat_rate(db, sub.entity_id)
 
     # Carry recurring (fixed) general expenses forward into this period first, so
     # the clones are picked up by the normal per-period invoice query below.
@@ -574,7 +571,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         )
         manual_income_out = []
         for mi in manual_income_rows:
-            m_excl, m_incl = _income_split(mi.amount, mi.vat_applicable)
+            m_excl, m_incl = _income_split(mi.amount, mi.vat_applicable, vat_rate)
             income_excl += m_excl
             income_incl += m_incl
             manual_income_out.append(TruckCostingIncomeOut(
@@ -666,8 +663,8 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             for f in fups:
                 amt    = Decimal(str(f.amount))
                 fee_ex = Decimal(str(f.admin_fee_amount))
-                fee_vt = (fee_ex * Decimal("0.15")).quantize(Decimal("0.01"))
-                fee_in = (fee_ex * Decimal("1.15")).quantize(Decimal("0.01"))
+                fee_vt = (fee_ex * vat_rate).quantize(Decimal("0.01"))
+                fee_in = (fee_ex * (Decimal("1") + vat_rate)).quantize(Decimal("0.01"))
                 rows.append(DieselFillUpCostingRow(
                     fillup_id=f.id,
                     fillup_date=f.fillup_date,
@@ -1043,7 +1040,7 @@ def create_truck_costing_income(
     db.commit()
     db.refresh(row)
 
-    excl, incl = _income_split(row.amount, row.vat_applicable)
+    excl, incl = _income_split(row.amount, row.vat_applicable, entity_vat_rate(db, sub.entity_id))
     return TruckCostingIncomeOut(
         id=row.id,
         description=row.description,

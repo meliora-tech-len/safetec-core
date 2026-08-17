@@ -5,7 +5,7 @@ import {
   getCurrentDieselRate, getEntities, getDieselSettings, getSuppliers,
   getDieselInvoiceLocks, setDieselInvoiceLock, setDieselInvoiceLocksBulk,
 } from '../services/api'
-import { formatCurrency, formatDate, errorMessage, dieselTypeForSupplier } from '../utils/helpers'
+import { formatCurrency, formatDate, errorMessage, dieselTypeForSupplier, entityVatRate } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
@@ -28,7 +28,7 @@ function rawApi(path, opts = {}) {
   }).then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
 }
 
-const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+import { MONTHS_SHORT_1 as MONTHS } from '../utils/helpers'
 const today = new Date().toISOString().slice(0, 10)
 
 // Fixed display order for the truck registration dropdown on this standalone
@@ -249,10 +249,10 @@ export default function DieselFillUpsPage() {
     const pct      = dieselSettings ? parseFloat(dieselSettings.admin_fee_pct) : 0
     const applyFee = dieselSettings ? dieselSettings.apply_admin_fee : false
     const feeExcl = applyFee && pct > 0 ? amount * pct : 0
-    const feeVat  = feeExcl * 0.15
+    const feeVat  = feeExcl * entityVatRate(authEntities, editForm.entity_id)
     const feeIncl = feeExcl + feeVat
     setPreview({ amount: amount.toFixed(2), fee: feeExcl.toFixed(2), feeVat: feeVat.toFixed(2), feeIncl: feeIncl.toFixed(2), total: (amount + feeIncl).toFixed(2) })
-  }, [editForm.amount, dieselSettings])
+  }, [editForm.amount, editForm.entity_id, dieselSettings, authEntities])
 
   // The three linked money fields. Each keeps the others consistent.
   const onLitres = (v) => setEditForm(f => {

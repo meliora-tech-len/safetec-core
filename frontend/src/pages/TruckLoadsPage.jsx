@@ -14,10 +14,7 @@ const STATUS_COLOURS = {
   maintenance: { badge: 'badge-quote',     label: 'Maint.' },
 }
 
-const MONTHS = [
-  '', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+import { MONTHS_LONG_1 as MONTHS } from '../utils/helpers'
 
 const currentMonth = () => new Date().getMonth() + 1
 const currentYear  = () => new Date().getFullYear()

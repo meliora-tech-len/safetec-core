@@ -22,7 +22,7 @@ import BulkUnlockButton from '../components/BulkUnlockButton'
 import SearchableSelect from '../components/SearchableSelect'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+import { MONTHS_SHORT_0 as MONTHS } from '../utils/helpers'
 
 // The spreadsheets track the base month plus the two following months
 // (rolling "TO PAY / PAID" column pairs), so the grid shows three months.

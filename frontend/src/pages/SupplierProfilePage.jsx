@@ -15,7 +15,7 @@ import {
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { useLocalState } from '../hooks/useLocalState'
-import { formatCurrency, formatDate, errorMessage } from '../utils/helpers'
+import { formatCurrency, formatDate, errorMessage, entityVatRate } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock, Unlock, Calendar } from 'lucide-react'
 import * as XLSX from 'xlsx'
@@ -26,10 +26,7 @@ import DeleteModal from '../components/DeleteModal'
 import SearchableSelect from '../components/SearchableSelect'
 import DateInput from '../components/DateInput'
 
-const MONTH_NAMES = [
-  '', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+import { MONTHS_LONG_1 as MONTH_NAMES } from '../utils/helpers'
 
 const today = new Date().toISOString().slice(0, 10)
 const currentMonth = () => new Date().getMonth() + 1
@@ -231,7 +228,7 @@ function isIntsimbiSheet(ws) {
 // must be the item_code or the import can never match/absorb them. TransID is
 // kept in the description for reference only. Diesel is zero-rated; VAT applies
 // only to the admin fee, so the line's incl-VAT = diesel + admin fee + VAT(admin fee).
-function parseIntsimbiSheet(ws) {
+function parseIntsimbiSheet(ws, vatRate = 0.15) {
   const grid = XLSX.utils.sheet_to_json(ws, { header: 1, cellDates: true })
 
   const hdr = grid.findIndex(r => (r || []).some(c => String(c ?? '').trim().toUpperCase() === 'LDISPENSED'))
@@ -256,7 +253,7 @@ function parseIntsimbiSheet(ws) {
     const litres = parseZAR(lit)
     const diesel = r2(parseZAR(row[cAmt]))
     const fee = row[cFee] == null || row[cFee] === '' ? 0 : r2(parseZAR(row[cFee]))
-    const feeVat = r2(fee * 0.15)
+    const feeVat = r2(fee * vatRate)
     const dateISO = row[cDate] instanceof Date ? fmtISODate(row[cDate]) : parseSlipDate(row[cDate])
     const invNo = String(row[cInv] ?? '').trim() || '(no invoice)'
     const driver = cDriver >= 0 ? String(row[cDriver] ?? '').trim() : ''
@@ -430,7 +427,7 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
     if (!workbook || !sheetName) return
     const ws = workbook.Sheets[sheetName]
     try {
-      const parsed = isIntsimbiSheet(ws) ? parseIntsimbiSheet(ws) : parseWBGSheet(ws)
+      const parsed = isIntsimbiSheet(ws) ? parseIntsimbiSheet(ws, entityVatRate(entities, entityId)) : parseWBGSheet(ws)
       setInvoices(parsed)
       // Select by row index, not invoice number — a not-yet-numbered day imports
       // with a null number, and several could share it.
@@ -2714,6 +2711,7 @@ export default function SupplierProfilePage() {
                                         items={editForm.line_items || []}
                                         onChange={items => setEditForm(p => ({ ...p, line_items: items }))}
                                         vatApplicable={editForm.vat_applicable !== false}
+                                        vatRate={entityVatRate(entities, editForm.entity_id ?? inv.entity_id)}
                                         subbies={subbies}
                                         trucks={trucks}
                                         fillups={dieselFillups}
@@ -2725,6 +2723,7 @@ export default function SupplierProfilePage() {
                                         showReg={showVehicleReg}
                                         trucks={trucks}
                                         amountInclOnly={amountInclOnly}
+                                        vatRate={entityVatRate(entities, editForm.entity_id ?? inv.entity_id)}
                                       />
                                 ) : (
                                   isDiesel
@@ -2806,7 +2805,8 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
   const [splitSearch, setSplitSearch] = useState('')
 
   const currentMode = splitMode ? 'split' : form.is_multi_line ? 'multi' : 'single'
-  const vatMult = form.vat_applicable !== false ? 1.15 : 1
+  const formVatRate = entityVatRate(entities, form.entity_id)
+  const vatMult = form.vat_applicable !== false ? 1 + formVatRate : 1
 
   const setMode = (v) => {
     setSplitMode(v === 'split')
@@ -3174,6 +3174,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
               items={form.line_items || []}
               onChange={items => setForm(f => ({ ...f, line_items: items }))}
               vatApplicable={form.vat_applicable !== false}
+              vatRate={formVatRate}
               subbies={subbies}
               trucks={trucks}
               fillups={fillups}
@@ -3186,6 +3187,7 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
               showReg={showReg || (form.line_items || []).some(li => li.unit)}
               trucks={trucks}
               amountInclOnly={amountInclOnly}
+              vatRate={formVatRate}
             />
           )}
         </div>
@@ -3195,10 +3197,10 @@ function NewInvoiceCard({ form, setForm, saving, onSave, onCancel, entities, mul
 }
 
 
-function LineItemsEditor({ items, onChange, showReg = false, trucks = [], amountInclOnly = false }) {
+function LineItemsEditor({ items, onChange, showReg = false, trucks = [], amountInclOnly = false, vatRate = 0.15 }) {
   // Each line carries its own VAT flag (default on). incl == excl when off.
   const lineVat = (li) => li._vat !== false
-  const multOf = (li) => (lineVat(li) ? 1.15 : 1)
+  const multOf = (li) => (lineVat(li) ? 1 + vatRate : 1)
   const addLine = () => onChange([...items, blankLineItem()])
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
   const r2 = (n) => Math.round(n * 100) / 100
@@ -3234,7 +3236,7 @@ function LineItemsEditor({ items, onChange, showReg = false, trucks = [], amount
   // (the typed incl in incl-only mode, otherwise the qty×rate excl).
   const toggleVat = (idx) => {
     const updated = { ...items[idx], _vat: !lineVat(items[idx]) }
-    const vatMult = updated._vat ? 1.15 : 1
+    const vatMult = updated._vat ? 1 + vatRate : 1
     if (amountInclOnly) {
       const incl = parseFloat(updated.amount_incl_vat) || 0
       updated.amount_excl_vat = incl ? String(Math.round(incl / vatMult * 100) / 100) : ''
@@ -3522,8 +3524,8 @@ function LineItemsViewer({ items, total, showReg = false, amountInclOnly = false
 // Slip # | Slip Date | Vehicle Reg | Litres | Rate/L | Excl. VAT | Incl. VAT
 // Stored as: item_code | line_date | unit | quantity | _rate(computed) | amount_excl_vat | amount_incl_vat
 
-function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies = [], trucks = [], fillups = [], freeTextSlip = false }) {
-  const vatMult = vatApplicable ? 1.15 : 1
+function DieselLineItemsEditor({ items, onChange, vatApplicable = true, subbies = [], trucks = [], fillups = [], freeTextSlip = false, vatRate = 0.15 }) {
+  const vatMult = vatApplicable ? 1 + vatRate : 1
   const addLine = () => onChange([...items, blankLineItem()])
   const removeLine = (idx) => onChange(items.filter((_, i) => i !== idx))
   const updateLine = (idx, field, value) => {

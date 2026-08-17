@@ -4,7 +4,7 @@ import { Plus, Trash2, AlertCircle, ArrowLeft, Save, X, FileText, ArrowUp, Arrow
 import { useAuth } from '../hooks/useAuth'
 import { getEntities, getSuppliers, getCustomers, createCustomer, getInvoice, getNextInvoiceNumber, createInvoice, updateInvoice } from '../services/api'
 import DateInput from '../components/DateInput'
-import { errorMessage } from '../utils/helpers'
+import { errorMessage, formatCurrency } from '../utils/helpers'
 
 const LINE_TYPES = [
   { value: 'item',   label: 'Item',   color: 'var(--accent)' },
@@ -110,11 +110,6 @@ function LineTypeChip({ value, onChange }) {
       ))}
     </select>
   )
-}
-
-function formatCurrency(val) {
-  const n = parseFloat(val) || 0
-  return `R ${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export default function InvoiceFormPage({ docType = 'invoice' }) {

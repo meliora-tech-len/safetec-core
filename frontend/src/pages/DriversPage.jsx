@@ -25,27 +25,11 @@ const TYPE_BADGE = {
   casual:    { label: 'Casual',    cls: 'badge-quote' },
 }
 
-const MONTHS = [
-  '', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+import { MONTHS_LONG_1 as MONTHS, formatCurrency, errorMessage, entityVatRate } from '../utils/helpers'
 
 const currentMonth = () => new Date().getMonth() + 1
 const currentYear  = () => new Date().getFullYear()
 
-const formatCurrency = (n) =>
-  `R ${parseFloat(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
-// Coerce any API error shape into a plain string for toast().
-// FastAPI 422s return `detail` as an array of {loc, msg, type} objects — passing
-// that straight to toast renders objects as React children (React error #31).
-const apiErrorText = (err, fallback = 'Something went wrong') => {
-  const d = err?.detail ?? err?.response?.data?.detail ?? err?.message
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return d.map(e => e?.msg || String(e)).join(', ') || fallback
-  if (d && typeof d === 'object') return d.msg || JSON.stringify(d)
-  return fallback
-}
 
 // ── Stat cards ────────────────────────────────────────────────────────────────
 function StatCards({ stats }) {
@@ -120,7 +104,7 @@ function DriverModal({ driver, entities, onSave, onClose }) {
       }
       onSave()
     } catch (err) {
-      toast.error(apiErrorText(err, 'Failed to save driver'))
+      toast.error(errorMessage(err, 'Failed to save driver'))
     } finally {
       setSaving(false)
     }
@@ -331,7 +315,8 @@ export default function DriversPage() {
 
   // Casual export mirrors the hand-kept "CASUAL DRIVERS CTC REPORT" sheet:
   // rand columns come off the pay cycle (not the load list) so Net Pay and
-  // CTC reconcile with the payslip; CTC column is plus VAT (×1.15).
+  // CTC reconcile with the payslip; CTC column is plus VAT at the driver's
+  // entity's saved rate.
   const rand = v => Number(parseFloat(v || 0).toFixed(2))
   const casualExport = filterType === 'casual'
   const exportColumns = casualExport
@@ -346,7 +331,7 @@ export default function DriversPage() {
         { header: 'LOAD BONUS',   value: r => rand(r.mine_bonus_this_month) },
         { header: 'BACK LOADS',   value: r => rand(r.back_loads_this_month) },
         { header: `Net Pay (${periodLabel})`,        value: r => rand(r.net_pay_this_month) },
-        { header: 'CTC (PLUS VAT)', value: r => rand(parseFloat(r.ctc_this_month || 0) * 1.15) },
+        { header: 'CTC (PLUS VAT)', value: r => rand(parseFloat(r.ctc_this_month || 0) * (1 + entityVatRate(entities, r.entity_id))) },
       ]
     : [
         { header: 'Employee #',   key: 'employee_number' },
@@ -548,7 +533,7 @@ export default function DriversPage() {
             setDeleteTarget(null)
             load()
           } catch (err) {
-            toast.error(apiErrorText(err, 'Failed to delete driver'))
+            toast.error(errorMessage(err, 'Failed to delete driver'))
           }
         }}
       />

@@ -15,8 +15,7 @@ import SearchableSelect from '../components/SearchableSelect'
 
 const API = import.meta.env.VITE_API_URL || ''
 
-const MONTHS = ['January','February','March','April','May','June',
-                'July','August','September','October','November','December']
+import { MONTHS_LONG_0 as MONTHS } from '../utils/helpers'
 
 const GROUP_A_MINES = ['Mokala', 'Assmang', 'Sebilo', 'Tawana']
 const GROUP_B_MINES = ['Glosam', 'Driehoek', 'Future', 'Afrimat', 'Boskop']

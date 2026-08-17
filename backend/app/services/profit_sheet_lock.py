@@ -20,10 +20,7 @@ from app.services.costing_sent import (
     _norm_reg, costing_override_period, natural_invoice_period,
 )
 
-MONTH_NAMES = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-]
+from app.core.constants import MONTH_NAMES_0 as MONTH_NAMES
 
 
 def get_profit_sheet_lock(db: Session, entity_id: int, year: int,

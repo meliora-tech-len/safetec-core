@@ -65,17 +65,6 @@ def _totals(lines):
     return outstanding, paid, deductions, outstanding + paid + deductions
 
 
-def _invoice_desc(line):
-    if line.description:
-        return line.description
-    parts = []
-    if line.line_date:
-        parts.append(format_date(line.line_date))
-    if line.invoice_number:
-        parts.append(line.invoice_number)
-    return " - ".join(parts)
-
-
 def _desc_text(line):
     """Description for the dedicated description column. The invoice number now
     has its own column, so fall back to the line date only (not the invoice #)

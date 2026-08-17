@@ -41,7 +41,7 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA') : '—'
 const fmtLoads = (n) => Number.isInteger(n) ? String(n) : n.toFixed(1)
 const today = new Date().toISOString().slice(0, 10)
 
-const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+import { MONTHS_LONG_0 as MONTHS } from '../utils/helpers'
 
 // In-header truck switcher: click the registration to open a grouped, searchable
 // list of trucks and jump straight to another one (keeps the current month/tab).
@@ -2641,7 +2641,9 @@ export default function TruckLoadProfilePage() {
       `${a.last_name} ${a.first_name}`.localeCompare(`${b.last_name} ${b.first_name}`)
     )
   }, [drivers, truck])
-  const showPo  = !isSubcontractorEntity && truck?.notes?.toLowerCase() === 'intsimbi'
+  // Substring, not exact — matches every other Intsimbi check, so an edited
+  // note ("Intsimbi + WBG") can't silently hide the PO column.
+  const showPo  = !isSubcontractorEntity && (truck?.notes || '').toLowerCase().includes('intsimbi')
   const showSub = !isSubcontractorEntity && (truck?.is_subcontractor || false)
   const vatRegistered = entities.find(e => e.id === truck?.entity_id)?.vat_registered !== false
   const COLS    = isSubcontractorEntity

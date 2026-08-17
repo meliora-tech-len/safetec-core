@@ -25,6 +25,14 @@ def diesel_type_for_supplier(supplier: Optional[Supplier]) -> str:
     return "fillup"
 
 
+def supplier_bills_own_admin_fee(name) -> bool:
+    """Intsimbi bills its admin fee on its own statement, so that fee's VAT is
+    genuine supplier input VAT — unlike the internal 1% markup every other diesel
+    supplier's fill-ups carry, whose VAT is ours and must not be claimed.
+    Single source of truth for the Intsimbi name match."""
+    return "intsimbi" in (name or "").lower()
+
+
 def fillup_effective_period():
     """(year, month) expressions for the period a fill-up counts under.
 

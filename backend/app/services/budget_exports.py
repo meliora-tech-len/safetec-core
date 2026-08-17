@@ -14,12 +14,10 @@ import io
 import re
 from decimal import Decimal
 
-MONTH_NAMES = [
-    "", "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-]
-MONTHS_SHORT = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+from app.core.constants import (
+    MONTH_NAMES_1 as MONTH_NAMES,
+    MONTHS_SHORT_1 as MONTHS_SHORT,
+)
 
 D0 = Decimal("0")
 

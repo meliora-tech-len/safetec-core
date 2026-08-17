@@ -14,7 +14,8 @@ from app.models.models import (
     ProfitSheetLock,
 )
 from app.services.audit import log_action
-from app.services.diesel_service import apply_fillup_period
+from app.services.diesel_service import apply_fillup_period, supplier_bills_own_admin_fee
+from app.services.vat import entity_vat_rate
 from app.services.profit_sheet_lock import (
     get_profit_sheet_lock, profit_sheet_lock_detail,
 )
@@ -100,11 +101,26 @@ def _excluded_ids(db: Session, entity_id: int, record_type: str) -> set:
 
 
 def _is_intsimbi_diesel(inv) -> bool:
-    """Intsimbi bills its admin fee on its own statement, so that fee's VAT is
-    genuine supplier input VAT — unlike the internal 1% markup every other diesel
-    supplier's fill-ups carry, whose VAT is ours and must not be claimed
+    """Whether this supplier invoice's admin-fee VAT is claimable input VAT
     (see the input_vat note in income_expenses_report)."""
-    return 'intsimbi' in _supplier_name(inv).lower()
+    return supplier_bills_own_admin_fee(_supplier_name(inv))
+
+
+def _line_excl_by_invoice(db: Session, inv_ids: list) -> dict:
+    """Batch-fetch each supplier invoice's summed line-item excl-VAT amount
+    (single grouped query to avoid N+1)."""
+    if not inv_ids:
+        return {}
+    li_rows = (
+        db.query(
+            SupplierInvoiceLineItem.invoice_id,
+            func.coalesce(func.sum(SupplierInvoiceLineItem.amount_excl_vat), 0).label('excl'),
+        )
+        .filter(SupplierInvoiceLineItem.invoice_id.in_(inv_ids))
+        .group_by(SupplierInvoiceLineItem.invoice_id)
+        .all()
+    )
+    return {r.invoice_id: float(r.excl) for r in li_rows}
 
 
 def _fee_vat_by_invoice(db: Session, inv_ids: list) -> dict:
@@ -171,18 +187,10 @@ def _diesel_fillup_lines(db: Session, inv_ids: list) -> dict:
     return lines
 
 
-MONTH_NAMES = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-]
+from app.core.constants import MONTH_NAMES_0 as MONTH_NAMES  # noqa: E402
 
 
-def _check_entity_access(entity_id: int, user: User):
-    if user.role == "admin":
-        return
-    access_ids = [a.entity_id for a in user.entity_access]
-    if entity_id not in access_ids:
-        raise HTTPException(status_code=403, detail="Access denied to this entity")
+from app.core.security import check_entity_access as _check_entity_access
 
 
 @router.get("/income-expenses")
@@ -274,7 +282,7 @@ def income_expenses_report(
         # own 1% markup. Intsimbi's fee is supplier-billed, so its VAT is already
         # claimed through the supplier-invoice block below; counting it here too
         # would report the same rand twice with opposite meanings.
-        if 'intsimbi' not in (sup_name or '').lower():
+        if not supplier_bills_own_admin_fee(sup_name):
             diesel_input_vat[cm] = diesel_input_vat.get(cm, 0.0) + float(vat or 0)
 
     # ── Supplier invoice expenses grouped by report period ──────────────────────
@@ -296,24 +304,12 @@ def income_expenses_report(
         .all()
     )
 
-    # Batch-fetch line-item excl-VAT sums to avoid N+1 queries
-    inv_ids = [inv.id for inv in all_supplier_invoices]
-    line_excl_by_inv: dict[int, float] = {}
-    if inv_ids:
-        li_rows = (
-            db.query(
-                SupplierInvoiceLineItem.invoice_id,
-                func.coalesce(func.sum(SupplierInvoiceLineItem.amount_excl_vat), 0).label('excl'),
-            )
-            .filter(SupplierInvoiceLineItem.invoice_id.in_(inv_ids))
-            .group_by(SupplierInvoiceLineItem.invoice_id)
-            .all()
-        )
-        line_excl_by_inv = {r.invoice_id: float(r.excl) for r in li_rows}
+    line_excl_by_inv = _line_excl_by_invoice(db, [inv.id for inv in all_supplier_invoices])
 
     fee_vat_by_inv = _fee_vat_by_invoice(
         db, [inv.id for inv in all_supplier_invoices if _is_intsimbi_diesel(inv)])
 
+    vat_divisor = 1.0 + float(entity_vat_rate(db, entity_id))
     supplier_incl_by_month: dict[int, float] = {}
     supplier_excl_by_month: dict[int, float] = {}
     for inv in all_supplier_invoices:
@@ -327,7 +323,7 @@ def income_expenses_report(
         elif inv.id in line_excl_by_inv:
             excl = line_excl_by_inv[inv.id]
         elif inv.vat_applicable:
-            excl = incl / 1.15
+            excl = incl / vat_divisor
         else:
             excl = incl
         # Report-only reclassification (source data untouched):
@@ -347,7 +343,7 @@ def income_expenses_report(
             truck_income_excl[m] = truck_income_excl.get(m, 0.0) + round(excl, 2)
             continue
         # Round per-invoice (matching the SARS VAT detail) so the month-line totals
-        # tie exactly to the drill-down rather than drifting a few cents on incl/1.15.
+        # tie exactly to the drill-down rather than drifting a few cents on incl/(1+rate).
         supplier_incl_by_month[m] = supplier_incl_by_month.get(m, 0.0) + round(incl, 2)
         supplier_excl_by_month[m] = supplier_excl_by_month.get(m, 0.0) + round(excl, 2)
 
@@ -494,6 +490,7 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
     exclude_general   = _exclude_general_expenses(db, entity_id)
     excluded_income   = _excluded_ids(db, entity_id, 'invoice')
     excluded_expenses = _excluded_ids(db, entity_id, 'supplier_invoice')
+    vat_divisor       = 1.0 + float(entity_vat_rate(db, entity_id))
     # Income side: every customer invoice issued in the month (output VAT basis),
     # for all entities — the actual tax invoices, not operational truck loads.
     income_invoices = (
@@ -560,19 +557,7 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         .all()
     )
 
-    inv_ids = [inv.id for inv in sup_invoices]
-    line_excl_by_inv: dict[int, float] = {}
-    if inv_ids:
-        li_rows = (
-            db.query(
-                SupplierInvoiceLineItem.invoice_id,
-                func.coalesce(func.sum(SupplierInvoiceLineItem.amount_excl_vat), 0).label('excl'),
-            )
-            .filter(SupplierInvoiceLineItem.invoice_id.in_(inv_ids))
-            .group_by(SupplierInvoiceLineItem.invoice_id)
-            .all()
-        )
-        line_excl_by_inv = {r.invoice_id: float(r.excl) for r in li_rows}
+    line_excl_by_inv = _line_excl_by_invoice(db, [inv.id for inv in sup_invoices])
 
     fillup_lines_by_inv = _diesel_fillup_lines(
         db, [inv.id for inv in sup_invoices if _is_intsimbi_diesel(inv)])
@@ -592,7 +577,7 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
         elif inv.id in line_excl_by_inv:
             excl = line_excl_by_inv[inv.id]
         elif inv.vat_applicable:
-            excl = incl / 1.15
+            excl = incl / vat_divisor
         else:
             excl = incl
         name = ''

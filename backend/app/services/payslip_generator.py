@@ -28,24 +28,10 @@ from reportlab.platypus import (
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
-MONTHS = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-]
+from app.core.constants import MONTH_NAMES_0 as MONTHS
 
 
 # ── Colour / formatting helpers ───────────────────────────────────────────────
-
-def _hex(h: str) -> colors.Color:
-    h = h.strip().lstrip("#")
-    if len(h) == 3:
-        h = "".join(c * 2 for c in h)
-    return colors.Color(int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255)
-
-
-def _darken(c: colors.Color, f: float = 0.8) -> colors.Color:
-    return colors.Color(c.red * f, c.green * f, c.blue * f)
-
 
 def _fmt(v) -> str:
     try:

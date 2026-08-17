@@ -46,7 +46,7 @@ function invoiceDescription(inv) {
   return anyLine ? text(anyLine) : ''
 }
 
-const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+import { MONTHS_SHORT_1 as MONTHS } from '../utils/helpers'
 const now = new Date()
 const YEARS = []
 for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) YEARS.push(y)

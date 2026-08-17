@@ -10,18 +10,10 @@ from app.models.models import User, PayrollEntry, Driver
 router = APIRouter(prefix="/api/payroll-entries", tags=["payroll-entries"])
 
 
-def _check_entity_access(entity_id: int, user: User):
-    if user.role == "admin":
-        return
-    access_ids = [a.entity_id for a in user.entity_access]
-    if entity_id not in access_ids:
-        raise HTTPException(status_code=403, detail="Access denied to this entity")
-
-
-def _accessible_entity_ids(user: User):
-    if user.role == "admin":
-        return None
-    return [a.entity_id for a in user.entity_access]
+from app.core.security import (
+    check_entity_access as _check_entity_access,
+    accessible_entity_ids as _accessible_entity_ids,
+)
 
 
 @router.get("/")

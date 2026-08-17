@@ -52,3 +52,23 @@ def require_admin(current_user=Depends(get_current_user)):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
+
+
+# Canonical per-entity access checks. Every route module must use these —
+# they were previously copy-pasted per module, which risked one copy drifting
+# on a security check. (Params untyped to avoid importing models here.)
+
+def check_entity_access(entity_id, user):
+    """403 unless the user is admin or has explicit access to the entity."""
+    if user.role == "admin":
+        return
+    access_ids = [a.entity_id for a in user.entity_access]
+    if entity_id not in access_ids:
+        raise HTTPException(status_code=403, detail="Access denied to this entity")
+
+
+def accessible_entity_ids(user):
+    """None for admins (meaning: no filter); otherwise the entity-id whitelist."""
+    if user.role == "admin":
+        return None
+    return [a.entity_id for a in user.entity_access]

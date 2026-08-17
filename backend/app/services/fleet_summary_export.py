@@ -9,10 +9,7 @@ single entity is selected (same fallback chain as the costing export).
 
 import io
 
-MONTH_NAMES = [
-    "", "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-]
+from app.core.constants import MONTH_NAMES_1 as MONTH_NAMES
 
 
 def _fmt(v) -> str:

@@ -12,7 +12,7 @@ import { getStatements, deleteStatement, exportStatementPdf, exportStatementExce
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 const now = new Date()
-const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+import { MONTHS_SHORT_1 as MONTHS } from '../utils/helpers'
 const YEARS = []
 for (let y = now.getFullYear(); y >= now.getFullYear() - 3; y--) YEARS.push(y)
 

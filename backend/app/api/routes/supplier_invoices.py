@@ -715,12 +715,7 @@ def _auto_create_diesel_fillup(
         return None
 
 
-def _check_entity_access(entity_id: int, user: User):
-    if user.role == "admin":
-        return
-    access_ids = [a.entity_id for a in user.entity_access]
-    if entity_id not in access_ids:
-        raise HTTPException(status_code=403, detail="Access denied to this entity")
+from app.core.security import check_entity_access as _check_entity_access
 
 
 def _check_invoice_access(inv: "SupplierInvoice", user: User):
@@ -744,10 +739,7 @@ def _check_invoice_access(inv: "SupplierInvoice", user: User):
         raise HTTPException(status_code=403, detail="Access denied to this entity")
 
 
-def _accessible_entity_ids(user: User) -> Optional[List[int]]:
-    if user.role == "admin":
-        return None
-    return [a.entity_id for a in user.entity_access]
+from app.core.security import accessible_entity_ids as _accessible_entity_ids
 
 
 def calculate_supplier_due_date(invoice_date: datetime, payment_term: PaymentTermType) -> datetime:

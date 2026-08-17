@@ -4,10 +4,7 @@ import toast from 'react-hot-toast'
 import { X, AlertCircle, ChevronRight } from 'lucide-react'
 import { formatCurrency, errorMessage } from '../utils/helpers'
 
-const MONTH_NAMES = [
-  '', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+import { MONTHS_LONG_1 as MONTH_NAMES } from '../utils/helpers'
 
 function verifyState(inv) {
   if (inv.verified2_by_initials) return { label: `${inv.verified_by_initials} · ${inv.verified2_by_initials}`, color: '#16a34a', note: '2 ticks — awaiting final lock' }

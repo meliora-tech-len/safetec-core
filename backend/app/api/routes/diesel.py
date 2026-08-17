@@ -24,7 +24,9 @@ from app.schemas.schemas import (
 )
 from app.services.diesel_service import (
     DieselCalculationService, diesel_type_for_supplier, apply_fillup_period,
+    supplier_bills_own_admin_fee,
 )
+from app.services.vat import entity_vat
 from app.services.diesel_lock import (
     ensure_fillup_unlocked, ensure_invoice_unlocked, exclude_locked_invoices,
     get_lock, invoice_label, lock_message, locked_invoice_ids, resolve_invoice_id,
@@ -143,18 +145,10 @@ def _auto_link_or_create_supplier_invoice(db: Session, fillup: DieselFillUp, use
         db.commit()
 
 
-def _check_entity_access(entity_id: int, user: User):
-    if user.role == "admin":
-        return
-    access_ids = [a.entity_id for a in user.entity_access]
-    if entity_id not in access_ids:
-        raise HTTPException(status_code=403, detail="Access denied to this entity")
+from app.core.security import check_entity_access as _check_entity_access
 
 
-def _accessible_entity_ids(user: User) -> Optional[List[int]]:
-    if user.role == "admin":
-        return None
-    return [a.entity_id for a in user.entity_access]
+from app.core.security import accessible_entity_ids as _accessible_entity_ids
 
 
 def _enrich_fillup(f: DieselFillUp, db=None) -> dict:
@@ -277,7 +271,6 @@ def update_diesel_settings(
     # so the new additional_charge_per_ton takes effect immediately.
     new_fee = Decimal(str(payload.additional_charge_per_ton))
     TWO_DP = Decimal("0.01")
-    VAT = Decimal("1.15")
 
     sub_loads = (
         db.query(TruckLoad)
@@ -291,13 +284,12 @@ def update_diesel_settings(
         .all()
     )
 
-    # Cache truck-entity VAT status to avoid repeated queries
+    # Cache truck-entity VAT status (registered, saved rate) to avoid repeated queries
     _entity_vat: dict = {}
 
-    def _sub_vat(truck: Truck) -> bool:
+    def _sub_vat(truck: Truck):
         if truck.entity_id not in _entity_vat:
-            te = db.query(BusinessEntity).filter(BusinessEntity.id == truck.entity_id).first()
-            _entity_vat[truck.entity_id] = te.vat_registered if te else True
+            _entity_vat[truck.entity_id] = entity_vat(db, truck.entity_id)
         return _entity_vat[truck.entity_id]
 
     # Re-snapshot the admin fee onto existing fill-ups. Every creation path stores
@@ -348,8 +340,9 @@ def update_diesel_settings(
             excl     = Decimal(str(load.tonnes)) * sub_rate
             load.subcontractor_rate            = sub_rate.quantize(TWO_DP)
             load.subcontractor_amount_excl_vat = excl.quantize(TWO_DP)
+            sub_registered, sub_rate = _sub_vat(load.truck)
             load.subcontractor_amount_incl_vat = (
-                (excl * VAT) if _sub_vat(load.truck) else excl
+                (excl * (Decimal("1") + sub_rate)) if sub_registered else excl
             ).quantize(TWO_DP)
             loads_updated += 1
 
@@ -1654,16 +1647,13 @@ def diesel_invoice_reconciliation(
 
     fillup_by_supplier = {r.supplier_id: r for r in fillup_rows}
 
-    def _bills_own_fee(name: str) -> bool:
-        return 'intsimbi' in (name or '').lower()
-
     result = []
     for inv in inv_rows:
         fu = fillup_by_supplier.get(inv.supplier_id)
         invoice_total = Decimal(str(inv.invoice_total))
         if fu:
             fillup_total = Decimal(str(
-                fu.fillup_total if _bills_own_fee(inv.supplier_name) else fu.fillup_fuel
+                fu.fillup_total if supplier_bills_own_admin_fee(inv.supplier_name) else fu.fillup_fuel
             ))
         else:
             fillup_total = Decimal("0")

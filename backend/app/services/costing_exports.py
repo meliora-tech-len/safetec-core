@@ -7,10 +7,7 @@ import io
 from decimal import Decimal
 from datetime import date
 
-MONTH_NAMES = [
-    "", "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-]
+from app.core.constants import MONTH_NAMES_1 as MONTH_NAMES
 
 D0 = Decimal("0")
 

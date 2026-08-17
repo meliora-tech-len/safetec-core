@@ -2,21 +2,10 @@ from pydantic import BaseModel, EmailStr, field_validator, computed_field
 from typing import Optional, List, Any, Dict
 from datetime import datetime, date
 from decimal import Decimal
-from enum import Enum
-
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
-
-class UserRole(str, Enum):
-    admin = "admin"
-    standard = "standard"
-
-from app.models.models import InvoiceStatus  # noqa: E402 — single source of truth
-
-class DocumentType(str, Enum):
-    invoice = "invoice"
-    quote = "quote"
-    purchase_order = "purchase_order"
+# Single source of truth for all shared enums is models.py — never re-declare here.
+from app.models.models import InvoiceStatus, UserRole, DocumentType, PaymentTermType  # noqa: F401
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -209,11 +198,6 @@ class Token(BaseModel):
 
 
 # ── Suppliers ─────────────────────────────────────────────────────────────────
-
-class PaymentTermType(str, Enum):
-    current = "current"
-    days_30 = "30_days"
-
 
 class SupplierBase(BaseModel):
     entity_id: int

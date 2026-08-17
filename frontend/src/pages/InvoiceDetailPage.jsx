@@ -23,7 +23,7 @@ function isPoImport(inv) {
 
 // Any status can be set from the "Change Status" override menu — this also lets
 // users correct mistakes (e.g. an invoice marked paid by accident).
-const ALL_STATUSES = ['draft', 'ready', 'sent', 'accepted', 'paid', 'overdue', 'cancelled']
+import { INVOICE_STATUSES as ALL_STATUSES } from '../utils/helpers'
 
 export default function InvoiceDetailPage({ docType = 'invoice' }) {
   const { id } = useParams()

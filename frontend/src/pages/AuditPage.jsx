@@ -8,10 +8,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import SortableHeader, { useSort } from '../components/SortableHeader'
 
-const MONTH_NAMES = [
-  '', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+import { MONTHS_LONG_1 as MONTH_NAMES } from '../utils/helpers'
 const monthKey = (year, month) => `${year}-${month}`
 const monthLabel = (year, month) => `${MONTH_NAMES[month]} ${year}`
 

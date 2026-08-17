@@ -28,8 +28,7 @@ import DeleteModal from '../components/DeleteModal'
 import FixedExpenseRemoveModal from '../components/FixedExpenseRemoveModal'
 import DateInput from '../components/DateInput'
 
-const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December']
+import { MONTHS_LONG_1 as MONTHS } from '../utils/helpers'
 
 const now = new Date()
 const todayStr = now.toISOString().slice(0, 10)

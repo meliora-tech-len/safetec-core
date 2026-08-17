@@ -17,7 +17,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Supplier, Customer
+from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Supplier, Customer, InvoiceStatus
 from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, DashboardStats, InvoiceSummary, EntityProfitLoss
 from app.services.audit import log_action
 from app.services.invoice_numbering import generate_invoice_number, peek_invoice_number
@@ -28,6 +28,9 @@ from app.services.email import send_invoice_email
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 logger = logging.getLogger("safetec.invoices")
+
+# Statuses that count as money still owed to us (dashboard + debtors drill-down).
+OUTSTANDING_STATUSES = (InvoiceStatus.sent, InvoiceStatus.overdue, InvoiceStatus.accepted)
 
 # ── PO attachment storage (the source purchase-order document) ────────────────
 # Mirrors the supplier-invoice attachment pattern (supplier_invoices.py): files
@@ -120,12 +123,7 @@ def _merge_with_attachment(pdf_bytes: bytes, invoice: Invoice) -> bytes:
         return pdf_bytes
 
 
-def _check_entity_access(entity_id: int, user: User):
-    if user.role == "admin":
-        return
-    access_ids = [a.entity_id for a in user.entity_access]
-    if entity_id not in access_ids:
-        raise HTTPException(status_code=403, detail="Access denied to this entity")
+from app.core.security import check_entity_access as _check_entity_access
 
 
 # Every rand figure on an invoice rounds commercially (half away from zero),
@@ -293,15 +291,15 @@ def dashboard_stats(
 
     outstanding = sum(
         inv.total for inv in invoices
-        if inv.status in ("sent", "overdue", "accepted") and inv.document_type == "invoice"
+        if inv.status in OUTSTANDING_STATUSES and inv.document_type == "invoice"
     )
     paid_this_month = sum(
         inv.total for inv in all_docs
-        if inv.status == "paid" and in_period(inv.paid_date)
+        if inv.status == InvoiceStatus.paid and in_period(inv.paid_date)
     )
-    overdue_count = sum(1 for inv in invoices if inv.status == "overdue")
-    draft_count = sum(1 for inv in invoices if inv.status == "draft")
-    ready_count = sum(1 for inv in invoices if inv.status == "ready")
+    overdue_count = sum(1 for inv in invoices if inv.status == InvoiceStatus.overdue)
+    draft_count = sum(1 for inv in invoices if inv.status == InvoiceStatus.draft)
+    ready_count = sum(1 for inv in invoices if inv.status == InvoiceStatus.ready)
     total_invoices = sum(1 for inv in invoices if inv.document_type == "invoice")
     total_quotes = sum(1 for inv in invoices if inv.document_type == "quote")
 
@@ -326,11 +324,11 @@ def dashboard_stats(
     # Itemized proof for the Debtors drill-down modals — same filters used above
     # to compute outstanding_total / paid_this_month.
     outstanding_invoices_list = sorted(
-        (inv for inv in invoices if inv.status in ("sent", "overdue", "accepted") and inv.document_type == "invoice"),
+        (inv for inv in invoices if inv.status in OUTSTANDING_STATUSES and inv.document_type == "invoice"),
         key=lambda x: x.issue_date or datetime.min, reverse=True,
     )
     paid_invoices_list = sorted(
-        (inv for inv in all_docs if inv.status == "paid" and in_period(inv.paid_date)),
+        (inv for inv in all_docs if inv.status == InvoiceStatus.paid and in_period(inv.paid_date)),
         key=lambda x: x.paid_date or datetime.min, reverse=True,
     )
     outstanding_invoices_out = [to_summary(inv) for inv in outstanding_invoices_list]
@@ -644,7 +642,7 @@ def update_invoice(
     # A paid invoice is locked against content edits, but its status may be
     # reverted (e.g. it was marked paid by mistake). Allow the request only
     # when it changes the status away from "paid"; block plain field edits.
-    if invoice.status == "paid" and not (payload.status and payload.status != "paid"):
+    if invoice.status == InvoiceStatus.paid and not (payload.status and payload.status != InvoiceStatus.paid):
         raise HTTPException(
             status_code=400,
             detail="Cannot edit a paid invoice. Change its status first if you need to make corrections.",
@@ -681,7 +679,7 @@ def update_invoice(
             invoice.qty_adjustment_scope = normalize_scope(payload.qty_adjustment_scope)
 
         # Reverting a paid invoice clears the recorded payment so it stays consistent.
-        if old_status == "paid" and invoice.status != "paid":
+        if old_status == InvoiceStatus.paid and invoice.status != InvoiceStatus.paid:
             invoice.paid_date = None
             invoice.payment_reference = None
 
@@ -763,7 +761,7 @@ def delete_invoice(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_entity_access(invoice.entity_id, current_user)
-    if invoice.status == "paid":
+    if invoice.status == InvoiceStatus.paid:
         raise HTTPException(status_code=400, detail="Cannot delete a paid invoice")
     if invoice.supplier_id:
         del_rec = db.query(Supplier).filter(Supplier.id == invoice.supplier_id).first()
@@ -811,8 +809,8 @@ async def download_invoice_pdf(
     pdf_bytes = await asyncio.to_thread(_build)
 
     # Advance draft → ready on first PDF generation
-    if invoice.status == "draft":
-        invoice.status = "ready"
+    if invoice.status == InvoiceStatus.draft:
+        invoice.status = InvoiceStatus.ready
         log_action(db, "invoice.ready", user_id=current_user.id,
                    entity_id=invoice.entity_id, resource_type="invoice",
                    resource_id=invoice_id,
@@ -1001,8 +999,8 @@ async def download_invoices_bulk_pdf(
     # Advance any drafts → ready, mirroring the single-PDF endpoint.
     drafted = False
     for inv in selected:
-        if inv.status == "draft":
-            inv.status = "ready"
+        if inv.status == InvoiceStatus.draft:
+            inv.status = InvoiceStatus.ready
             log_action(db, "invoice.ready", user_id=current_user.id,
                        entity_id=inv.entity_id, resource_type="invoice",
                        resource_id=inv.id,
@@ -1145,8 +1143,8 @@ async def send_invoice_email_endpoint(
     doc_label = "Invoice" if invoice.document_type == "invoice" else "Quote"
 
     # Mark as sent when emailed via the app
-    if invoice.status in ("draft", "ready"):
-        invoice.status = "sent"
+    if invoice.status in (InvoiceStatus.draft, InvoiceStatus.ready):
+        invoice.status = InvoiceStatus.sent
 
     log_action(db, "invoice.emailed", user_id=current_user.id,
                entity_id=invoice.entity_id, resource_type="invoice",
