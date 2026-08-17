@@ -1,0 +1,42 @@
+-- Undo for sft_release_stale_budget_pins.py (SFT budgets [4, 20]).
+-- Re-pins the cells and restores the amounts they held beforehand.
+-- Run BEFORE any further pull, which would already have rewritten the amounts.
+BEGIN;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1173.00 WHERE id = 237;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 3640.00 WHERE id = 241;
+UPDATE budget_line_values SET is_overridden = true, amount_due = 0.00, amount_paid = NULL WHERE id = 785;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 5798.45 WHERE id = 446;
+UPDATE budget_line_values SET is_overridden = true, amount_due = 0.00, amount_paid = NULL WHERE id = 786;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1600.00 WHERE id = 267;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 9820.00 WHERE id = 282;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1130.00 WHERE id = 285;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 2234.45 WHERE id = 288;
+UPDATE budget_line_values SET is_overridden = true, amount_due = 0.00, amount_paid = NULL WHERE id = 291;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 28555.65 WHERE id = 467;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 2750.00 WHERE id = 796;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 4741.00 WHERE id = 797;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 5743.43 WHERE id = 481;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1161.50 WHERE id = 322;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 9160.00 WHERE id = 483;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 0.00 WHERE id = 800;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 207.00 WHERE id = 486;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1002.00 WHERE id = 804;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1173.00 WHERE id = 1281;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 3640.00 WHERE id = 1282;
+UPDATE budget_line_values SET is_overridden = true, amount_due = 0.00, amount_paid = NULL WHERE id = 1284;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 5798.45 WHERE id = 1285;
+UPDATE budget_line_values SET is_overridden = true, amount_due = 0.00, amount_paid = NULL WHERE id = 1287;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1600.00 WHERE id = 1288;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 9820.00 WHERE id = 1291;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1130.00 WHERE id = 1292;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 2234.45 WHERE id = 1293;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 28555.65 WHERE id = 1296;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 2750.00 WHERE id = 1297;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 4741.00 WHERE id = 1298;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 5743.43 WHERE id = 1299;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1161.50 WHERE id = 1302;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 9160.00 WHERE id = 1303;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 0.00 WHERE id = 1304;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 207.00 WHERE id = 1305;
+UPDATE budget_line_values SET is_overridden = true, amount_due = NULL, amount_paid = 1002.00 WHERE id = 1306;
+COMMIT;
