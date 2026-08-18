@@ -731,6 +731,76 @@ def sars_vat_detail_annual(
     return {'year': year, 'entity_id': entity_id, 'months': months}
 
 
+@router.get("/supplier-summary")
+def supplier_summary_report(
+    entity_id: int = Query(...),
+    year: int = Query(..., ge=2020),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Supplier invoices for the month grouped per supplier, with each supplier's
+    individual invoices behind its totals row.
+
+    Built on the same per-invoice computation as the SARS VAT detail
+    (_build_month_detail) — invoice-date basis with Manage→Move pins, plus the
+    report-only reclassifications and user exclusions — so the grand total here
+    always equals the month's supplier-expense figure on Income vs Expenses.
+    """
+    _check_entity_access(entity_id, current_user)
+    detail = _build_month_detail(db, entity_id, year, month)
+
+    suppliers: dict[str, dict] = {}
+    for row in detail['input_invoices']:
+        if row['excluded']:
+            continue
+        name = row['supplier_name'] or 'General Expenses'
+        sup = suppliers.get(name.upper())
+        if sup is None:
+            sup = suppliers[name.upper()] = {
+                'supplier_name': name,
+                'category':      row['category'],
+                'count':         0,
+                'amount_excl':   0.0,
+                'vat':           0.0,
+                'amount_incl':   0.0,
+                'invoices':      [],
+            }
+        sup['count'] += 1
+        sup['amount_excl'] += row['amount_excl']
+        sup['vat']         += row['vat']
+        sup['amount_incl'] += row['amount_incl']
+        sup['invoices'].append({
+            'record_id':      row['record_id'],
+            'date':           row['date'],
+            'invoice_number': row['invoice_number'],
+            'description':    row['description'],
+            'amount_excl':    row['amount_excl'],
+            'vat':            row['vat'],
+            'amount_incl':    row['amount_incl'],
+            'vat_applicable': row['vat_applicable'],
+        })
+
+    rows = sorted(suppliers.values(), key=lambda s: -s['amount_incl'])
+    for s in rows:
+        for k in ('amount_excl', 'vat', 'amount_incl'):
+            s[k] = round(s[k], 2)
+
+    return {
+        'entity_id':  entity_id,
+        'year':       year,
+        'month':      month,
+        'month_name': MONTH_NAMES[month - 1],
+        'suppliers':  rows,
+        'totals': {
+            'count':       sum(s['count'] for s in rows),
+            'amount_excl': round(sum(s['amount_excl'] for s in rows), 2),
+            'vat':         round(sum(s['vat'] for s in rows), 2),
+            'amount_incl': round(sum(s['amount_incl'] for s in rows), 2),
+        },
+    }
+
+
 # ── Report exclusions ─────────────────────────────────────────────────────────
 # Dropping a row is report-only: the invoice itself is never touched, so costing,
 # diesel and payouts are unaffected and it's always reversible. That's why these

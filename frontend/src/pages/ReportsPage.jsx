@@ -7,7 +7,7 @@ import { useLocalState } from '../hooks/useLocalState'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
-  getSubcontractorLoadsReport, getPoLoadReconciliationReport, lookupPoLoadSlip,
+  getSubcontractorLoadsReport, getSupplierSummaryReport, getPoLoadReconciliationReport, lookupPoLoadSlip,
   createReportExclusion, deleteReportExclusion,
   getProfitSheetReport, saveProfitSheetReport, setProfitSheetLock,
 } from '../services/api'
@@ -28,6 +28,7 @@ const TABS = [
   { key: 'income',   label: 'Income vs Expenses' },
   { key: 'profit',   label: 'Profit Sheet' },
   { key: 'subloads', label: 'Subcontractor Loads' },
+  { key: 'supsummary', label: 'Supplier Summary' },
   { key: 'poloads',  label: 'Invoiced PO vs Loads' },
   { key: 'truck',    label: 'Diesel by Truck' },
   { key: 'supplier', label: 'Diesel by Supplier' },
@@ -105,6 +106,7 @@ export default function ReportsPage() {
   const [incomeData, setIncomeData]   = useState(null)
   const [detailData, setDetailData]   = useState(null)
   const [subData, setSubData]         = useState(null)
+  const [supSumData, setSupSumData]   = useState(null)
   const [poData, setPoData]           = useState(null)
 
   // Profit Sheet is the one editable report — its rows live here (not in the
@@ -196,6 +198,7 @@ export default function ReportsPage() {
     setIncomeData(null)
     setDetailData(null)
     setSubData(null)
+    setSupSumData(null)
     setPoData(null)
     setProfitRows(null)
     setProfitDirty(false)
@@ -213,6 +216,9 @@ export default function ReportsPage() {
       } else if (tab === 'subloads') {
         const res = await getSubcontractorLoadsReport({ entity_id: entityId, year, month })
         setSubData(res.data)
+      } else if (tab === 'supsummary') {
+        const res = await getSupplierSummaryReport({ entity_id: entityId, year, month })
+        setSupSumData(res.data)
       } else if (tab === 'poloads') {
         const res = await getPoLoadReconciliationReport({ entity_id: entityId, year, month })
         setPoData(res.data)
@@ -257,6 +263,31 @@ export default function ReportsPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a'); a.href = url
       a.download = `sars-vat-${year}.csv`; a.click()
+      URL.revokeObjectURL(url)
+    } else if (tab === 'supsummary') {
+      if (!supSumData?.suppliers?.length) return
+      // Summary per supplier, then every invoice behind each supplier's total.
+      const q = (v) => `"${v ?? ''}"`
+      const lines = [
+        ['Supplier', 'Invoices', 'Excl VAT', 'VAT', 'Incl VAT'].map(q).join(','),
+        ...supSumData.suppliers.map(s => [
+          s.supplier_name, s.count, s.amount_excl, s.vat, s.amount_incl,
+        ].map(q).join(',')),
+        ['TOTAL', supSumData.totals.count, supSumData.totals.amount_excl,
+         supSumData.totals.vat, supSumData.totals.amount_incl].map(q).join(','),
+        '',
+        ['Supplier', 'Date', 'Invoice #', 'Description', 'Excl VAT', 'VAT', 'Incl VAT'].map(q).join(','),
+        ...supSumData.suppliers.flatMap(s => (s.invoices || []).map(i => [
+          s.supplier_name, i.date, i.invoice_number, i.description,
+          i.amount_excl, i.vat, i.amount_incl,
+        ].map(q).join(','))),
+      ]
+      const csv = lines.join('\n')
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url
+      a.download = `supplier-summary-${year}-${String(month).padStart(2, '0')}.csv`
+      a.click()
       URL.revokeObjectURL(url)
     } else if (tab === 'supplier') {
       if (!dieselData.length) return
@@ -1140,6 +1171,7 @@ export default function ReportsPage() {
   const hasData = tab === 'income' ? !!incomeData
     : tab === 'profit' ? profitVisible.length > 0
     : tab === 'subloads' ? !!subData?.subcontractors?.length
+    : tab === 'supsummary' ? !!supSumData?.suppliers?.length
     : tab === 'poloads' ? !!(poData?.pos?.length || poData?.uninvoiced?.length)
     : dieselData.length > 0
 
@@ -1303,6 +1335,12 @@ export default function ReportsPage() {
           : subData.subcontractors.length === 0
             ? <div style={{ ...styles.card, ...styles.empty }}>No subcontractor loads for this period.</div>
             : <SubcontractorLoadsReport data={subData} year={year} />
+      ) : tab === 'supsummary' ? (
+        !supSumData
+          ? <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
+          : supSumData.suppliers.length === 0
+            ? <div style={{ ...styles.card, ...styles.empty }}>No supplier invoices for this period.</div>
+            : <SupplierSummaryReport data={supSumData} year={year} />
       ) : tab === 'poloads' ? (
         !poData
           ? <div style={{ ...styles.card, ...styles.empty }}>Select an entity to load the report.</div>
@@ -2482,6 +2520,115 @@ const badge = {
   marginLeft: 6, padding: '1px 5px', borderRadius: 4, fontSize: 9, fontWeight: 700,
   fontFamily: 'inherit', letterSpacing: '0.04em',
   background: 'var(--bg-hover)', color: 'var(--text-muted)',
+}
+
+// ── Supplier Summary ──────────────────────────────────────────────────────────
+// One row per supplier for the month, invoice-date basis (same rules as the SARS
+// VAT detail, so the grand total ties to Income vs Expenses). Rows start
+// collapsed; clicking a supplier reveals its individual invoices.
+const SUP_CAT_LABEL = {
+  diesel: 'Diesel', subcontractor: 'Subcontractor',
+  intercompany: 'Intercompany', other: null,
+}
+
+function SupplierSummaryReport({ data, year }) {
+  const { month_name, suppliers, totals } = data
+  const [expanded, setExpanded] = useState({})
+
+  const toggle = (name) => setExpanded(e => ({ ...e, [name]: !e[name] }))
+  const allExpanded = suppliers.every(s => expanded[s.supplier_name])
+  const toggleAll = () =>
+    setExpanded(allExpanded ? {} : Object.fromEntries(suppliers.map(s => [s.supplier_name, true])))
+
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' }) : '—'
+
+  return (
+    <div style={styles.card}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+          Supplier Summary — {month_name} {year}
+        </span>
+        <button onClick={toggleAll} style={{
+          padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+          background: 'var(--bg-hover)', color: 'var(--text-primary)',
+          border: '1px solid var(--border)', borderRadius: 6,
+        }}>
+          {allExpanded ? 'Collapse all' : 'Expand all'}
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: 32, padding: '12px 20px', background: 'var(--bg-surface)', flexWrap: 'wrap' }}>
+        {[
+          { label: 'Suppliers', value: String(suppliers.length) },
+          { label: 'Invoices',  value: String(totals.count) },
+          { label: 'Excl VAT',  value: fmtR(totals.amount_excl) },
+          { label: 'VAT',       value: fmtR(totals.vat) },
+          { label: 'Incl VAT',  value: fmtR(totals.amount_incl), color: '#16a34a' },
+        ].map(c => (
+          <div key={c.label} style={{ fontSize: 12 }}>
+            <div style={{ color: 'var(--text-muted)', marginBottom: 2, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{c.label}</div>
+            <div style={{ fontWeight: 700, color: c.color || 'var(--text-primary)' }}>{c.value}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Supplier</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>Invoices</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>Excl VAT</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>VAT</th>
+              <th style={{ ...styles.th, textAlign: 'right' }}>Incl VAT</th>
+            </tr>
+          </thead>
+          <tbody>
+            {suppliers.map(s => {
+              const isOpen = !!expanded[s.supplier_name]
+              const cat = SUP_CAT_LABEL[s.category]
+              return (
+                <Fragment key={s.supplier_name}>
+                  <tr style={{ ...styles.row, cursor: 'pointer' }} onClick={() => toggle(s.supplier_name)}>
+                    <td style={{ ...styles.td, fontWeight: 600 }}>
+                      <span style={{ display: 'inline-block', width: 14, color: 'var(--text-muted)' }}>{isOpen ? '▾' : '▸'}</span>
+                      {s.supplier_name}
+                      {cat && <span style={badge}>{cat.toUpperCase()}</span>}
+                    </td>
+                    <td style={{ ...styles.td, textAlign: 'right' }}>{s.count}</td>
+                    <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtR(s.amount_excl)}</td>
+                    <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtR(s.vat)}</td>
+                    <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{fmtR(s.amount_incl)}</td>
+                  </tr>
+                  {isOpen && s.invoices.map(i => (
+                    <tr key={i.record_id} style={{ background: 'var(--bg-surface)' }}>
+                      <td style={{ ...styles.td, paddingLeft: 34, color: 'var(--text-muted)' }}>
+                        <span style={{ whiteSpace: 'nowrap' }}>{fmtDate(i.date)}</span>
+                        {i.invoice_number && <span style={{ fontFamily: 'monospace', fontSize: 12, marginLeft: 10 }}>{i.invoice_number}</span>}
+                        <span style={{ marginLeft: 10 }}>{i.description}</span>
+                        {!i.vat_applicable && <span style={badge}>NON-VAT</span>}
+                      </td>
+                      <td style={styles.td}></td>
+                      <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{fmtR(i.amount_excl)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{fmtR(i.vat)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{fmtR(i.amount_incl)}</td>
+                    </tr>
+                  ))}
+                </Fragment>
+              )
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={styles.totalRow}>
+              <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{totals.count}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap' }}>{fmtR(totals.amount_excl)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap' }}>{fmtR(totals.vat)}</td>
+              <td style={{ ...styles.td, textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap' }}>{fmtR(totals.amount_incl)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  )
 }
 
 // ── Invoiced PO vs Truck Loads ────────────────────────────────────────────────
