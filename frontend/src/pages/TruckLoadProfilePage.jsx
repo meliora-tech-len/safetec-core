@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Save, X, Trash2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader, Fuel, UtensilsCrossed, BarChart3,
-  Banknote, CalendarClock, Search, Check, Flag, Upload, Pencil,
+  Banknote, CalendarClock, Search, Check, Flag, Upload, Pencil, GripVertical,
 } from 'lucide-react'
 import ImportDieselModal from '../components/ImportDieselModal'
 import { useAuth } from '../hooks/useAuth'
@@ -1990,6 +1990,36 @@ function ProfitSheetSection({ truck, year, month, summary }) {
     setField('custom_lines', (data.custom_lines || []).map(l => l.id === id ? { ...l, [field]: value } : l))
   }
 
+  // ── Drag-to-reorder ──
+  // The on-screen order IS the saved order — custom_lines round-trips through the
+  // API as-is and carries forward into new months — so a drop only has to rewrite
+  // the array and mark the sheet dirty; Save persists the arrangement.
+  // Rows are only draggable while the grip is held (armedLineId), otherwise
+  // dragging would fight with selecting text inside the inputs.
+  const dragLineId = useRef(null)
+  const [armedLineId, setArmedLineId] = useState(null)
+
+  // Releasing the mouse without ever dragging (mouseup lands outside the grip)
+  // must disarm the row, or it would stay draggable and hijack text selection.
+  useEffect(() => {
+    if (armedLineId == null) return
+    const disarm = () => setArmedLineId(null)
+    window.addEventListener('mouseup', disarm)
+    return () => window.removeEventListener('mouseup', disarm)
+  }, [armedLineId])
+
+  const moveLineOver = (overId) => {
+    const fromId = dragLineId.current
+    if (!fromId || fromId === overId) return
+    const lines = data.custom_lines || []
+    const from = lines.findIndex(l => l.id === fromId)
+    const to   = lines.findIndex(l => l.id === overId)
+    if (from < 0 || to < 0) return
+    const next = [...lines]
+    next.splice(to, 0, next.splice(from, 1)[0])
+    setField('custom_lines', next)
+  }
+
   const removeCustomLine = (id) => {
     setField('custom_lines', (data.custom_lines || []).filter(l => l.id !== id))
   }
@@ -2107,7 +2137,24 @@ function ProfitSheetSection({ truck, year, month, summary }) {
         <div className="card" style={{ overflow: 'hidden' }}>
           <SectionHead>Expenses</SectionHead>
           {(data.custom_lines || []).map(l => (
-            <div key={l.id} style={{ ...psRow, gap: 8 }}>
+            <div
+              key={l.id}
+              draggable={armedLineId === l.id}
+              onDragStart={e => { dragLineId.current = l.id; e.dataTransfer.effectAllowed = 'move' }}
+              onDragEnter={() => moveLineOver(l.id)}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => e.preventDefault()}
+              onDragEnd={() => { dragLineId.current = null; setArmedLineId(null) }}
+              style={{ ...psRow, gap: 8, ...(armedLineId === l.id ? { opacity: 0.5, background: 'var(--bg-surface)' } : {}) }}
+            >
+              <span
+                onMouseDown={() => setArmedLineId(l.id)}
+                onMouseUp={() => setArmedLineId(null)}
+                title="Drag to reorder"
+                style={{ cursor: 'grab', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', flexShrink: 0, marginLeft: -8, touchAction: 'none' }}
+              >
+                <GripVertical size={13} />
+              </span>
               <input
                 style={{ ...psInput, flex: '1 1 90px', textAlign: 'left', minWidth: 70 }}
                 value={l.description}
