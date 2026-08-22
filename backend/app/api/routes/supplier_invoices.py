@@ -1048,22 +1048,34 @@ def invoices_by_vehicle_regs(db: Session, regs, month: int, year: int) -> dict:
             return natural == (year, month)
         return roll_past_sent(natural, truck.id, inv.created_at, sent_map) == (year, month)
 
-    def _amount_for_regs(inv: SupplierInvoice, kregs: set) -> float:
-        """Incl-VAT amount of this invoice attributable to one truck's regs.
+    def _amount_for_regs(inv: SupplierInvoice, kregs: set):
+        """(matched, incl-VAT amount, line notes) of this invoice attributable
+        to one truck's regs.
 
         Multi-line/split invoices with per-sub-line regs contribute only the
-        sub-lines matching this truck; everything else contributes its full total.
+        sub-lines matching this truck; everything else contributes its full
+        total. `matched` is False when the invoice's per-line regs all belong
+        to OTHER trucks — a zero AMOUNT alone does not unmatch it, so a
+        no-charge record (e.g. a R0 tyre jobcard) still pulls through with its
+        note. Line notes are the matched sub-lines' descriptions (diesel
+        statements excepted — their per-slip detail lives in the Diesel module).
         """
         if inv.is_multi_line and inv.line_items:
             has_line_reg = any((li.unit or "").strip() for li in inv.line_items)
             if has_line_reg:
-                return float(sum(
-                    (Decimal(str(li.amount_incl_vat or 0))
-                     for li in inv.line_items
-                     if (li.unit or "").strip().upper() in kregs),
+                lines = [li for li in inv.line_items
+                         if (li.unit or "").strip().upper() in kregs]
+                total = float(sum(
+                    (Decimal(str(li.amount_incl_vat or 0)) for li in lines),
                     Decimal("0"),
                 ))
-        return float(inv.amount)
+                is_diesel = bool(inv.supplier and inv.supplier.is_diesel_supplier)
+                descs = [] if is_diesel else [
+                    (li.item_description or "").strip()
+                    for li in lines if (li.item_description or "").strip()
+                ]
+                return bool(lines), total, descs
+        return True, float(inv.amount), []
 
     result = {t: [] for t in target_set}
     for inv in candidates:
@@ -1079,9 +1091,10 @@ def invoices_by_vehicle_regs(db: Session, regs, month: int, year: int) -> dict:
                 continue
             if not _in_period(inv, truck_by_reg.get(target)):
                 continue
-            amount = _amount_for_regs(inv, kregs)
-            if amount == 0:
+            matched, amount, line_notes = _amount_for_regs(inv, kregs)
+            if not matched:
                 continue
+            note_parts = ([inv.notes.strip()] if (inv.notes or "").strip() else []) + line_notes
             result[target].append({
                 "id": inv.id,
                 "supplier_name": inv.supplier.name if inv.supplier else None,
@@ -1091,6 +1104,7 @@ def invoices_by_vehicle_regs(db: Session, regs, month: int, year: int) -> dict:
                 "vat_applicable": inv.vat_applicable,
                 "is_diesel_supplier": bool(inv.supplier.is_diesel_supplier) if inv.supplier else False,
                 "description": inv.description,
+                "notes": " · ".join(note_parts) or None,
             })
     return result
 

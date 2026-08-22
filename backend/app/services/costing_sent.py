@@ -118,9 +118,11 @@ def truck_invoice_contribution(inv: SupplierInvoice, regs: set):
     """How much of a non-diesel supplier invoice is attributable to one truck,
     split into a non-VAT (excl) and a VAT (incl) bucket.
 
-    Returns (matched, excl_nonvat, incl_vat). `matched` is True only when a
-    positive amount applies to this truck. The caller sums both buckets into the
-    truck's expenses; the split only drives the Excl-VAT vs Incl-VAT columns.
+    Returns (matched, excl_nonvat, incl_vat). `matched` is True when the invoice
+    names this truck — a zero-amount record (e.g. a no-charge tyre jobcard)
+    still pulls through so the invoice and its note show on the costing. The
+    caller sums both buckets into the truck's expenses; the split only drives
+    the Excl-VAT vs Incl-VAT columns.
 
     - Matching is against ALL the truck's known regs (real + temp plate).
     - Multi-line / split invoices whose sub-lines carry a per-line vehicle reg
@@ -155,8 +157,6 @@ def truck_invoice_contribution(inv: SupplierInvoice, regs: set):
                     continue
                 e = Decimal(str(li.amount_excl_vat or 0))
                 i = Decimal(str(li.amount_incl_vat or 0))
-                if e == 0 and i == 0:
-                    continue
                 matched = True
                 if i > e:          # line carries VAT
                     incl_vat += i
@@ -170,8 +170,6 @@ def truck_invoice_contribution(inv: SupplierInvoice, regs: set):
 
     if _norm_reg(inv.vehicle_reg) in regs:
         amt = Decimal(str(inv.amount))
-        if amt == 0:
-            return False, D0, D0
         if inv.vat_applicable:
             return True, D0, amt
         return True, amt, D0

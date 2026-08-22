@@ -328,6 +328,27 @@ def _norm_reg(reg) -> str:
     return (reg or "").replace(" ", "").strip().upper()
 
 
+def _invoice_display_note(inv: SupplierInvoice, regs: set):
+    """Costing display note for one truck: the invoice's own note plus the
+    descriptions of this truck's matched sub-lines (fuel lines excluded — their
+    per-slip detail lives in the Diesel module), so a note captured on either
+    level pulls through — e.g. a R0 tyre jobcard's "what was done" line."""
+    parts = []
+    if (inv.notes or "").strip():
+        parts.append(inv.notes.strip())
+    if inv.is_multi_line and inv.line_items and any((li.unit or "").strip() for li in inv.line_items):
+        is_diesel = bool(inv.supplier and inv.supplier.is_diesel_supplier)
+        for li in inv.line_items:
+            if _norm_reg(li.unit) not in regs:
+                continue
+            if is_diesel and (li.item_code or "").strip():
+                continue
+            d = (li.item_description or "").strip()
+            if d:
+                parts.append(d)
+    return " · ".join(parts) or None
+
+
 def _income_split(amount, vat_applicable, vat_rate=DEFAULT_VAT_RATE):
     """Resolve a manual costing-income amount into (excl, incl) figures, mirroring
     the general-expense VAT rule: a VAT-applicable amount IS the inclusive value
@@ -599,7 +620,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                 continue
             exp_excl += c_excl
             exp_incl += c_incl
-            inv_contribs.append((inv, c_excl + c_incl))
+            inv_contribs.append((inv, c_excl + c_incl, _invoice_display_note(inv, truck_regs)))
 
         # Diesel fill-ups for this truck — bucketed by the supplier's payment term,
         # mirroring the non-diesel invoice rule above. The fill-up's STATEMENT
@@ -714,8 +735,8 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             loads_income_incl_vat=loads_income_incl,
             admin_fee=admin_fee,
             supplier_invoices=[
-                _enrich_invoice(db, i).model_copy(update={"amount": amt})
-                for (i, amt) in inv_contribs
+                _enrich_invoice(db, i).model_copy(update={"amount": amt, "notes": note})
+                for (i, amt, note) in inv_contribs
             ],
             manual_incomes=manual_income_out,
             total_expenses_excl_vat=exp_excl,

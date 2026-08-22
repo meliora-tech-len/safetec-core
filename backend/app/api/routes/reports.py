@@ -1717,10 +1717,6 @@ def profit_sheet_report(
     inv_by_reg = invoices_by_vehicle_regs(
         db, [t.registration for t in trucks if t.registration], month, year,
     )
-    supplier_totals = {
-        reg: sum(float(i.get('amount') or 0) for i in invs)
-        for reg, invs in inv_by_reg.items()
-    }
 
     saved = {
         r.truck_id: r
@@ -1752,10 +1748,12 @@ def profit_sheet_report(
         rec   = saved.get(t.id)
         loads = int(lr.loads) if lr else 0
         diesel = diesel_by_truck.get(t.id, 0.0)
-        supplier_total = supplier_totals.get((t.registration or '').strip().upper(), 0.0)
+        supplier_invs = inv_by_reg.get((t.registration or '').strip().upper()) or []
+        supplier_total = sum(float(i.get('amount') or 0) for i in supplier_invs)
 
-        # A truck with nothing captured and nothing typed is not on the sheet.
-        if not lr and not diesel and not sheet and not supplier_total and rec is None:
+        # A truck with nothing captured and nothing typed is not on the sheet —
+        # but a zero-amount invoice (a no-charge record) still counts as captured.
+        if not lr and not diesel and not sheet and not supplier_invs and rec is None:
             continue
 
         profit = _profit_sheet_net_profit(

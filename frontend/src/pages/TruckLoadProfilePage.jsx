@@ -2254,6 +2254,9 @@ function ProfitSheetSection({ truck, year, month, summary }) {
                         {inv.invoice_number && (
                           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
                         )}
+                        {inv.notes && (
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>{inv.notes}</span>
+                        )}
                       </span>
                       <span style={psAmt}><PV field={`invoice:${inv.id}`}>{fmt(inv.amount)}</PV></span>
                     </div>
@@ -2268,6 +2271,9 @@ function ProfitSheetSection({ truck, year, month, summary }) {
                     <span style={{ fontWeight: 500 }}>{inv.supplier_name || '—'}</span>
                     {inv.invoice_number && (
                       <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
+                    )}
+                    {inv.notes && (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>{inv.notes}</span>
                     )}
                   </span>
                   <span style={psAmt}><PV field={`invoice:${inv.id}`}>{fmt(inv.amount)}</PV></span>

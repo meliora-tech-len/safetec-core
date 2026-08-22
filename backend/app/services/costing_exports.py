@@ -6,6 +6,7 @@ Both include the entity letterhead/logo as a header.
 import io
 from decimal import Decimal
 from datetime import date
+from xml.sax.saxutils import escape as xml_escape
 
 from app.core.constants import MONTH_NAMES_1 as MONTH_NAMES
 
@@ -226,6 +227,8 @@ def generate_costing_pdf(costing, entity) -> bytes:
             rows.append([P("Supplier Invoices", s_sec), P("", s_val), P("", s_val), P("", s_val), P("", s_val)])
             for inv in td.supplier_invoices:
                 sup = inv.supplier_name or f"Supplier #{inv.supplier_id}"
+                if inv.notes:
+                    sup = f"{sup} — {xml_escape(inv.notes)}"
                 if inv.vat_applicable:
                     rows.append([P(sup, s_lbl), dash, dash, P(_fmt(inv.amount), s_val), dash])
                 else:
@@ -616,6 +619,8 @@ def generate_costing_excel(costing, entity) -> bytes:
             row += 1
             for inv in td.supplier_invoices:
                 sup = inv.supplier_name or f"Supplier #{inv.supplier_id}"
+                if inv.notes:
+                    sup = f"{sup} — {inv.notes}"
                 if inv.vat_applicable:
                     write_row([sup, None, None, fmt_val(inv.amount), None], fnt=LBL_FONT, row_h=15)
                     exp_incl_cells.append(f"{EXP_I_L}{row - 1}")

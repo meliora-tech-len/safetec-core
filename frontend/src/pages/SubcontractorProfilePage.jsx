@@ -2022,6 +2022,9 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                         {inv.invoice_number && (
                           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{inv.invoice_number}</span>
                         )}
+                        {inv.notes && (
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>{inv.notes}</span>
+                        )}
                       </span>
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
