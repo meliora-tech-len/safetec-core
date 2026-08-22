@@ -1118,6 +1118,10 @@ export default function SupplierProfilePage() {
   const [payingBulk, setPayingBulk] = useState(false)
   const [finalizingBulk, setFinalizingBulk] = useState(false)
   const [unfinalizingBulk, setUnfinalizingBulk] = useState(false)
+  // Paid-date prompt: which mark-paid action is waiting on a date.
+  // { mode: 'single', inv } | { mode: 'bulk' } | { mode: 'statement', group }
+  const [paidPrompt, setPaidPrompt] = useState(null)
+  const [paidPromptDate, setPaidPromptDate] = useState(today)
   const firstInputRef = useRef(null)
   // Physical-invoice attachment: one shared hidden file input, targeted at a row.
   const attachInputRef = useRef(null)
@@ -1648,26 +1652,14 @@ export default function SupplierProfilePage() {
   }
 
   // Mark every selected unpaid invoice as paid (a single payment covering many
-  // invoices). Already-paid selections are skipped.
-  const handleMarkPaidSelected = async () => {
+  // invoices). Already-paid selections are skipped. Opens the paid-date prompt;
+  // the actual writes happen in confirmMarkPaid.
+  const handleMarkPaidSelected = () => {
     const targets = groups.flatMap(g => g.invoices)
       .filter(i => selectedIds.has(i.id) && !i.is_paid)
     if (!targets.length) return
-    setPayingBulk(true)
-    const paidDate = new Date().toISOString()
-    let ok = 0
-    for (const inv of targets) {
-      try {
-        await updateSupplierInvoice(inv.id, { is_paid: true, paid_date: paidDate })
-        ok++
-      } catch (e) { toast.error(errorMessage(e)) }
-    }
-    setPayingBulk(false)
-    clearSelection()
-    if (ok) {
-      toast.success(`Marked ${ok} invoice${ok === 1 ? '' : 's'} as paid`)
-      loadInvoices()
-    }
+    setPaidPromptDate(today)
+    setPaidPrompt({ mode: 'bulk' })
   }
 
   const handleFinalize = async (inv, intent) => {
@@ -1677,24 +1669,64 @@ export default function SupplierProfilePage() {
     } catch (e) { toast.error(errorMessage(e)) }
   }
 
+  // Marking paid asks for the payment date first; unmarking clears it directly.
   const handleMarkPaid = async (inv, e) => {
     e.stopPropagation()
+    if (!inv.is_paid) {
+      setPaidPromptDate(today)
+      setPaidPrompt({ mode: 'single', inv })
+      return
+    }
     try {
-      await updateSupplierInvoice(inv.id, {
-        is_paid: !inv.is_paid,
-        paid_date: inv.is_paid ? null : new Date().toISOString(),
-      })
+      await updateSupplierInvoice(inv.id, { is_paid: false, paid_date: null })
       loadInvoices()
     } catch (e) { toast.error(errorMessage(e)) }
   }
 
-  const handleMarkAllPaid = async (group) => {
-    if (!confirm(`Mark all invoices in ${MONTH_NAMES[group.statement_month]} ${group.statement_year} as paid?`)) return
-    try {
-      await markStatementPaid(supplierId, group.statement_year, group.statement_month)
-      toast.success('Statement marked as paid')
+  const handleMarkAllPaid = (group) => {
+    setPaidPromptDate(today)
+    setPaidPrompt({ mode: 'statement', group })
+  }
+
+  // Confirm from the paid-date prompt: apply the chosen date to whichever
+  // mark-paid action opened it. paid_date goes over as plain yyyy-mm-dd so the
+  // chosen calendar date is stored as-is (no timezone shifting).
+  const confirmMarkPaid = async () => {
+    if (!paidPrompt || !paidPromptDate) return
+    const { mode, inv, group } = paidPrompt
+    setPaidPrompt(null)
+    if (mode === 'single') {
+      try {
+        await updateSupplierInvoice(inv.id, { is_paid: true, paid_date: paidPromptDate })
+        loadInvoices()
+      } catch (e) { toast.error(errorMessage(e)) }
+      return
+    }
+    if (mode === 'statement') {
+      try {
+        await markStatementPaid(supplierId, group.statement_year, group.statement_month, paidPromptDate)
+        toast.success('Statement marked as paid')
+        loadInvoices()
+      } catch (e) { toast.error(errorMessage(e)) }
+      return
+    }
+    // bulk: every selected unpaid invoice
+    const targets = groups.flatMap(g => g.invoices)
+      .filter(i => selectedIds.has(i.id) && !i.is_paid)
+    setPayingBulk(true)
+    let ok = 0
+    for (const target of targets) {
+      try {
+        await updateSupplierInvoice(target.id, { is_paid: true, paid_date: paidPromptDate })
+        ok++
+      } catch (e) { toast.error(errorMessage(e)) }
+    }
+    setPayingBulk(false)
+    clearSelection()
+    if (ok) {
+      toast.success(`Marked ${ok} invoice${ok === 1 ? '' : 's'} as paid`)
       loadInvoices()
-    } catch (e) { toast.error(errorMessage(e)) }
+    }
   }
 
   const handleKeyDown = (e, saveFn, cancelFn) => {
@@ -2068,6 +2100,53 @@ export default function SupplierProfilePage() {
         style={{ display: 'none' }}
         onChange={handleAttachFile}
       />
+
+      {/* Paid-date prompt for the single / bulk / statement mark-paid actions */}
+      {paidPrompt && (
+        <div style={wbgModalOverlay} onClick={() => setPaidPrompt(null)}>
+          <div style={{ ...wbgModalBox, width: 340 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 15 }}>
+              {paidPrompt.mode === 'single' && `Mark invoice ${paidPrompt.inv.invoice_number || '(no number)'} as paid`}
+              {paidPrompt.mode === 'bulk' && `Mark ${selectedUnpaid.length} invoice${selectedUnpaid.length === 1 ? '' : 's'} as paid`}
+              {paidPrompt.mode === 'statement' && `Mark all invoices in ${MONTH_NAMES[paidPrompt.group.statement_month]} ${paidPrompt.group.statement_year} as paid`}
+            </h3>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+              {paidPrompt.mode === 'single' && paidPrompt.inv.amount != null && formatCurrency(paidPrompt.inv.amount)}
+              {paidPrompt.mode === 'bulk' && formatCurrency(selectedUnpaidTotal)}
+              {paidPrompt.mode === 'statement' && `${paidPrompt.group.invoices.filter(i => !i.is_paid).length} unpaid invoice(s)`}
+            </div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Paid Date</label>
+            <DateInput
+              autoFocus
+              value={paidPromptDate}
+              onChange={e => setPaidPromptDate(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') confirmMarkPaid()
+                if (e.key === 'Escape') setPaidPrompt(null)
+              }}
+              className="form-input"
+              style={{ width: '100%' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+              <button className="btn-ghost" style={{ fontSize: 13, padding: '6px 12px' }} onClick={() => setPaidPrompt(null)}>
+                Cancel
+              </button>
+              <button
+                onClick={confirmMarkPaid}
+                disabled={!paidPromptDate}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '7px 16px', borderRadius: 7, border: 'none',
+                  background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
+                  cursor: paidPromptDate ? 'pointer' : 'default', opacity: paidPromptDate ? 1 : 0.6,
+                }}>
+                <CheckCircle size={15} />
+                Mark Paid
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <DeleteModal
         isOpen={!!deleteTarget}

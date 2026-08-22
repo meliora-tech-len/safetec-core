@@ -1940,6 +1940,7 @@ def mark_statement_paid(
     supplier_id: int,
     year: int,
     month: int,
+    paid_date: Optional[datetime] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1948,7 +1949,7 @@ def mark_statement_paid(
         raise HTTPException(status_code=404, detail="Supplier not found")
     _check_entity_access(supplier.entity_id, current_user)
 
-    now = datetime.now(tz=timezone.utc)
+    now = paid_date or datetime.now(tz=timezone.utc)
     unpaid = (
         db.query(SupplierInvoice)
         .filter(

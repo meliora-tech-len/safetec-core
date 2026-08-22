@@ -391,8 +391,9 @@ export const deleteSupplierInvoice = (id) => api.delete(`/supplier-invoices/${id
 // scope: 'forward' (stop from this month onward) | 'all' (remove every month)
 export const removeFixedExpense = (id, scope = 'forward') =>
   api.delete(`/supplier-invoices/${id}/fixed-expense`, { params: { scope } })
-export const markStatementPaid = (supplierId, year, month) =>
-  api.post(`/supplier-invoices/statements/${supplierId}/${year}/${month}/mark-paid`)
+export const markStatementPaid = (supplierId, year, month, paidDate) =>
+  api.post(`/supplier-invoices/statements/${supplierId}/${year}/${month}/mark-paid`, null,
+    paidDate ? { params: { paid_date: paidDate } } : undefined)
 export const getSupplierPayablesDashboard = (params = {}) =>
   api.get('/supplier-invoices/dashboard-summary', { params })
 export const addInvoiceLineItem = (invoiceId, data) =>
