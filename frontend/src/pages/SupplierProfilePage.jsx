@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   getSupplier, getSuppliers, getEntities,
@@ -15,6 +15,7 @@ import {
 } from '../services/api'
 import { useAuth } from '../hooks/useAuth'
 import { useLocalState } from '../hooks/useLocalState'
+import { useSessionState } from '../hooks/useSessionState'
 import { formatCurrency, formatDate, errorMessage, entityVatRate } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock, Unlock, Calendar } from 'lucide-react'
@@ -1096,9 +1097,11 @@ export default function SupplierProfilePage() {
   const [trucks, setTrucks] = useState([])
   const [groups, setGroups] = useState([])
   const [truckLoadGroups, setTruckLoadGroups] = useState([])
-  const [loadsCollapsed, setLoadsCollapsed] = useState({})
   const [loading, setLoading] = useState(true)
-  const [collapsed, setCollapsed] = useState({})
+  // View state remembered per supplier for the browser session, so leaving the
+  // page and coming back restores where the user left off.
+  const [loadsCollapsed, setLoadsCollapsed] = useSessionState(`supplier.${supplierId}.loadsCollapsed`, {})
+  const [collapsed, setCollapsed] = useSessionState(`supplier.${supplierId}.collapsed`, {})
 
   // Inline editing state
   const [editingId, setEditingId] = useState(null)   // invoice id being edited
@@ -1112,7 +1115,14 @@ export default function SupplierProfilePage() {
   const [showImport, setShowImport] = useState(false)
   const [showManage, setShowManage] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)  // invoice pending deletion
-  const [openInvoiceIds, setOpenInvoiceIds] = useState(new Set())
+  // Expanded multi-line invoices — stored as an array (a Set can't be JSON'd),
+  // exposed as a Set so call sites read naturally.
+  const [openInvoiceIdsArr, setOpenInvoiceIdsArr] = useSessionState(`supplier.${supplierId}.openInvoices`, [])
+  const openInvoiceIds = useMemo(() => new Set(openInvoiceIdsArr), [openInvoiceIdsArr])
+  const setOpenInvoiceIds = useCallback(
+    (updater) => setOpenInvoiceIdsArr(arr => [...updater(new Set(arr))]),
+    [setOpenInvoiceIdsArr]
+  )
   const [selectedIds, setSelectedIds] = useState(new Set())  // invoices ticked for bulk verify / pay
   const [verifyingBulk, setVerifyingBulk] = useState(false)
   const [payingBulk, setPayingBulk] = useState(false)
@@ -1137,10 +1147,17 @@ export default function SupplierProfilePage() {
   // preference, not something to re-pick on each profile.
   const [sortCol, setSortCol] = useLocalState('sort:supplier.invoices.col', 'vehicle_reg')
   const [sortDir, setSortDir] = useLocalState('sort:supplier.invoices.dir', 'asc')
-  const [filterText, setFilterText] = useState('')
+  const [filterText, setFilterText] = useSessionState(`supplier.${supplierId}.filter`, '')
 
+  // Which supplier the loaded groups belong to — on quick-switch the old
+  // supplier's rows linger until the fetch resolves, and scroll restore must
+  // not fire against them.
+  const groupsSupplierRef = useRef(null)
   const loadInvoices = useCallback(() =>
-    getSupplierInvoices({ supplier_id: supplierId }).then(r => setGroups(r.data))
+    getSupplierInvoices({ supplier_id: supplierId }).then(r => {
+      groupsSupplierRef.current = supplierId
+      setGroups(r.data)
+    })
   , [supplierId])
 
   useEffect(() => {
@@ -1183,6 +1200,38 @@ export default function SupplierProfilePage() {
     const clear = setTimeout(() => setFlashId(null), 2600)
     return () => { clearTimeout(t); clearTimeout(clear) }
   }, [focusInvoiceId, groups, setSearchParams])
+
+  // Scroll position, remembered per supplier: the app scrolls inside <main>
+  // (AppLayout), not the window. Written straight to sessionStorage on scroll
+  // so a refresh keeps it too; restored once the rows exist so the offset
+  // isn't clamped by a still-empty page. A ?invoice deep link wins.
+  const scrollKey = `supplier.${supplierId}.scroll`
+  const scrollRestored = useRef(false)
+  useEffect(() => { if (loading) scrollRestored.current = false }, [loading])
+  useEffect(() => {
+    const el = document.querySelector('main')
+    if (!el) return
+    let raf = 0
+    const onScroll = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        try { sessionStorage.setItem(scrollKey, String(el.scrollTop)) } catch {}
+      })
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => { el.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf) }
+  }, [scrollKey])
+  useEffect(() => {
+    if (scrollRestored.current || loading) return
+    if (groupsSupplierRef.current !== supplierId) return
+    scrollRestored.current = true
+    if (focusInvoiceId) return
+    let saved = 0
+    try { saved = Number(sessionStorage.getItem(scrollKey)) || 0 } catch {}
+    const el = document.querySelector('main')
+    if (el && saved > 0) el.scrollTop = saved
+  }, [loading, groups, focusInvoiceId, scrollKey, supplierId])
 
   // Per-line verification overlay for multi-line/split invoices: users tick a
   // sub-line once they've confirmed its amount on that subcontractor's costing
