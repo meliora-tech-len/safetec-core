@@ -13,8 +13,10 @@ import { exportToExcel, exportToPdf } from '../utils/exportUtils'
  *   filename  — string without extension  e.g. 'suppliers-2024'
  *   title     — string shown in the PDF header  e.g. 'Suppliers Report'
  *   disabled  — bool (optional)
+ *   extraItems — optional Array<{ key, label, icon?, title?, onClick }> of extra
+ *                menu entries rendered below the standard Excel/PDF pair.
  */
-export default function ExportButton({ columns, data, fetchData, filename, title, disabled }) {
+export default function ExportButton({ columns, data, fetchData, filename, title, disabled, extraItems }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const ref = useRef(null)
@@ -73,6 +75,22 @@ export default function ExportButton({ columns, data, fetchData, filename, title
             <FileText size={14} style={{ color: '#dc2626' }} />
             Export to PDF
           </button>
+          {extraItems?.length > 0 && (
+            <>
+              <div style={{ borderTop: '1px solid var(--border)' }} />
+              {extraItems.map(item => (
+                <button
+                  key={item.key || item.label}
+                  onClick={() => { setOpen(false); item.onClick() }}
+                  title={item.title}
+                  style={itemStyle}
+                >
+                  {item.icon}
+                  {item.label}
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>

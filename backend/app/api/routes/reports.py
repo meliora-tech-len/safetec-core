@@ -1,4 +1,5 @@
 import re
+from datetime import date as date_cls
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_, and_
@@ -623,6 +624,10 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             'invoice_id':     inv.id,
             'record_type':    'supplier_invoice',
             'record_id':      inv.id,
+            'supplier_id':    inv.supplier_id,
+            # Manage→Move pin: the row sits in this month's bucket regardless of
+            # its invoice date (day-precision export filters must not drop it).
+            'pinned':         inv.report_period_year is not None or inv.report_period_month is not None,
             'excluded':       inv.id in excluded_expenses,
             'date':           inv.invoice_date.strftime('%Y-%m-%d') if inv.invoice_date else None,
             'invoice_number': inv.invoice_number or '',
@@ -805,19 +810,30 @@ def supplier_summary_report(
 @router.get("/supplier-summary/export/excel")
 def supplier_summary_export_excel(
     entity_id: int = Query(...),
-    year: int = Query(..., ge=2020),
+    year: Optional[int] = Query(None, ge=2020),
     month: Optional[int] = Query(None, ge=1, le=12),
+    start: Optional[date_cls] = Query(None),
+    end: Optional[date_cls] = Query(None),
+    supplier_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Excel workbook of supplier invoices, one tab per supplier (plus a
-    Summary grid) — the shape of the manual supplier workbook. The whole
-    year by default; pass `month` for just that month.
+    Summary grid) — the shape of the manual supplier workbook.
+
+    Period: either `year` (whole year, or one month with `month`) — the Reports
+    page — or a `start`/`end` date range (may span years) — the Supplier
+    Profile export. Pass `supplier_id` for just that supplier's workbook.
 
     Reuses _build_month_detail per month, so the rows and totals are exactly
-    the ones the Supplier Summary report shows.
+    the ones the Supplier Summary report shows. Day-precision: an unpinned row
+    is kept only if its invoice date falls inside [start, end]; a Manage→Move
+    pinned row belongs to its pinned month bucket, so it's kept whenever that
+    month is inside the range (full-month ranges therefore tie to the report
+    exactly).
     """
     import io
+    import calendar
     from fastapi.responses import StreamingResponse
     from app.services.supplier_summary_export import generate_supplier_summary_excel
 
@@ -825,17 +841,58 @@ def supplier_summary_export_excel(
     entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
+    supplier = None
+    if supplier_id is not None:
+        supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+        if not supplier or supplier.entity_id != entity_id:
+            raise HTTPException(status_code=404, detail="Supplier not found")
+
+    if start and end:
+        if start > end:
+            raise HTTPException(status_code=400, detail="Start date must be on or before end date")
+        n_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
+        if n_months > 60:
+            raise HTTPException(status_code=400, detail="Date range too large (maximum 5 years)")
+        month_keys = [((start.year * 12 + start.month - 1 + i) // 12,
+                       (start.year * 12 + start.month - 1 + i) % 12 + 1)
+                      for i in range(n_months)]
+        s_iso, e_iso = start.isoformat(), end.isoformat()
+        aligned = start.day == 1 and end.day == calendar.monthrange(end.year, end.month)[1]
+        if aligned and (start.year, start.month) == (end.year, end.month):
+            period_label = f"{MONTH_NAMES[start.month - 1]} {start.year}"
+        elif aligned and (start.month, end.month) == (1, 12) and start.year == end.year:
+            period_label = str(start.year)
+        elif aligned:
+            period_label = (f"{MONTH_NAMES[start.month - 1][:3]} {start.year} – "
+                            f"{MONTH_NAMES[end.month - 1][:3]} {end.year}")
+        else:
+            period_label = f"{start.strftime('%d %b %Y')} – {end.strftime('%d %b %Y')}"
+    elif year:
+        month_keys = [(year, month)] if month else [(year, m) for m in range(1, 13)]
+        s_iso = e_iso = None
+        period_label = f"{MONTH_NAMES[month - 1]} {year}" if month else str(year)
+    else:
+        raise HTTPException(status_code=400, detail="Provide either year or a start/end date range")
 
     month_rows = {}
-    for m in [month] if month else range(1, 13):
-        rows = [r for r in _build_month_detail(db, entity_id, year, m)['input_invoices']
-                if not r['excluded']]
+    for (yy, mm) in month_keys:
+        rows = [r for r in _build_month_detail(db, entity_id, yy, mm)['input_invoices']
+                if not r['excluded']
+                and (supplier_id is None or r.get('supplier_id') == supplier_id)
+                and (s_iso is None or r.get('pinned') or not r['date']
+                     or s_iso <= r['date'] <= e_iso)]
         if rows:
-            month_rows[m] = rows
+            month_rows[(yy, mm)] = rows
 
-    xl_bytes = generate_supplier_summary_excel(entity, year, month_rows)
+    xl_bytes = generate_supplier_summary_excel(entity, period_label, month_rows)
     code = (entity.code or 'entity').lower()
-    filename = f"supplier-summary-{code}-{year}" + (f"-{month:02d}" if month else "") + ".xlsx"
+    sup_slug = (re.sub(r'[^A-Za-z0-9]+', '-', supplier.name).strip('-').lower() or 'supplier') \
+        if supplier else None
+    base = "supplier-summary-" + (f"{sup_slug}-" if sup_slug else "") + code
+    if start and end:
+        filename = f"{base}-{start.isoformat()}-to-{end.isoformat()}.xlsx"
+    else:
+        filename = f"{base}-{year}" + (f"-{month:02d}" if month else "") + ".xlsx"
     return StreamingResponse(
         io.BytesIO(xl_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

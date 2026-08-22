@@ -31,23 +31,32 @@ def _sheet_title(name: str, used: set) -> str:
     return clean
 
 
-def generate_supplier_summary_excel(entity, year: int, month_rows: dict) -> bytes:
-    """month_rows: {month: [row, ...]} — the month's non-excluded supplier rows
-    from _build_month_detail (date / invoice_number / vehicle_reg / description
-    / amount_excl / vat / amount_incl / vat_applicable)."""
+def generate_supplier_summary_excel(entity, period_label: str, month_rows: dict) -> bytes:
+    """month_rows: {(year, month): [row, ...]} — each month's non-excluded
+    supplier rows from _build_month_detail (date / invoice_number / vehicle_reg
+    / description / amount_excl / vat / amount_incl / vat_applicable).
+    period_label titles the workbook (e.g. "2026", "August 2026",
+    "15 Jun 2026 – 20 Aug 2026")."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
 
     # Group per supplier, months kept in calendar order.
     suppliers: dict[str, dict] = {}
-    for m in sorted(month_rows):
-        for r in month_rows[m]:
+    for ym in sorted(month_rows):
+        for r in month_rows[ym]:
             name = r["supplier_name"] or "General Expenses"
             sup = suppliers.setdefault(name.upper(), {"name": name, "months": {}})
-            sup["months"].setdefault(m, []).append(r)
+            sup["months"].setdefault(ym, []).append(r)
     ordered = sorted(suppliers.values(), key=lambda s: s["name"].upper())
     months_present = sorted(month_rows)
+
+    # Month headings only carry the year when the export spans more than one.
+    multi_year = len({y for y, _ in months_present}) > 1
+
+    def month_label(ym):
+        y, m = ym
+        return MONTH_NAMES[m - 1].upper() + (f" {y}" if multi_year else "")
 
     wb = Workbook()
 
@@ -80,16 +89,13 @@ def generate_supplier_summary_excel(entity, year: int, month_rows: dict) -> byte
         return c
 
     ent_label = f"{getattr(entity, 'code', '') or ''} — {getattr(entity, 'name', '') or ''}".strip(" —")
-    # A single-month export is titled by that month; the full year by the year.
-    period_label = (f"{MONTH_NAMES[months_present[0] - 1]} {year}"
-                    if len(months_present) == 1 else str(year))
 
     # ── Summary sheet: supplier × month grid (incl VAT) ───────────────────────
     ws = wb.active
     ws.title = "Summary"
     ws.column_dimensions["A"].width = 40
     for i in range(2, len(months_present) + 3):
-        ws.column_dimensions[get_column_letter(i)].width = 14
+        ws.column_dimensions[get_column_letter(i)].width = 16 if multi_year else 14
 
     ws.cell(row=1, column=1, value=f"Supplier Summary — {period_label}").font = Font(bold=True, size=13)
     ws.cell(row=2, column=1, value=ent_label).font = Font(color="6B7280", size=10)
@@ -100,7 +106,7 @@ def generate_supplier_summary_excel(entity, year: int, month_rows: dict) -> byte
     row = 5
     label(ws, row, 1, "Supplier", bold=True, fill=HDR_FILL, color="FFFFFF")
     for i, m in enumerate(months_present):
-        c = label(ws, row, 2 + i, MONTH_NAMES[m - 1].upper(), bold=True, fill=HDR_FILL, color="FFFFFF")
+        c = label(ws, row, 2 + i, month_label(m), bold=True, fill=HDR_FILL, color="FFFFFF")
         c.alignment = RIGHT
     c = label(ws, row, 2 + len(months_present), "TOTAL", bold=True, fill=HDR_FILL, color="FFFFFF")
     c.alignment = RIGHT
@@ -143,7 +149,7 @@ def generate_supplier_summary_excel(entity, year: int, month_rows: dict) -> byte
             rows = sup["months"][m]
             # Month banner across the full width, like the manual sheet's teal band.
             ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(COLS))
-            label(ws, row, 1, MONTH_NAMES[m - 1].upper(), bold=True,
+            label(ws, row, 1, month_label(m), bold=True,
                   fill=MONTH_FILL, color="FFFFFF", size=10)
             for col in range(2, len(COLS) + 1):
                 ws.cell(row=row, column=col).fill = MONTH_FILL
@@ -171,7 +177,7 @@ def generate_supplier_summary_excel(entity, year: int, month_rows: dict) -> byte
                 mt["incl"] += r["amount_incl"]
                 row += 1
 
-            label(ws, row, 1, f"{MONTH_NAMES[m - 1].upper()} TOTAL", bold=True, fill=TOTAL_FILL)
+            label(ws, row, 1, f"{month_label(m)} TOTAL", bold=True, fill=TOTAL_FILL)
             label(ws, row, 2, "", fill=TOTAL_FILL)
             amount(ws, row, 3, mt["excl"], bold=True, fill=TOTAL_FILL)
             amount(ws, row, 4, mt["vat"], bold=True, fill=TOTAL_FILL)
@@ -184,8 +190,11 @@ def generate_supplier_summary_excel(entity, year: int, month_rows: dict) -> byte
 
         # With a single month on the tab this would just repeat the month total.
         if len(sup["months"]) > 1:
-            label(ws, row, 1, f"{year} TOTAL", bold=True, fill=HDR_FILL, color="FFFFFF")
+            # Label merged across A:B so long period labels ("15 Jun 2026 – …")
+            # aren't clipped by the narrow date column.
+            label(ws, row, 1, f"{period_label.upper()} TOTAL", bold=True, fill=HDR_FILL, color="FFFFFF")
             label(ws, row, 2, "", fill=HDR_FILL)
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
             amount(ws, row, 3, grand["excl"], bold=True, fill=HDR_FILL).font = Font(bold=True, color="FFFFFF", size=9)
             amount(ws, row, 4, grand["vat"], bold=True, fill=HDR_FILL).font = Font(bold=True, color="FFFFFF", size=9)
             amount(ws, row, 5, grand["incl"], bold=True, fill=HDR_FILL).font = Font(bold=True, color="FFFFFF", size=9)
