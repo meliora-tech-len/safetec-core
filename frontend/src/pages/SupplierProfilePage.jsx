@@ -8,6 +8,7 @@ import {
   addInvoiceLineItem, updateInvoiceLineItem, deleteInvoiceLineItem,
   getSubcontractors, getDieselFillUpSlips,
   finalizeSupplierInvoice, bulkImportSupplierInvoices, resolveSupplierDieselConflicts,
+  setSupplierInvoiceLock, setSupplierInvoiceLocksBulk,
   getVerifications, verifyValue, finalizeValue,
   uploadSupplierInvoiceAttachment, deleteSupplierInvoiceAttachment, viewSupplierInvoiceAttachment,
   updateSupplierStatementNote, uploadSupplierStatementDocument,
@@ -449,12 +450,13 @@ function WBGImportModal({ supplierId, supplier, entities, trucks, onClose, onImp
         entity_id:   parseInt(entityId),
         invoices:    invoices.filter((_, i) => selectedNums.has(i)),
       })
-      const { created, skipped, diesel_created, diesel_linked, conflicts: cfts } = r.data
+      const { created, skipped, diesel_created, diesel_linked, locked_skipped, conflicts: cfts } = r.data
       const parts = []
       if (created > 0) parts.push(`${created} invoice${created !== 1 ? 's' : ''} imported`)
       if (skipped > 0)  parts.push(`${skipped} skipped`)
       if (diesel_created > 0) parts.push(`${diesel_created} diesel record${diesel_created !== 1 ? 's' : ''} created`)
       if (diesel_linked > 0)  parts.push(`${diesel_linked} linked`)
+      if (locked_skipped > 0) parts.push(`${locked_skipped} line${locked_skipped !== 1 ? 's' : ''} left on locked invoices`)
       if (parts.length) toast.success(parts.join(', '))
       else toast('All invoices already exist — nothing imported')
       onImported()
@@ -835,7 +837,7 @@ function ManagePeriodsModal({ invoices, onClose, onSaved }) {
           >
             {filtered.map(i => (
               <option key={i.id} value={i.id}>
-                {formatDate(i.invoice_date)} · {i.invoice_number || 'Pending'} · {formatCurrency(i.amount)}{(costingMoved(i) || reportMoved(i)) ? '  • moved' : ''}
+                {formatDate(i.invoice_date)} · {i.invoice_number || 'Pending'} · {formatCurrency(i.amount)}{(costingMoved(i) || reportMoved(i)) ? '  • moved' : ''}{i.locked_at ? '  🔒 locked' : ''}
               </option>
             ))}
           </select>
@@ -848,6 +850,12 @@ function ManagePeriodsModal({ invoices, onClose, onSaved }) {
               Editing <strong>{inv.invoice_number || 'Pending'}</strong>
               <span style={{ color:'var(--text-muted)' }}> · {formatDate(inv.invoice_date)} · {formatCurrency(inv.amount)}{inv.vehicle_reg ? ` · ${inv.vehicle_reg}` : ''}</span>
             </div>
+            {inv.locked_at && (
+              <div style={{ margin:'0 0 10px', padding:'8px 10px', borderRadius:6, background:'rgba(34,197,94,0.10)', border:'1px solid rgba(34,197,94,0.30)', fontSize:12, display:'flex', alignItems:'center', gap:6 }}>
+                <Lock size={13} color="#16a34a" />
+                This invoice is locked ({formatDate(inv.locked_at)}) — its periods can't be moved. Unlock it first.
+              </div>
+            )}
             {bucketRow(
               'Costing month',
               'Subcontractor-costing month. The month you pick is used exactly — no cash “previous month” rule and no sent-costing lock.',
@@ -868,7 +876,8 @@ function ManagePeriodsModal({ invoices, onClose, onSaved }) {
 
         <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:18 }}>
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={save} disabled={saving || !inv}>
+          <button className="btn-primary" onClick={save} disabled={saving || !inv || !!inv?.locked_at}
+            title={inv?.locked_at ? 'This invoice is locked — unlock it to move its periods' : undefined}>
             {saving ? 'Saving…' : (inv ? `Save ${inv.invoice_number || 'invoice'}` : 'Save')}
           </button>
         </div>
@@ -1238,8 +1247,9 @@ export default function SupplierProfilePage() {
   // Inline editing state
   const [editingId, setEditingId] = useState(null)   // invoice id being edited
   const [editForm, setEditForm] = useState({})
-  // True when the row being edited carries the final verification lock — only
-  // its notes field stays editable (everything else renders disabled).
+  // True when the row being edited carries the final verification lock or the
+  // invoice lock — only its notes field stays editable (everything else renders
+  // disabled).
   const [editLocked, setEditLocked] = useState(false)
   const [showNew, setShowNew] = useState(false)       // new inline row visible
   const [newForm, setNewForm] = useState(blankForm(''))
@@ -1270,6 +1280,12 @@ export default function SupplierProfilePage() {
   const attachInputRef = useRef(null)
   const attachTargetId = useRef(null)
   const [attachBusyId, setAttachBusyId] = useState(null)
+  // Invoice lock (closed off/reconciled): locked-date modal + per-row busy flag.
+  // lockModal = { invoices: [...] } while the confirm dialog is open.
+  const [lockModal, setLockModal] = useState(null)
+  const [lockDate, setLockDate] = useState(today)
+  const [lockSaving, setLockSaving] = useState(false)
+  const [lockBusyId, setLockBusyId] = useState(null)
 
   // Diesel rate auto-fill state (for diesel suppliers)
   const [dieselRate, setDieselRate] = useState(null)
@@ -1480,7 +1496,7 @@ export default function SupplierProfilePage() {
     if (editingId !== null) return   // intentional exit required (Esc or X) before switching rows
     setShowNew(false)
     setEditingId(inv.id)
-    setEditLocked(!!(inv.verified3_by || inv.verified3_by_initials))
+    setEditLocked(!!(inv.verified3_by || inv.verified3_by_initials) || !!inv.locked_at)
     setEditForm({
       entity_id: inv.entity_id,
       invoice_date: inv.invoice_date?.slice(0, 10) || today,
@@ -1756,9 +1772,10 @@ export default function SupplierProfilePage() {
 
   // A row is selectable if there's a bulk action it can take part in: a pending
   // verification tick, a pending final lock, a final lock of this user's to
-  // remove, or it's still unpaid (bulk mark-paid).
+  // remove, it's still unpaid (bulk mark-paid), or it's not yet invoice-locked
+  // (bulk lock).
   const canUserSelect = (inv) =>
-    canUserVerify(inv) || canUserFinalize(inv) || canUserUnfinalize(inv) || !inv.is_paid
+    canUserVerify(inv) || canUserFinalize(inv) || canUserUnfinalize(inv) || !inv.is_paid || !inv.locked_at
 
   const toggleSelect = (id) => setSelectedIds(s => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
@@ -1851,6 +1868,47 @@ export default function SupplierProfilePage() {
     } catch (e) { toast.error(errorMessage(e)) }
   }
 
+  // ── Invoice lock (closed off/reconciled) ──────────────────────────────────
+  // Locking asks for the locked-on date first (backdatable, like the Diesel
+  // Log's lock); the same modal serves the single row and the bulk selection.
+  const openLockModal = (invoices) => {
+    const targets = invoices.filter(i => !i.locked_at)
+    if (!targets.length) return
+    setLockDate(today)
+    setLockModal({ invoices: targets })
+  }
+
+  const confirmLock = async () => {
+    if (!lockModal || !lockDate) return
+    const targets = lockModal.invoices
+    setLockSaving(true)
+    try {
+      await setSupplierInvoiceLocksBulk({
+        supplier_invoice_ids: targets.map(i => i.id),
+        locked_date: lockDate,
+      })
+      toast.success(targets.length === 1
+        ? `Invoice ${targets[0].invoice_number || ''} locked`.trim()
+        : `${targets.length} invoices locked`)
+      setLockModal(null)
+      setEditingId(null)
+      clearSelection()
+      await loadInvoices()
+    } catch (e) { toast.error(errorMessage(e)) }
+    finally { setLockSaving(false) }
+  }
+
+  const handleUnlockInvoice = async (inv) => {
+    if (!window.confirm(`Unlock invoice ${inv.invoice_number || `#${inv.id}`}? Its values can then be changed again.`)) return
+    setLockBusyId(inv.id)
+    try {
+      await setSupplierInvoiceLock({ supplier_invoice_id: inv.id }, { locked: false })
+      toast.success('Invoice unlocked')
+      await loadInvoices()
+    } catch (e) { toast.error(errorMessage(e)) }
+    finally { setLockBusyId(null) }
+  }
+
   // Marking paid asks for the payment date first; unmarking clears it directly.
   const handleMarkPaid = async (inv, e) => {
     e.stopPropagation()
@@ -1927,7 +1985,8 @@ export default function SupplierProfilePage() {
   const selectedUnpaidTotal = selectedUnpaid.reduce((s, i) => s + Number(i.amount || 0), 0)
   const selectedFinalizable = allInvoices.filter(i => selectedIds.has(i.id) && canUserFinalize(i))
   const selectedUnfinalizable = allInvoices.filter(i => selectedIds.has(i.id) && canUserUnfinalize(i))
-  const bulkBusy = verifyingBulk || payingBulk || finalizingBulk || unfinalizingBulk
+  const selectedLockable    = allInvoices.filter(i => selectedIds.has(i.id) && !i.locked_at)
+  const bulkBusy = verifyingBulk || payingBulk || finalizingBulk || unfinalizingBulk || lockSaving
   const multiEntity = entities.length > 1
 
   // Map a vehicle registration to its owning subcontractor (display fallback).
@@ -2271,6 +2330,20 @@ export default function SupplierProfilePage() {
               {payingBulk ? 'Marking…' : `Mark paid (${selectedUnpaid.length} · ${formatCurrency(selectedUnpaidTotal)})`}
             </button>
           )}
+          {selectedLockable.length > 0 && (
+            <button
+              onClick={() => openLockModal(selectedLockable)}
+              disabled={bulkBusy}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 7, border: 'none',
+                background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
+                cursor: lockSaving ? 'default' : 'pointer', opacity: bulkBusy ? 0.6 : 1,
+              }}>
+              <Lock size={15} />
+              {lockSaving ? 'Locking…' : `Lock selected (${selectedLockable.length})`}
+            </button>
+          )}
           <button
             onClick={clearSelection}
             disabled={bulkBusy}
@@ -2289,6 +2362,57 @@ export default function SupplierProfilePage() {
         style={{ display: 'none' }}
         onChange={handleAttachFile}
       />
+
+      {/* Locked-on date prompt for the invoice lock (single row or bulk selection) */}
+      {lockModal && (
+        <div style={wbgModalOverlay} onClick={() => setLockModal(null)}>
+          <div style={{ ...wbgModalBox, width: 380 }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 15, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Lock size={15} color="#16a34a" />
+              {lockModal.invoices.length === 1
+                ? `Lock invoice ${lockModal.invoices[0].invoice_number || `#${lockModal.invoices[0].id}`}`
+                : `Lock ${lockModal.invoices.length} invoices`}
+            </h3>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+              While locked, nothing on {lockModal.invoices.length === 1 ? 'this invoice' : 'these invoices'} can
+              be added, changed or removed — values, lines, diesel logs and deletion all refuse.
+              Paid status, notes, verification ticks and attachments stay available.
+            </div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Locked on *</label>
+            <DateInput
+              autoFocus
+              value={lockDate}
+              onChange={e => setLockDate(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') confirmLock()
+                if (e.key === 'Escape') setLockModal(null)
+              }}
+              className="form-input"
+              style={{ width: '100%' }}
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              Backdate this to the day the invoice was actually closed off — it shows on the badge and in the audit trail.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+              <button className="btn-ghost" style={{ fontSize: 13, padding: '6px 12px' }} onClick={() => setLockModal(null)}>
+                Cancel
+              </button>
+              <button
+                onClick={confirmLock}
+                disabled={!lockDate || lockSaving}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '7px 16px', borderRadius: 7, border: 'none',
+                  background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
+                  cursor: lockDate && !lockSaving ? 'pointer' : 'default', opacity: lockDate && !lockSaving ? 1 : 0.6,
+                }}>
+                <Lock size={15} />
+                {lockSaving ? 'Locking…' : lockModal.invoices.length === 1 ? 'Lock Invoice' : `Lock ${lockModal.invoices.length} Invoices`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Paid-date prompt for the single / bulk / statement mark-paid actions */}
       {paidPrompt && (
@@ -2563,7 +2687,10 @@ export default function SupplierProfilePage() {
                   <tbody>
                     {processInvoices(group.invoices).map(inv => {
                       const isEditing = editingId === inv.id
-                      const isLocked = !!(inv.verified3_by || inv.verified3_by_initials)
+                      // Invoice lock (closed off/reconciled) — separate from the
+                      // verification final lock but freezes the row the same way.
+                      const invLocked = !!inv.locked_at
+                      const isLocked = !!(inv.verified3_by || inv.verified3_by_initials) || invLocked
                       // When editing a locked row, every field but notes is read-only
                       // (rendered as plain text). `editFields` gates the editable inputs;
                       // `lockEdit` is true only while editing a locked row.
@@ -2657,10 +2784,27 @@ export default function SupplierProfilePage() {
                                   placeholder={isDiesel ? 'e.g. WBG-001' : ''}
                                   style={{ ...styles.cellInput, minWidth: 90 }}
                                 />
-                              ) : inv.invoice_number ? inv.invoice_number : (
-                                isDiesel
-                                  ? <span style={{ fontSize: 11, fontWeight: 700, color: '#d97706', background: 'rgba(245,158,11,0.12)', padding: '2px 6px', borderRadius: 3 }}>Pending</span>
-                                  : '—'
+                              ) : (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                  {inv.invoice_number ? inv.invoice_number : (
+                                    isDiesel
+                                      ? <span style={{ fontSize: 11, fontWeight: 700, color: '#d97706', background: 'rgba(245,158,11,0.12)', padding: '2px 6px', borderRadius: 3 }}>Pending</span>
+                                      : '—'
+                                  )}
+                                  {invLocked && (
+                                    <span
+                                      title={`Locked by ${inv.locked_by_name || '—'} on ${formatDate(inv.locked_at)} — nothing can be added, changed or removed`}
+                                      style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: 3,
+                                        fontSize: 10, fontWeight: 700, color: '#16a34a',
+                                        background: 'rgba(34,197,94,0.12)', padding: '1px 5px',
+                                        borderRadius: 3, whiteSpace: 'nowrap', cursor: 'help',
+                                      }}
+                                    >
+                                      <Lock size={10} /> LOCKED {formatDate(inv.locked_at)}
+                                    </span>
+                                  )}
+                                </span>
                               )}
                             </td>
 
@@ -2722,7 +2866,8 @@ export default function SupplierProfilePage() {
                             {/* Amount */}
                             <td style={{
                               ...styles.td, fontWeight: 600,
-                              ...(inv.verified3_by ? { background: 'rgba(253,224,71,0.55)' } : {}),
+                              ...(inv.verified3_by ? { background: 'rgba(253,224,71,0.55)' }
+                                : invLocked ? { background: 'rgba(34,197,94,0.10)' } : {}),
                             }}>
                               {editFields && !f.is_multi_line ? (
                                 <input
@@ -2964,13 +3109,39 @@ export default function SupplierProfilePage() {
                                       {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                                     </button>
                                   )}
-                                  <button
-                                    className="btn-icon btn-ghost"
-                                    onClick={() => handleDelete(inv)}
-                                    title="Delete"
-                                  >
-                                    <Trash2 size={13} color="var(--danger)" />
-                                  </button>
+                                  {/* Invoice lock — closed off/reconciled; freezes everything on the row */}
+                                  {invLocked ? (
+                                    <button
+                                      className="btn-icon btn-ghost"
+                                      disabled={lockBusyId === inv.id}
+                                      onClick={e => { e.stopPropagation(); handleUnlockInvoice(inv) }}
+                                      title={`Locked by ${inv.locked_by_name || '—'} on ${formatDate(inv.locked_at)} — click to unlock`}
+                                    >
+                                      <Unlock size={13} color="#16a34a" />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className="btn-icon btn-ghost"
+                                      disabled={lockBusyId === inv.id}
+                                      onClick={e => { e.stopPropagation(); openLockModal([inv]) }}
+                                      title="Lock this invoice — nothing can be added, changed or removed while locked"
+                                    >
+                                      <Lock size={13} color="var(--text-muted)" />
+                                    </button>
+                                  )}
+                                  {invLocked ? (
+                                    <span title="This invoice is locked — unlock it to delete" style={{ display: 'inline-flex', padding: 4 }}>
+                                      <Lock size={13} color="var(--text-muted)" />
+                                    </span>
+                                  ) : (
+                                    <button
+                                      className="btn-icon btn-ghost"
+                                      onClick={() => handleDelete(inv)}
+                                      title="Delete"
+                                    >
+                                      <Trash2 size={13} color="var(--danger)" />
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </td>

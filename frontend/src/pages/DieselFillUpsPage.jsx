@@ -3,7 +3,7 @@ import {
   getDieselFillUps, getDieselFillUpSummary, createDieselFillUp,
   updateDieselFillUp, deleteDieselFillUp, archiveDieselFillUp, verifyDieselFillUp, finalizeDieselFillUp,
   getCurrentDieselRate, getEntities, getDieselSettings, getSuppliers,
-  getDieselInvoiceLocks, setDieselInvoiceLock, setDieselInvoiceLocksBulk,
+  getSupplierInvoiceLocks, setSupplierInvoiceLock, setSupplierInvoiceLocksBulk,
 } from '../services/api'
 import { formatCurrency, formatDate, errorMessage, dieselTypeForSupplier, entityVatRate } from '../utils/helpers'
 import { useAuth } from '../hooks/useAuth'
@@ -164,7 +164,7 @@ export default function DieselFillUpsPage() {
     if (filterSupplier) p.supplier_id = filterSupplier
     // A new filter shows a different set of invoices — drop stale ticks with it
     setLockChecked(new Set())
-    getDieselInvoiceLocks(p)
+    getSupplierInvoiceLocks(p)
       .then(r => setLocks(r.data || []))
       .catch(() => setLocks([]))
   }, [filterEntity, filterSupplier, filterYear, filterMonth])
@@ -184,7 +184,7 @@ export default function DieselFillUpsPage() {
     const groups = lockModal.groups
     setLockSaving(true)
     try {
-      await setDieselInvoiceLocksBulk({
+      await setSupplierInvoiceLocksBulk({
         supplier_invoice_ids: groups.map(g => g.invoiceId),
         locked_date: lockDate,
       })
@@ -202,7 +202,7 @@ export default function DieselFillUpsPage() {
   const removeLock = async (grp) => {
     if (!window.confirm(`Unlock the diesel on invoice ${grp.invoiceNumber}? Its ${grp.rows.length} log${grp.rows.length === 1 ? '' : 's'} can be changed again.`)) return
     try {
-      await setDieselInvoiceLock({ supplier_invoice_id: grp.invoiceId }, { locked: false })
+      await setSupplierInvoiceLock({ supplier_invoice_id: grp.invoiceId }, { locked: false })
       toast.success('Invoice unlocked')
       loadLocks()
     } catch (err) { toast.error(errorMessage(err)) }

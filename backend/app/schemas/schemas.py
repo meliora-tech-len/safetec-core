@@ -1720,6 +1720,8 @@ class BulkImportResult(BaseModel):
     skipped_numbers: List[str] = []
     diesel_created: int = 0
     diesel_linked: int = 0
+    # Lines whose fill-up sits on a LOCKED invoice — left untouched by the import.
+    locked_skipped: int = 0
     conflicts: List[DieselConflict] = []
 
 
@@ -1840,6 +1842,10 @@ class SupplierInvoiceOut(BaseModel):
     is_multi_line: bool = False
     is_fixed_expense: bool = False
     line_items: List[SupplierInvoiceLineItemOut] = []
+    # Invoice lock (supplier_invoice_locks row) — merged in by the list/detail
+    # endpoints; null = unlocked.
+    locked_at: Optional[datetime] = None
+    locked_by_name: Optional[str] = None
     # Physical-invoice attachment. attachment_filename comes straight off the
     # model; has_attachment is derived so the row can show a paperclip without
     # exposing the storage key.
@@ -2136,7 +2142,7 @@ class DieselFillUpOut(BaseModel):
         from_attributes = True
 
 
-class DieselInvoiceLockOut(BaseModel):
+class SupplierInvoiceLockOut(BaseModel):
     supplier_invoice_id: int
     entity_id: int
     locked_at: datetime
@@ -2148,8 +2154,8 @@ class DieselInvoiceLockOut(BaseModel):
         from_attributes = True
 
 
-class DieselInvoiceLockUpdate(BaseModel):
-    # True = lock the diesel on this supplier invoice (no values in or out);
+class SupplierInvoiceLockUpdate(BaseModel):
+    # True = lock this supplier invoice (nothing added, changed or removed);
     # False = unlock it again.
     locked: bool
     # The date the invoice was actually closed off (defaults to today). Recorded
@@ -2158,9 +2164,9 @@ class DieselInvoiceLockUpdate(BaseModel):
     locked_date: Optional[date] = None
 
 
-class DieselInvoiceLockBulkCreate(BaseModel):
-    # Lock the diesel on several supplier invoices in one go — same semantics as
-    # DieselInvoiceLockUpdate(locked=True) per invoice; already-locked invoices
+class SupplierInvoiceLockBulkCreate(BaseModel):
+    # Lock several supplier invoices in one go — same semantics as
+    # SupplierInvoiceLockUpdate(locked=True) per invoice; already-locked invoices
     # are left as they are. Unlocking stays one-at-a-time (deliberate: it undoes
     # a reconciliation and should be considered per invoice).
     supplier_invoice_ids: List[int]

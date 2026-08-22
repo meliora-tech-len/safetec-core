@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from app.db.database import get_db
 from app.core.security import get_current_user
-from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, SupplierStatement, PaymentTermType, Truck, TruckLoad, DieselFillUp, BusinessEntity, ValueVerification
+from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, SupplierInvoiceLock, SupplierStatement, PaymentTermType, Truck, TruckLoad, DieselFillUp, BusinessEntity, ValueVerification
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
     SupplierInvoicePeriodUpdate,
@@ -21,6 +21,7 @@ from app.schemas.schemas import (
     SupplierCurrentPayable, Supplier30DaysPayable, SupplierInvoiceLineSummary,
     BulkImportPayload, BulkImportResult,
     DieselConflict, DieselConflictSide, DieselConflictResolution,
+    SupplierInvoiceLockOut, SupplierInvoiceLockUpdate, SupplierInvoiceLockBulkCreate,
 )
 from app.services.audit import log_action
 from app.services.costing_sent import (
@@ -35,7 +36,9 @@ from app.services.verification import (
     build_initials_cache, intent_from_action,
 )
 from app.services.diesel_service import DieselCalculationService, diesel_type_for_supplier
-from app.services.diesel_lock import is_invoice_locked, locked_invoice_ids
+from app.services.invoice_lock import (
+    ensure_supplier_invoice_unlocked, get_lock, is_invoice_locked, locked_invoice_ids,
+)
 from app.services.supplier_invoice_attachments import (
     MAX_ATTACH_BYTES,
     resolve_attach_type as _resolve_attach_type,
@@ -107,6 +110,8 @@ def _clear_intsimbi_slip_placeholders(
         sn = _norm_slip(fu.slip_number)
         if sn and sn != norm:
             continue  # a real TransID → a genuine transaction, not a lump placeholder
+        if fu.supplier_invoice_id and is_invoice_locked(db, fu.supplier_invoice_id):
+            continue  # sits on a locked (reconciled) invoice — leave it in place
         old_inv_id = fu.supplier_invoice_id
         fu.is_archived = True
         _archive_orphaned_placeholder(db, old_inv_id, new_inv_id, user_id, slip=slip)
@@ -1160,6 +1165,18 @@ def list_supplier_invoices(
     # One query for all verifier initials, reused across every invoice (avoids N+1).
     initials_cache = build_initials_cache(db)
 
+    # Invoice locks for every row in one query — the frontend reads locked_at/
+    # locked_by_name straight off the invoice.
+    lock_by_inv: dict = {}
+    if inv_ids:
+        for lk in (
+            db.query(SupplierInvoiceLock)
+            .options(joinedload(SupplierInvoiceLock.locked_by))
+            .filter(SupplierInvoiceLock.supplier_invoice_id.in_(inv_ids))
+            .all()
+        ):
+            lock_by_inv[lk.supplier_invoice_id] = lk
+
     # Resolve the owning subcontractor per invoice from its OWN entity's fleet, so
     # the column is correct regardless of which entity is active in the UI. Built
     # once for every entity present in this supplier's invoices (a supplier's rows
@@ -1170,12 +1187,15 @@ def list_supplier_invoices(
         out = SupplierInvoiceOut.model_validate(inv)
         fillup_data = fillup_data_by_inv.get(inv.id, {})
         owner = owner_by_reg.get((inv.entity_id, _norm_reg_key(inv.vehicle_reg))) if inv.vehicle_reg else None
+        lk = lock_by_inv.get(inv.id)
         return out.model_copy(update={
             "diesel_fillup_id": fillup_data.get("fillup_id"),
             "slip_number": fillup_data.get("slip_number"),
             "subcontractor_display_name": owner,
             "is_multi_line": inv.is_multi_line,
             "line_items": [SupplierInvoiceLineItemOut.model_validate(li) for li in inv.line_items],
+            "locked_at": lk.locked_at if lk else None,
+            "locked_by_name": (lk.locked_by.full_name if lk and lk.locked_by else None),
             **get_verification_display(db, inv, initials_cache),
         })
 
@@ -1279,6 +1299,171 @@ def list_pending_verification(
             verified2_by_initials=disp.get("verified2_by_initials"),
         ))
     return result
+
+
+# ── Invoice locks ─────────────────────────────────────────────────────────────
+# A locked invoice is closed off/reconciled: nothing on it may be added, changed
+# or removed (paid status, notes, verification ticks and attachments stay open).
+# IMPORTANT: declared BEFORE /{invoice_id} so "locks" isn't parsed as an id.
+
+def _lock_timestamp(locked_date) -> datetime:
+    """Timestamp for a new lock. A backdated lock stamps the end of that day,
+    so the badge reads as the day the invoice was actually closed off."""
+    now_utc = datetime.now(timezone.utc)
+    if locked_date and locked_date != now_utc.date():
+        return datetime(
+            locked_date.year, locked_date.month, locked_date.day,
+            23, 59, 59, tzinfo=timezone.utc,
+        )
+    return now_utc
+
+
+def _lock_out(row: SupplierInvoiceLock) -> dict:
+    return {
+        "supplier_invoice_id": row.supplier_invoice_id,
+        "entity_id": row.entity_id,
+        "locked_at": row.locked_at,
+        "locked_by_id": row.locked_by_id,
+        "locked_by_name": row.locked_by.full_name if row.locked_by else None,
+        "invoice_number": row.supplier_invoice.invoice_number if row.supplier_invoice else None,
+    }
+
+
+@router.get("/locks", response_model=List[SupplierInvoiceLockOut])
+def list_supplier_invoice_locks(
+    entity_id: Optional[int] = Query(None),
+    supplier_id: Optional[int] = Query(None),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Locked invoices. Narrowed by entity/supplier and, when a period is
+    given, by the invoice's STATEMENT period — the same bucket the Diesel Log
+    filters rows into, so a screen only pulls the locks it can show."""
+    accessible = _accessible_entity_ids(current_user)
+    q = (
+        db.query(SupplierInvoiceLock)
+        .options(joinedload(SupplierInvoiceLock.supplier_invoice),
+                 joinedload(SupplierInvoiceLock.locked_by))
+    )
+    if accessible is not None:
+        q = q.filter(SupplierInvoiceLock.entity_id.in_(accessible))
+    if entity_id:
+        _check_entity_access(entity_id, current_user)
+        q = q.filter(SupplierInvoiceLock.entity_id == entity_id)
+    if supplier_id or year or month:
+        q = q.join(SupplierInvoice, SupplierInvoice.id == SupplierInvoiceLock.supplier_invoice_id)
+        if supplier_id:
+            q = q.filter(SupplierInvoice.supplier_id == supplier_id)
+        if year:
+            q = q.filter(SupplierInvoice.statement_year == year)
+        if month:
+            q = q.filter(SupplierInvoice.statement_month == month)
+    return [_lock_out(r) for r in q.order_by(SupplierInvoiceLock.locked_at.desc()).all()]
+
+
+@router.put("/locks", response_model=Optional[SupplierInvoiceLockOut])
+def set_supplier_invoice_lock(
+    payload: SupplierInvoiceLockUpdate,
+    supplier_invoice_id: int = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lock one supplier invoice (nothing added, changed or removed) or unlock
+    it again. The optional locked_date records when the invoice was closed off —
+    audit trail and on-screen label only; nothing rolls forward."""
+    inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == supplier_invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Supplier invoice not found")
+    _check_entity_access(inv.entity_id, current_user)
+    label = inv.invoice_number or f"#{inv.id}"
+
+    row = get_lock(db, supplier_invoice_id)
+
+    if not payload.locked:
+        if not row:
+            return None
+        db.delete(row)
+        log_action(
+            db, "supplier_invoice_lock.unlocked", user_id=current_user.id,
+            entity_id=inv.entity_id, resource_type="supplier_invoice_lock",
+            resource_id=supplier_invoice_id,
+            description=f"Unlocked invoice {label}",
+        )
+        db.commit()
+        return None
+
+    if row:
+        return _lock_out(row)
+
+    locked_at = _lock_timestamp(payload.locked_date)
+
+    row = SupplierInvoiceLock(
+        supplier_invoice_id=supplier_invoice_id, entity_id=inv.entity_id,
+        locked_at=locked_at, locked_by_id=current_user.id,
+    )
+    db.add(row)
+    log_action(
+        db, "supplier_invoice_lock.locked", user_id=current_user.id,
+        entity_id=inv.entity_id, resource_type="supplier_invoice_lock",
+        resource_id=supplier_invoice_id,
+        description=f"Locked invoice {label}",
+        new_values={"locked_at": locked_at.isoformat()},
+    )
+    db.commit()
+    db.refresh(row)
+    return _lock_out(row)
+
+
+@router.put("/locks/bulk", response_model=List[SupplierInvoiceLockOut])
+def set_supplier_invoice_locks_bulk(
+    payload: SupplierInvoiceLockBulkCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lock several supplier invoices at once — one shared locked-on date, one
+    audit entry per invoice. Invoices already locked are left untouched; their
+    existing lock is returned as-is. Unlocking stays per-invoice on
+    PUT /locks."""
+    ids = list(dict.fromkeys(payload.supplier_invoice_ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="No invoices given to lock")
+
+    invoices = db.query(SupplierInvoice).filter(SupplierInvoice.id.in_(ids)).all()
+    by_id = {inv.id: inv for inv in invoices}
+    missing = [i for i in ids if i not in by_id]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Supplier invoice(s) not found: {', '.join(str(i) for i in missing)}",
+        )
+    for inv in invoices:
+        _check_entity_access(inv.entity_id, current_user)
+
+    locked_at = _lock_timestamp(payload.locked_date)
+    rows = []
+    for inv_id in ids:
+        inv = by_id[inv_id]
+        row = get_lock(db, inv_id)
+        if not row:
+            row = SupplierInvoiceLock(
+                supplier_invoice_id=inv_id, entity_id=inv.entity_id,
+                locked_at=locked_at, locked_by_id=current_user.id,
+            )
+            db.add(row)
+            log_action(
+                db, "supplier_invoice_lock.locked", user_id=current_user.id,
+                entity_id=inv.entity_id, resource_type="supplier_invoice_lock",
+                resource_id=inv_id,
+                description=f"Locked invoice {inv.invoice_number or f'#{inv.id}'}",
+                new_values={"locked_at": locked_at.isoformat()},
+            )
+        rows.append(row)
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return [_lock_out(r) for r in rows]
 
 
 @router.post("/{invoice_id}/skip-verification")
@@ -1397,11 +1582,14 @@ def get_supplier_invoice(
     # No entity gate: an authenticated user who can reach the supplier's invoices
     # may view any of them, regardless of the row's stored entity_id.
     fillup = db.query(DieselFillUp).filter(DieselFillUp.supplier_invoice_id == invoice_id).first()
+    lk = get_lock(db, invoice_id)
     out = SupplierInvoiceOut.model_validate(inv)
     return out.model_copy(update={
         **get_verification_display(db, inv),
         "slip_number": fillup.slip_number if fillup else None,
         "diesel_fillup_id": fillup.id if fillup else None,
+        "locked_at": lk.locked_at if lk else None,
+        "locked_by_name": (lk.locked_by.full_name if lk and lk.locked_by else None),
     })
 
 
@@ -1543,19 +1731,12 @@ def update_supplier_invoice(
 
     old_values, new_values = _changed_values(inv, updates)
 
-    # A single-line diesel invoice's fuel values flow onto its fill-up — refuse
-    # changing them while its diesel is locked, the same way line edits and
-    # deletes on a multi-line statement refuse.
-    if (
-        not inv.is_multi_line
-        and any(k in new_values for k in ("litres", "amount", "vehicle_reg", "invoice_date"))
-        and is_invoice_locked(db, inv.id)
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail=f"The diesel on invoice {inv.invoice_number or f'#{inv.id}'} is locked — "
-                   "unlock it before changing its values.",
-        )
+    # Invoice lock: a locked invoice is closed off — only payment-status fields
+    # and a free-text note may still change (keyed on CHANGED fields so a form
+    # that re-sends unchanged values never 403s).
+    ensure_supplier_invoice_unlocked(
+        db, inv, new_values, {"is_paid", "paid_date", "payment_reference", "notes"},
+    )
 
     for field, value in updates.items():
         setattr(inv, field, value)
@@ -1627,12 +1808,17 @@ def move_supplier_invoice_periods(
 
     This is a period-only change, deliberately allowed even on verified/locked or
     sent-costing invoices (pulling a late invoice OFF an already-sent costing is
-    the whole point), and always audit-logged.
+    the whole point), and always audit-logged. The INVOICE lock, by contrast,
+    does block it — see below.
     """
     inv = db.query(SupplierInvoice).filter(SupplierInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_invoice_access(inv, current_user)
+    # Invoice lock: unlike the verification/sent locks above, a LOCKED invoice
+    # is closed off/reconciled — its reporting month may not silently change.
+    # The workflow is unlock → move → re-lock, which keeps the audit trail.
+    ensure_supplier_invoice_unlocked(db, inv)
 
     def _validate_pair(m, y, label):
         if (m is None) != (y is None):
@@ -1835,6 +2021,7 @@ def archive_supplier_invoice(
     ensure_not_locked(inv)
     ensure_not_on_sent_costing(db, inv)
     ensure_invoice_not_profit_locked(db, inv)
+    ensure_supplier_invoice_unlocked(db, inv)
 
     inv.is_archived = True
     log_action(
@@ -1861,6 +2048,8 @@ def delete_supplier_invoice(
     ensure_not_locked(inv)
     ensure_not_on_sent_costing(db, inv)
     ensure_invoice_not_profit_locked(db, inv)
+    # Invoice lock: also protects the fill-up hard-delete below.
+    ensure_supplier_invoice_unlocked(db, inv)
 
     log_action(
         db, "supplier_invoice.deleted", user_id=current_user.id,
@@ -1923,6 +2112,7 @@ def remove_fixed_expense(
     if scope == "all":
         for r in group:
             ensure_not_locked(r)
+            ensure_supplier_invoice_unlocked(db, r)
         for r in group:
             log_action(
                 db, "supplier_invoice.deleted", user_id=current_user.id,
@@ -1937,6 +2127,7 @@ def remove_fixed_expense(
     affected = [r for r in group if (p := _period(r)) is not None and target is not None and p >= target]
     for r in affected:
         ensure_not_locked(r)
+        ensure_supplier_invoice_unlocked(db, r)
     for r in affected:
         if _period(r) == target:
             r.is_archived = True
@@ -2208,6 +2399,7 @@ def add_line_item(
     ensure_not_locked(inv)
     ensure_not_on_sent_costing(db, inv, extra_reg=data.unit)
     ensure_invoice_not_profit_locked(db, inv, extra_reg=data.unit)
+    ensure_supplier_invoice_unlocked(db, inv)
 
     total_before = inv.amount
     li = SupplierInvoiceLineItem(invoice_id=invoice_id, **data.model_dump())
@@ -2263,21 +2455,11 @@ def update_line_item(
     inv = li.invoice
     total_before = inv.amount
 
-    # The line's values flow onto its diesel fill-up. Refuse a value change when
-    # that diesel is locked — same rule as deleting the line; otherwise editing
-    # lines would be a way around the invoice lock. (The edit form re-PUTs every
-    # line on save, so only refuse when a fuel-relevant field actually changed.)
-    if (
-        any(k in new_values for k in (
-            "quantity", "amount_excl_vat", "amount_incl_vat", "item_code", "unit", "line_date",
-        ))
-        and is_invoice_locked(db, inv.id)
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail=f"The diesel on invoice {inv.invoice_number or f'#{inv.id}'} is locked — "
-                   "unlock it before changing lines.",
-        )
+    # Invoice lock: no line value may change on a locked invoice. The edit form
+    # re-PUTs every line with re-indexed sort_order on save, so only refuse when
+    # something other than sort_order actually changed.
+    if any(k != "sort_order" for k in new_values):
+        ensure_supplier_invoice_unlocked(db, inv)
 
     for k, v in updates.items():
         setattr(li, k, v)
@@ -2330,14 +2512,9 @@ def delete_line_item(
     total_before = inv.amount
     snapshot = {"line_id": li.id, **_line_snapshot(li)}
     label = li.unit or li.item_description or f"#{li.id}"
-    # The line's diesel log goes with it. Refuse when that diesel is locked —
-    # otherwise deleting lines would be a way around the invoice lock.
-    if is_invoice_locked(db, inv.id):
-        raise HTTPException(
-            status_code=403,
-            detail=f"The diesel on invoice {inv.invoice_number or f'#{inv.id}'} is locked — "
-                   "unlock it before removing lines.",
-        )
+    # Invoice lock: the line (and its diesel log) may not be removed while the
+    # invoice is locked.
+    ensure_supplier_invoice_unlocked(db, inv)
     fillups_deleted = _delete_line_fillups(db, inv, li, current_user.id)
     db.delete(li)
     db.flush()
@@ -2361,8 +2538,9 @@ def delete_line_item(
 
 # ── Attachment (physical invoice document) ─────────────────────────────────────
 # Adding/replacing/removing the physical document is allowed even after the final
-# lock (verified3_by) — like adding verification ticks, it changes no financial
-# figures — so these endpoints deliberately do NOT call ensure_not_locked.
+# lock (verified3_by) AND the invoice lock — like adding verification ticks, it
+# changes no financial figures — so these endpoints deliberately call neither
+# ensure_not_locked nor ensure_supplier_invoice_unlocked.
 
 @router.post("/{invoice_id}/attachment", response_model=SupplierInvoiceOut)
 async def upload_attachment(
@@ -2404,11 +2582,16 @@ async def upload_attachment(
     db.refresh(inv)
 
     fillup = db.query(DieselFillUp).filter(DieselFillUp.supplier_invoice_id == invoice_id).first()
+    # Attaching is allowed on a locked invoice, and the frontend merges this
+    # response over the row — carry the lock fields so they aren't wiped.
+    lk = get_lock(db, invoice_id)
     out = SupplierInvoiceOut.model_validate(inv)
     return out.model_copy(update={
         **get_verification_display(db, inv),
         "slip_number": fillup.slip_number if fillup else None,
         "diesel_fillup_id": fillup.id if fillup else None,
+        "locked_at": lk.locked_at if lk else None,
+        "locked_by_name": (lk.locked_by.full_name if lk and lk.locked_by else None),
     })
 
 
@@ -2498,6 +2681,8 @@ def _archive_orphaned_placeholder(db: Session, old_inv_id, new_inv_id: int, user
     old = db.query(SupplierInvoice).filter(SupplierInvoice.id == old_inv_id).first()
     if not old or old.is_archived:
         return False
+    if is_invoice_locked(db, old_inv_id):  # reconciled and closed off — leave it
+        return False
     if old.is_multi_line or old.line_items:   # an imported/real invoice — leave it alone
         return False
     number = _norm_slip(old.invoice_number)
@@ -2554,6 +2739,8 @@ def _archive_filler_invoices_by_slip(db: Session, statement: SupplierInvoice, sl
     for ph in candidates:
         if ph.line_items or ph.is_paid or ph.verified3_by:
             continue
+        if is_invoice_locked(db, ph.id):   # locked → closed off, never absorbed
+            continue
         if db.query(DieselFillUp).filter(
             DieselFillUp.supplier_invoice_id == ph.id,
             DieselFillUp.is_archived != True,
@@ -2590,7 +2777,7 @@ def bulk_import_invoices(
     }
 
     created, skipped, skipped_numbers = 0, 0, []
-    diesel_created, diesel_linked = 0, 0
+    diesel_created, diesel_linked, locked_skipped = 0, 0, 0
     conflicts: List[DieselConflict] = []
     # Printed slips whose lump placeholder has already been cleared this import, so a
     # slip that spans several sheet lines only triggers the clear once (Intsimbi).
@@ -2602,9 +2789,9 @@ def bulk_import_invoices(
     apply_admin_fee = diesel_settings.apply_admin_fee if diesel_settings else False
     entity_obj = db.query(BusinessEntity).filter(BusinessEntity.id == payload.entity_id).first()
     vat_rate = Decimal(str(entity_obj.vat_rate)) if entity_obj and entity_obj.vat_rate else Decimal("0.15")
-    # Locked diesel invoices take no fill-ups — the invoices and their lines still
-    # import, only the Diesel Log side is left untouched.
-    diesel_locked = locked_invoice_ids(db, payload.entity_id)
+    # Locked invoices take no fill-ups — the new invoices and their lines still
+    # import, only the Diesel Log side of anything locked is left untouched.
+    locked_ids = locked_invoice_ids(db, payload.entity_id)
 
     for item in payload.invoices:
         num = (item.invoice_number or '').strip()
@@ -2715,11 +2902,11 @@ def bulk_import_invoices(
             if not truck:
                 continue
 
-            # Diesel invoice lock — skip the fill-up sync entirely (no create, no
+            # Invoice lock — skip the fill-up sync entirely (no create, no
             # relink, no overwrite) for an invoice that has been closed off. A row
             # imported onto a brand-new invoice can't be locked yet, so this only
             # bites on a re-import over a reconciled invoice.
-            if inv.id in diesel_locked:
+            if inv.id in locked_ids:
                 continue
 
             # Use the rate from the Excel rate column if supplied; fall back to
@@ -2760,6 +2947,11 @@ def bulk_import_invoices(
                         DieselFillUp.supplier_id == payload.supplier_id,
                         DieselFillUp.is_archived != True,
                     ).first()
+                # A transaction sitting on a LOCKED invoice stays exactly where and
+                # as it is — the import may neither overwrite nor steal it.
+                if existing and existing.supplier_invoice_id in locked_ids:
+                    locked_skipped += 1
+                    continue
                 if existing:
                     old_inv_id = existing.supplier_invoice_id
                     existing.litres = litres_d
@@ -2810,6 +3002,13 @@ def bulk_import_invoices(
                 DieselFillUp.fillup_date == fillup_date,
                 DieselFillUp.is_archived != True,
             ).order_by(DieselFillUp.fillup_date.desc()).first()
+
+            # A fill-up on a LOCKED invoice may neither be overwritten nor stolen
+            # onto this statement — and raising a conflict would offer exactly
+            # that on resolution, so skip the line's diesel sync outright.
+            if existing_fillup and existing_fillup.supplier_invoice_id in locked_ids:
+                locked_skipped += 1
+                continue
 
             if existing_fillup:
                 litres_mismatch = abs(float(existing_fillup.litres or 0) - float(litres_d)) > 0.01
@@ -2907,13 +3106,15 @@ def bulk_import_invoices(
         resource_type="supplier_invoice",
         description=(
             f"Bulk imported {created} invoices for {supplier.name}; "
-            f"{diesel_created} diesel records created, {diesel_linked} linked"
+            f"{diesel_created} diesel records created, {diesel_linked} linked, "
+            f"{locked_skipped} lines skipped on locked invoices"
         ),
     )
     db.commit()
     return BulkImportResult(
         created=created, skipped=skipped, skipped_numbers=skipped_numbers,
         diesel_created=diesel_created, diesel_linked=diesel_linked,
+        locked_skipped=locked_skipped,
         conflicts=conflicts,
     )
 
@@ -2927,12 +3128,22 @@ def resolve_diesel_conflicts(
     current_user: User = Depends(get_current_user),
 ):
     resolved = 0
+    skipped_locked = 0
     for res in resolutions:
         fillup = db.query(DieselFillUp).filter_by(id=res.fillup_id).first()
         invoice = db.query(SupplierInvoice).filter_by(id=res.invoice_id).first()
         if not fillup or not invoice:
             continue
         _check_entity_access(fillup.entity_id, current_user)
+
+        # Invoice lock: neither steal a fill-up off a locked invoice nor land
+        # one on a locked destination — both would change a reconciled total.
+        if (
+            is_invoice_locked(db, fillup.supplier_invoice_id)
+            or is_invoice_locked(db, invoice.id)
+        ):
+            skipped_locked += 1
+            continue
 
         # Re-link the fill-up to the resolved invoice, then archive the placeholder
         # it was auto-created under (same orphan the import's re-link branch clears —
@@ -2966,7 +3177,7 @@ def resolve_diesel_conflicts(
         resolved += 1
 
     db.commit()
-    return {"resolved": resolved}
+    return {"resolved": resolved, "skipped_locked": skipped_locked}
 
 
 # ── One-off cleanup: archive stranded diesel placeholders ─────────────────────
@@ -3027,8 +3238,15 @@ def cleanup_diesel_placeholders(
 
     archived: List[dict] = []
     seen_placeholders: set = set()
+    # Invoice lock: a locked statement's diesel may not grow, and a locked
+    # placeholder may not be stripped/archived — skip both sides.
+    locked = locked_invoice_ids(db)
+    skipped_locked = 0
 
     for inv in multiline_invs:
+        if inv.id in locked:
+            skipped_locked += 1
+            continue
         for li in inv.line_items:
             slip = (li.item_code or "").strip()
             if not slip:
@@ -3039,6 +3257,9 @@ def cleanup_diesel_placeholders(
             placeholders = ph_by_slip.get((inv.entity_id, inv.supplier_id, _norm_slip(slip)), [])
             for ph in placeholders:
                 if ph.id == inv.id or ph.id in seen_placeholders or ph.line_items:
+                    continue
+                if ph.id in locked:
+                    skipped_locked += 1
                     continue
                 # Re-link this slip's fill-ups off the placeholder onto the statement
                 # (Scenario B). When the manual flow already re-linked them, there are
@@ -3106,6 +3327,9 @@ def cleanup_diesel_placeholders(
         for ph in blanks:
             if ph.id == inv.id or ph.id in seen_placeholders or ph.line_items:
                 continue
+            if ph.id in locked:
+                skipped_locked += 1
+                continue
             if ph.is_paid or ph.verified3_by or not ph.vehicle_reg or ph.amount is None:
                 continue
             # A shell has no fill-up of its own — the real diesel cost lives on the
@@ -3150,6 +3374,7 @@ def cleanup_diesel_placeholders(
     return {
         "committed": commit,
         "archived_count": len(archived),
+        "skipped_locked": skipped_locked,
         "archived": archived,
     }
 

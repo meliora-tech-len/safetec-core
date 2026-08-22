@@ -322,10 +322,10 @@ export const archiveDieselFillUp = (id) => api.patch(`/diesel/fillups/${id}/arch
 export const verifyDieselFillUp       = (id, action) => api.patch(`/diesel/fillups/${id}/verify`, null, { params: action ? { action } : {} })
 export const finalizeDieselFillUp     = (id, action) => api.patch(`/diesel/fillups/${id}/finalize`, null, { params: action ? { action } : {} })
 export const getDieselWarnings        = (params = {}) => api.get('/diesel/warnings', { params })
-// Diesel invoice lock — per supplier invoice; locked = no values in or out
-export const getDieselInvoiceLocks    = (params = {}) => api.get('/diesel/invoice-locks', { params })
-export const setDieselInvoiceLock     = (params = {}, data = {}) => api.put('/diesel/invoice-locks', data, { params })
-export const setDieselInvoiceLocksBulk = (data) => api.put('/diesel/invoice-locks/bulk', data)
+// Supplier invoice lock — per invoice; locked = nothing added, changed or removed
+export const getSupplierInvoiceLocks    = (params = {}) => api.get('/supplier-invoices/locks', { params })
+export const setSupplierInvoiceLock     = (params = {}, data = {}) => api.put('/supplier-invoices/locks', data, { params })
+export const setSupplierInvoiceLocksBulk = (data) => api.put('/supplier-invoices/locks/bulk', data)
 export const bulkImportSupplierInvoices = (data) => api.post('/supplier-invoices/bulk-import', data)
 export const resolveSupplierDieselConflicts = (resolutions) => api.post('/supplier-invoices/resolve-diesel-conflicts', resolutions)
 export const archiveSupplierInvoice   = (id) => api.patch(`/supplier-invoices/${id}/archive`)

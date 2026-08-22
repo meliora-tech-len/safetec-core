@@ -1373,18 +1373,19 @@ class DieselFillUp(Base):
     creator          = relationship("User", foreign_keys=[created_by])
 
 
-class DieselInvoiceLock(Base):
-    """Per supplier invoice: the diesel logged against this invoice is LOCKED.
-    No fill-up on it may be added, changed or removed (a free-text note stays
-    editable — it is never part of any total), and the admin-fee re-snapshot
-    skips it.
+class SupplierInvoiceLock(Base):
+    """Per supplier invoice: the invoice is LOCKED — closed off/reconciled.
+    Nothing on it may be added, changed or removed: values, line items,
+    delete/archive, period moves and its diesel fill-ups all refuse. Still
+    allowed while locked (none of these change a financial figure): paid
+    status, free-text notes, verification ticks and attachments.
 
     Deliberately narrower than the subcontractor costing "Sent" flag: nothing
     rolls forward, and the scope is one invoice rather than a whole month —
-    diesel reconciles invoice by invoice. `locked_at` is the recorded lock date,
+    invoices reconcile one by one. `locked_at` is the recorded lock date,
     for the audit trail and the on-screen label.
     """
-    __tablename__ = "diesel_invoice_locks"
+    __tablename__ = "supplier_invoice_locks"
 
     id                  = Column(Integer, primary_key=True, index=True)
     supplier_invoice_id = Column(Integer, ForeignKey("supplier_invoices.id", ondelete="CASCADE"), nullable=False)
@@ -1397,7 +1398,7 @@ class DieselInvoiceLock(Base):
     locked_by        = relationship("User")
 
     __table_args__ = (
-        UniqueConstraint("supplier_invoice_id", name="uq_diesel_invoice_lock"),
+        UniqueConstraint("supplier_invoice_id", name="uq_supplier_invoice_lock"),
     )
 
 
