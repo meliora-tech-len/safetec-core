@@ -66,20 +66,29 @@ function TruckSwitcher({ trucks, currentId, currentLabel, entities, onSelect }) 
     : (entityCode(t.entity_id) || 'Own Fleet')
 
   const q = query.trim().toLowerCase()
-  const groups = useMemo(() => {
-    const filtered = q
-      ? trucks.filter(t =>
-          t.registration?.toLowerCase().includes(q) ||
-          String(t.fleet_number || '').toLowerCase().includes(q) ||
-          t.make?.toLowerCase().includes(q))
-      : trucks
+  const allGroups = useMemo(() => {
     const m = {}
-    for (const t of filtered) { const g = groupOf(t); (m[g] = m[g] || []).push(t) }
+    for (const t of trucks) { const g = groupOf(t); (m[g] = m[g] || []).push(t) }
     Object.values(m).forEach(arr => arr.sort((a, b) =>
       (parseInt(a.fleet_number) || 9999) - (parseInt(b.fleet_number) || 9999) ||
       (a.registration || '').localeCompare(b.registration || '')))
     return Object.entries(m).sort(([a], [b]) => a.localeCompare(b))
-  }, [trucks, q, entities])
+  }, [trucks, entities])
+  const groups = useMemo(() => {
+    if (!q) return allGroups
+    return allGroups
+      .map(([g, list]) => [g, list.filter(t =>
+        t.registration?.toLowerCase().includes(q) ||
+        String(t.fleet_number || '').toLowerCase().includes(q) ||
+        t.make?.toLowerCase().includes(q))])
+      .filter(([, list]) => list.length > 0)
+  }, [allGroups, q])
+
+  // Flat order matching the dropdown, so the arrows step through the same list.
+  const ordered = useMemo(() => allGroups.flatMap(([, list]) => list), [allGroups])
+  const curIdx = ordered.findIndex(t => String(t.id) === String(currentId))
+  const prevTruck = curIdx > 0 ? ordered[curIdx - 1] : null
+  const nextTruck = curIdx >= 0 && curIdx < ordered.length - 1 ? ordered[curIdx + 1] : null
 
   const pick = (t) => { setOpen(false); setQuery(''); if (String(t.id) !== String(currentId)) onSelect(t.id) }
 
@@ -91,7 +100,16 @@ function TruckSwitcher({ trucks, currentId, currentLabel, entities, onSelect }) 
   }
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 2 }}>
+      <button
+        className="btn btn-ghost btn-sm"
+        onClick={() => prevTruck && onSelect(prevTruck.id)}
+        disabled={!prevTruck}
+        title={prevTruck ? `Previous truck: ${prevTruck.registration}` : 'No previous truck'}
+        style={{ padding: '4px 5px', opacity: prevTruck ? 1 : 0.35 }}
+      >
+        <ChevronLeft size={18} />
+      </button>
       <button
         onClick={() => setOpen(o => !o)}
         title="Switch truck"
@@ -101,6 +119,15 @@ function TruckSwitcher({ trucks, currentId, currentLabel, entities, onSelect }) 
           {current ? current.registration : (currentLabel || '—')}
         </span>
         <ChevronDown size={20} style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      <button
+        className="btn btn-ghost btn-sm"
+        onClick={() => nextTruck && onSelect(nextTruck.id)}
+        disabled={!nextTruck}
+        title={nextTruck ? `Next truck: ${nextTruck.registration}` : 'No next truck'}
+        style={{ padding: '4px 5px', opacity: nextTruck ? 1 : 0.35 }}
+      >
+        <ChevronRight size={18} />
       </button>
 
       {open && (
