@@ -1044,6 +1044,7 @@ async def split_po_pdf(
 
     def _build():
         from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import RectangleObject
         try:
             reader = PdfReader(BytesIO(content))
         except Exception:
@@ -1083,7 +1084,14 @@ async def split_po_pdf(
             for g in groups:
                 writer = PdfWriter()
                 for idx in g["pages"]:
-                    writer.add_page(reader.pages[idx])
+                    src = reader.pages[idx]
+                    page = writer.add_page(src)
+                    # pypdf dedups identical box arrays across pages, appending the
+                    # 4 values once per page -> invalid 12-number /MediaBox that
+                    # viewers replace with portrait Letter, clipping the right edge.
+                    # Reassign fresh rectangles so each page keeps its own box.
+                    page.mediabox = RectangleObject([float(v) for v in src.mediabox])
+                    page.cropbox = RectangleObject([float(v) for v in src.cropbox])
                 out = BytesIO()
                 writer.write(out)
                 base = _safe_filename(g["po_number"])
