@@ -627,6 +627,7 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             'date':           inv.invoice_date.strftime('%Y-%m-%d') if inv.invoice_date else None,
             'invoice_number': inv.invoice_number or '',
             'supplier_name':  name,
+            'vehicle_reg':    inv.vehicle_reg or '',
             'description':    inv.description or name,
             'amount_incl':    round(incl, 2),
             'amount_excl':    round(excl, 2),
@@ -799,6 +800,47 @@ def supplier_summary_report(
             'amount_incl': round(sum(s['amount_incl'] for s in rows), 2),
         },
     }
+
+
+@router.get("/supplier-summary/export/excel")
+def supplier_summary_export_excel(
+    entity_id: int = Query(...),
+    year: int = Query(..., ge=2020),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Excel workbook of supplier invoices, one tab per supplier (plus a
+    Summary grid) — the shape of the manual supplier workbook. The whole
+    year by default; pass `month` for just that month.
+
+    Reuses _build_month_detail per month, so the rows and totals are exactly
+    the ones the Supplier Summary report shows.
+    """
+    import io
+    from fastapi.responses import StreamingResponse
+    from app.services.supplier_summary_export import generate_supplier_summary_excel
+
+    _check_entity_access(entity_id, current_user)
+    entity = db.query(BusinessEntity).filter(BusinessEntity.id == entity_id).first()
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    month_rows = {}
+    for m in [month] if month else range(1, 13):
+        rows = [r for r in _build_month_detail(db, entity_id, year, m)['input_invoices']
+                if not r['excluded']]
+        if rows:
+            month_rows[m] = rows
+
+    xl_bytes = generate_supplier_summary_excel(entity, year, month_rows)
+    code = (entity.code or 'entity').lower()
+    filename = f"supplier-summary-{code}-{year}" + (f"-{month:02d}" if month else "") + ".xlsx"
+    return StreamingResponse(
+        io.BytesIO(xl_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ── Report exclusions ─────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ import { useLocalState } from '../hooks/useLocalState'
 import {
   getDieselReportByTruck, getDieselReportBySupplier, getDieselAnnualSummary,
   getIncomeExpensesReport, getSarsVatDetail, getSarsVatDetailAnnual,
-  getSubcontractorLoadsReport, getSupplierSummaryReport, getPoLoadReconciliationReport, lookupPoLoadSlip,
+  getSubcontractorLoadsReport, getSupplierSummaryReport, downloadSupplierSummaryExcel, getPoLoadReconciliationReport, lookupPoLoadSlip,
   createReportExclusion, deleteReportExclusion,
   getProfitSheetReport, saveProfitSheetReport, setProfitSheetLock,
 } from '../services/api'
@@ -1168,6 +1168,36 @@ export default function ReportsPage() {
     doc.save(`${profitSlug}.pdf`)
   }
 
+  // ── Supplier Summary exports ────────────────────────────────────────────────
+  // Excel is generated server-side: one tab per supplier with month sections —
+  // the shape of the manually-kept supplier workbook. Whole year or one month.
+  const [supSumExporting, setSupSumExporting] = useState(false)
+  const handleSupSumExportExcel = async (monthOnly) => {
+    setShowExportMenu(false)
+    if (supSumExporting) return
+    setSupSumExporting(true)
+    try {
+      const params = { entity_id: entityId, year, ...(monthOnly ? { month } : {}) }
+      const r = await downloadSupplierSummaryExcel(params)
+      const url = URL.createObjectURL(new Blob([r.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `supplier-summary-${year}${monthOnly ? `-${String(month).padStart(2, '0')}` : ''}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      toast.error(errorMessage(err, 'Failed to export'))
+    } finally {
+      setSupSumExporting(false)
+    }
+  }
+  const handleSupSumExportCsv = () => {
+    setShowExportMenu(false)
+    exportCsv()
+  }
+
   const hasData = tab === 'income' ? !!incomeData
     : tab === 'profit' ? profitVisible.length > 0
     : tab === 'subloads' ? !!subData?.subcontractors?.length
@@ -1183,7 +1213,7 @@ export default function ReportsPage() {
           <p style={styles.subtitle}>Business reports and reconciliations</p>
         </div>
         <div style={{ position: 'relative' }}>
-          {tab === 'income' || tab === 'profit' || tab === 'subloads' || tab === 'poloads' ? (
+          {tab === 'income' || tab === 'profit' || tab === 'subloads' || tab === 'poloads' || tab === 'supsummary' ? (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {tab === 'profit' && (
                 <>
@@ -1250,6 +1280,10 @@ export default function ReportsPage() {
                       ? [{ label: 'Export Excel (.xlsx)', action: handleSubExportExcel }, { label: 'Export PDF', action: handleSubExportPdf }]
                       : tab === 'poloads'
                       ? [{ label: 'Export Excel (.xlsx)', action: handlePoExportExcel }, { label: 'Export PDF', action: handlePoExportPdf }]
+                      : tab === 'supsummary'
+                      ? [{ label: supSumExporting ? 'Exporting…' : `Export Excel — ${year} workbook`, action: () => handleSupSumExportExcel(false) },
+                         { label: supSumExporting ? 'Exporting…' : `Export Excel — ${MONTHS[month - 1]} ${year}`, action: () => handleSupSumExportExcel(true) },
+                         { label: 'Export CSV — this month', action: handleSupSumExportCsv }]
                       : detailData
                         ? [{ label: 'Export Excel (.xlsx)', action: handleDetailExportExcel }, { label: 'Export PDF', action: handleDetailExportPdf }]
                         : [{ label: 'Export Excel (.xlsx)', action: handleAnnualExportExcel }, { label: 'Export PDF', action: handleAnnualExportPdf }]
