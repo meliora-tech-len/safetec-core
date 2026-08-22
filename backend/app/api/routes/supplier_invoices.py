@@ -993,11 +993,18 @@ def invoices_by_vehicle_regs(db: Session, regs, month: int, year: int) -> dict:
         .all()
     )
     truck_by_reg: dict = {}
+    # Each requested reg also answers for its truck's other plate — a truck
+    # reissued with a new plate keeps the old one in temp_registration, and
+    # invoices captured before the change still carry it, so a lookup by the
+    # new reg must pull those in too.
+    regs_by_target: dict = {t: {t} for t in target_set}
     for t in trucks:
-        for reg in (t.registration, t.temp_registration):
-            key = (reg or "").strip().upper()
-            if key in target_set:
-                truck_by_reg.setdefault(key, t)
+        t_regs = {(r or "").strip().upper() for r in (t.registration, t.temp_registration)}
+        t_regs.discard("")
+        for key in t_regs & target_set:
+            truck_by_reg.setdefault(key, t)
+            regs_by_target[key] |= t_regs
+    search_set = set().union(*regs_by_target.values())
 
     safetec_ids = {
         e.id for e in db.query(BusinessEntity).filter(
@@ -1022,9 +1029,9 @@ def invoices_by_vehicle_regs(db: Session, regs, month: int, year: int) -> dict:
             SupplierInvoice.is_archived != True,
             stmt_idx.between(period_idx - 3, period_idx + 1),
             or_(
-                func.upper(SupplierInvoice.vehicle_reg).in_(target_set),
+                func.upper(SupplierInvoice.vehicle_reg).in_(search_set),
                 SupplierInvoice.line_items.any(
-                    func.upper(SupplierInvoiceLineItem.unit).in_(target_set)
+                    func.upper(SupplierInvoiceLineItem.unit).in_(search_set)
                 ),
             ),
         )
@@ -1041,8 +1048,8 @@ def invoices_by_vehicle_regs(db: Session, regs, month: int, year: int) -> dict:
             return natural == (year, month)
         return roll_past_sent(natural, truck.id, inv.created_at, sent_map) == (year, month)
 
-    def _amount_for_reg(inv: SupplierInvoice, target: str) -> float:
-        """Incl-VAT amount of this invoice attributable to one reg.
+    def _amount_for_regs(inv: SupplierInvoice, kregs: set) -> float:
+        """Incl-VAT amount of this invoice attributable to one truck's regs.
 
         Multi-line/split invoices with per-sub-line regs contribute only the
         sub-lines matching this truck; everything else contributes its full total.
@@ -1053,7 +1060,7 @@ def invoices_by_vehicle_regs(db: Session, regs, month: int, year: int) -> dict:
                 return float(sum(
                     (Decimal(str(li.amount_incl_vat or 0))
                      for li in inv.line_items
-                     if (li.unit or "").strip().upper() == target),
+                     if (li.unit or "").strip().upper() in kregs),
                     Decimal("0"),
                 ))
         return float(inv.amount)
@@ -1067,10 +1074,12 @@ def invoices_by_vehicle_regs(db: Session, regs, month: int, year: int) -> dict:
         # reg with stray whitespace is skipped here just as it is in the query.
         touched = {(inv.vehicle_reg or "").upper()}
         touched |= {(li.unit or "").upper() for li in (inv.line_items or [])}
-        for target in touched & target_set:
+        for target, kregs in regs_by_target.items():
+            if not (touched & kregs):
+                continue
             if not _in_period(inv, truck_by_reg.get(target)):
                 continue
-            amount = _amount_for_reg(inv, target)
+            amount = _amount_for_regs(inv, kregs)
             if amount == 0:
                 continue
             result[target].append({
