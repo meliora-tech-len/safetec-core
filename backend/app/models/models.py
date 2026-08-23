@@ -944,6 +944,9 @@ class DriverAdditionalLoad(Base):
     # Safetec additional-load extras (from the customer loads sheet)
     delivery_note     = Column(String(200), nullable=True)
     tons              = Column(Numeric(10, 2), nullable=True)
+    # What the CUSTOMER is charged for the load, EXCL VAT (`amount` above is the
+    # driver's payment). Feeds the Profit Sheet's sand-loads income.
+    load_value        = Column(Numeric(12, 2), nullable=True)
     waiting_for_slips = Column(Boolean, nullable=False, default=False)
     is_paid           = Column(Boolean, nullable=False, default=False)
     is_verified     = Column(Boolean, default=False)

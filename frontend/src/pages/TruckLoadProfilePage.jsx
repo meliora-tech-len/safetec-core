@@ -26,7 +26,7 @@ import {
   getVerifications, verifyValue, finalizeValue,
 } from '../services/api'
 import toast from 'react-hot-toast'
-import { errorMessage, dieselTypeForSupplier } from '../utils/helpers'
+import { errorMessage, dieselTypeForSupplier, entityVatRate } from '../utils/helpers'
 import DeleteModal from '../components/DeleteModal'
 import VerifyBadge from '../components/VerifyBadge'
 import VerifiableAmount from '../components/VerifiableAmount'
@@ -937,7 +937,7 @@ function DieselSection({ truck, year, month, suppliers, isBokamosho }) {
 
 // ── Additional Loads section (shown below main loads) ─────────────────────────
 function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId, isSafetec }) {
-  const EMPTY_AL = { driver_id: '', customer_id: '', route_name: '', delivery_note: '', tons: '', amount: '', load_date: '', waiting_for_slips: false, is_paid: false, notes: '' }
+  const EMPTY_AL = { driver_id: '', customer_id: '', route_name: '', delivery_note: '', tons: '', amount: '', load_value: '', load_date: '', waiting_for_slips: false, is_paid: false, notes: '' }
   const [entries, setEntries]   = useState([])
   const [loading, setLoading]   = useState(true)
   const [addingNew, setAddingNew] = useState(false)
@@ -970,6 +970,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
       route_name:    e.route_name || '',
       delivery_note: e.delivery_note || '',
       tons:          e.tons != null ? String(e.tons) : '',
+      load_value:    e.load_value != null ? String(e.load_value) : '',
       load_date:     e.load_date ? e.load_date.slice(0, 10) : today,
       amount:        e.amount != null ? String(e.amount) : '',
       waiting_for_slips: !!e.waiting_for_slips,
@@ -992,6 +993,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
         amount:             parseFloat(editEntryForm.amount) || 0,
         delivery_note:      editEntryForm.delivery_note || null,
         tons:               editEntryForm.tons !== '' ? parseFloat(editEntryForm.tons) : null,
+        load_value:         editEntryForm.load_value !== '' ? parseFloat(editEntryForm.load_value) : null,
         waiting_for_slips:  !!editEntryForm.waiting_for_slips,
         is_paid:            !!editEntryForm.is_paid,
         notes:              editEntryForm.notes || null,
@@ -1050,6 +1052,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
         amount,
         delivery_note:      form.delivery_note || null,
         tons:               form.tons !== '' ? parseFloat(form.tons) : null,
+        load_value:         form.load_value !== '' ? parseFloat(form.load_value) : null,
         waiting_for_slips:  !!form.waiting_for_slips,
         is_paid:            !!form.is_paid,
         notes: form.notes || null,
@@ -1066,6 +1069,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
   const handleDelete = (entry) => setDeleteTarget(entry)
 
   const total = entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
+  const totalValue = entries.reduce((s, e) => s + (parseFloat(e.load_value) || 0), 0)
   const driverTypeByName = drivers.reduce((acc, d) => {
     acc[`${d.first_name} ${d.last_name}`.trim()] = d.driver_type
     return acc
@@ -1149,6 +1153,14 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
               <label className="form-label">Amount (R) *</label>
               <input className="form-input" type="number" step="0.01" min="0" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
             </div>
+            {isSafetec && (
+              <div>
+                {/* The customer charge for the load (excl VAT) — flows to the
+                    Profit Sheet as sand-load income; the driver gets Amount. */}
+                <label className="form-label">Load Value (Excl VAT)</label>
+                <input className="form-input" type="number" step="0.01" min="0" value={form.load_value} onChange={e => set('load_value', e.target.value)} placeholder="0.00" />
+              </div>
+            )}
             <div>
               <label className="form-label">Note</label>
               <input className="form-input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
@@ -1189,6 +1201,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
                 <SortableHeader label="Date" col="load_date" sort={addSort} onSort={onAddSort} />
                 {isSafetec && <SortableHeader label="Tons" col="tons" sort={addSort} onSort={onAddSort} style={{ textAlign: 'right' }} />}
                 <SortableHeader label="Amount" col="amount" sort={addSort} onSort={onAddSort} style={{ textAlign: 'right' }} />
+                {isSafetec && <SortableHeader label="Load Value" col="load_value" sort={addSort} onSort={onAddSort} style={{ textAlign: 'right' }} />}
                 {isSafetec && <th>Status</th>}
                 <th>Note</th>
                 <th></th>
@@ -1230,6 +1243,13 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
                         onChange={ev => setEE('amount', ev.target.value)} placeholder="0.00"
                         style={{ width: 90, textAlign: 'right' }} />
                     </td>
+                    {isSafetec && (
+                      <td style={{ padding: '4px 6px' }}>
+                        <input className="form-input" type="number" step="0.01" value={editEntryForm.load_value}
+                          onChange={ev => setEE('load_value', ev.target.value)} placeholder="0.00"
+                          style={{ width: 90, textAlign: 'right' }} />
+                      </td>
+                    )}
                     {isSafetec && (
                       <td style={{ padding: '4px 6px', whiteSpace: 'nowrap' }}>
                         <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer', marginBottom: 3 }}>
@@ -1280,6 +1300,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
                     <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(e.load_date)}</td>
                     {isSafetec && <td style={{ textAlign: 'right', fontSize: 12 }}>{e.tons != null ? fmt(e.tons) : '—'}</td>}
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(e.amount)}</td>
+                    {isSafetec && <td style={{ textAlign: 'right', fontSize: 12 }}>{e.load_value != null ? fmt(e.load_value) : '—'}</td>}
                     {isSafetec && (
                       <td style={{ whiteSpace: 'nowrap' }}>
                         {e.waiting_for_slips && (
@@ -1317,6 +1338,7 @@ function AdditionalLoadsSection({ truck, year, month, drivers, selectedDriverId,
                 <tr style={{ background: 'var(--bg-surface)', fontWeight: 700, borderTop: '2px solid var(--border)' }}>
                   <td colSpan={isSafetec ? 5 : 3} style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'right' }}>Total</td>
                   <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(total)}</td>
+                  {isSafetec && <td style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--accent)' }}>{fmt(totalValue)}</td>}
                   <td colSpan={isSafetec ? 3 : 2} />
                 </tr>
               </tfoot>
@@ -1934,6 +1956,7 @@ const psAmt = { fontWeight: 600, fontSize: 13, minWidth: 130, textAlign: 'right'
 function ProfitSheetSection({ truck, year, month, summary }) {
   const [data, setData]         = useState({})
   const [supplierInvs, setSupplierInvs] = useState([])
+  const [sandExcl, setSandExcl] = useState(0)
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
   const [dirty, setDirty]       = useState(false)
@@ -1944,10 +1967,14 @@ function ProfitSheetSection({ truck, year, month, summary }) {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [expRes, invRes] = await Promise.all([
+      const [expRes, invRes, addRes] = await Promise.all([
         getTruckMonthlyExpenses(truck.id, { year, month }),
         truck.registration ? getSupplierInvoicesByVehicle({ vehicle_reg: truck.registration, month, year }) : Promise.resolve({ data: [] }),
+        getTruckAdditionalLoads(truck.id, { year, month }).catch(() => ({ data: [] })),
       ])
+      // Additional (sand) loads income — the captured customer value per load,
+      // excl VAT. Joins the truck's own invoiced income below.
+      setSandExcl((addRes.data || []).reduce((s, e) => s + (parseFloat(e.load_value) || 0), 0))
       const expData = expRes.data
       // Everything lives in the unified custom_lines list. The server decides which
       // lines a fresh month opens with — it duplicates the previous month's list in
@@ -1975,7 +2002,7 @@ function ProfitSheetSection({ truck, year, month, summary }) {
   useEffect(() => { fetchData() }, [fetchData])
 
   // ── Per-value verification overlay (profit sheet) — optional on every value ──
-  const { user: pvUser, isAdmin: pvIsAdmin } = useAuth()
+  const { user: pvUser, isAdmin: pvIsAdmin, entities: pvEntities } = useAuth()
   const [pVerif, setPVerif] = useState({})
   const profitPrefix = `profit:${truck.id}:${year}-${String(month).padStart(2, '0')}`
   const fetchPVerif = useCallback(() => {
@@ -2063,10 +2090,14 @@ function ProfitSheetSection({ truck, year, month, summary }) {
   // For subcontractor trucks that's the payout (after the R5/ton admin fee);
   // for Safetec-owned trucks the subcontractor totals are zero, so fall back to
   // the truck's own invoiced income instead.
+  // Additional (sand) loads join the auto income on top of either fallback —
+  // captured excl VAT, grossed up with the entity's saved rate for the incl
+  // figure (mirrors the Profit Sheet report's calculation).
   const subExcl  = parseFloat(summary?.total_subcontractor_excl_vat) || 0
   const subIncl  = parseFloat(summary?.total_subcontractor_incl_vat) || 0
-  const autoIncomeExcl = subExcl > 0 ? subExcl : (parseFloat(summary?.total_excl_vat) || 0)
-  const autoIncomeIncl = subIncl > 0 ? subIncl : (parseFloat(summary?.total_incl_vat) || 0)
+  const sandIncl = sandExcl * (1 + entityVatRate(pvEntities, truck.entity_id))
+  const autoIncomeExcl = (subExcl > 0 ? subExcl : (parseFloat(summary?.total_excl_vat) || 0)) + sandExcl
+  const autoIncomeIncl = (subIncl > 0 ? subIncl : (parseFloat(summary?.total_incl_vat) || 0)) + sandIncl
   const incomeExcl = data.income_excl_vat != null ? parseFloat(data.income_excl_vat) : autoIncomeExcl
   const incomeIncl = data.income_incl_vat != null ? parseFloat(data.income_incl_vat) : autoIncomeIncl
 
@@ -2112,6 +2143,9 @@ function ProfitSheetSection({ truck, year, month, summary }) {
                 style={{ width: 120, fontWeight: 700, fontSize: 15, color: 'var(--text-muted)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
               />
             </PV>
+            {sandExcl > 0 && (
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>incl. {fmt(sandExcl)} additional loads</div>
+            )}
           </div>
           {/* Income Incl VAT — editable */}
           <div style={{ padding: '10px 20px', borderRight: '1px solid var(--border)' }}>
@@ -2125,6 +2159,9 @@ function ProfitSheetSection({ truck, year, month, summary }) {
                 style={{ width: 120, fontWeight: 700, fontSize: 15, color: 'var(--accent)', background: 'transparent', border: 'none', outline: 'none', padding: 0, textAlign: 'left' }}
               />
             </PV>
+            {sandExcl > 0 && (
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>incl. {fmt(sandIncl)} additional loads</div>
+            )}
           </div>
           {/* Total Expenses — calculated, read-only */}
           <div style={{ padding: '10px 20px', borderRight: '1px solid var(--border)' }}>

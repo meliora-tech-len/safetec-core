@@ -16,10 +16,13 @@ migration locally runs it against production. There is no isolated dev DB.
 
 - **Never edit or renumber an applied migration.** They are the historical
   record of what ran against prod. New work always takes the next free number.
-- Highest number as of 2026-08-22: **134**
-  (`134_supplier_invoice_lock_rename.py`, applied to prod 2026-08-22 at deploy —
-  an empty `supplier_invoice_locks` shell left by an earlier create_all run had
-  to be dropped first). Next free number: **135**.
+- Highest number as of 2026-08-23: **135**
+  (`135_additional_load_value.py`, applied to prod 2026-08-23 — customer load
+  value on additional loads for the Profit Sheet pull-through).
+  Next free number: **136**.
+  Before that: `134_supplier_invoice_lock_rename.py`, applied to prod
+  2026-08-22 at deploy — an empty `supplier_invoice_locks` shell left by an
+  earlier create_all run had to be dropped first.
 - Schema/feature changes get a numbered migration. One-off *data* fixes
   (backfills, restores, deletions for a specific incident) go in `manual/`
   instead — unnumbered, named for what they did, ideally with a paired

@@ -1186,6 +1186,7 @@ class DriverAdditionalLoadCreate(BaseModel):
     amount: Decimal
     delivery_note: Optional[str] = None
     tons: Optional[Decimal] = None
+    load_value: Optional[Decimal] = None
     waiting_for_slips: bool = False
     is_paid: bool = False
     is_verified: bool = False
@@ -1200,6 +1201,7 @@ class DriverAdditionalLoadUpdate(BaseModel):
     amount: Optional[Decimal] = None
     delivery_note: Optional[str] = None
     tons: Optional[Decimal] = None
+    load_value: Optional[Decimal] = None
     waiting_for_slips: Optional[bool] = None
     is_paid: Optional[bool] = None
     is_verified: Optional[bool] = None
@@ -2888,6 +2890,7 @@ class ProfitSheetReportAuto(BaseModel):
     diesel: Decimal = Decimal("0")
     loads: Decimal = Decimal("0")
     profit: Decimal = Decimal("0")
+    sand_loads_incl_vat: Decimal = Decimal("0")
 
 
 class ProfitSheetReportRowOut(BaseModel):

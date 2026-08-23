@@ -12,7 +12,7 @@ from app.models.models import (
     DriverPayCycle, Driver, PayrollSettings, PayrollEntry, Supplier, PaymentTermType,
     Invoice, InvoiceLineItem, Customer, DocumentType, InvoiceStatus, BusinessEntity,
     Truck, Subcontractor, ReportExclusion, TruckMonthlyExpenses, ProfitSheetReportRow,
-    ProfitSheetLock,
+    ProfitSheetLock, DriverAdditionalLoad,
 )
 from app.services.audit import log_action
 from app.services.diesel_service import apply_fillup_period, supplier_bills_own_admin_fee
@@ -1598,15 +1598,16 @@ _PROFIT_SHEET_EXPENSE_COLUMNS = [
 
 
 def _profit_sheet_net_profit(sheet, loads_incl: float, sub_incl: float,
-                             supplier_total: float) -> float:
+                             supplier_total: float, sand_incl: float = 0.0) -> float:
     """Net profit for one truck-month, exactly as the truck's Profit Sheet tab
     shows it: income incl VAT − (captured expense lines + supplier invoices).
 
     Income falls back the same way the sheet does — the manual override first,
-    then the subcontractor payout, then the truck's own invoiced income — so the
-    report and the sheet can never disagree.
+    then the subcontractor payout, then the truck's own invoiced income, plus
+    the additional (sand) loads' customer value — so the report and the sheet
+    can never disagree.
     """
-    auto_income = sub_incl if sub_incl > 0 else loads_incl
+    auto_income = (sub_incl if sub_incl > 0 else loads_incl) + sand_incl
     income = float(sheet.income_incl_vat) if (sheet and sheet.income_incl_vat is not None) else auto_income
 
     expenses = supplier_total
@@ -1690,6 +1691,40 @@ def profit_sheet_report(
     ) if truck_ids else []
     diesel_by_truck = {r.truck_id: float(r.total or 0) for r in diesel_rows}
 
+    # Additional (sand) loads — the customer value captured per load in the
+    # truck's Additional Loads section, stored EXCL VAT. Matched to trucks by
+    # registration (current + old/temp plate, like the truck's own view) and
+    # scoped by the pay-cycle month the entries live under. Grossed up with the
+    # entity's saved VAT rate, this feeds the "Sand Loads (Incl VAT)" column and
+    # joins the truck's income in Profit.
+    reg_to_truck = {}
+    for t in trucks:
+        for r in (t.registration, t.temp_registration):
+            if r:
+                reg_to_truck[r.strip().upper()] = t.id
+    sand_rows = (
+        db.query(
+            DriverAdditionalLoad.truck_registration,
+            func.coalesce(func.sum(DriverAdditionalLoad.load_value), 0).label('value'),
+        )
+        .join(DriverPayCycle, DriverAdditionalLoad.pay_cycle_id == DriverPayCycle.id)
+        .filter(
+            DriverAdditionalLoad.truck_registration.isnot(None),
+            DriverPayCycle.pay_year == year,
+            DriverPayCycle.pay_month == month,
+            DriverAdditionalLoad.is_archived != True,  # noqa: E712
+            DriverAdditionalLoad.load_value.isnot(None),
+        )
+        .group_by(DriverAdditionalLoad.truck_registration)
+        .all()
+    ) if trucks else []
+    vat_mult = 1 + float(entity_vat_rate(db, entity_id))
+    sand_by_truck: dict = {}
+    for reg, value in sand_rows:
+        tid = reg_to_truck.get((reg or '').strip().upper())
+        if tid is not None:
+            sand_by_truck[tid] = sand_by_truck.get(tid, 0.0) + float(value or 0)
+
     sheets = {
         s.truck_id: s
         for s in db.query(TruckMonthlyExpenses).filter(
@@ -1750,10 +1785,11 @@ def profit_sheet_report(
         diesel = diesel_by_truck.get(t.id, 0.0)
         supplier_invs = inv_by_reg.get((t.registration or '').strip().upper()) or []
         supplier_total = sum(float(i.get('amount') or 0) for i in supplier_invs)
+        sand_incl = round(sand_by_truck.get(t.id, 0.0) * vat_mult, 2)
 
         # A truck with nothing captured and nothing typed is not on the sheet —
         # but a zero-amount invoice (a no-charge record) still counts as captured.
-        if not lr and not diesel and not sheet and not supplier_invs and rec is None:
+        if not lr and not diesel and not sheet and not supplier_invs and not sand_incl and rec is None:
             continue
 
         profit = _profit_sheet_net_profit(
@@ -1761,6 +1797,7 @@ def profit_sheet_report(
             float(lr.incl or 0) if lr else 0.0,
             float(lr.sub_incl or 0) if lr else 0.0,
             supplier_total,
+            sand_incl,
         )
         rows.append(ProfitSheetReportRowOut(
             truck_id=t.id,
@@ -1776,6 +1813,7 @@ def profit_sheet_report(
                 diesel=round(diesel, 2),
                 loads=loads,
                 profit=profit,
+                sand_loads_incl_vat=sand_incl,
             ),
             overrides=_overrides(rec),
         ))

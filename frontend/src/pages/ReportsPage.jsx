@@ -54,7 +54,7 @@ const psValue = (r, key) => {
     case 'diesel': return psBlank(ov.diesel) ? psNum(auto.diesel) : psNum(ov.diesel)
     case 'loads':  return psBlank(ov.loads)  ? psNum(auto.loads)  : psNum(ov.loads)
     case 'profit': return psBlank(ov.profit) ? psNum(auto.profit) : psNum(ov.profit)
-    case 'sand':   return psNum(ov.sand_loads_incl_vat)
+    case 'sand':   return psBlank(ov.sand_loads_incl_vat) ? psNum(auto.sand_loads_incl_vat) : psNum(ov.sand_loads_incl_vat)
     case 'diesel_avg': {
       if (!psBlank(ov.diesel_avg_per_load)) return psNum(ov.diesel_avg_per_load)
       const loads = psValue(r, 'loads')
@@ -1503,8 +1503,10 @@ function ProfitSheetReport({
                     {cell({ r, field: 'profit', autoText: fmtN(r.auto?.profit), bold: true })}
                   </td>
                   <td style={{ ...styles.td, padding: 4 }}>
-                    {/* No calculated source — sand loads are captured by hand. */}
-                    {cell({ r, field: 'sand_loads_incl_vat', autoText: '' })}
+                    {/* Calculated from the truck's Additional Loads (load value
+                        + VAT); blank when none captured, overtypable as ever. */}
+                    {cell({ r, field: 'sand_loads_incl_vat',
+                            autoText: psNum(r.auto?.sand_loads_incl_vat) ? fmtN(r.auto.sand_loads_incl_vat) : '' })}
                   </td>
                   <td style={{ ...styles.td, padding: 4 }}>
                     {/* Derived: profit − sand loads, unless she pins it by hand. */}
