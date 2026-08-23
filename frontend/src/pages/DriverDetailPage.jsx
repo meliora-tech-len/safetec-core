@@ -8,7 +8,7 @@ import VerifyBadge from '../components/VerifyBadge'
 import VerifiableAmount from '../components/VerifiableAmount'
 import BulkUnlockButton from '../components/BulkUnlockButton'
 import DateInput from '../components/DateInput'
-import { errorMessage } from '../utils/helpers'
+import { errorMessage, entityVatRate } from '../utils/helpers'
 import { getVerifications, verifyValue, finalizeValue } from '../services/api'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 import SearchableSelect from '../components/SearchableSelect'
@@ -594,6 +594,11 @@ export default function DriverDetailPage() {
   const ctcComputed = grossEarnings
     + (stat ? stat.provident + stat.nbcrfli + stat.wellness : 0)
     + (isCasual ? totalFoodPaid : 0)
+  // VAT-inclusive CTC — the entity's SAVED vat_rate (never hardcoded 1.15),
+  // applied to the effective CTC (manual override wins over the computed value).
+  const ctcEffective = ovNum('ctc_override', ctcComputed)
+  const vatRate = entityVatRate(entities, driver?.entity_id)
+  const ctcInclVat = ctcEffective * (1 + vatRate)
 
   const downloadPayslip = async () => {
     setPdfLoading(true)
@@ -1038,6 +1043,12 @@ export default function DriverDetailPage() {
                       {' '}= {fmt(ctcComputed)}
                     </div>
                   )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0 0', fontSize: 13 }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>
+                      CTC (VAT included)<span style={{ color: 'var(--text-muted)', fontSize: 11 }}> @ {+(vatRate * 100).toFixed(2)}%</span>
+                    </span>
+                    <span style={{ fontWeight: 600 }}>{fmt(ctcInclVat)}</span>
+                  </div>
                 </div>
 
                 <button className="btn-primary" style={{ marginTop: 14, width: '100%' }} onClick={saveLoads} disabled={savingLoads}>

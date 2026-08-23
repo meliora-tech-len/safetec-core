@@ -29,6 +29,7 @@ from reportlab.platypus import (
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 from app.core.constants import MONTH_NAMES_0 as MONTHS
+from app.services.vat import DEFAULT_VAT_RATE
 
 
 # ── Colour / formatting helpers ───────────────────────────────────────────────
@@ -353,12 +354,17 @@ def _build_permanent_payslip(driver, cycle, calc: dict, entity, ytd: dict, avail
     co_contrib    = float(provident + nbcrfli + wellness)
 
     ctc = float(calc.get("ctc", 0)) or (disp_gross + co_contrib)
+    # VAT-inclusive CTC off the entity's SAVED rate (services/vat.py rule) —
+    # 0.15 only as fallback for a NULL rate.
+    vat_rate = (float(entity.vat_rate) if getattr(entity, "vat_rate", None) is not None
+                else float(DEFAULT_VAT_RATE))
 
     cp_rows = [
         [P("CURRENT PERIOD", s_ysl), ""],
         [P("Total Perks",       s_lbl), P(_fmt(total_perks),  s_r)],
         [P("Co. Contributions", s_lbl), P(_fmt(co_contrib),   s_r)],
         [P("Cost to Company (CTC)", s_lbl), P(_fmt(ctc), s_r)],
+        [P(f"CTC (VAT included @ {vat_rate * 100:g}%)", s_lbl), P(_fmt(ctc * (1 + vat_rate)), s_r)],
     ]
     cp_tbl = Table(cp_rows, colWidths=[130 * mm, 56 * mm])
     cp_tbl.setStyle(TableStyle([

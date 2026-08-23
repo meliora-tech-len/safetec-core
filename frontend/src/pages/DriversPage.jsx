@@ -344,6 +344,8 @@ export default function DriversPage() {
         { header: `Loads (${periodLabel})`,          key: 'load_count_this_month' },
         { header: `Food Allowance (${periodLabel})`, value: r => parseFloat(r.food_total_this_month || 0).toFixed(2) },
         { header: `Net Pay (${periodLabel})`,        value: r => parseFloat(r.net_pay_this_month || 0).toFixed(2) },
+        { header: `CTC (${periodLabel})`,            value: r => rand(r.ctc_this_month) },
+        { header: 'CTC (VAT INCL)', value: r => rand(parseFloat(r.ctc_this_month || 0) * (1 + entityVatRate(entities, r.entity_id))) },
         { header: 'Status',       value: r => r.is_active ? 'Active' : 'Inactive' },
       ]
 
