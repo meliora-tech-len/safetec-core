@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { getSuppliers, getEntities, createSupplierBulk, updateSupplier, deleteSupplier, permanentlyDeleteSupplier } from '../services/api'
-import { errorMessage, formatDate } from '../utils/helpers'
+import { getSuppliers, getSupplierFinancialSummary, getEntities, createSupplierBulk, updateSupplier, deleteSupplier, permanentlyDeleteSupplier } from '../services/api'
+import { errorMessage, formatDate, formatCurrency } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, User, X, Copy, AlertCircle } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
+import FinancialPeriodFilter, { defaultFinancialPeriod, financialPeriodLabel } from '../components/FinancialPeriodFilter'
 import { usePendingInvoices } from '../hooks/usePendingInvoices'
 import PendingInvoicesModal from '../components/PendingInvoicesModal'
 import DeleteModal from '../components/DeleteModal'
@@ -44,8 +46,36 @@ export default function SuppliersPage() {
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
+  // Paid / Outstanding totals per supplier for the selected period. The period
+  // is shared with the Subcontractors overview so flipping between the two
+  // pages keeps the same view.
+  const [finPeriod, setFinPeriod] = useSessionState('overview-fin-period', defaultFinancialPeriod)
+  const [finSummary, setFinSummary] = useState(null)
+  useEffect(() => {
+    let cancelled = false
+    setFinSummary(null)
+    const params = { period: finPeriod.mode }
+    if (finPeriod.mode !== 'lifetime') params.year = finPeriod.year
+    if (finPeriod.mode === 'month') params.month = finPeriod.month
+    if (filterEntity) params.entity_id = filterEntity
+    getSupplierFinancialSummary(params)
+      .then(r => {
+        if (cancelled) return
+        const map = {}
+        for (const row of r.data) map[row.supplier_id] = row
+        setFinSummary(map)
+      })
+      .catch(() => { if (!cancelled) setFinSummary({}) })
+    return () => { cancelled = true }
+  }, [filterEntity, finPeriod])
+
   const { sort, onSort } = useSort('name', 'asc', 'suppliers')
-  const sortedSuppliers = useMemo(() => applySort(suppliers, sort), [suppliers, sort])
+  const enriched = useMemo(() => suppliers.map(s => ({
+    ...s,
+    paid_total: finSummary?.[s.id]?.paid ?? 0,
+    outstanding_total: finSummary?.[s.id]?.outstanding ?? 0,
+  })), [suppliers, finSummary])
+  const sortedSuppliers = useMemo(() => applySort(enriched, sort), [enriched, sort])
 
   const openCreate = () => setModal({ mode: 'create' })
   const openEdit = (supplier) => setModal({ mode: 'edit', supplier })
@@ -99,9 +129,9 @@ export default function SuppliersPage() {
             </button>
           )}
           <ExportButton
-            title="Suppliers Report"
+            title={`Suppliers Report — ${financialPeriodLabel(finPeriod)}`}
             filename="suppliers"
-            data={suppliers}
+            data={sortedSuppliers}
             columns={[
               { header: 'Name',                key: 'name' },
               { header: 'Trading Name',        key: 'trading_name' },
@@ -109,6 +139,8 @@ export default function SuppliersPage() {
               { header: 'Email',               key: 'email' },
               { header: 'Phone',               key: 'phone' },
               { header: 'City',                key: 'city' },
+              { header: 'Paid',                value: r => formatCurrency(r.paid_total) },
+              { header: 'Outstanding',         value: r => formatCurrency(r.outstanding_total) },
               { header: 'Entity',              value: r => entityCode(r.entity_id) },
               { header: 'Reg No.',             key: 'registration_number' },
               { header: 'VAT No.',             key: 'vat_number' },
@@ -132,6 +164,7 @@ export default function SuppliersPage() {
           />
           {search && <button className="btn-icon" onClick={() => setSearch('')}><X size={13} /></button>}
         </div>
+        <FinancialPeriodFilter value={finPeriod} onChange={setFinPeriod} />
         {isAdmin && (
           <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
             <option value="">All Entities</option>
@@ -147,18 +180,17 @@ export default function SuppliersPage() {
             <tr>
               <SortableHeader label="Name" col="name" sort={sort} onSort={onSort} />
               <SortableHeader label="Payment Term" col="payment_term" sort={sort} onSort={onSort} />
-              <SortableHeader label="Contact Person" col="contact_person" sort={sort} onSort={onSort} />
-              <SortableHeader label="Email" col="email" sort={sort} onSort={onSort} />
-              <th>Phone</th>
+              <SortableHeader label="Paid" col="paid_total" sort={sort} onSort={onSort} style={{ textAlign: 'right' }} />
+              <SortableHeader label="Outstanding" col="outstanding_total" sort={sort} onSort={onSort} style={{ textAlign: 'right' }} />
               <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
               <th style={{ width: 80 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
+              <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40 }}><div className="spinner" style={{ margin: '0 auto' }} /></td></tr>
             ) : sortedSuppliers.length === 0 ? (
-              <tr><td colSpan={7}>
+              <tr><td colSpan={6}>
                 <div className="empty-state"><User size={32} /><p>No suppliers found</p></div>
               </td></tr>
             ) : sortedSuppliers.map(supplier => (
@@ -177,9 +209,20 @@ export default function SuppliersPage() {
                 <td>
                   <PaymentTermBadge term={supplier.payment_term} />
                 </td>
-                <td>{supplier.contact_person || '—'}</td>
-                <td>{supplier.email || '—'}</td>
-                <td>{supplier.phone || '—'}</td>
+                <td style={styles.amountCell}>
+                  {finSummary === null ? '…' : (
+                    <span style={{ color: supplier.paid_total > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                      {formatCurrency(supplier.paid_total)}
+                    </span>
+                  )}
+                </td>
+                <td style={styles.amountCell}>
+                  {finSummary === null ? '…' : (
+                    <span style={{ color: supplier.outstanding_total > 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
+                      {formatCurrency(supplier.outstanding_total)}
+                    </span>
+                  )}
+                </td>
                 <td>
                   <span style={styles.entityChip}>{entityCode(supplier.entity_id)}</span>
                 </td>
@@ -604,4 +647,5 @@ const styles = {
     fontSize: 10, fontWeight: 700, padding: '2px 7px',
     borderRadius: 4, letterSpacing: 0.5,
   },
+  amountCell: { textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 },
 }

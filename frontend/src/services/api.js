@@ -57,6 +57,7 @@ export const updateEntityInvoiceConfig = (id, data) => api.put(`/entities/${id}/
 
 // ── Suppliers ─────────────────────────────────────────────────────────────────
 export const getSuppliers = (params = {}) => api.get('/suppliers/', { params })
+export const getSupplierFinancialSummary = (params = {}) => api.get('/suppliers/summary', { params })
 export const getSupplier = (id) => api.get(`/suppliers/${id}`)
 export const createSupplier = (data) => api.post('/suppliers/', data)
 export const permanentlyDeleteSupplier = (id) => api.delete(`/suppliers/${id}/permanent`)
@@ -214,6 +215,7 @@ export const permanentlyDeleteCustomer = (id) => api.delete(`/customers/${id}/pe
 
 // ── Subcontractors ────────────────────────────────────────────────────────────
 export const getSubcontractors        = (params = {}) => api.get('/subcontractors/', { params })
+export const getSubcontractorFinancialSummary = (params = {}) => api.get('/subcontractors/summary', { params })
 export const getSubcontractor         = (id)          => api.get(`/subcontractors/${id}`)
 export const createSubcontractorBulk  = (data)        => api.post('/subcontractors/bulk', data)
 export const updateSubcontractor      = (id, data)    => api.put(`/subcontractors/${id}`, data)

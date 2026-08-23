@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { getSubcontractors, getEntities, createSubcontractorBulk, updateSubcontractor, deleteSubcontractor, permanentlyDeleteSubcontractor } from '../services/api'
-import { errorMessage, formatDate } from '../utils/helpers'
+import { getSubcontractors, getSubcontractorFinancialSummary, getEntities, createSubcontractorBulk, updateSubcontractor, deleteSubcontractor, permanentlyDeleteSubcontractor } from '../services/api'
+import { errorMessage, formatDate, formatCurrency } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, Building2, X, Copy } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
+import { useSessionState } from '../hooks/useSessionState'
+import FinancialPeriodFilter, { defaultFinancialPeriod, financialPeriodLabel } from '../components/FinancialPeriodFilter'
 import DeleteModal from '../components/DeleteModal'
 import SortableHeader, { useSort, applySort } from '../components/SortableHeader'
 
@@ -41,8 +43,37 @@ export default function SubcontractorsPage() {
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
 
+  // Income / Outgoing / Profit per subcontractor for the selected period.
+  // Shares its session key with the Suppliers overview so flipping between the
+  // two pages keeps the same view.
+  const [finPeriod, setFinPeriod] = useSessionState('overview-fin-period', defaultFinancialPeriod)
+  const [finSummary, setFinSummary] = useState(null)
+  useEffect(() => {
+    let cancelled = false
+    setFinSummary(null)
+    const params = { period: finPeriod.mode }
+    if (finPeriod.mode !== 'lifetime') params.year = finPeriod.year
+    if (finPeriod.mode === 'month') params.month = finPeriod.month
+    if (filterEntity) params.entity_id = filterEntity
+    getSubcontractorFinancialSummary(params)
+      .then(r => {
+        if (cancelled) return
+        const map = {}
+        for (const row of r.data) map[row.subcontractor_id] = row
+        setFinSummary(map)
+      })
+      .catch(() => { if (!cancelled) setFinSummary({}) })
+    return () => { cancelled = true }
+  }, [filterEntity, finPeriod])
+
   const { sort, onSort } = useSort('name', 'asc', 'subcontractors')
-  const sortedSubs = useMemo(() => applySort(subcontractors, sort), [subcontractors, sort])
+  const enriched = useMemo(() => subcontractors.map(s => ({
+    ...s,
+    income_total: finSummary?.[s.id]?.income ?? 0,
+    outgoing_total: finSummary?.[s.id]?.outgoing ?? 0,
+    profit_total: finSummary?.[s.id]?.profit ?? 0,
+  })), [subcontractors, finSummary])
+  const sortedSubs = useMemo(() => applySort(enriched, sort), [enriched, sort])
 
   // When a reg was searched, carry it into the profile so it jumps to that truck.
   const regQuery = debouncedSearch.trim()
@@ -98,15 +129,18 @@ export default function SubcontractorsPage() {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <ExportButton
-            title="Subcontractors"
+            title={`Subcontractors — ${financialPeriodLabel(finPeriod)}`}
             filename="subcontractors"
-            data={subcontractors}
+            data={sortedSubs}
             columns={[
               { header: 'Name',           key: 'name' },
               { header: 'Trading Name',   key: 'trading_name' },
               { header: 'Contact Person', key: 'contact_person' },
               { header: 'Email',          key: 'email' },
               { header: 'Phone',          key: 'phone' },
+              { header: 'Income',         value: r => formatCurrency(r.income_total) },
+              { header: 'Outgoing',       value: r => formatCurrency(r.outgoing_total) },
+              { header: 'Profit',         value: r => formatCurrency(r.profit_total) },
               { header: 'Entity',         value: r => entityCode(r.entity_id) },
               { header: 'Reg No.',        key: 'registration_number' },
               { header: 'VAT No.',        key: 'vat_number' },
@@ -130,6 +164,7 @@ export default function SubcontractorsPage() {
           />
           {search && <button className="btn-icon" onClick={() => setSearch('')}><X size={13} /></button>}
         </div>
+        <FinancialPeriodFilter value={finPeriod} onChange={setFinPeriod} />
         {isAdmin && (
           <select value={filterEntity} onChange={e => setFilterEntity(e.target.value)} style={{ width: 180 }}>
             <option value="">All Entities</option>
@@ -144,9 +179,9 @@ export default function SubcontractorsPage() {
           <thead>
             <tr>
               <SortableHeader label="Name" col="name" sort={sort} onSort={onSort} />
-              <SortableHeader label="Contact Person" col="contact_person" sort={sort} onSort={onSort} />
-              <SortableHeader label="Email" col="email" sort={sort} onSort={onSort} />
-              <th>Phone</th>
+              <SortableHeader label="Income" col="income_total" sort={sort} onSort={onSort} style={{ textAlign: 'right' }} />
+              <SortableHeader label="Outgoing" col="outgoing_total" sort={sort} onSort={onSort} style={{ textAlign: 'right' }} />
+              <SortableHeader label="Profit" col="profit_total" sort={sort} onSort={onSort} style={{ textAlign: 'right' }} />
               <SortableHeader label="Entity" col="entity_id" sort={sort} onSort={onSort} />
               <th>Actions</th>
             </tr>
@@ -167,9 +202,19 @@ export default function SubcontractorsPage() {
                   {sub.trading_name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sub.trading_name}</div>}
                   {sub.end_date && <div style={{ fontSize: 11, color: 'var(--warning, #b45309)' }}>Ends {formatDate(sub.end_date)}</div>}
                 </td>
-                <td>{sub.contact_person || '—'}</td>
-                <td>{sub.email || '—'}</td>
-                <td>{sub.phone || '—'}</td>
+                <td style={styles.amountCell}>
+                  {finSummary === null ? '…' : formatCurrency(sub.income_total)}
+                </td>
+                <td style={styles.amountCell}>
+                  {finSummary === null ? '…' : formatCurrency(sub.outgoing_total)}
+                </td>
+                <td style={styles.amountCell}>
+                  {finSummary === null ? '…' : (
+                    <span style={{ color: sub.profit_total > 0 ? 'var(--success)' : sub.profit_total < 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
+                      {formatCurrency(sub.profit_total)}
+                    </span>
+                  )}
+                </td>
                 <td><span style={styles.entityChip}>{entityCode(sub.entity_id)}</span></td>
                 <td>
                   <div style={{ display: 'flex', gap: 4 }}>
@@ -475,4 +520,5 @@ const styles = {
     background: 'var(--accent-dim)', color: 'var(--accent)',
     fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, letterSpacing: 0.5,
   },
+  amountCell: { textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 },
 }

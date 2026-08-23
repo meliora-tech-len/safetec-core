@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func, case, extract
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from app.db.database import get_db
@@ -59,6 +59,65 @@ def list_suppliers(
         query = query.filter(Supplier.registration_number.ilike(truck_registration))
 
     return query.order_by(Supplier.name).offset(skip).limit(limit).all()
+
+
+# NOTE: must be registered before /{supplier_id} or "summary" is parsed as an id.
+@router.get("/summary")
+def suppliers_financial_summary(
+    entity_id: Optional[int] = Query(None),
+    period: str = Query("month", pattern="^(month|year|lifetime)$"),
+    year: Optional[int] = Query(None, ge=2020),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Per-supplier Paid / Outstanding totals for the Suppliers overview table.
+
+    Supplier invoices are bucketed by invoice_date — the same convention as the
+    SARS VAT and Income-vs-Expenses reports (not the statement period).
+    """
+    if period == "month" and not (year and month):
+        raise HTTPException(status_code=400, detail="year and month are required for a monthly period")
+    if period == "year" and not year:
+        raise HTTPException(status_code=400, detail="year is required for a yearly period")
+
+    query = (
+        db.query(
+            SupplierInvoice.supplier_id.label("supplier_id"),
+            func.coalesce(func.sum(case(
+                (SupplierInvoice.is_paid == True, SupplierInvoice.amount), else_=0,
+            )), 0).label("paid"),
+            func.coalesce(func.sum(case(
+                (SupplierInvoice.is_paid == True, 0), else_=SupplierInvoice.amount,
+            )), 0).label("outstanding"),
+        )
+        .join(Supplier, Supplier.id == SupplierInvoice.supplier_id)
+        .filter(SupplierInvoice.is_archived == False)
+    )
+
+    if current_user.role != "admin":
+        access_ids = [a.entity_id for a in current_user.entity_access]
+        query = query.filter(Supplier.entity_id.in_(access_ids))
+    if entity_id:
+        _check_entity_access(entity_id, current_user)
+        query = query.filter(Supplier.entity_id == entity_id)
+
+    if period == "month":
+        query = query.filter(
+            extract("year", SupplierInvoice.invoice_date) == year,
+            extract("month", SupplierInvoice.invoice_date) == month,
+        )
+    elif period == "year":
+        query = query.filter(extract("year", SupplierInvoice.invoice_date) == year)
+
+    return [
+        {
+            "supplier_id": r.supplier_id,
+            "paid": float(r.paid or 0),
+            "outstanding": float(r.outstanding or 0),
+        }
+        for r in query.group_by(SupplierInvoice.supplier_id).all()
+    ]
 
 
 @router.get("/{supplier_id}", response_model=SupplierOut)

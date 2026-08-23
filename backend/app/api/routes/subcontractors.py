@@ -94,6 +94,70 @@ def list_subcontractors(
     return query.order_by(Subcontractor.name).offset(skip).limit(limit).all()
 
 
+# NOTE: must be registered before /{subcontractor_id} or "summary" is parsed as an id.
+@router.get("/summary")
+def subcontractors_financial_summary(
+    entity_id: Optional[int] = Query(None),
+    period: str = Query("month", pattern="^(month|year|lifetime)$"),
+    year: Optional[int] = Query(None, ge=2020),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Per-subcontractor Income / Outgoing / Profit (excl VAT) for the overview
+    table.
+
+    Mirrors the Subcontractor Loads report: income is what we invoice for the
+    sub's loads, outgoing is the payout to the sub, and a load belongs to its
+    STATEMENT period when one is set, falling back to the load date — so the
+    monthly figures reconcile with that report.
+    """
+    if period == "month" and not (year and month):
+        raise HTTPException(status_code=400, detail="year and month are required for a monthly period")
+    if period == "year" and not year:
+        raise HTTPException(status_code=400, detail="year is required for a yearly period")
+
+    query = (
+        db.query(
+            Subcontractor.id.label("subcontractor_id"),
+            func.coalesce(func.sum(TruckLoad.amount_excl_vat), 0).label("income"),
+            func.coalesce(func.sum(TruckLoad.subcontractor_amount_excl_vat), 0).label("outgoing"),
+        )
+        .join(Truck, Truck.subcontractor_id == Subcontractor.id)
+        .join(TruckLoad, TruckLoad.truck_id == Truck.id)
+        .filter(TruckLoad.is_archived == False)
+    )
+
+    if current_user.role != "admin":
+        access_ids = [a.entity_id for a in current_user.entity_access]
+        query = query.filter(Subcontractor.entity_id.in_(access_ids))
+    if entity_id:
+        _check_entity_access(entity_id, current_user)
+        query = query.filter(Subcontractor.entity_id == entity_id)
+
+    if period == "month":
+        query = query.filter(
+            func.coalesce(TruckLoad.statement_month, extract("month", TruckLoad.load_date)) == month,
+            func.coalesce(TruckLoad.statement_year, extract("year", TruckLoad.load_date)) == year,
+        )
+    elif period == "year":
+        query = query.filter(
+            func.coalesce(TruckLoad.statement_year, extract("year", TruckLoad.load_date)) == year,
+        )
+
+    result = []
+    for r in query.group_by(Subcontractor.id).all():
+        income = float(r.income or 0)
+        outgoing = float(r.outgoing or 0)
+        result.append({
+            "subcontractor_id": r.subcontractor_id,
+            "income": income,
+            "outgoing": outgoing,
+            "profit": round(income - outgoing, 2),
+        })
+    return result
+
+
 @router.get("/{subcontractor_id}", response_model=SubcontractorOut)
 def get_subcontractor(
     subcontractor_id: int,
