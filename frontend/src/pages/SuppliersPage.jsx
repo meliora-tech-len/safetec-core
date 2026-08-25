@@ -7,6 +7,7 @@ import { Plus, Search, Edit2, Trash2, User, X, Copy, AlertCircle } from 'lucide-
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
+import { useScrollMemory } from '../hooks/useScrollMemory'
 import FinancialPeriodFilter, { defaultFinancialPeriod } from '../components/FinancialPeriodFilter'
 import { usePendingInvoices } from '../hooks/usePendingInvoices'
 import PendingInvoicesModal from '../components/PendingInvoicesModal'
@@ -44,6 +45,9 @@ export default function SuppliersPage() {
 
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
+
+  // Coming back from a supplier profile lands on the same spot in the list
+  useScrollMemory('suppliers.scroll', !loading)
 
   // Paid / Outstanding totals per supplier for the selected period. The period
   // is shared with the Subcontractors overview so flipping between the two
