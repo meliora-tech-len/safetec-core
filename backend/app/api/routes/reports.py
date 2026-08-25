@@ -815,15 +815,17 @@ def supplier_summary_export_excel(
     start: Optional[date_cls] = Query(None),
     end: Optional[date_cls] = Query(None),
     supplier_id: Optional[int] = Query(None),
+    all_time: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Excel workbook of supplier invoices, one tab per supplier (plus a
     Summary grid) — the shape of the manual supplier workbook.
 
-    Period: either `year` (whole year, or one month with `month`) — the Reports
-    page — or a `start`/`end` date range (may span years) — the Supplier
-    Profile export. Pass `supplier_id` for just that supplier's workbook.
+    Period: `year` (whole year, or one month with `month`), a `start`/`end`
+    date range (may span years), or `all_time` — every month from the earliest
+    invoice on record to the latest. Pass `supplier_id` for just that
+    supplier's workbook.
 
     Reuses _build_month_detail per month, so the rows and totals are exactly
     the ones the Supplier Summary report shows. Day-precision: an unpinned row
@@ -871,8 +873,29 @@ def supplier_summary_export_excel(
         month_keys = [(year, month)] if month else [(year, m) for m in range(1, 13)]
         s_iso = e_iso = None
         period_label = f"{MONTH_NAMES[month - 1]} {year}" if month else str(year)
+    elif all_time:
+        # Span = earliest → latest report month on record: invoice_date for
+        # unpinned rows, the Manage→Move pin for pinned ones (same coalesce as
+        # _build_month_detail), so a pinned row can't fall outside the span.
+        flt = [SupplierInvoice.entity_id == entity_id, SupplierInvoice.is_archived != True]
+        if supplier_id is not None:
+            flt.append(SupplierInvoice.supplier_id == supplier_id)
+        ym = (func.coalesce(SupplierInvoice.report_period_year,
+                            func.extract('year', SupplierInvoice.invoice_date)) * 12
+              + func.coalesce(SupplierInvoice.report_period_month,
+                              func.extract('month', SupplierInvoice.invoice_date)) - 1)
+        lo, hi = db.query(func.min(ym), func.max(ym)).filter(*flt).first()
+        if lo is None:
+            month_keys = []
+            period_label = "All time"
+        else:
+            lo, hi = int(lo), int(hi)
+            month_keys = [(i // 12, i % 12 + 1) for i in range(lo, hi + 1)]
+            period_label = (f"{MONTH_NAMES[lo % 12][:3]} {lo // 12} – "
+                            f"{MONTH_NAMES[hi % 12][:3]} {hi // 12}")
+        s_iso = e_iso = None
     else:
-        raise HTTPException(status_code=400, detail="Provide either year or a start/end date range")
+        raise HTTPException(status_code=400, detail="Provide a year, a start/end date range, or all_time")
 
     month_rows = {}
     for (yy, mm) in month_keys:
@@ -891,8 +914,10 @@ def supplier_summary_export_excel(
     base = "supplier-summary-" + (f"{sup_slug}-" if sup_slug else "") + code
     if start and end:
         filename = f"{base}-{start.isoformat()}-to-{end.isoformat()}.xlsx"
-    else:
+    elif year:
         filename = f"{base}-{year}" + (f"-{month:02d}" if month else "") + ".xlsx"
+    else:
+        filename = f"{base}-all.xlsx"
     return StreamingResponse(
         io.BytesIO(xl_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -1,14 +1,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { getSuppliers, getSupplierFinancialSummary, getEntities, createSupplierBulk, updateSupplier, deleteSupplier, permanentlyDeleteSupplier } from '../services/api'
-import { errorMessage, formatDate, formatCurrency } from '../utils/helpers'
+import { errorMessage, formatCurrency } from '../utils/helpers'
 import toast from 'react-hot-toast'
 import { Plus, Search, Edit2, Trash2, User, X, Copy, AlertCircle } from 'lucide-react'
-import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
 import { useSessionState } from '../hooks/useSessionState'
-import FinancialPeriodFilter, { defaultFinancialPeriod, financialPeriodLabel } from '../components/FinancialPeriodFilter'
+import FinancialPeriodFilter, { defaultFinancialPeriod } from '../components/FinancialPeriodFilter'
 import { usePendingInvoices } from '../hooks/usePendingInvoices'
 import PendingInvoicesModal from '../components/PendingInvoicesModal'
 import DeleteModal from '../components/DeleteModal'
@@ -128,25 +127,6 @@ export default function SuppliersPage() {
               <AlertCircle size={15} /> {pending.count} to verify
             </button>
           )}
-          <ExportButton
-            title={`Suppliers Report — ${financialPeriodLabel(finPeriod)}`}
-            filename="suppliers"
-            data={sortedSuppliers}
-            columns={[
-              { header: 'Name',                key: 'name' },
-              { header: 'Trading Name',        key: 'trading_name' },
-              { header: 'Contact Person',      key: 'contact_person' },
-              { header: 'Email',               key: 'email' },
-              { header: 'Phone',               key: 'phone' },
-              { header: 'City',                key: 'city' },
-              { header: 'Paid',                value: r => formatCurrency(r.paid_total) },
-              { header: 'Outstanding',         value: r => formatCurrency(r.outstanding_total) },
-              { header: 'Entity',              value: r => entityCode(r.entity_id) },
-              { header: 'Reg No.',             key: 'registration_number' },
-              { header: 'VAT No.',             key: 'vat_number' },
-              { header: 'Created',             value: r => formatDate(r.created_at) },
-            ]}
-          />
           <button className="btn-primary" onClick={openCreate}>
             <Plus size={15} /> New Supplier
           </button>
