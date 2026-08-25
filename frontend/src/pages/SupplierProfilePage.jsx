@@ -1271,10 +1271,6 @@ export default function SupplierProfilePage() {
   const [payingBulk, setPayingBulk] = useState(false)
   const [finalizingBulk, setFinalizingBulk] = useState(false)
   const [unfinalizingBulk, setUnfinalizingBulk] = useState(false)
-  // Paid-date prompt: which mark-paid action is waiting on a date.
-  // { mode: 'single', inv } | { mode: 'bulk' } | { mode: 'statement', group }
-  const [paidPrompt, setPaidPrompt] = useState(null)
-  const [paidPromptDate, setPaidPromptDate] = useState(today)
   const firstInputRef = useRef(null)
   // Physical-invoice attachment: one shared hidden file input, targeted at a row.
   const attachInputRef = useRef(null)
@@ -1851,14 +1847,25 @@ export default function SupplierProfilePage() {
   }
 
   // Mark every selected unpaid invoice as paid (a single payment covering many
-  // invoices). Already-paid selections are skipped. Opens the paid-date prompt;
-  // the actual writes happen in confirmMarkPaid.
-  const handleMarkPaidSelected = () => {
+  // invoices). Already-paid selections are skipped. Stamped with today's date.
+  const handleMarkPaidSelected = async () => {
     const targets = groups.flatMap(g => g.invoices)
       .filter(i => selectedIds.has(i.id) && !i.is_paid)
     if (!targets.length) return
-    setPaidPromptDate(today)
-    setPaidPrompt({ mode: 'bulk' })
+    setPayingBulk(true)
+    let ok = 0
+    for (const inv of targets) {
+      try {
+        await updateSupplierInvoice(inv.id, { is_paid: true, paid_date: today })
+        ok++
+      } catch (e) { toast.error(errorMessage(e)) }
+    }
+    setPayingBulk(false)
+    clearSelection()
+    if (ok) {
+      toast.success(`Marked ${ok} invoice${ok === 1 ? '' : 's'} as paid`)
+      loadInvoices()
+    }
   }
 
   const handleFinalize = async (inv, intent) => {
@@ -1909,64 +1916,26 @@ export default function SupplierProfilePage() {
     finally { setLockBusyId(null) }
   }
 
-  // Marking paid asks for the payment date first; unmarking clears it directly.
+  // Marking paid stamps today's date (sent as plain yyyy-mm-dd so the calendar
+  // day is stored as-is, no timezone shift); unmarking clears it.
   const handleMarkPaid = async (inv, e) => {
     e.stopPropagation()
-    if (!inv.is_paid) {
-      setPaidPromptDate(today)
-      setPaidPrompt({ mode: 'single', inv })
-      return
-    }
     try {
-      await updateSupplierInvoice(inv.id, { is_paid: false, paid_date: null })
+      await updateSupplierInvoice(inv.id, {
+        is_paid: !inv.is_paid,
+        paid_date: inv.is_paid ? null : today,
+      })
       loadInvoices()
     } catch (e) { toast.error(errorMessage(e)) }
   }
 
-  const handleMarkAllPaid = (group) => {
-    setPaidPromptDate(today)
-    setPaidPrompt({ mode: 'statement', group })
-  }
-
-  // Confirm from the paid-date prompt: apply the chosen date to whichever
-  // mark-paid action opened it. paid_date goes over as plain yyyy-mm-dd so the
-  // chosen calendar date is stored as-is (no timezone shifting).
-  const confirmMarkPaid = async () => {
-    if (!paidPrompt || !paidPromptDate) return
-    const { mode, inv, group } = paidPrompt
-    setPaidPrompt(null)
-    if (mode === 'single') {
-      try {
-        await updateSupplierInvoice(inv.id, { is_paid: true, paid_date: paidPromptDate })
-        loadInvoices()
-      } catch (e) { toast.error(errorMessage(e)) }
-      return
-    }
-    if (mode === 'statement') {
-      try {
-        await markStatementPaid(supplierId, group.statement_year, group.statement_month, paidPromptDate)
-        toast.success('Statement marked as paid')
-        loadInvoices()
-      } catch (e) { toast.error(errorMessage(e)) }
-      return
-    }
-    // bulk: every selected unpaid invoice
-    const targets = groups.flatMap(g => g.invoices)
-      .filter(i => selectedIds.has(i.id) && !i.is_paid)
-    setPayingBulk(true)
-    let ok = 0
-    for (const target of targets) {
-      try {
-        await updateSupplierInvoice(target.id, { is_paid: true, paid_date: paidPromptDate })
-        ok++
-      } catch (e) { toast.error(errorMessage(e)) }
-    }
-    setPayingBulk(false)
-    clearSelection()
-    if (ok) {
-      toast.success(`Marked ${ok} invoice${ok === 1 ? '' : 's'} as paid`)
+  const handleMarkAllPaid = async (group) => {
+    if (!confirm(`Mark all invoices in ${MONTH_NAMES[group.statement_month]} ${group.statement_year} as paid?`)) return
+    try {
+      await markStatementPaid(supplierId, group.statement_year, group.statement_month, today)
+      toast.success('Statement marked as paid')
       loadInvoices()
-    }
+    } catch (e) { toast.error(errorMessage(e)) }
   }
 
   const handleKeyDown = (e, saveFn, cancelFn) => {
@@ -2414,53 +2383,6 @@ export default function SupplierProfilePage() {
         </div>
       )}
 
-      {/* Paid-date prompt for the single / bulk / statement mark-paid actions */}
-      {paidPrompt && (
-        <div style={wbgModalOverlay} onClick={() => setPaidPrompt(null)}>
-          <div style={{ ...wbgModalBox, width: 340 }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 6px', fontSize: 15 }}>
-              {paidPrompt.mode === 'single' && `Mark invoice ${paidPrompt.inv.invoice_number || '(no number)'} as paid`}
-              {paidPrompt.mode === 'bulk' && `Mark ${selectedUnpaid.length} invoice${selectedUnpaid.length === 1 ? '' : 's'} as paid`}
-              {paidPrompt.mode === 'statement' && `Mark all invoices in ${MONTH_NAMES[paidPrompt.group.statement_month]} ${paidPrompt.group.statement_year} as paid`}
-            </h3>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
-              {paidPrompt.mode === 'single' && paidPrompt.inv.amount != null && formatCurrency(paidPrompt.inv.amount)}
-              {paidPrompt.mode === 'bulk' && formatCurrency(selectedUnpaidTotal)}
-              {paidPrompt.mode === 'statement' && `${paidPrompt.group.invoices.filter(i => !i.is_paid).length} unpaid invoice(s)`}
-            </div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Paid Date</label>
-            <DateInput
-              autoFocus
-              value={paidPromptDate}
-              onChange={e => setPaidPromptDate(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') confirmMarkPaid()
-                if (e.key === 'Escape') setPaidPrompt(null)
-              }}
-              className="form-input"
-              style={{ width: '100%' }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-              <button className="btn-ghost" style={{ fontSize: 13, padding: '6px 12px' }} onClick={() => setPaidPrompt(null)}>
-                Cancel
-              </button>
-              <button
-                onClick={confirmMarkPaid}
-                disabled={!paidPromptDate}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '7px 16px', borderRadius: 7, border: 'none',
-                  background: '#16a34a', color: '#fff', fontWeight: 600, fontSize: 13,
-                  cursor: paidPromptDate ? 'pointer' : 'default', opacity: paidPromptDate ? 1 : 0.6,
-                }}>
-                <CheckCircle size={15} />
-                Mark Paid
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <DeleteModal
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -2680,6 +2602,7 @@ export default function SupplierProfilePage() {
                       </th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
+                      <th style={styles.th}>Paid Date</th>
                       <th style={styles.th}>Notes</th>
                       <th style={styles.th}></th>
                     </tr>
@@ -2699,7 +2622,7 @@ export default function SupplierProfilePage() {
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
                       // Diesel drops Description, Deposit, Outstanding and VAT; adds Litres + Rate/L
-                      const totalCols = (isDiesel ? 9 : 13) + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
+                      const totalCols = (isDiesel ? 10 : 14) + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
 
                       return (
                         <Fragment key={inv.id}>
@@ -3022,11 +2945,18 @@ export default function SupplierProfilePage() {
                             <td style={{ ...styles.td, textAlign: 'center' }}>
                               <button
                                 onClick={e => handleMarkPaid(inv, e)}
-                                title={inv.is_paid ? `Paid${inv.paid_date ? ' ' + formatDate(inv.paid_date) : ''}` : 'Mark paid'}
+                                title={inv.is_paid ? 'Mark unpaid' : 'Mark paid'}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: inv.is_paid ? '#16a34a' : 'var(--border)' }}
                               >
                                 <CheckCircle size={16} />
                               </button>
+                            </td>
+
+                            {/* Paid Date — stamped when the tick is set */}
+                            <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
+                              {inv.is_paid && inv.paid_date
+                                ? <span style={{ fontSize: 12 }}>{formatDate(inv.paid_date)}</span>
+                                : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                             </td>
 
                             {/* Notes */}
@@ -3196,7 +3126,7 @@ export default function SupplierProfilePage() {
                         Statement Total:
                       </td>
                       <td style={{ ...styles.td, fontWeight: 700 }}>{formatCurrency(group.subtotal)}</td>
-                      <td colSpan={(isDiesel ? 5 : 8) + (isDiesel && !isWBGDiesel ? 2 : 0)} style={styles.td} />
+                      <td colSpan={(isDiesel ? 6 : 9) + (isDiesel && !isWBGDiesel ? 2 : 0)} style={styles.td} />
                     </tr>
                   </tfoot>
                 </table>
