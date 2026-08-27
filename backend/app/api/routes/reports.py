@@ -639,6 +639,8 @@ def _build_month_detail(db, entity_id: int, year: int, month: int) -> dict:
             'vat':            round(incl - excl, 2),
             'vat_applicable': vat_applicable,
             'category':       category,
+            # Same Paid/Outstanding rule as the Suppliers overview (is_paid flag).
+            'is_paid':        bool(inv.is_paid),
             # Diesel fill-up breakdown for rows that expand (Intsimbi only, where
             # the admin fee is supplier-billed and carries the invoice's only VAT).
             'fillup_lines':   fillup_lines,

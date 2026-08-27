@@ -1,9 +1,10 @@
 """Supplier Summary Excel export (openpyxl).
 
 One worksheet per supplier — the way the manual supplier workbook is kept —
-with the year's invoices grouped under a banner per month, a total under each
-month, and a grand total at the bottom. A Summary sheet up front holds the
-supplier × month grid (incl VAT).
+with the year's invoices grouped under a banner per month, Paid / Outstanding /
+Total under each month, and a period total at the bottom. A
+Summary sheet up front holds the supplier × month grid (incl VAT) with Paid /
+Outstanding / Total rows beneath it.
 
 Rows are exactly what the on-screen Supplier Summary shows
 (reports._build_month_detail: invoice-date basis with Manage→Move pins,
@@ -29,6 +30,24 @@ def _sheet_title(name: str, used: set) -> str:
         n += 1
     used.add(clean.upper())
     return clean
+
+
+# Per-block sums: excl / vat / incl overall, and the incl-VAT split into paid
+# vs outstanding (Suppliers-overview rule: is_paid flag set → paid, else the
+# whole amount is outstanding).
+_SUM_KEYS = ("excl", "vat", "incl", "paid_excl", "paid_vat", "paid_incl",
+             "out_excl", "out_vat", "out_incl")
+
+
+def _empty_sums() -> dict:
+    return {k: 0.0 for k in _SUM_KEYS}
+
+
+def _accumulate(sums: dict, r: dict) -> None:
+    pre = "paid_" if r.get("is_paid") else "out_"
+    for k, field in (("excl", "amount_excl"), ("vat", "vat"), ("incl", "amount_incl")):
+        sums[k] += r[field]
+        sums[pre + k] += r[field]
 
 
 def generate_supplier_summary_excel(entity, period_label: str, month_rows: dict) -> bytes:
@@ -88,6 +107,32 @@ def generate_supplier_summary_excel(entity, period_label: str, month_rows: dict)
             c.fill = fill
         return c
 
+    def totals_block(ws, row, title, sums, fill, color, merge_label=False, split=True):
+        """PAID / OUTSTANDING / TOTAL rows for one month — or, with
+        split=False, just the TOTAL row (the period total at the foot of a
+        multi-month tab). Paid and Outstanding sit on the light total fill; the
+        TOTAL row takes the block's own fill/colour. Returns the row after the
+        block."""
+        def line(r, text, pre, row_fill, row_color):
+            label(ws, r, 1, text, bold=True, fill=row_fill, color=row_color)
+            label(ws, r, 2, "", fill=row_fill)
+            if merge_label:
+                # Merged across A:B so long period labels ("15 Jun 2026 – …")
+                # aren't clipped by the narrow date column.
+                ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+            for col, k in ((3, "excl"), (4, "vat"), (5, "incl")):
+                c = amount(ws, r, col, sums[pre + k], bold=True, fill=row_fill)
+                c.font = Font(bold=True, color=row_color, size=9)
+            label(ws, r, 6, "", fill=row_fill)
+            label(ws, r, 7, "", fill=row_fill)
+
+        if split:
+            line(row, f"{title} PAID", "paid_", TOTAL_FILL, "111111")
+            line(row + 1, f"{title} OUTSTANDING", "out_", TOTAL_FILL, "111111")
+            row += 2
+        line(row, f"{title} TOTAL", "", fill, color)
+        return row + 1
+
     ent_label = f"{getattr(entity, 'code', '') or ''} — {getattr(entity, 'name', '') or ''}".strip(" —")
 
     # ── Summary sheet: supplier × month grid (incl VAT) ───────────────────────
@@ -112,22 +157,36 @@ def generate_supplier_summary_excel(entity, period_label: str, month_rows: dict)
     c.alignment = RIGHT
     row += 1
 
-    grand_by_month = {m: 0.0 for m in months_present}
+    # Paid / Outstanding follow the Suppliers overview rule: an invoice is paid
+    # when its is_paid flag is set, otherwise the full amount is outstanding.
+    paid_by_month = {m: 0.0 for m in months_present}
+    outst_by_month = {m: 0.0 for m in months_present}
     for sup in ordered:
         label(ws, row, 1, sup["name"])
         sup_total = 0.0
         for i, m in enumerate(months_present):
-            mt = sum(r["amount_incl"] for r in sup["months"].get(m, []))
-            grand_by_month[m] += mt
+            rows = sup["months"].get(m, [])
+            mt = sum(r["amount_incl"] for r in rows)
+            paid_by_month[m] += sum(r["amount_incl"] for r in rows if r.get("is_paid"))
+            outst_by_month[m] += sum(r["amount_incl"] for r in rows if not r.get("is_paid"))
             sup_total += mt
-            amount(ws, row, 2 + i, mt if sup["months"].get(m) else None)
+            amount(ws, row, 2 + i, mt if rows else None)
         amount(ws, row, 2 + len(months_present), sup_total, bold=True)
         row += 1
 
-    label(ws, row, 1, "TOTAL", bold=True, fill=TOTAL_FILL)
+    for title, by_month in (("PAID", paid_by_month), ("OUTSTANDING", outst_by_month)):
+        label(ws, row, 1, title, bold=True, fill=TOTAL_FILL)
+        for i, m in enumerate(months_present):
+            amount(ws, row, 2 + i, by_month[m], bold=True, fill=TOTAL_FILL)
+        amount(ws, row, 2 + len(months_present), sum(by_month.values()), bold=True, fill=TOTAL_FILL)
+        row += 1
+    label(ws, row, 1, "TOTAL", bold=True, fill=HDR_FILL, color="FFFFFF")
     for i, m in enumerate(months_present):
-        amount(ws, row, 2 + i, grand_by_month[m], bold=True, fill=TOTAL_FILL)
-    amount(ws, row, 2 + len(months_present), sum(grand_by_month.values()), bold=True, fill=TOTAL_FILL)
+        amount(ws, row, 2 + i, paid_by_month[m] + outst_by_month[m], bold=True, fill=HDR_FILL) \
+            .font = Font(bold=True, color="FFFFFF", size=9)
+    amount(ws, row, 2 + len(months_present),
+           sum(paid_by_month.values()) + sum(outst_by_month.values()), bold=True, fill=HDR_FILL) \
+        .font = Font(bold=True, color="FFFFFF", size=9)
     ws.freeze_panes = "B6"
 
     # ── One sheet per supplier ────────────────────────────────────────────────
@@ -144,7 +203,7 @@ def generate_supplier_summary_excel(entity, period_label: str, month_rows: dict)
         ws.cell(row=2, column=1, value=f"{ent_label} · {period_label}").font = Font(color="6B7280", size=10)
 
         row = 4
-        grand = {"excl": 0.0, "vat": 0.0, "incl": 0.0}
+        grand = _empty_sums()
         for m in sorted(sup["months"]):
             rows = sup["months"][m]
             # Month banner across the full width, like the manual sheet's teal band.
@@ -162,7 +221,7 @@ def generate_supplier_summary_excel(entity, period_label: str, month_rows: dict)
                     c.alignment = RIGHT
             row += 1
 
-            mt = {"excl": 0.0, "vat": 0.0, "incl": 0.0}
+            mt = _empty_sums()
             for r in rows:
                 label(ws, row, 1, r["date"] or "")
                 inv_no = r["invoice_number"] or ""
@@ -172,34 +231,17 @@ def generate_supplier_summary_excel(entity, period_label: str, month_rows: dict)
                 amount(ws, row, 5, r["amount_incl"])
                 label(ws, row, 6, r.get("vehicle_reg") or "")
                 label(ws, row, 7, r["description"] or "")
-                mt["excl"] += r["amount_excl"]
-                mt["vat"] += r["vat"]
-                mt["incl"] += r["amount_incl"]
+                _accumulate(mt, r)
                 row += 1
 
-            label(ws, row, 1, f"{month_label(m)} TOTAL", bold=True, fill=TOTAL_FILL)
-            label(ws, row, 2, "", fill=TOTAL_FILL)
-            amount(ws, row, 3, mt["excl"], bold=True, fill=TOTAL_FILL)
-            amount(ws, row, 4, mt["vat"], bold=True, fill=TOTAL_FILL)
-            amount(ws, row, 5, mt["incl"], bold=True, fill=TOTAL_FILL)
-            label(ws, row, 6, "", fill=TOTAL_FILL)
-            label(ws, row, 7, "", fill=TOTAL_FILL)
+            row = totals_block(ws, row, month_label(m), mt, TOTAL_FILL, "111111")
             for k in grand:
                 grand[k] += mt[k]
-            row += 2
+            row += 1
 
         # With a single month on the tab this would just repeat the month total.
         if len(sup["months"]) > 1:
-            # Label merged across A:B so long period labels ("15 Jun 2026 – …")
-            # aren't clipped by the narrow date column.
-            label(ws, row, 1, f"{period_label.upper()} TOTAL", bold=True, fill=HDR_FILL, color="FFFFFF")
-            label(ws, row, 2, "", fill=HDR_FILL)
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-            amount(ws, row, 3, grand["excl"], bold=True, fill=HDR_FILL).font = Font(bold=True, color="FFFFFF", size=9)
-            amount(ws, row, 4, grand["vat"], bold=True, fill=HDR_FILL).font = Font(bold=True, color="FFFFFF", size=9)
-            amount(ws, row, 5, grand["incl"], bold=True, fill=HDR_FILL).font = Font(bold=True, color="FFFFFF", size=9)
-            label(ws, row, 6, "", fill=HDR_FILL)
-            label(ws, row, 7, "", fill=HDR_FILL)
+            totals_block(ws, row, period_label.upper(), grand, HDR_FILL, "FFFFFF", merge_label=True, split=False)
 
     out = io.BytesIO()
     wb.save(out)
