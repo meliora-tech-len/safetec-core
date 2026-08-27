@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.models import (
@@ -206,6 +207,62 @@ def invoice_costing_targets(db: Session, inv: SupplierInvoice) -> list:
             f"costing:{t.subcontractor_id}:{eff[0]}-{eff[1]:02d}:truck:{t.id}:invoice:{inv.id}:amount"
         )
     return targets
+
+
+def _profit_sheet_matches(inv: SupplierInvoice, regs: set) -> bool:
+    """Does this invoice show on a truck's Profit Sheet tab? Mirrors the matching
+    in `invoices_by_vehicle_regs._amount_for_regs` (the tab's data source):
+    multi-line/split invoices with per-line regs match on any sub-line reg,
+    everything else on the main-line reg. Unlike costing, diesel statements DO
+    show (grouped under the tab's Diesel row), so no fuel-line skip here."""
+    if not regs:
+        return False
+    items = inv.line_items or []
+    if inv.is_multi_line and items and any((li.unit or "").strip() for li in items):
+        return any(_norm_reg(li.unit) in regs for li in items)
+    touched = {_norm_reg(inv.vehicle_reg)} | {_norm_reg(li.unit) for li in items}
+    touched.discard("")
+    return bool(touched & regs)
+
+
+def invoice_profit_targets(db: Session, inv: SupplierInvoice) -> list:
+    """Value-verification targets for every Profit Sheet row this invoice shows
+    on: one `profit:{truckId}:{YYYY-MM}:invoice:{id}` key per Safetec-owned truck
+    the invoice names, in the month the tab lists it — the same key the truck's
+    Profit Sheet tab binds its per-invoice verification tick to.
+
+    Only Safetec trucks have a Profit Sheet tab, and the tab fetches by reg
+    without an entity filter, so trucks are matched across the SFT fleet
+    regardless of the invoice's own entity. Period rules mirror
+    `invoices_by_vehicle_regs._in_period`: Safetec timing (no cash shift), fixed
+    expenses pinned to their month, everything else rolled past sent costings."""
+    sft_ids = [
+        e.id for e in db.query(BusinessEntity).filter(func.upper(BusinessEntity.code) == "SFT").all()
+    ]
+    if not sft_ids:
+        return []
+    trucks = db.query(Truck).filter(Truck.entity_id.in_(sft_ids)).all()
+    matched = [t for t in trucks if _profit_sheet_matches(inv, truck_regs(t))]
+    if not matched:
+        return []
+
+    natural = natural_invoice_period(inv, True)
+    if natural is None:
+        return []
+
+    sent_map = build_sent_map(db, [t.id for t in matched])
+    targets = []
+    for t in matched:
+        eff = natural if inv.is_fixed_expense else roll_past_sent(natural, t.id, inv.created_at, sent_map)
+        targets.append(f"profit:{t.id}:{eff[0]}-{eff[1]:02d}:invoice:{inv.id}")
+    return targets
+
+
+def invoice_sheet_targets(db: Session, inv: SupplierInvoice) -> list:
+    """Every sheet row this invoice appears on — subcontractor costing rows AND
+    Safetec Profit Sheet rows — as value-verification targets. This is the set
+    a supplier invoice's final lock writes through to."""
+    return invoice_costing_targets(db, inv) + invoice_profit_targets(db, inv)
 
 
 def invoice_sent_lock_message(db: Session, inv: SupplierInvoice,
