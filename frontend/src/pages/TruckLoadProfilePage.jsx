@@ -2933,7 +2933,7 @@ export default function TruckLoadProfilePage() {
         {/* Per-driver loads + food for the period selected below. Splits count 0.5
             per driver, so these add up to the period's effective load count.
             "Paid Loads" = flagged driver-already-paid on the Loads tab;
-            "Total Remaining Loads" = Loads minus Paid Loads. */}
+            "Actual Total Loads" = Loads minus Paid Loads. */}
         {!isSubcontractorEntity && driverTotals.length > 0 && (
           <div style={{ minWidth: 240 }}>
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 4 }}>
@@ -2945,7 +2945,7 @@ export default function TruckLoadProfilePage() {
                   <th style={{ textAlign: 'left',  padding: '0 14px 3px 0' }}>Driver</th>
                   <th style={{ textAlign: 'right', padding: '0 14px 3px 0' }}>Loads</th>
                   <th style={{ textAlign: 'right', padding: '0 14px 3px 0' }} title="Loads flagged as driver already paid">Paid Loads</th>
-                  <th style={{ textAlign: 'right', padding: '0 14px 3px 0' }} title="Loads minus Paid Loads">Total Remaining Loads</th>
+                  <th style={{ textAlign: 'right', padding: '0 14px 3px 0' }} title="Loads minus Paid Loads">Actual Total Loads</th>
                   <th style={{ textAlign: 'right', padding: '0 0 3px 0' }}>Food</th>
                 </tr>
               </thead>
