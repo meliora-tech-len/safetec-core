@@ -1573,6 +1573,13 @@ class TruckLoadSummary(BaseModel):
     total_subcontractor_incl_vat: Decimal = Decimal("0")
 
 
+class TruckFleetSummaryDriver(BaseModel):
+    driver_id: Optional[int] = None
+    driver_name: str
+    # Effective loads: a split load credits 0.5 to each of its drivers
+    loads: float
+
+
 class TruckFleetSummaryRow(BaseModel):
     truck_id: int
     truck_registration: str
@@ -1585,6 +1592,7 @@ class TruckFleetSummaryRow(BaseModel):
     total_excl_vat: Decimal
     total_incl_vat: Decimal
     loads_missing_invoice: int
+    drivers: List[TruckFleetSummaryDriver] = []
 
 
 # ── Driver Salary Config Schemas ──────────────────────────────────────────────

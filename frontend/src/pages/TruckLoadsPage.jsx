@@ -25,12 +25,12 @@ function PeriodEntityBar({ month, setMonth, year, setYear, entityId, setEntityId
   return (
     <div style={{ display: 'flex', gap: 10, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
       {isAdmin && (
-        <select value={entityId} onChange={e => setEntityId(e.target.value)} style={{ minWidth: 180 }}>
+        <select value={entityId} onChange={e => setEntityId(e.target.value)} style={{ width: 'auto', minWidth: 180 }}>
           <option value="">All entities</option>
           {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
         </select>
       )}
-      <select value={month} onChange={e => setMonth(Number(e.target.value))} style={{ minWidth: 130 }}>
+      <select value={month} onChange={e => setMonth(Number(e.target.value))} style={{ width: 'auto', minWidth: 130 }}>
         {MONTHS.slice(1).map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
       </select>
       <input type="number" value={year} onChange={e => setYear(Number(e.target.value))}
@@ -209,6 +209,8 @@ function SummaryTab({ entities, isAdmin }) {
 
   const totalMissing = rows.reduce((s, r) => s + r.loads_missing_invoice, 0)
   const fmt2 = (v) => Number(v).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  // Effective loads per driver: split loads show as 0.5 (e.g. "12.5")
+  const fmtLoads = (v) => Number(v).toLocaleString('en-ZA', { minimumFractionDigits: 0, maximumFractionDigits: 1 })
 
   const totals = useMemo(() => ({
     loads:   rows.reduce((s, r) => s + r.total_loads, 0),
@@ -252,6 +254,7 @@ function SummaryTab({ entities, isAdmin }) {
                 <th>Fleet #</th>
                 <th>Registration</th>
                 <th style={{ textAlign: 'right' }}>Loads</th>
+                <th>Total per driver</th>
                 <th style={{ textAlign: 'right' }}>Tonnes</th>
                 <th style={{ textAlign: 'right' }}>Excl VAT</th>
                 <th style={{ textAlign: 'right' }}>Incl VAT</th>
@@ -265,6 +268,23 @@ function SummaryTab({ entities, isAdmin }) {
                   <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{r.fleet_number || '—'}</td>
                   <td style={{ fontFamily: 'monospace', fontWeight: 700 }}>{r.truck_registration}</td>
                   <td style={{ textAlign: 'right' }}>{r.total_loads}</td>
+                  <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                    {(r.drivers || []).length === 0 ? (
+                      <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {r.drivers.map((d, i) => (
+                          <div key={d.driver_id ?? `n${i}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span style={{ color: d.driver_id == null ? 'var(--text-muted)' : 'inherit',
+                                           fontStyle: d.driver_id == null ? 'italic' : 'normal' }}>
+                              {d.driver_name}
+                            </span>
+                            <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{fmtLoads(d.loads)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{fmt2(r.total_tonnes)} t</td>
                   <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12 }}>{formatCurrency(r.total_excl_vat)}</td>
                   <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, fontWeight: 600 }}>{formatCurrency(r.total_incl_vat)}</td>
@@ -285,6 +305,7 @@ function SummaryTab({ entities, isAdmin }) {
               <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-secondary)', fontWeight: 700 }}>
                 <td colSpan={2} style={{ padding: '8px 12px', fontSize: 12 }}>Total</td>
                 <td style={{ textAlign: 'right', padding: '8px 12px' }}>{totals.loads}</td>
+                <td />
                 <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, padding: '8px 12px' }}>{fmt2(totals.tonnes)} t</td>
                 <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, padding: '8px 12px' }}>{formatCurrency(totals.excl)}</td>
                 <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 12, padding: '8px 12px' }}>{formatCurrency(totals.incl)}</td>
@@ -459,7 +480,7 @@ export default function TruckLoadsPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 0, marginBottom: 24, borderBottom: '2px solid var(--border)' }}>
+      <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderBottom: '2px solid var(--border)' }}>
         {TABS.map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
             style={{

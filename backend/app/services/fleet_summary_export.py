@@ -26,6 +26,23 @@ def _tonnes(v) -> str:
         return "—"
 
 
+def _loads(v) -> str:
+    """Effective driver loads: whole numbers plain, split halves as e.g. 12.5."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    return f"{int(f)}" if f == int(f) else f"{f:,.1f}"
+
+
+def _drivers_text(row) -> str:
+    """One 'Name (n)' per line for the Total per driver column."""
+    drivers = getattr(row, "drivers", None) or []
+    if not drivers:
+        return "—"
+    return "<br/>".join(f"{d.driver_name} ({_loads(d.loads)})" for d in drivers)
+
+
 def generate_fleet_summary_pdf(rows, entity, month: int, year: int) -> bytes:
     """Render the fleet summary as a branded PDF.
 
@@ -119,6 +136,7 @@ def generate_fleet_summary_pdf(rows, entity, month: int, year: int) -> bytes:
     sub_bits = [f"Period: {period}"]
     if entity is None:
         sub_bits.append("All entities")
+    sub_bits.append("Total per driver: a split load counts 0.5 per driver")
     story.append(Paragraph("  ·  ".join(sub_bits), s_sub))
     story.append(Spacer(1, 5*mm))
 
@@ -129,7 +147,7 @@ def generate_fleet_summary_pdf(rows, entity, month: int, year: int) -> bytes:
     header = [P("Fleet #", s_hdr), P("Registration", s_hdr)]
     if multi_entity:
         header.insert(0, P("Entity", s_hdr))
-    header += [P("Loads", s_hdr_r), P("Tonnes", s_hdr_r),
+    header += [P("Loads", s_hdr_r), P("Total per driver", s_hdr), P("Tonnes", s_hdr_r),
                P("Excl VAT", s_hdr_r), P("Incl VAT", s_hdr_r),
                P("Missing Invoice", s_hdr_r)]
 
@@ -141,6 +159,7 @@ def generate_fleet_summary_pdf(rows, entity, month: int, year: int) -> bytes:
         missing = int(r.loads_missing_invoice or 0)
         cells += [
             P(r.total_loads, s_val),
+            P(_drivers_text(r), s_lbl),
             P(_tonnes(r.total_tonnes), s_val),
             P(_fmt(r.total_excl_vat), s_val),
             P(_fmt(r.total_incl_vat), s_val),
@@ -160,6 +179,7 @@ def generate_fleet_summary_pdf(rows, entity, month: int, year: int) -> bytes:
         tot_row.insert(1, P("", s_tot))
     tot_row += [
         P(tot_loads, s_tot_r),
+        P("", s_tot),
         P(_tonnes(tot_tonnes), s_tot_r),
         P(_fmt(tot_excl), s_tot_r),
         P(_fmt(tot_incl), s_tot_r),
@@ -167,10 +187,11 @@ def generate_fleet_summary_pdf(rows, entity, month: int, year: int) -> bytes:
     ]
     data.append(tot_row)
 
+    # A4 portrait printable width = 178mm
     if multi_entity:
-        col_w = [18*mm, 16*mm, 30*mm, 18*mm, 24*mm, 28*mm, 28*mm, 16*mm]
+        col_w = [14*mm, 13*mm, 24*mm, 13*mm, 36*mm, 18*mm, 22*mm, 22*mm, 16*mm]
     else:
-        col_w = [20*mm, 36*mm, 20*mm, 26*mm, 30*mm, 30*mm, 16*mm]
+        col_w = [14*mm, 26*mm, 13*mm, 42*mm, 20*mm, 24*mm, 24*mm, 15*mm]
 
     tbl = Table(data, colWidths=col_w, repeatRows=1)
     tbl.setStyle(TableStyle([

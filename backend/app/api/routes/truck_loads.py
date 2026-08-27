@@ -17,7 +17,7 @@ from app.models.models import (
 )
 from app.schemas.schemas import (
     TruckLoadCreate, TruckLoadUpdate, TruckLoadOut,
-    TruckLoadBulkCreate, TruckLoadSummary, TruckFleetSummaryRow,
+    TruckLoadBulkCreate, TruckLoadSummary, TruckFleetSummaryRow, TruckFleetSummaryDriver,
     SplitLoadCreate, SplitLoadOut,
 )
 from app.services.audit import log_action
@@ -598,6 +598,62 @@ def get_truck_load_summary(
 
 # ── Fleet summary (cross-truck overview) ─────────────────────────────────────
 
+def _fleet_summary_drivers(db: Session, truck_ids, statement_month, statement_year, entity_id):
+    """Per-truck driver breakdown for the fleet summary: who drove and how many
+    loads. Effective count, same as the profile page header — a split load
+    credits `share` (0.5) to each of its driver lines, a normal load 1 to its
+    driver. Loads without a driver are grouped as "No driver" so the rows still
+    add up to the truck's load count."""
+    if not truck_ids:
+        return {}
+    q = (
+        db.query(TruckLoad)
+        .options(
+            joinedload(TruckLoad.driver),
+            selectinload(TruckLoad.driver_splits).joinedload(TruckLoadDriverSplit.driver),
+        )
+        .filter(TruckLoad.truck_id.in_(truck_ids), TruckLoad.is_archived.is_(False))
+    )
+    if entity_id is not None:
+        q = q.filter(TruckLoad.entity_id == entity_id)
+    if statement_month is not None:
+        q = q.filter(TruckLoad.statement_month == statement_month)
+    if statement_year is not None:
+        q = q.filter(TruckLoad.statement_year == statement_year)
+
+    def name_of(driver, fallback):
+        if driver is not None:
+            return f"{driver.first_name} {driver.last_name}".strip()
+        return (fallback or "").strip() or "No driver"
+
+    per_truck: dict = {}
+    for load in q.all():
+        bucket = per_truck.setdefault(load.truck_id, {})
+
+        def add(driver_id, name, loads):
+            key = driver_id if driver_id is not None else f"name:{name}"
+            row = bucket.setdefault(key, {"driver_id": driver_id, "driver_name": name, "loads": 0.0})
+            row["loads"] += float(loads)
+
+        if load.is_split_load and load.driver_splits:
+            for sp in load.driver_splits:
+                add(sp.driver_id, name_of(sp.driver, None),
+                    sp.share if sp.share is not None else Decimal("0.5"))
+        else:
+            add(load.driver_id, name_of(load.driver, load.driver_name), 1)
+
+    return {
+        tid: [
+            TruckFleetSummaryDriver(**r)
+            for r in sorted(
+                bucket.values(),
+                key=lambda r: (r["driver_name"] == "No driver", -r["loads"], r["driver_name"]),
+            )
+        ]
+        for tid, bucket in per_truck.items()
+    }
+
+
 @router.get("/fleet-summary", response_model=List[TruckFleetSummaryRow])
 def get_fleet_summary(
     entity_id: Optional[int] = Query(None),
@@ -654,6 +710,10 @@ def get_fleet_summary(
         .all()
     )
 
+    drivers_by_truck = _fleet_summary_drivers(
+        db, [r.truck_id for r in rows], statement_month, statement_year, entity_id,
+    )
+
     return [
         TruckFleetSummaryRow(
             truck_id=r.truck_id,
@@ -667,6 +727,7 @@ def get_fleet_summary(
             total_excl_vat=Decimal(str(r.total_excl_vat)),
             total_incl_vat=Decimal(str(r.total_incl_vat)),
             loads_missing_invoice=int(r.loads_missing_invoice),
+            drivers=drivers_by_truck.get(r.truck_id, []),
         )
         for r in rows
     ]
