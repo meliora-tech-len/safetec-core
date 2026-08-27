@@ -726,7 +726,7 @@ export default function DieselRatesPage() {
 
 const styles = {
   page: { padding: 'var(--page-pad)', flex: 1 },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
   title: { fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', margin: 0 },
   subtitle: { fontSize: 13, color: 'var(--text-muted)', marginTop: 4 },
   empty: { textAlign: 'center', color: 'var(--text-muted)', padding: 60, fontSize: 14 },

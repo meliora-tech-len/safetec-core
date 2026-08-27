@@ -204,7 +204,7 @@ export default function UsersPage() {
   return (
     <div style={{ padding: 'var(--page-pad)', maxWidth: 980 }}>
       {/* Header */}
-      <div className="page-header" style={{ marginBottom: 24 }}>
+      <div className="page-header" style={{ marginBottom: 16 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>User Management</h1>
           <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', fontSize: 13 }}>

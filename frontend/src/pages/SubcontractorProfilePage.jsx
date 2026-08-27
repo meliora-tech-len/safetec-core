@@ -1790,7 +1790,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
         background: 'var(--bg-card)',
         border: `1px solid ${highlight ? 'var(--accent)' : 'var(--border)'}`,
         boxShadow: highlight ? '0 0 0 2px var(--accent-dim)' : 'none',
-        borderRadius: 10, marginBottom: 24, overflow: 'hidden',
+        borderRadius: 10, marginBottom: 16, overflow: 'hidden',
         transition: 'box-shadow 0.3s, border-color 0.3s',
       }}
     >
@@ -2346,7 +2346,7 @@ function SummaryCard({ summary, trucks = [], isVatRegistered = true,
   const origNetTotal = trucks.reduce((s, t) => s + (parseFloat(t.net_payable_calculated) || 0), 0)
 
   return (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 10, marginTop: 8, marginBottom: 24, overflow: 'hidden' }}>
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--accent)', borderRadius: 10, marginTop: 8, marginBottom: 16, overflow: 'hidden' }}>
       {/* Header — click to expand */}
       <div
         onClick={() => setExpanded(v => !v)}

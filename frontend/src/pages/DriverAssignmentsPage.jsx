@@ -328,7 +328,7 @@ function OrphanedAlert({ drivers, entityName, open, onToggle }) {
 // ── Casual pool collapsible section ──────────────────────────────────────────
 function CasualPoolSection({ drivers, entityName, open, onToggle }) {
   return (
-    <div style={{ marginBottom: 24 }}>
+    <div style={{ marginBottom: 16 }}>
       <button
         onClick={onToggle}
         style={{
@@ -554,7 +554,7 @@ export default function DriverAssignmentsPage() {
     <div style={{ padding: 'var(--page-pad)', flex: 1 }}>
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="page-header" style={{ marginBottom: 24 }}>
+      <div className="page-header" style={{ marginBottom: 16 }}>
         <div>
           <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Link2 size={22} style={{ color: 'var(--accent)' }} />
@@ -573,7 +573,7 @@ export default function DriverAssignmentsPage() {
       </div>
 
       {/* ── Stats ──────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
         <Stat label="Trucks with D1"           value={assignedTrucks.length}  colour="var(--success)" />
         <Stat label="Fully staffed (D1+D2+D3)" value={fullyStaffed.length}    colour="var(--accent)" />
         <Stat label="No drivers"               value={unassignedTrucks.length} colour={unassignedTrucks.length ? 'var(--warning)' : 'var(--text-muted)'} />
@@ -609,7 +609,7 @@ export default function DriverAssignmentsPage() {
       </div>
 
       {/* ── Truck card grid ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12, marginBottom: 16 }}>
         {filteredTrucks.map(truck => {
           const popoverTruckId = activePopover?.truckId
           const popoverSlot    = activePopover?.slot

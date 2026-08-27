@@ -2781,30 +2781,35 @@ export default function TruckLoadProfilePage() {
   // ── Per-driver totals for the header (this truck, this period) ───────────────
   // Loads count effective, not raw: a split load is 0.5 to each of its two drivers,
   // matching what payroll credits them. Loads with no driver are grouped so the
-  // rows still add up to the period's load count.
+  // rows still add up to the period's load count. `paid` is the share of those
+  // loads flagged "driver already paid" (settled in a prior period), so the
+  // header can show the full count alongside what is still owed this period.
   const driverTotals = useMemo(() => {
     const map = new Map()
     // Prefer the live driver record's type over whatever the row was saved with.
     const typeOf = (id, fallback) =>
       drivers.find(d => String(d.id) === String(id))?.driver_type || fallback || null
 
-    const add = (id, name, type, loads, food) => {
+    const add = (id, name, type, loads, food, paid = 0) => {
       const key = id ?? 'none'
-      if (!map.has(key)) map.set(key, { id: id ?? null, name: '', type: null, loads: 0, food: 0 })
+      if (!map.has(key)) map.set(key, { id: id ?? null, name: '', type: null, loads: 0, paid: 0, food: 0 })
       const r = map.get(key)
       if (name && !r.name) r.name = name
       if (type && !r.type) r.type = type
       r.loads += loads
+      r.paid  += paid
       r.food  += food
     }
 
     for (const l of loads) {
+      const paid = l.driver_already_paid
       if (l.is_split_load) {
         for (const s of (l.driver_splits || [])) {
-          add(s.driver_id, s.driver_name, typeOf(s.driver_id, s.driver_type), Number(s.share ?? 0.5), 0)
+          const share = Number(s.share ?? 0.5)
+          add(s.driver_id, s.driver_name, typeOf(s.driver_id, s.driver_type), share, 0, paid ? share : 0)
         }
       } else {
-        add(l.driver_id, l.driver_name, typeOf(l.driver_id, l.driver_type), 1, 0)
+        add(l.driver_id, l.driver_name, typeOf(l.driver_id, l.driver_type), 1, 0, paid ? 1 : 0)
       }
     }
     for (const f of foodEntries) {
@@ -2926,7 +2931,9 @@ export default function TruckLoadProfilePage() {
         </div>
 
         {/* Per-driver loads + food for the period selected below. Splits count 0.5
-            per driver, so these add up to the period's effective load count. */}
+            per driver, so these add up to the period's effective load count.
+            "Paid Loads" = flagged driver-already-paid on the Loads tab;
+            "Total Remaining Loads" = Loads minus Paid Loads. */}
         {!isSubcontractorEntity && driverTotals.length > 0 && (
           <div style={{ minWidth: 240 }}>
             <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 4 }}>
@@ -2937,6 +2944,8 @@ export default function TruckLoadProfilePage() {
                 <tr style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)' }}>
                   <th style={{ textAlign: 'left',  padding: '0 14px 3px 0' }}>Driver</th>
                   <th style={{ textAlign: 'right', padding: '0 14px 3px 0' }}>Loads</th>
+                  <th style={{ textAlign: 'right', padding: '0 14px 3px 0' }} title="Loads flagged as driver already paid">Paid Loads</th>
+                  <th style={{ textAlign: 'right', padding: '0 14px 3px 0' }} title="Loads minus Paid Loads">Total Remaining Loads</th>
                   <th style={{ textAlign: 'right', padding: '0 0 3px 0' }}>Food</th>
                 </tr>
               </thead>
@@ -2957,8 +2966,14 @@ export default function TruckLoadProfilePage() {
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: '2px 14px 2px 0', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ padding: '2px 14px 2px 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                         {fmtLoads(d.loads)}
+                      </td>
+                      <td style={{ padding: '2px 14px 2px 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: d.paid ? '#16a34a' : 'var(--text-muted)' }}>
+                        {fmtLoads(d.paid)}
+                      </td>
+                      <td style={{ padding: '2px 14px 2px 0', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {fmtLoads(d.loads - d.paid)}
                       </td>
                       <td style={{ padding: '2px 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: d.food ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                         {d.food ? fmt(d.food) : '—'}
@@ -2973,6 +2988,12 @@ export default function TruckLoadProfilePage() {
                     <td style={{ padding: '3px 14px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>Total</td>
                     <td style={{ padding: '3px 14px 0 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                       {fmtLoads(driverTotals.reduce((s, d) => s + d.loads, 0))}
+                    </td>
+                    <td style={{ padding: '3px 14px 0 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtLoads(driverTotals.reduce((s, d) => s + d.paid, 0))}
+                    </td>
+                    <td style={{ padding: '3px 14px 0 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtLoads(driverTotals.reduce((s, d) => s + d.loads - d.paid, 0))}
                     </td>
                     <td style={{ padding: '3px 0 0', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                       {fmt(driverTotals.reduce((s, d) => s + d.food, 0))}

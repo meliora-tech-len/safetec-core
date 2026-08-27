@@ -124,7 +124,7 @@ function GroupCard({ group, history, onRefresh }) {
   }
 
   return (
-    <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
+    <div className="bg-card" style={{ padding: 16, borderRadius: 10, border: '1px solid var(--border)' }}>
       {editing ? (
         <>
           <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 14, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
@@ -220,7 +220,7 @@ function ReferenceTable({ groups }) {
   const loadCounts = [7, 8, 9, 10, 11, 12]
 
   return (
-    <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
+    <div className="bg-card" style={{ padding: 16, borderRadius: 10, border: '1px solid var(--border)' }}>
       <h3 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 700 }}>Gross Income Reference Table</h3>
       <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--text-muted)' }}>
         Auto-calculated from current rates above. Updates live as you edit.
@@ -331,7 +331,7 @@ export default function PayrollSettingsPage() {
       </div>
 
       {/* ── Mine Route Groups ─────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 24 }}>
+      <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: 15 }}>Mine Route Groups</div>
@@ -353,7 +353,7 @@ export default function PayrollSettingsPage() {
           })}
 
           {showAddGroup && (
-            <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
+            <div className="bg-card" style={{ padding: 16, borderRadius: 10, border: '1px solid var(--border)' }}>
               <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 14, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 New Route Group
               </div>
@@ -364,8 +364,8 @@ export default function PayrollSettingsPage() {
       </div>
 
       {/* ── Casual Rate · Assmang Bonus · Payroll Factor ──────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, marginBottom: 24 }}>
-        <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, marginBottom: 16 }}>
+        <div className="bg-card" style={{ padding: 16, borderRadius: 10, border: '1px solid var(--border)' }}>
           <h3 style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Casual Driver Rates
           </h3>
@@ -400,7 +400,7 @@ export default function PayrollSettingsPage() {
           </div>
         </div>
 
-        <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
+        <div className="bg-card" style={{ padding: 16, borderRadius: 10, border: '1px solid var(--border)' }}>
           <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Mine Bonus
           </h3>
@@ -417,7 +417,7 @@ export default function PayrollSettingsPage() {
         </div>
 
         {/* ── Payroll Factor ──────────────────────────────────────────────── */}
-        <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)' }}>
+        <div className="bg-card" style={{ padding: 16, borderRadius: 10, border: '1px solid var(--border)' }}>
           <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Payroll Factor
           </h3>
@@ -434,7 +434,7 @@ export default function PayrollSettingsPage() {
       </div>
 
       {/* ── Statutory Deductions ──────────────────────────────────────────── */}
-      <div className="bg-card" style={{ padding: 20, borderRadius: 10, border: '1px solid var(--border)', marginBottom: 24 }}>
+      <div className="bg-card" style={{ padding: 16, borderRadius: 10, border: '1px solid var(--border)', marginBottom: 16 }}>
         <h3 style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           Statutory Deduction Rates
         </h3>

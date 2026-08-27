@@ -41,7 +41,7 @@ function StatCards({ stats }) {
     { label: 'Active',             value: stats.active,                colour: 'var(--success)' },
   ]
   return (
-    <div className="grid-4" style={{ marginBottom: 24 }}>
+    <div className="grid-4" style={{ marginBottom: 16 }}>
       {cards.map(c => (
         <div key={c.label} className="stat-card">
           <div className="stat-card-label">{c.label}</div>

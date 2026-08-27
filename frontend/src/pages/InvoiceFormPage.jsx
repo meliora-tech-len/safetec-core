@@ -1119,7 +1119,7 @@ function QuickAddCustomerModal({ entityId, onCreated, onClose }) {
 
 const styles = {
   page: { padding: '20px 28px', flex: 1 },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   grid: { display: 'grid', gridTemplateColumns: '1fr 300px', gap: 20, alignItems: 'start' },
   main: { display: 'flex', flexDirection: 'column', gap: 16 },
   sidebar: { display: 'flex', flexDirection: 'column', position: 'sticky', top: 20 },

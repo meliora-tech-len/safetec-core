@@ -1145,7 +1145,7 @@ export default function BudgetsPage() {
               TP reconcile per month-group (income vs the expenses that income has
               to cover); every other entity uses the single window total. */}
           {isSft && baseSummary ? (
-            <div style={{ marginBottom: 24 }}>
+            <div style={{ marginBottom: 16 }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16 }}>
                 {[
                   { label: 'Income', value: baseSummary.income },
@@ -1196,7 +1196,7 @@ export default function BudgetsPage() {
               </div>
             </div>
           ) : hasMonthSplit && monthSplit ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 24 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 16 }}>
               {[monthSplit.g1, monthSplit.g2].map(g => (
                 <div key={g.title} className="stat-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div>
@@ -1221,7 +1221,7 @@ export default function BudgetsPage() {
               ))}
             </div>
           ) : (
-            <div className="grid-4" style={{ marginBottom: 24 }}>
+            <div className="grid-4" style={{ marginBottom: 16 }}>
               {[
                 { label: 'Income', value: totals.income },
                 { label: 'Expenses — To Pay', value: totals.expensesDue },
@@ -1240,7 +1240,7 @@ export default function BudgetsPage() {
               banking system by hand; the profit line below them is pulled from
               the budget on screen. Rows are the user's to rename or delete. */}
           {bankInfo && (
-            <div className="card" style={{ marginBottom: 24, padding: 16 }}>
+            <div className="card" style={{ marginBottom: 16, padding: 16 }}>
               <button
                 onClick={() => setBankInfoOpen(o => !o)}
                 style={{

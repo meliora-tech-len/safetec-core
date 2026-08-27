@@ -24,7 +24,7 @@
   --font: 'Inter', system-ui, -apple-system, sans-serif;
   /* Responsive page padding — referenced inline as var(--page-pad) so the same
      wrapper adapts across breakpoints (overridden in the media queries below). */
-  --page-pad: 28px 32px;
+  --page-pad: 18px 24px;
   /* Two-column inline grids — referenced as gridTemplateColumns: 'var(--col-2)'
      so they stack to one column on phones. */
   --col-2: 1fr 1fr;
@@ -137,7 +137,7 @@ button {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 20px;
+  padding: 16px;
 }
 
 /* Status badges */
@@ -168,7 +168,7 @@ button {
 table { width: 100%; border-collapse: collapse; }
 thead { background: var(--bg-surface); }
 th {
-  padding: 11px 14px;
+  padding: 9px 12px;
   text-align: left;
   font-size: 11px;
   font-weight: 600;
@@ -178,7 +178,7 @@ th {
   white-space: nowrap;
 }
 td {
-  padding: 13px 14px;
+  padding: 10px 12px;
   border-top: 1px solid var(--border);
   font-size: 13px;
   color: var(--text-primary);
@@ -194,8 +194,8 @@ tbody tr:first-child td { border-top: none; }
 /* Form layout */
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-group label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 
 /* ── Scrollbars ─────────────────────────────────────────────────
    Wide enough to grab comfortably (14px track / 8px visible thumb via a
@@ -251,13 +251,13 @@ tbody tr:first-child td { border-top: none; }
 .modal-lg { max-width: 900px; }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 20px 24px; border-bottom: 1px solid var(--border);
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
 }
 .modal-header h2 { font-size: 16px; font-weight: 600; }
-.modal-body { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+.modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
 .modal-footer {
   display: flex; gap: 10px; justify-content: flex-end;
-  padding: 16px 24px; border-top: 1px solid var(--border);
+  padding: 12px 20px; border-top: 1px solid var(--border);
 }
 
 @keyframes slideUp {
@@ -268,7 +268,7 @@ tbody tr:first-child td { border-top: none; }
 /* Empty state */
 .empty-state {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 60px 20px; color: var(--text-muted); gap: 12px;
+  padding: 36px 20px; color: var(--text-muted); gap: 10px;
 }
 .empty-state svg { opacity: 0.3; }
 .empty-state p { font-size: 15px; }
@@ -276,9 +276,10 @@ tbody tr:first-child td { border-top: none; }
 /* Page header */
 .page-header {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 24px;
+  gap: 12px; flex-wrap: wrap;
+  margin-bottom: 16px;
 }
-.page-title { font-size: 22px; font-weight: 700; }
+.page-title { font-size: 20px; font-weight: 700; }
 .page-subtitle { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
 
 /* Loading spinner */
@@ -302,13 +303,13 @@ tbody tr:first-child td { border-top: none; }
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 20px;
-  display: flex; flex-direction: column; gap: 6px;
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 4px;
 }
 .stat-card-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); }
-.stat-card-value { font-size: 28px; font-weight: 700; color: var(--text-primary); }
+.stat-card-value { font-size: 24px; font-weight: 700; color: var(--text-primary); }
 .stat-card-sub { font-size: 12px; color: var(--text-secondary); }
-.stat-card-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-bottom: 4px; }
+.stat-card-icon { width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 2px; }
 
 /* Search bar */
 .search-bar {
@@ -339,9 +340,9 @@ hr { border: none; border-top: 1px solid var(--border); }
 .flex-col { flex-direction: column; }
 .items-center { align-items: center; }
 .justify-between { justify-content: space-between; }
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
-.grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
 .mt-4 { margin-top: 4px; }
 .mt-8 { margin-top: 8px; }
 .mt-16 { margin-top: 16px; }

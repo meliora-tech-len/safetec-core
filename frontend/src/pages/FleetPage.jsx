@@ -129,7 +129,7 @@ function StatCards({ stats, alertCount }) {
     { label: 'Personal Vehicles', value: stats.total_personal_vehicles, colour: 'var(--accent)' },
   ]
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, marginBottom: 24 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
       {cards.map(c => (
         <div key={c.label} className="stat-card">
           <div className="stat-card-label">{c.label}</div>

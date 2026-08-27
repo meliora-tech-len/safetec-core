@@ -191,7 +191,7 @@ export default function SettingsPage() {
     // No cap here — each Section caps itself (860 by default) so a single
     // section can opt into more width without stretching the rest of the page.
     <div style={{ padding: 'var(--page-pad)' }}>
-      <div style={{ marginBottom: 28 }}>
+      <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Settings</h1>
         <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', fontSize: 13 }}>
           Global configuration — changes apply across the system
@@ -510,7 +510,7 @@ export default function SettingsPage() {
 // genuinely narrow screens.
 function Section({ title, subtitle, children, wide = false }) {
   return (
-    <div style={{ marginBottom: 28, maxWidth: wide ? 1240 : 860 }}>
+    <div style={{ marginBottom: 20, maxWidth: wide ? 1240 : 860 }}>
       <div style={{ marginBottom: 14 }}>
         <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{title}</h2>
         {subtitle && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '3px 0 0' }}>{subtitle}</p>}

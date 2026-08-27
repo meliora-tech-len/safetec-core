@@ -262,7 +262,7 @@ export default function DashboardPage() {
               className="card"
               style={{
                 display: 'flex', alignItems: 'center', gap: 14, width: '100%',
-                textAlign: 'left', cursor: 'pointer', marginBottom: 24,
+                textAlign: 'left', cursor: 'pointer', marginBottom: 16,
                 border: '1px solid var(--warning)', background: 'rgba(245,158,11,0.06)',
               }}
             >
@@ -283,7 +283,7 @@ export default function DashboardPage() {
 
           {/* ── Profit & Loss (BTP / Thembi) ─────────────────────────── */}
           {profitLoss?.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
+            <div style={{ marginBottom: 16 }}>
               <SectionLabel
                 icon={<Scale size={13} />}
                 label={`Profit & Loss · ${periodLabel}`}
@@ -329,7 +329,7 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
-          <div className="grid-4" style={{ marginBottom: 24 }}>
+          <div className="grid-4" style={{ marginBottom: 16 }}>
             <StatCard
               icon={<Clock size={20} />}
               iconBg="#22c55e20"
@@ -370,7 +370,7 @@ export default function DashboardPage() {
 
           {/* Diesel Warnings */}
           {dieselWarnings && (dieselWarnings.missing_slip_count > 0 || dieselWarnings.missing_invoice_count > 0) && (
-            <div style={{ marginBottom: 24 }}>
+            <div style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                 <Fuel size={15} color="var(--text-muted)" />
                 <span style={{ fontSize: 14, fontWeight: 600 }}>Diesel — Needs Attention</span>
@@ -438,7 +438,7 @@ export default function DashboardPage() {
 
           {/* Invoices logged in other months — collapsed by default (informational) */}
           {payables?.other_period_payables?.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
+            <div style={{ marginBottom: 16 }}>
               <button
                 onClick={() => setShowOtherPeriods(v => !v)}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
@@ -491,7 +491,7 @@ export default function DashboardPage() {
                   />
                 </div>
               </div>
-              <div className="grid-4" style={{ marginBottom: 24 }}>
+              <div className="grid-4" style={{ marginBottom: 16 }}>
                 <StatCard
                   icon={<FileText size={20} />}
                   iconBg="#4f8ef720"
@@ -720,7 +720,7 @@ function StatCard({ icon, iconBg, iconColor, label, value, sub, onClick }) {
 
 const styles = {
   page: { padding: 'var(--page-pad)', flex: 1 },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 },
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
   title: { fontSize: 22, fontWeight: 700 },
   sub: { fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 },
   grid: { display: 'flex', gap: 20, alignItems: 'flex-start' },
