@@ -19,7 +19,7 @@ import { useLocalState } from '../hooks/useLocalState'
 import { useSessionState } from '../hooks/useSessionState'
 import { formatCurrency, formatDate, errorMessage, entityVatRate } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock, Unlock, Calendar, FileSpreadsheet } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, SlidersHorizontal, Save, X, CheckCircle, Fuel, Upload, Paperclip, Eye, Lock, Unlock, Calendar, FileSpreadsheet } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import ExportButton from '../components/ExportButton'
 import VerifyBadge from '../components/VerifyBadge'
@@ -34,6 +34,101 @@ import { MONTHS_LONG_1 as MONTH_NAMES } from '../utils/helpers'
 const today = new Date().toISOString().slice(0, 10)
 const currentMonth = () => new Date().getMonth() + 1
 const currentYear  = () => new Date().getFullYear()
+
+// Invoice-table columns in display order. `when` says whether a column
+// applies to the supplier at all (diesel vs general, multi-entity, WBG);
+// `fixed` columns can't be hidden. The user's hidden set lives in
+// localStorage and is shared by every supplier profile — it's a view
+// preference like the sort order.
+const INVOICE_COLUMNS = [
+  { key: 'entity',         label: 'Entity',        when: c => c.multiEntity },
+  { key: 'date',           label: 'Date' },
+  { key: 'period',         label: 'Period' },
+  { key: 'invoice_number', label: 'Invoice #',     fixed: true },
+  { key: 'vehicle_reg',    label: 'Vehicle Reg',   when: c => c.showVehicleReg && !c.isWBGDiesel },
+  { key: 'subcontractor',  label: 'Subcontractor', when: c => c.showVehicleReg && !c.isWBGDiesel },
+  { key: 'description',    label: 'Description',   when: c => !c.isDiesel },
+  { key: 'amount',         label: 'Amount',        fixed: true },
+  { key: 'deposit',        label: 'Deposit',       when: c => !c.isDiesel },
+  { key: 'outstanding',    label: 'Outstanding',   when: c => !c.isDiesel },
+  { key: 'litres',         label: 'Litres',        when: c => c.isDiesel && !c.isWBGDiesel },
+  { key: 'rate',           label: 'Rate/L',        when: c => c.isDiesel && !c.isWBGDiesel },
+  { key: 'vat',            label: 'VAT',           when: c => !c.isDiesel },
+  { key: 'select',         label: 'Select',        fixed: true },
+  { key: 'verified',       label: 'Verified' },
+  { key: 'paid',           label: 'Paid' },
+  { key: 'paid_date',      label: 'Paid Date' },
+  { key: 'notes',          label: 'Notes' },
+  { key: 'actions',        label: 'Actions',       fixed: true },
+]
+
+function ColumnPicker({ columns, hidden, onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const toggle = (key) => onChange(hidden.includes(key) ? hidden.filter(k => k !== key) : [...hidden, key])
+  const hiddenHere = columns.filter(c => !c.fixed && hidden.includes(c.key)).length
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        className="btn-ghost"
+        onClick={() => setOpen(o => !o)}
+        title="Choose which columns to show"
+        style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, padding: '4px 10px' }}
+      >
+        <SlidersHorizontal size={13} />
+        Columns{hiddenHere > 0 ? ` (${hiddenHere} hidden)` : ''}
+        <ChevronDown size={11} style={{ opacity: 0.6, marginLeft: 1 }} />
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 100,
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 8, boxShadow: 'var(--shadow)', minWidth: 190, padding: '6px 0',
+        }}>
+          {columns.map(c => (
+            <label
+              key={c.key}
+              title={c.fixed ? 'Always shown' : undefined}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 9, padding: '6px 14px',
+                fontSize: 13, cursor: c.fixed ? 'default' : 'pointer',
+                color: c.fixed ? 'var(--text-muted)' : 'var(--text-primary)',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={c.fixed || !hidden.includes(c.key)}
+                disabled={c.fixed}
+                onChange={() => toggle(c.key)}
+                style={{ width: 'auto', cursor: c.fixed ? 'default' : 'pointer' }}
+              />
+              {c.label}
+            </label>
+          ))}
+          <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, padding: '6px 14px 2px' }}>
+            <button
+              onClick={() => onChange([])}
+              disabled={hidden.length === 0}
+              style={{ background: 'none', border: 'none', padding: 0, fontSize: 12, color: hidden.length ? 'var(--accent)' : 'var(--text-muted)', cursor: hidden.length ? 'pointer' : 'default' }}
+            >
+              Show all columns
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 const blankForm = (entityId, isDieselSupplier = false) => ({
   entity_id: entityId || '',
@@ -1161,6 +1256,7 @@ export default function SupplierProfilePage() {
   // preference, not something to re-pick on each profile.
   const [sortCol, setSortCol] = useLocalState('sort:supplier.invoices.col', 'vehicle_reg')
   const [sortDir, setSortDir] = useLocalState('sort:supplier.invoices.dir', 'asc')
+  const [hiddenCols, setHiddenCols] = useLocalState('supplier.invoices.hiddenCols', [])
   const [filterText, setFilterText] = useSessionState(`supplier.${supplierId}.filter`, '')
 
   // Which supplier the loaded groups belong to — on quick-switch the old
@@ -1817,6 +1913,8 @@ export default function SupplierProfilePage() {
   })
 
   const allInvoices = groups.flatMap(g => g.invoices)
+  const openLineCount = allInvoices.filter(i => i.is_multi_line && openInvoiceIds.has(i.id)).length
+  const allMonthsCollapsed = groups.length > 0 && groups.every(g => collapsed[`${g.statement_year}-${g.statement_month}`])
   const selectedVerifiable  = allInvoices.filter(i => selectedIds.has(i.id) && canUserVerify(i))
   const selectedUnpaid      = allInvoices.filter(i => selectedIds.has(i.id) && !i.is_paid)
   const selectedTotal       = allInvoices.filter(i => selectedIds.has(i.id)).reduce((s, i) => s + Number(i.amount || 0), 0)
@@ -1864,6 +1962,13 @@ export default function SupplierProfilePage() {
   // sub-line with editable Excl + Incl amounts and a per-line VAT toggle. Diesel
   // suppliers use the separate DieselLineItemsEditor and are unaffected.
   const amountInclOnly = false
+
+  // Columns that apply to this supplier, minus the ones the user has hidden.
+  // Header, cells and the footer colSpans all key off this one list.
+  const availableCols = INVOICE_COLUMNS.filter(c => !c.when || c.when({ multiEntity, showVehicleReg, isDiesel, isWBGDiesel }))
+  const visibleCols = availableCols.filter(c => c.fixed || !hiddenCols.includes(c.key))
+  const colVisible = (key) => visibleCols.some(c => c.key === key)
+  const amountColIdx = visibleCols.findIndex(c => c.key === 'amount')
   // Merino & Oukop send a statement carrying the slip# before the physical slip
   // is received, so the slip# hasn't been captured as a fill-up yet. Let the user
   // type the slip# freely instead of forcing a pick from the fill-up dropdown.
@@ -2018,7 +2123,7 @@ export default function SupplierProfilePage() {
 
       {/* Truck loads section — shows loads where this supplier was selected */}
       {truckLoadGroups.length > 0 && (
-        <div style={{ marginBottom: 24 }}>
+        <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--text-muted)', marginBottom: 8 }}>
             Truck Loads
           </div>
@@ -2317,7 +2422,7 @@ export default function SupplierProfilePage() {
 
       {/* ── Filter bar ── */}
       {groups.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           <input
             type="text"
             placeholder={`Filter by invoice #, vehicle reg, ${isDiesel ? 'subbie name' : 'description'}, notes…`}
@@ -2334,6 +2439,31 @@ export default function SupplierProfilePage() {
               Clear
             </button>
           )}
+
+          {/* View controls. Open months / expanded lines are remembered for
+              the session, so a refresh brings them back — these close the
+              lot in one click. */}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {openLineCount > 0 && (
+              <button
+                className="btn-ghost"
+                onClick={() => setOpenInvoiceIdsArr([])}
+                title="Collapse every expanded invoice's line items"
+                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, padding: '4px 10px' }}
+              >
+                <ChevronsDownUp size={13} /> Collapse lines ({openLineCount})
+              </button>
+            )}
+            <button
+              className="btn-ghost"
+              onClick={() => setCollapsed(allMonthsCollapsed ? {} : Object.fromEntries(groups.map(g => [`${g.statement_year}-${g.statement_month}`, true])))}
+              title={allMonthsCollapsed ? 'Open every month' : 'Close every month'}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, padding: '4px 10px' }}
+            >
+              {allMonthsCollapsed ? <><ChevronsUpDown size={13} /> Expand months</> : <><ChevronsDownUp size={13} /> Collapse months</>}
+            </button>
+            <ColumnPicker columns={availableCols} hidden={hiddenCols} onChange={setHiddenCols} />
+          </div>
         </div>
       )}
 
@@ -2426,38 +2556,40 @@ export default function SupplierProfilePage() {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: 'var(--bg-surface)' }}>
-                      {multiEntity && <th style={styles.th}>Entity</th>}
-                      <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('invoice_date')}>
-                        Date{sortArrow('invoice_date')}
-                      </th>
-                      <th style={styles.th}>Period</th>
+                      {colVisible('entity') && <th style={styles.th}>Entity</th>}
+                      {colVisible('date') && (
+                        <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('invoice_date')}>
+                          Date{sortArrow('invoice_date')}
+                        </th>
+                      )}
+                      {colVisible('period') && <th style={styles.th}>Period</th>}
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('invoice_number')}>
                         Invoice #{sortArrow('invoice_number')}
                       </th>
-                      {showVehicleReg && !isWBGDiesel && (
+                      {colVisible('vehicle_reg') && (
                         <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('vehicle_reg')}>
                           Vehicle Reg{sortArrow('vehicle_reg')}
                         </th>
                       )}
-                      {showVehicleReg && !isWBGDiesel && (
+                      {colVisible('subcontractor') && (
                         <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('subcontractor')}>
                           Subcontractor{sortArrow('subcontractor')}
                         </th>
                       )}
-                      {!isDiesel && <th style={styles.th}>Description</th>}
+                      {colVisible('description') && <th style={styles.th}>Description</th>}
                       <th style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('amount')}>
                         Amount{sortArrow('amount')}
                       </th>
                       {/* Deposit / Outstanding / VAT don't apply to diesel statements */}
-                      {!isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Deposit</th>}
-                      {!isDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Outstanding</th>}
-                      {isDiesel && !isWBGDiesel && (
+                      {colVisible('deposit') && <th style={{ ...styles.th, textAlign: 'right' }}>Deposit</th>}
+                      {colVisible('outstanding') && <th style={{ ...styles.th, textAlign: 'right' }}>Outstanding</th>}
+                      {colVisible('litres') && (
                         <th style={{ ...styles.th, textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('litres')}>
                           Litres{sortArrow('litres')}
                         </th>
                       )}
-                      {isDiesel && !isWBGDiesel && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
-                      {!isDiesel && <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>}
+                      {colVisible('rate') && <th style={{ ...styles.th, textAlign: 'right' }}>Rate/L</th>}
+                      {colVisible('vat') && <th style={{ ...styles.th, textAlign: 'center' }}>VAT</th>}
                       <th style={{ ...styles.th, width: 28, textAlign: 'center' }}>
                         {groupSelectable.length > 0 && (
                           <input
@@ -2469,10 +2601,10 @@ export default function SupplierProfilePage() {
                           />
                         )}
                       </th>
-                      <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>
-                      <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>
-                      <th style={styles.th}>Paid Date</th>
-                      <th style={styles.th}>Notes</th>
+                      {colVisible('verified') && <th style={{ ...styles.th, textAlign: 'center' }}>Verified</th>}
+                      {colVisible('paid') && <th style={{ ...styles.th, textAlign: 'center' }}>Paid</th>}
+                      {colVisible('paid_date') && <th style={styles.th}>Paid Date</th>}
+                      {colVisible('notes') && <th style={styles.th}>Notes</th>}
                       <th style={styles.th}></th>
                     </tr>
                   </thead>
@@ -2490,8 +2622,7 @@ export default function SupplierProfilePage() {
                       const editFields = isEditing && !isLocked
                       const f = editForm
                       const isExpanded = openInvoiceIds.has(inv.id)
-                      // Diesel drops Description, Deposit, Outstanding and VAT; adds Litres + Rate/L
-                      const totalCols = (isDiesel ? 10 : 14) + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0) + (isDiesel && !isWBGDiesel ? 2 : 0)
+                      const totalCols = visibleCols.length
 
                       return (
                         <Fragment key={inv.id}>
@@ -2507,7 +2638,7 @@ export default function SupplierProfilePage() {
                             }}
                           >
                             {/* Entity cell */}
-                            {multiEntity && (
+                            {colVisible('entity') && (
                               <td style={styles.td}>
                                 <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
                                   {entities.find(e => e.id === inv.entity_id)?.code || '—'}
@@ -2516,6 +2647,7 @@ export default function SupplierProfilePage() {
                             )}
 
                             {/* Date */}
+                            {colVisible('date') && (
                             <td style={styles.td}>
                               {editFields ? (
                                 <DateInput
@@ -2527,8 +2659,10 @@ export default function SupplierProfilePage() {
                                 />
                               ) : formatDate(inv.invoice_date)}
                             </td>
+                            )}
 
                             {/* Period */}
+                            {colVisible('period') && (
                             <td style={styles.td}>
                               {editFields ? (
                                 <div style={{ display: 'flex', gap: 3 }} onClick={e => e.stopPropagation()}>
@@ -2564,6 +2698,7 @@ export default function SupplierProfilePage() {
                                 </span>
                               )}
                             </td>
+                            )}
 
                             {/* Invoice # */}
                             <td style={{ ...styles.td, fontWeight: editFields ? 400 : 600 }}>
@@ -2602,7 +2737,7 @@ export default function SupplierProfilePage() {
 
 
                             {/* Vehicle Reg */}
-                            {showVehicleReg && !isWBGDiesel && (
+                            {colVisible('vehicle_reg') && (
                               <td style={styles.td}>
                                 {editFields ? (
                                   <div onClick={e => e.stopPropagation()}>
@@ -2625,7 +2760,7 @@ export default function SupplierProfilePage() {
                             )}
 
                             {/* Subcontractor / truck owner (display only) */}
-                            {showVehicleReg && !isWBGDiesel && (
+                            {colVisible('subcontractor') && (
                               <td style={styles.td}>
                                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                                   {subForInvoice(inv) || '—'}
@@ -2634,7 +2769,7 @@ export default function SupplierProfilePage() {
                             )}
 
                             {/* Description (non-diesel only) */}
-                            {!isDiesel && (
+                            {colVisible('description') && (
                               <td style={{ ...styles.td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {editFields ? (
                                   <input
@@ -2678,7 +2813,7 @@ export default function SupplierProfilePage() {
                             </td>
 
                             {/* Deposit Paid */}
-                            {!isDiesel && (
+                            {colVisible('deposit') && (
                               <td style={{ ...styles.td, textAlign: 'right' }}>
                                 {editFields ? (
                                   <input
@@ -2698,7 +2833,7 @@ export default function SupplierProfilePage() {
                             )}
 
                             {/* Outstanding Amount */}
-                            {!isDiesel && (
+                            {colVisible('outstanding') && (
                               <td style={{ ...styles.td, textAlign: 'right' }}>
                                 {(() => {
                                   const amt = parseFloat(isEditing ? f.amount : inv.amount) || 0
@@ -2712,7 +2847,7 @@ export default function SupplierProfilePage() {
                             )}
 
                             {/* Litres — diesel suppliers only (not WBG bulk-import) */}
-                            {isDiesel && !isWBGDiesel && (
+                            {colVisible('litres') && (
                               <td style={{ ...styles.td, textAlign: 'right' }}>
                                 {editFields ? (
                                   <input
@@ -2744,7 +2879,7 @@ export default function SupplierProfilePage() {
                             )}
 
                             {/* Rate/L — diesel suppliers only (not WBG bulk-import) */}
-                            {isDiesel && !isWBGDiesel && (
+                            {colVisible('rate') && (
                               <td style={{ ...styles.td, textAlign: 'right' }}>
                                 {editFields ? (
                                   <input
@@ -2773,7 +2908,7 @@ export default function SupplierProfilePage() {
                             )}
 
                             {/* VAT */}
-                            {!isDiesel && (
+                            {colVisible('vat') && (
                               <td style={{ ...styles.td, textAlign: 'center' }}>
                                 {inv.is_multi_line ? (
                                   <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>per line</span>
@@ -2806,11 +2941,14 @@ export default function SupplierProfilePage() {
                             </td>
 
                             {/* Verified */}
+                            {colVisible('verified') && (
                             <td style={styles.td}>
                               <VerifyBadge item={inv} onVerify={handleVerify} onFinalize={handleFinalize} currentUserId={user?.id} isAdmin={isAdmin} adminFinalizeAnytime />
                             </td>
+                            )}
 
                             {/* Paid */}
+                            {colVisible('paid') && (
                             <td style={{ ...styles.td, textAlign: 'center' }}>
                               <button
                                 onClick={e => handleMarkPaid(inv, e)}
@@ -2820,15 +2958,19 @@ export default function SupplierProfilePage() {
                                 <CheckCircle size={16} />
                               </button>
                             </td>
+                            )}
 
                             {/* Paid Date — stamped when the tick is set */}
+                            {colVisible('paid_date') && (
                             <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
                               {inv.is_paid && inv.paid_date
                                 ? <span style={{ fontSize: 12 }}>{formatDate(inv.paid_date)}</span>
                                 : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                             </td>
+                            )}
 
                             {/* Notes */}
+                            {colVisible('notes') && (
                             <td style={{ ...styles.td, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {isEditing ? (
                                 <input
@@ -2848,6 +2990,7 @@ export default function SupplierProfilePage() {
                                 </span>
                               )}
                             </td>
+                            )}
 
                             {/* Actions */}
                             <td style={{ ...styles.td, whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
@@ -2989,13 +3132,13 @@ export default function SupplierProfilePage() {
                   <tfoot>
                     <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-surface)' }}>
                       <td
-                        colSpan={3 + (isDiesel ? 0 : 1) + (multiEntity ? 1 : 0) + (showVehicleReg && !isWBGDiesel ? 2 : 0)}
+                        colSpan={amountColIdx}
                         style={{ ...styles.td, fontWeight: 700, textAlign: 'right' }}
                       >
                         Statement Total:
                       </td>
                       <td style={{ ...styles.td, fontWeight: 700 }}>{formatCurrency(group.subtotal)}</td>
-                      <td colSpan={(isDiesel ? 6 : 9) + (isDiesel && !isWBGDiesel ? 2 : 0)} style={styles.td} />
+                      <td colSpan={visibleCols.length - amountColIdx - 1} style={styles.td} />
                     </tr>
                   </tfoot>
                 </table>
@@ -3994,7 +4137,7 @@ const styles = {
   page: { padding: 'var(--page-pad)', flex: 1 },
   infoCard: {
     display: 'flex', flexWrap: 'wrap', gap: '6px 24px',
-    padding: '12px 16px', marginBottom: 24,
+    padding: '12px 16px', marginBottom: 16,
     background: 'var(--bg-card)', border: '1px solid var(--border)',
     borderRadius: 8, fontSize: 13, color: 'var(--text-muted)',
   },
