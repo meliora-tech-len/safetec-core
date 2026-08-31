@@ -5,6 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from app.db.database import get_db
 from app.core.security import get_current_user
+from app.core.updates import sent_fields
 from app.models.models import User, Supplier, Invoice, SupplierInvoice, DieselRate, DieselFillUp
 from app.schemas.schemas import SupplierCreate, SupplierBulkCreate, SupplierUpdate, SupplierOut
 from app.services.audit import log_action
@@ -198,8 +199,9 @@ def update_supplier(
         raise HTTPException(status_code=404, detail="Supplier not found")
     _check_entity_access(supplier.entity_id, current_user)
 
-    old_vals = {k: str(getattr(supplier, k)) for k in payload.model_dump(exclude_none=True)}
-    for field, value in payload.model_dump(exclude_none=True).items():
+    updates = sent_fields(payload, "notes")
+    old_vals = {k: str(getattr(supplier, k)) for k in updates}
+    for field, value in updates.items():
         setattr(supplier, field, value)
 
     log_action(

@@ -4,6 +4,7 @@ from sqlalchemy import or_
 from typing import List, Optional
 from app.db.database import get_db
 from app.core.security import get_current_user
+from app.core.updates import sent_fields
 from app.models.models import User, Customer, Invoice, Statement
 from app.schemas.schemas import CustomerCreate, CustomerUpdate, CustomerOut
 from app.services.audit import log_action
@@ -95,7 +96,7 @@ def update_customer(
         raise HTTPException(status_code=404, detail="Customer not found")
     _check_entity_access(customer.entity_id, current_user)
 
-    for field, value in payload.model_dump(exclude_none=True).items():
+    for field, value in sent_fields(payload, "notes").items():
         setattr(customer, field, value)
 
     log_action(

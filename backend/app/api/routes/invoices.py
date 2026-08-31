@@ -17,6 +17,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone
 from app.db.database import get_db
 from app.core.security import get_current_user
+from app.core.updates import sent_fields
 from app.models.models import User, Invoice, InvoiceLineItem, BusinessEntity, Supplier, Customer, InvoiceStatus
 from app.schemas.schemas import InvoiceCreate, InvoiceUpdate, InvoiceOut, DashboardStats, InvoiceSummary, EntityProfitLoss
 from app.services.audit import log_action
@@ -666,9 +667,9 @@ def update_invoice(
         old_status = invoice.status
         # qty_adjustment_pct is handled separately: the generic pass drops
         # None, which would make "turn the adjustment off" a no-op.
-        update_data = payload.model_dump(
+        update_data = sent_fields(
+            payload, "notes",
             exclude={"line_items", "qty_adjustment_pct", "qty_adjustment_scope"},
-            exclude_none=True,
         )
         for field, value in update_data.items():
             setattr(invoice, field, value)

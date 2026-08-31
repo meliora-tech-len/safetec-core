@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from app.db.database import get_db
 from app.core.security import get_current_user
+from app.core.updates import sent_fields
 from app.models.models import User, Supplier, SupplierInvoice, SupplierInvoiceLineItem, SupplierInvoiceLock, SupplierStatement, PaymentTermType, Truck, TruckLoad, DieselFillUp, BusinessEntity, ValueVerification
 from app.schemas.schemas import (
     SupplierInvoiceCreate, SupplierInvoiceUpdate, SupplierInvoiceOut,
@@ -1699,7 +1700,7 @@ def update_supplier_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     _check_invoice_access(inv, current_user)
 
-    updates = payload.model_dump(exclude_none=True)
+    updates = sent_fields(payload, "notes")
 
     # Final-verification lock: only payment-status fields and a free-text note
     # may still change (a note-only edit sends just `notes`).

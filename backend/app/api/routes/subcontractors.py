@@ -10,6 +10,7 @@ from typing import List, Optional
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
+from app.core.updates import sent_fields
 from app.models.models import User, Subcontractor, Truck, TruckLoad, SupplierInvoice, SupplierInvoiceLineItem, BusinessEntity, DieselSettings, DieselRate, Supplier, DieselFillUp, PaymentTermType, TruckCostingNote, TruckCostingIncome, TruckCostingSent
 from app.schemas.schemas import (
     SubcontractorCreate, SubcontractorBulkCreate,
@@ -239,7 +240,7 @@ def update_subcontractor(
         raise HTTPException(status_code=404, detail="Subcontractor not found")
     _check_entity_access(sub.entity_id, current_user)
 
-    updates = payload.model_dump(exclude_none=True, exclude={"clear_end_date"})
+    updates = sent_fields(payload, "notes", exclude={"clear_end_date"})
     old_vals = {k: str(getattr(sub, k)) for k in updates}
     for field, value in updates.items():
         setattr(sub, field, value)

@@ -5,6 +5,7 @@ from datetime import date
 from decimal import Decimal
 from app.db.database import get_db
 from app.core.security import get_current_user
+from app.core.updates import sent_fields
 from app.models.models import User, InvoiceTemplate, InvoiceTemplateLineItem
 from app.schemas.schemas import (
     InvoiceTemplateCreate, InvoiceTemplateUpdate, InvoiceTemplateOut,
@@ -117,11 +118,11 @@ def update_template(
         raise HTTPException(status_code=404, detail="Template not found")
     _check_entity_access(tmpl.entity_id, current_user)
 
+    updates = sent_fields(data, "notes")
     for field in ("supplier_id", "customer_id", "name", "document_type",
                   "is_vat_exempt", "vat_rate", "notes", "print_note", "terms"):
-        val = getattr(data, field)
-        if val is not None:
-            setattr(tmpl, field, val)
+        if field in updates:
+            setattr(tmpl, field, updates[field])
 
     if data.line_items is not None:
         db.query(InvoiceTemplateLineItem).filter(

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db.database import get_db
 from app.core.security import get_current_user
+from app.core.updates import sent_fields
 from app.models.models import (
     User, DieselSettings, DieselRate, DieselFillUp,
     Supplier, Truck, TruckLoad, SupplierInvoice, BusinessEntity,
@@ -479,8 +480,8 @@ def update_diesel_rate(
         raise HTTPException(status_code=404, detail="Rate not found")
     _check_entity_access(rate.entity_id, current_user)
 
-    if payload.notes is not None:
-        rate.notes = payload.notes
+    if "notes" in payload.model_fields_set:
+        rate.notes = (payload.notes or "").strip() or None
     if payload.is_active is not None:
         rate.is_active = payload.is_active
     if payload.effective_to is not None:
@@ -1106,7 +1107,7 @@ def update_fillup(
         raise HTTPException(status_code=404, detail="Fill-up not found")
     _check_entity_access(f.entity_id, current_user)
 
-    updates = payload.model_dump(exclude_none=True)
+    updates = sent_fields(payload, "notes")
 
     # The tag is fixed per supplier (Merino & Oukop = top-up, everyone else =
     # fill-up) — never taken from the client. Re-derived below only when the

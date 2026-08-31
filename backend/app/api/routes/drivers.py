@@ -14,6 +14,7 @@ from datetime import date
 
 from app.db.database import get_db
 from app.core.security import get_current_user
+from app.core.updates import sent_fields
 from app.models.models import (
     User, Driver, DriverType,
     DriverPayCycle, DriverTripLog, DriverAdditionalLoad, DriverFoodPayment,
@@ -1053,7 +1054,7 @@ def update_additional_load(
     entry = db.query(DriverAdditionalLoad).filter(DriverAdditionalLoad.id == load_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Additional load not found")
-    updates = payload.model_dump(exclude_none=True)
+    updates = sent_fields(payload, "notes")
     # Final-verification lock: only the paid status and a free-text note may
     # still change (a note-only edit sends just `notes`).
     ensure_not_locked(entry, updates, {"is_paid", "notes"})
@@ -1234,7 +1235,7 @@ def update_food_payment(
     entry = db.query(DriverFoodPayment).filter(DriverFoodPayment.id == payment_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Food payment not found")
-    updates = payload.model_dump(exclude_none=True)
+    updates = sent_fields(payload, "notes")
     # Final-verification lock: a free-text note may still be added/edited, and the
     # payment may still be re-attributed to the correct truck. Re-attribution moves
     # which truck's Food Allowance tab shows the row — it changes no amount, date or

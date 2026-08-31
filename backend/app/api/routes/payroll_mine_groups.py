@@ -4,6 +4,7 @@ from typing import List
 
 from app.db.database import get_db
 from app.core.security import get_current_user, require_admin
+from app.core.updates import sent_fields
 from app.models.models import User, PayrollMineGroup
 from app.schemas.schemas import (
     PayrollMineGroupCreate, PayrollMineGroupUpdate, PayrollMineGroupOut,
@@ -100,7 +101,7 @@ def update_group(
     if not old:
         raise HTTPException(status_code=404, detail="Mine group not found")
 
-    update_data = payload.model_dump(exclude_none=True)
+    update_data = sent_fields(payload, "notes")
 
     # Deactivate all active records for this group name
     _deactivate_by_name(db, old.name)

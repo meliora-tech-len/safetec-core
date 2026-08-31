@@ -10,6 +10,7 @@ from decimal import Decimal
 
 from app.db.database import get_db
 from app.core.security import get_current_user
+from app.core.updates import sent_fields
 from app.models.models import (
     User, TruckLoad, TruckLoadDriverSplit, Mine, MineRate, Truck, Supplier,
     Driver, DriverType, DriverPayCycle, DriverTripLog, PayrollSettings,
@@ -1039,7 +1040,7 @@ def update_truck_load(
     # Profit Sheet final lock: the load's current month must be open ...
     ensure_truck_month_open(db, old_truck_id, *old_split_period)
 
-    updated_fields = payload.model_dump(exclude_none=True)
+    updated_fields = sent_fields(payload, "notes")
     for field, value in updated_fields.items():
         setattr(load, field, value)
 
