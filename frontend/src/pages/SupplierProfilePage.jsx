@@ -1969,11 +1969,12 @@ export default function SupplierProfilePage() {
   const visibleCols = availableCols.filter(c => c.fixed || !hiddenCols.includes(c.key))
   const colVisible = (key) => visibleCols.some(c => c.key === key)
   const amountColIdx = visibleCols.findIndex(c => c.key === 'amount')
-  // Merino & Oukop send a statement carrying the slip# before the physical slip
-  // is received, so the slip# hasn't been captured as a fill-up yet. Let the user
-  // type the slip# freely instead of forcing a pick from the fill-up dropdown.
-  const slipFreeText = isDiesel &&
-    /merino|oukop/i.test(`${supplier?.name || ''} ${supplier?.short_name || ''}`)
+  // Any diesel supplier's statement can carry a slip# before that slip has been
+  // captured as a fill-up (Merino & Oukop always do; a freshly typed statement
+  // for any other diesel supplier can too). The select-only dropdown otherwise
+  // silently discards a typed slip it doesn't already recognise — no error, no
+  // save — so every diesel supplier gets to type freely, not just these two.
+  const slipFreeText = isDiesel
 
   const isDuplicateInvoiceNumber = (invoiceNumber, excludeId = null) =>
     allInvoices.some(inv =>

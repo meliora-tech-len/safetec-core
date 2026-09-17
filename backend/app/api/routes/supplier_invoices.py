@@ -205,6 +205,81 @@ def _slipless_line_fillups(db: Session, invoice: SupplierInvoice, truck_id: int)
     )
 
 
+def _invoice_truck_fillups(db: Session, invoice: SupplierInvoice, truck_id: int):
+    """Every live fill-up linked to this invoice for one truck, slip or no slip.
+
+    How many there are is what says whether this invoice's lines for the truck
+    are already accounted for — a line captured without a slip can still own a
+    fill-up carrying one, linked in from the diesel side.
+    """
+    return db.query(DieselFillUp).filter(
+        DieselFillUp.supplier_invoice_id == invoice.id,
+        DieselFillUp.truck_id == truck_id,
+        DieselFillUp.is_archived != True,  # noqa: E712 — SQL boolean
+    )
+
+
+def _lines_for_truck(db: Session, invoice: SupplierInvoice, truck_id: int,
+                     slipless_only: bool = False) -> list:
+    """The invoice's lines whose registration resolves to this truck.
+
+    The invoice + truck key cannot tell two such lines apart, so their number is
+    what says how many fill-ups that truck should have on this invoice, and
+    whether a candidate fill-up can be assumed to be a given line's at all.
+    """
+    q = db.query(SupplierInvoiceLineItem).filter(
+        SupplierInvoiceLineItem.invoice_id == invoice.id,
+    )
+    if slipless_only:
+        q = q.filter(func.coalesce(SupplierInvoiceLineItem.item_code, '') == '')
+    lines = q.all()
+    out = []
+    for line in lines:
+        reg = (line.unit or "").strip()
+        if not reg:
+            continue
+        t = _resolve_truck_by_reg(db, invoice.entity_id, reg)
+        if t and t.id == truck_id:
+            out.append(line)
+    return out
+
+
+def _pick_line_fillup(fillups: list, li: SupplierInvoiceLineItem, default_date,
+                      strict: bool = False):
+    """Pick the fill-up a slip-less line stands for out of those for one truck.
+
+    The line's own date and litres name its fill-up, since that is what created
+    it. Where the truck has only one line on this invoice the match may be
+    loosened — a lone candidate is that line's whatever the values now say,
+    which keeps an edit that changes litres and slip in one save working.
+
+    Pass strict when the truck has more than one line: a candidate is then only
+    this line's if date and litres both say so. Two lines captured on the same
+    day are otherwise indistinguishable by date, and guessing there stamps one
+    line's slip onto the other's fuel transaction. Returning nothing leaves a
+    duplicate to delete; guessing wrong loses a transaction silently.
+    """
+    if not fillups:
+        return None
+    want_date = li.line_date or default_date
+    exact = [
+        f for f in fillups
+        if f.fillup_date == want_date
+        and li.quantity is not None
+        and Decimal(str(f.litres or 0)) == Decimal(str(li.quantity))
+    ]
+    if len(exact) == 1:
+        return exact[0]
+    if strict:
+        return None
+    if len(fillups) == 1:
+        return fillups[0]
+    same_date = [f for f in fillups if f.fillup_date == want_date]
+    if len(same_date) == 1:
+        return same_date[0]
+    return None
+
+
 def _delete_line_fillups(db: Session, invoice: SupplierInvoice,
                          li: SupplierInvoiceLineItem, user_id: int) -> int:
     """Delete the diesel fill-up(s) this invoice line stands for.
@@ -243,6 +318,14 @@ def _delete_line_fillups(db: Session, invoice: SupplierInvoice,
     fillups = q.all()
     if not fillups:
         return 0
+    if not slip and len(_lines_for_truck(db, invoice, truck.id)) > 1:
+        # Several lines for this truck on one invoice: take only the one this
+        # line stands for, never a sibling fuel transaction with it.
+        inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
+        picked = _pick_line_fillup(fillups, li, inv_date, strict=True)
+        if not picked:
+            return 0
+        fillups = [picked]
 
     for f in fillups:
         # Drop the diesel snapshot off any load that was reading from this fill-up
@@ -309,13 +392,24 @@ def _sync_line_fillup(db: Session, invoice: SupplierInvoice,
     else:
         return
     fillups = q.all()
-    if len(fillups) != 1:
+    inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
+    if slip:
+        # A printed slip covering several pump transactions (Intsimbi) can't be
+        # split per line, so more than one match is still left alone.
+        f = fillups[0] if len(fillups) == 1 else None
+    else:
+        # The invoice + truck key can't tell two slip-less lines apart, so where
+        # this truck has more than one, the line's own date and litres must
+        # identify its fill-up before any value is written to it.
+        f = _pick_line_fillup(
+            fillups, li, inv_date,
+            strict=len(_lines_for_truck(db, invoice, truck.id)) > 1,
+        )
+    if not f:
         return
-    f = fillups[0]
     if f.verified3_by:
         return
 
-    inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
     new_date = li.line_date or inv_date
     litres = Decimal(str(li.quantity))
     excl = Decimal(str(li.amount_excl_vat))
@@ -508,15 +602,34 @@ def _maybe_create_line_fillup(
         # The line may have been captured without its slip first — its fill-up
         # then carries no slip at all. Adopt that one and stamp the slip on it,
         # rather than duplicating the same fuel transaction.
-        slipless = _slipless_line_fillups(db, invoice, truck.id).first()
+        # Only the fill-up that is actually this line's may adopt the slip —
+        # taking whichever came first stamped one line's slip onto another
+        # line's fuel transaction, and the sync that followed then overwrote its
+        # litres, losing a transaction and double-counting the survivor.
+        # Nothing records which line a fill-up came from, so where this truck has
+        # more than one line, ownership must be proven by this line's own date
+        # and litres rather than assumed from the candidate being the only one.
+        slipless = _pick_line_fillup(
+            _slipless_line_fillups(db, invoice, truck.id).all(), li, inv_date,
+            strict=len(_lines_for_truck(db, invoice, truck.id)) > 1,
+        )
         if slipless:
             slipless.slip_number = slip
             slipless.depot_slip_number = slip
             return
     else:
-        # No slip on the line: the fill-up is keyed on the invoice itself, so
-        # one already created for this truck under this invoice IS this line's.
-        if _slipless_line_fillups(db, invoice, truck.id).first():
+        # No slip on the line: nothing identifies which fill-up is this line's,
+        # so go by how many there should be. This truck's lines on this invoice
+        # and its fill-ups on this invoice must balance.
+        #
+        # Count EVERY fill-up here, not only the slip-less ones. A line captured
+        # without a slip can still own a fill-up that carries one — the diesel
+        # import logs the slip, and linking by slip attaches it to this invoice
+        # later. Counting only slip-less fill-ups sees none, and re-saving the
+        # line then duplicates a transaction that was already there.
+        if _invoice_truck_fillups(db, invoice, truck.id).count() >= len(
+            _lines_for_truck(db, invoice, truck.id)
+        ):
             return
 
     litres_d = Decimal(str(li.quantity))
