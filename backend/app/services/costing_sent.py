@@ -115,7 +115,51 @@ def truck_regs(truck: Truck) -> set:
     return {r for r in (_norm_reg(truck.registration), _norm_reg(truck.temp_registration)) if r}
 
 
-def truck_invoice_contribution(inv: SupplierInvoice, regs: set):
+def _fuel_key(reg, litres, amount):
+    """Identity of one fuel transaction: truck + litres + rand value, rounded so
+    a float round-trip through the database cannot break the match."""
+    return (
+        _norm_reg(reg),
+        Decimal(str(litres or 0)).quantize(Decimal("0.001")),
+        Decimal(str(amount or 0)).quantize(Decimal("0.01")),
+    )
+
+
+def fuelled_lines_by_invoice(db: Session, invoice_ids) -> dict:
+    """Which invoice lines are already costed as fuel, keyed by invoice id.
+
+    A fill-up is created from its statement line and carries the same truck,
+    litres and amount, so that triple identifies the line it came from. Used to
+    keep fuel out of the supplier-invoice side of a costing: without it a fuel
+    line captured WITHOUT a slip number is counted twice — once in the diesel
+    section via its fill-up, and again as an ordinary invoice expense.
+    """
+    from app.models.models import DieselFillUp  # local: avoids an import cycle
+
+    ids = list(invoice_ids)
+    if not ids:
+        return {}
+    rows = (
+        db.query(
+            DieselFillUp.supplier_invoice_id,
+            Truck.registration,
+            DieselFillUp.litres,
+            DieselFillUp.amount,
+        )
+        .join(Truck, Truck.id == DieselFillUp.truck_id)
+        .filter(
+            DieselFillUp.supplier_invoice_id.in_(ids),
+            DieselFillUp.is_archived == False,  # noqa: E712 — SQL boolean
+        )
+        .all()
+    )
+    out = {}
+    for inv_id, reg, litres, amount in rows:
+        out.setdefault(inv_id, set()).add(_fuel_key(reg, litres, amount))
+    return out
+
+
+def truck_invoice_contribution(inv: SupplierInvoice, regs: set, fuelled: set = None):
     """How much of a non-diesel supplier invoice is attributable to one truck,
     split into a non-VAT (excl) and a VAT (incl) bucket.
 
@@ -134,10 +178,17 @@ def truck_invoice_contribution(inv: SupplierInvoice, regs: set):
       fall back to the main-line ``vehicle_reg`` and the invoice-level VAT flag.
 
     Diesel-supplier invoices are included so that their NON-fuel lines (parking,
-    maintenance — no slip in ``item_code``) still cost against the truck. Their
-    fuel lines carry a slip and are already costed via the truck's DieselFillUp
-    rows, so we skip any line with a slip here to avoid double-counting; a diesel
-    single-line invoice is fuel by nature, so it contributes nothing on this path.
+    maintenance) still cost against the truck. Their fuel lines are already
+    costed via the truck's DieselFillUp rows and are skipped here to avoid
+    double-counting; a diesel single-line invoice is fuel by nature, so it
+    contributes nothing on this path.
+
+    A fuel line is recognised two ways: it carries a slip, or ``fuelled`` says a
+    fill-up with its truck, litres and amount exists on this invoice. The slip
+    alone is not enough — a statement typed in without slip numbers has fuel
+    lines that look exactly like a parking charge, and counting those here is
+    what billed the fuel to the costing twice. Pass ``fuelled`` from
+    ``fuelled_lines_by_invoice``; omitting it keeps the slip-only behaviour.
     """
     D0 = Decimal("0")
     if not regs:
@@ -152,9 +203,14 @@ def truck_invoice_contribution(inv: SupplierInvoice, regs: set):
             for li in inv.line_items:
                 if _norm_reg(li.unit) not in regs:
                     continue
-                # A slipped line on a diesel statement is fuel — costed via its
-                # DieselFillUp, not here. Non-fuel lines (no slip) fall through.
-                if is_diesel and (li.item_code or "").strip():
+                # Fuel on a diesel statement is costed via its DieselFillUp, not
+                # here. A slip marks it; so does a fill-up on this invoice with
+                # the same truck, litres and amount — which is how a statement
+                # captured without slip numbers is recognised.
+                if is_diesel and (
+                    (li.item_code or "").strip()
+                    or (fuelled and _fuel_key(li.unit, li.quantity, li.amount_excl_vat) in fuelled)
+                ):
                     continue
                 e = Decimal(str(li.amount_excl_vat or 0))
                 i = Decimal(str(li.amount_incl_vat or 0))
@@ -188,7 +244,8 @@ def invoice_costing_targets(db: Session, inv: SupplierInvoice) -> list:
         .filter(Subcontractor.entity_id == inv.entity_id)
         .all()
     )
-    matched = [t for t in trucks if truck_invoice_contribution(inv, truck_regs(t))[0]]
+    fuelled = fuelled_lines_by_invoice(db, [inv.id]).get(inv.id)
+    matched = [t for t in trucks if truck_invoice_contribution(inv, truck_regs(t), fuelled)[0]]
     if not matched:
         return []
 

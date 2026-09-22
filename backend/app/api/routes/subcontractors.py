@@ -27,6 +27,7 @@ from app.services.profit_sheet_lock import ensure_invoice_not_profit_locked
 from app.services.costing_sent import (
     build_sent_map, natural_invoice_period, period_add, roll_past_sent, costing_override_period,
     truck_regs as _truck_regs, truck_invoice_contribution as _truck_invoice_contribution,
+    fuelled_lines_by_invoice as _fuelled_lines_by_invoice,
 )
 from app.services.verification import get_verification_display
 from app.services.vat import entity_vat_rate, DEFAULT_VAT_RATE
@@ -600,6 +601,9 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     natural_by_inv = {
         inv.id: natural_invoice_period(inv, is_safetec) for inv in candidate_invoices
     }
+    # Fuel already costed via the diesel section, so the invoice side can leave it
+    # alone. Fetched once for every candidate rather than per truck.
+    fuelled_by_inv = _fuelled_lines_by_invoice(db, [inv.id for inv in candidate_invoices])
 
     def _invoice_in_period(inv, truck_id: int) -> bool:
         """Does this invoice belong to (year, month) for this truck, after the
@@ -680,7 +684,9 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         for inv in candidate_invoices:
             if not _invoice_in_period(inv, truck.id):
                 continue
-            matched, c_excl, c_incl = _truck_invoice_contribution(inv, truck_regs)
+            matched, c_excl, c_incl = _truck_invoice_contribution(
+                inv, truck_regs, fuelled_by_inv.get(inv.id)
+            )
             if not matched:
                 continue
             exp_excl += c_excl
