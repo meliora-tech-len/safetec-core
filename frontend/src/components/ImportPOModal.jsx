@@ -57,6 +57,42 @@ function lastIntToken(val) {
   return runs ? runs[runs.length - 1] : String(val ?? '').trim()
 }
 
+// Every PO load line obeys Quantity x Price = Net Value. Once a row has been
+// flattened to a run of numbers, that identity is the only reliable way to tell
+// which of them belong together — the conversion can split one amount across
+// tokens ("33 678.40"), merge two printed columns into one cell, or leave an
+// unconsumed WB ticket sitting in front of the amounts, and none of those are
+// distinguishable from the text alone.
+//
+// Try every way of cutting the trailing numbers into three consecutive groups,
+// optionally discarding a run of whole numbers in front (what a stray ticket
+// number looks like), and take the reading that balances. If the caller's own
+// positional reading already balances, or nothing balances, the positional
+// reading is returned untouched — so a row that imports correctly today cannot
+// be changed by this.
+function balancedAmounts(tail, positional) {
+  const n = s => parseFloat(s)
+  const balances = ([q, p, v]) => {
+    const [Q, P, V] = [n(q), n(p), n(v)]
+    return [Q, P, V].every(Number.isFinite) && Q !== 0 && P !== 0 &&
+      Math.abs(Q * P - V) <= 0.01 + Math.abs(V) * 1e-6
+  }
+  if (balances(positional)) return positional
+  let best = null
+  for (let s = 0; s < tail.length - 2; s++) {
+    if (s > 0 && !/^\d+$/.test(tail[s - 1])) break
+    for (let i = s + 1; i < tail.length - 1; i++) {
+      for (let j = i + 1; j < tail.length; j++) {
+        const cand = [tail.slice(s, i).join(''), tail.slice(i, j).join(''), tail.slice(j).join('')]
+        if (!balances(cand)) continue
+        const err = Math.abs(n(cand[0]) * n(cand[1]) - n(cand[2]))
+        if (!best || err < best.err) best = { cand, err }
+      }
+    }
+  }
+  return best ? best.cand : positional
+}
+
 // Content-anchored rescue for pages where the converted sheet's header labels
 // sit in different columns than the data (page 1 and page 2 of the same PO can
 // disagree), or where the headers are crammed into a single cell. Anchor on the
@@ -76,10 +112,10 @@ function parseRowBySequence(row) {
   const load_wb   = d2 > d1 + 1 ? lastIntToken(after[d1 + 1]) : ''
   const wb_ticket = d2 >= 0 && d2 + 1 < after.length ? lastIntToken(after[d2 + 1]) : ''
   const tail = after.slice(d2 >= 0 ? d2 + 2 : d1 + 1).map(cleanNum).filter(v => v !== '')
-  const [quantity, price, net_value] =
+  const [quantity, price, net_value] = balancedAmounts(tail,
     tail.length >= 3 ? [tail[0], tail[1], tail[2]]
     : tail.length === 2 ? [tail[0], '', tail[1]]
-    : ['', '', tail[0] ?? '']
+    : ['', '', tail[0] ?? ''])
   return { horse_reg: stripTrailingDate(String(row[regIdx]).trim()), load_wb, wb_ticket, quantity, price, net_value }
 }
 
@@ -89,24 +125,53 @@ function parseRowBySequence(row) {
 // on. Flatten the row into whitespace tokens and walk the printed order from the
 // reg token: Load Date, Load WB, Delivery Date, WB Ticket, Quantity, Price,
 // Net Value (a thousand-grouped net value splits into tokens — rejoin the tail).
+// Each token keeps the value of the cell it came from: only some of the printed
+// dates survive the conversion as text ("2026/09/21"), the rest arrive as bare
+// Excel date serials ("46287"), which no text-date pattern matches. Missing a
+// date here shifts every column after it, so the Net Value is read as a run of
+// concatenated digits instead of the amount.
 function parseRowByTokens(row) {
-  const tokens = row.flatMap(c => String(c ?? '').trim().split(/\s+/)).filter(Boolean)
-  const regIdx = tokens.findIndex(t => REG_CELL_PAT.test(t.toUpperCase()))
+  const tokens = row.flatMap((c, ci) => {
+    const parts = String(c ?? '').trim().split(/\s+/).filter(Boolean)
+    return parts.map(t => ({ t, ci, raw: parts.length === 1 ? c : null }))
+  })
+  const regIdx = tokens.findIndex(({ t }) => REG_CELL_PAT.test(t.toUpperCase()))
   if (regIdx < 0) return null
-  const isDateTok = t => /^\d{4}[\/\-]\d{2}[\/\-]\d{2}$/.test(t)
+  const isDateTok = ({ t, raw }) =>
+    typeof raw === 'number' ? isDateCell(raw) : /^\d{4}[\/\-]\d{2}[\/\-]\d{2}$/.test(t)
   const after = tokens.slice(regIdx + 1)
   const d1 = after.findIndex(isDateTok)
   if (d1 < 0) return null
   let d2 = after.slice(d1 + 1).findIndex(isDateTok)
   d2 = d2 < 0 ? -1 : d1 + 1 + d2
-  const load_wb   = d2 > d1 + 1 ? lastIntToken(after.slice(d1 + 1, d2).join(' ')) : ''
-  const wb_ticket = d2 >= 0 && d2 + 1 < after.length ? lastIntToken(after[d2 + 1]) : ''
-  const tail = after.slice(d2 >= 0 ? d2 + 2 : d1 + 1).map(cleanNum).filter(v => v !== '')
-  const [quantity, price, net_value] =
+  const load_wb   = d2 > d1 + 1 ? lastIntToken(after.slice(d1 + 1, d2).map(x => x.t).join(' ')) : ''
+  const wb_ticket = d2 >= 0 && d2 + 1 < after.length ? lastIntToken(after[d2 + 1].t) : ''
+  // Whitespace inside ONE cell can be a thousands separator rather than a column
+  // break ("33 678.40"). Where the trailing numbers still sit in cells of their
+  // own, rejoin a cell's tokens when they spell a single thousand-grouped number
+  // — 1-3 digits, then groups of exactly 3 — so a Price of "1 200.00" survives,
+  // while a cell that really does hold two columns ("34.5 912.00") is still
+  // split. A row crammed entirely into one cell keeps the positional rejoin
+  // below, where the same spacing is genuinely ambiguous.
+  const tailToks = after.slice(d2 >= 0 ? d2 + 2 : d1 + 1)
+  const multiCell = new Set(tailToks.map(x => x.ci)).size > 1
+  const isGrouped = p => multiCell && p.length > 1 && /^-?\d{1,3}$/.test(p[0]) &&
+    p.slice(1, -1).every(x => /^\d{3}$/.test(x)) && /^\d{3}(\.\d+)?$/.test(p[p.length - 1])
+  const tail = []
+  for (let i = 0; i < tailToks.length;) {
+    let j = i
+    while (j < tailToks.length && tailToks[j].ci === tailToks[i].ci) j++
+    const parts = tailToks.slice(i, j).map(x => x.t)
+    for (const v of (isGrouped(parts) ? [cleanNum(parts.join(''))] : parts.map(cleanNum))) {
+      if (v !== '') tail.push(v)
+    }
+    i = j
+  }
+  const [quantity, price, net_value] = balancedAmounts(tail,
     tail.length >= 3 ? [tail[0], tail[1], tail.slice(2).join('')]
     : tail.length === 2 ? [tail[0], '', tail[1]]
-    : ['', '', tail[0] ?? '']
-  return { horse_reg: tokens[regIdx], load_wb, wb_ticket, quantity, price, net_value }
+    : ['', '', tail[0] ?? ''])
+  return { horse_reg: tokens[regIdx].t, load_wb, wb_ticket, quantity, price, net_value }
 }
 
 function extractRoute(description) {
