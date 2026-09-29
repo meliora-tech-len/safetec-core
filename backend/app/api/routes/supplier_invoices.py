@@ -244,6 +244,23 @@ def _lines_for_truck(db: Session, invoice: SupplierInvoice, truck_id: int,
     return out
 
 
+def _lines_for_truck_slip(db: Session, invoice: SupplierInvoice, truck_id: int,
+                          slip: str) -> list:
+    """The invoice's lines for this truck that carry this printed slip.
+
+    One printed slip can stand for more than one fuel transaction: a tank filled
+    in two goes on the same day, or a depot slip spanning several pump
+    transactions (Intsimbi, which keys those by Trans ID). Finding the slip
+    already on a fill-up therefore does not mean this line is accounted for —
+    only how many lines carry it against how many fill-ups exist can say that.
+    """
+    want = _norm_slip(slip)
+    return [
+        li for li in _lines_for_truck(db, invoice, truck_id)
+        if _norm_slip(li.item_code) == want
+    ]
+
+
 def _pick_line_fillup(fillups: list, li: SupplierInvoiceLineItem, default_date,
                       strict: bool = False):
     """Pick the fill-up a slip-less line stands for out of those for one truck.
@@ -318,9 +335,18 @@ def _delete_line_fillups(db: Session, invoice: SupplierInvoice,
     fillups = q.all()
     if not fillups:
         return 0
-    if not slip and len(_lines_for_truck(db, invoice, truck.id)) > 1:
-        # Several lines for this truck on one invoice: take only the one this
-        # line stands for, never a sibling fuel transaction with it.
+    # Several lines for this truck on one invoice — captured with no slip, or
+    # sharing one printed slip that covers more than one pump transaction: take
+    # only the one this line stands for, never a sibling fuel transaction with
+    # it. Without this a shared slip takes every transaction under it, so
+    # removing one line of a two-fill day wipes both.
+    siblings = []
+    if truck:
+        siblings = (
+            _lines_for_truck_slip(db, invoice, truck.id, slip) if slip
+            else _lines_for_truck(db, invoice, truck.id)
+        )
+    if len(siblings) > 1:
         inv_date = invoice.invoice_date.date() if hasattr(invoice.invoice_date, "date") else invoice.invoice_date
         picked = _pick_line_fillup(fillups, li, inv_date, strict=True)
         if not picked:
@@ -593,12 +619,22 @@ def _maybe_create_line_fillup(
                     DieselFillUp.supplier_invoice_id == invoice.id,
                 ),
             )
-            .first()
+            .all()
         )
         if existing:
-            if not existing.supplier_invoice_id:
-                existing.supplier_invoice_id = invoice.id
-            return
+            if not existing[0].supplier_invoice_id:
+                existing[0].supplier_invoice_id = invoice.id
+            # Finding the slip is not the same as this line being accounted for.
+            # One printed slip can cover several pump transactions for the same
+            # truck on one day, so the slip alone cannot tell two such lines
+            # apart — their number can. Returning on the first match left the
+            # second line with no fill-up, and _sync_line_fillup then wrote its
+            # litres over the first line's transaction, so the statement showed
+            # two fills and the Diesel tab only the later one.
+            if len(existing) >= len(
+                _lines_for_truck_slip(db, invoice, truck.id, slip)
+            ):
+                return
         # The line may have been captured without its slip first — its fill-up
         # then carries no slip at all. Adopt that one and stamp the slip on it,
         # rather than duplicating the same fuel transaction.
