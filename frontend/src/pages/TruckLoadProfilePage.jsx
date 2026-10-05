@@ -274,7 +274,16 @@ function LoadForm({ editForm, setEditForm, mines, drivers, vatRate, rateSource, 
         </div>
         <div>
           <div style={lbl}>Slip #</div>
-          <input value={editForm.slip_number || ''} placeholder="Slip #" onChange={e => set('slip_number', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80 }} />
+          {/* A slip number means the load actually happened, so entering one
+              takes the row off projection — that is the whole reason for
+              opening a projection. Without this the Tonnes field stays
+              disabled and the save quietly keeps the row a placeholder. */}
+          <input value={editForm.slip_number || ''} placeholder="Slip #"
+            onChange={e => {
+              const v = e.target.value
+              setEditForm(p => ({ ...p, slip_number: v, ...(v.trim() && p.is_projection ? { is_projection: false } : {}) }))
+            }}
+            onKeyDown={onKey} style={{ ...inp, width: 80 }} />
         </div>
         {showPo && <div>
           <div style={lbl}>PO #</div>
@@ -295,24 +304,35 @@ function LoadForm({ editForm, setEditForm, mines, drivers, vatRate, rateSource, 
             options={mines.filter(m => m.is_active)} getValue={m => String(m.id)} getLabel={m => m.name}
             placeholder="Mine…" style={{ minWidth: 120 }} />
         </div>
-        {!isProj && <>
-          <div>
-            <div style={lbl}>Tonnes</div>
-            <input type="number" step="0.001" min="0" placeholder="0.000" value={editForm.tonnes || ''} onChange={e => set('tonnes', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: 80, textAlign: 'right' }} />
-          </div>
-          <div>
-            <div style={lbl}>Rate/t {rateSource === 'mine' && <span style={{ fontSize: 9, color: 'var(--accent)', marginLeft: 3 }}>auto</span>}</div>
-            <input type="number" step="0.01" min="0" placeholder="Rate" value={editForm.rate_per_ton || ''} onChange={e => { set('rate_per_ton', e.target.value); setRateSource('manual') }} onKeyDown={onKey} style={{ ...inp, width: 75, textAlign: 'right' }} />
-          </div>
-          <div>
-            <div style={lbl}>Excl VAT</div>
-            <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: cardExcl ? 'var(--text-primary)' : 'var(--text-muted)' }}>{cardExcl ? fmt(cardExcl) : '—'}</div>
-          </div>
-          {vatRegistered && <div>
-            <div style={lbl}>Incl VAT</div>
-            <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: 'var(--accent)', fontWeight: 700 }}>{cardIncl ? fmt(cardIncl) : '—'}</div>
-          </div>}
-        </>}
+        {/* Tonnes and Rate stay on screen for a projection, disabled and showing
+            TBC — the same way the split-projection form presents them. Hiding
+            them outright left no sign that the fields exist, so filling a
+            projection in looked like it had worked when the tonnes were in fact
+            being discarded on save. */}
+        <div>
+          <div style={lbl}>Tonnes</div>
+          <input type="number" step="0.001" min="0" disabled={isProj}
+            placeholder={isProj ? 'TBC' : '0.000'}
+            value={isProj ? '' : (editForm.tonnes || '')}
+            onChange={e => set('tonnes', e.target.value)} onKeyDown={onKey}
+            style={{ ...inp, width: 80, textAlign: 'right', ...(isProj ? { background: 'var(--bg-surface)', color: 'var(--text-muted)' } : {}) }} />
+        </div>
+        <div>
+          <div style={lbl}>Rate/t {rateSource === 'mine' && <span style={{ fontSize: 9, color: 'var(--accent)', marginLeft: 3 }}>auto</span>}</div>
+          <input type="number" step="0.01" min="0" disabled={isProj}
+            placeholder={isProj ? 'TBC' : 'Rate'}
+            value={isProj ? '' : (editForm.rate_per_ton || '')}
+            onChange={e => { set('rate_per_ton', e.target.value); setRateSource('manual') }} onKeyDown={onKey}
+            style={{ ...inp, width: 75, textAlign: 'right', ...(isProj ? { background: 'var(--bg-surface)', color: 'var(--text-muted)' } : {}) }} />
+        </div>
+        <div>
+          <div style={lbl}>Excl VAT</div>
+          <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: cardExcl ? 'var(--text-primary)' : 'var(--text-muted)' }}>{cardExcl ? fmt(cardExcl) : '—'}</div>
+        </div>
+        {vatRegistered && <div>
+          <div style={lbl}>Incl VAT</div>
+          <div style={{ ...inp, width: 110, textAlign: 'right', background: 'var(--bg-surface)', color: 'var(--accent)', fontWeight: 700 }}>{cardIncl ? fmt(cardIncl) : '—'}</div>
+        </div>}
         <div style={{ flex: 1, minWidth: 100 }}>
           <div style={lbl}>Notes</div>
           <input value={editForm.notes || ''} placeholder="Notes" onChange={e => set('notes', e.target.value)} onKeyDown={onKey} style={{ ...inp, width: '100%' }} />
@@ -2636,6 +2656,12 @@ export default function TruckLoadProfilePage() {
     if (!editForm.mine_id)  return toast.error('Select a mine')
     if (!editForm.load_date) return toast.error('Load date required')
     if (!editForm.is_projection && (!editForm.tonnes || isNaN(editForm.tonnes))) return toast.error('Valid tonnes required')
+    // Backstop: a row carrying a slip number is a real load, not a placeholder.
+    // Saving it as a projection forces tonnes to 0 further down, which used to
+    // happen silently — the row stayed a projection and the captured figures
+    // were thrown away.
+    if (editForm.is_projection && editForm.slip_number?.trim())
+      return toast.error('This row still has Projection ticked — untick it to record the actual load')
     if (editingId === 'new' && editForm.slip_number?.trim()) {
       const slip = editForm.slip_number.trim().toLowerCase()
       const dup = loads.find(l =>
