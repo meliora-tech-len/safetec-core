@@ -298,7 +298,8 @@ def _pick_line_fillup(fillups: list, li: SupplierInvoiceLineItem, default_date,
 
 
 def _delete_line_fillups(db: Session, invoice: SupplierInvoice,
-                         li: SupplierInvoiceLineItem, user_id: int) -> int:
+                         li: SupplierInvoiceLineItem, user_id: int,
+                         refuse_locked: bool = False) -> int:
     """Delete the diesel fill-up(s) this invoice line stands for.
 
     A diesel statement line IS a fill-up: `_maybe_create_line_fillup` and the bulk
@@ -352,6 +353,12 @@ def _delete_line_fillups(db: Session, invoice: SupplierInvoice,
         if not picked:
             return 0
         fillups = [picked]
+
+    # A fill-up under final verification may not be removed by a line edit —
+    # refuse before anything is deleted so the whole edit is turned away.
+    if refuse_locked:
+        for f in fillups:
+            ensure_not_locked(f)
 
     for f in fillups:
         # Drop the diesel snapshot off any load that was reading from this fill-up
@@ -2615,6 +2622,17 @@ def update_line_item(
     # something other than sort_order actually changed.
     if any(k != "sort_order" for k in new_values):
         ensure_supplier_invoice_unlocked(db, inv)
+
+    # The line's registration now names a different truck (a mistyped reg put
+    # right). Its fill-up still sits on the old truck, and the create below then
+    # adds a second one on the new truck — the old truck's Diesel tab kept fuel
+    # the statement no longer gives it. Remove the old truck's fill-up while the
+    # line still reads as before, so the create below rebuilds it on the new one.
+    if "unit" in new_values:
+        old_truck = _resolve_truck_by_reg(db, inv.entity_id, (li.unit or "").strip())
+        new_truck = _resolve_truck_by_reg(db, inv.entity_id, (data.unit or "").strip())
+        if old_truck and (not new_truck or new_truck.id != old_truck.id):
+            _delete_line_fillups(db, inv, li, current_user.id, refuse_locked=True)
 
     for k, v in updates.items():
         setattr(li, k, v)
