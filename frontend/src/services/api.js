@@ -227,6 +227,7 @@ export const getSubcontractorCosting        = (id, params = {}) => api.get(`/sub
 export const saveSubcontractorCostingNote   = (id, params = {}, data = {}) => api.put(`/subcontractors/${id}/costing/note`, data, { params })
 export const saveSubcontractorCostingNetOverride = (id, params = {}, data = {}) => api.put(`/subcontractors/${id}/costing/net-override`, data, { params })
 export const createTruckCostingIncome       = (id, params = {}, data = {}) => api.post(`/subcontractors/${id}/costing/income`, data, { params })
+export const updateTruckCostingIncome       = (id, incomeId, data = {}) => api.put(`/subcontractors/${id}/costing/income/${incomeId}`, data)
 export const deleteTruckCostingIncome       = (id, incomeId) => api.delete(`/subcontractors/${id}/costing/income/${incomeId}`)
 export const setSubcontractorCostingSent    = (id, params = {}, data = {}) => api.put(`/subcontractors/${id}/costing/sent`, data, { params })
 export const downloadSubcontractorCostingPdf   = (id, params = {}) => api.get(`/subcontractors/${id}/costing/export/pdf`,   { params, responseType: 'blob' })
@@ -385,7 +386,7 @@ export const cleanupDieselPlaceholders = (params = {}) => api.post('/supplier-in
 export const getSupplierInvoicesByVehicle = (params = {}) => api.get('/supplier-invoices/by-vehicle', { params })
 export const getSupplierInvoice = (id) => api.get(`/supplier-invoices/${id}`)
 export const createSupplierInvoice = (data) => api.post('/supplier-invoices/', data)
-export const updateSupplierInvoice = (id, data) => api.put(`/supplier-invoices/${id}`, data)
+export const updateSupplierInvoice = (id, data, params = {}) => api.put(`/supplier-invoices/${id}`, data, { params })
 // "Manage → Move": shift an invoice's costing / SARS-report / listing months.
 // Send the full desired state; null costing/report values reset that bucket to Auto.
 export const updateSupplierInvoicePeriods = (id, data) => api.patch(`/supplier-invoices/${id}/periods`, data)

@@ -9,7 +9,7 @@ import {
   updateSupplierInvoice, deleteSupplierInvoice, archiveSupplierInvoice, removeFixedExpense,
   getSubcontractorInvoices, getSubcontractorCosting, saveSubcontractorCostingNote,
   saveSubcontractorCostingNetOverride, setSubcontractorCostingSent,
-  createTruckCostingIncome, deleteTruckCostingIncome,
+  createTruckCostingIncome, updateTruckCostingIncome, deleteTruckCostingIncome,
   downloadSubcontractorCostingPdf, downloadSubcontractorCostingExcel,
   downloadSubcontractorCostingBundle,
   getVerifications, verifyValue, finalizeValue,
@@ -110,6 +110,9 @@ export default function SubcontractorProfilePage() {
   const [expenseDeleteTarget, setExpenseDeleteTarget] = useState(null)
   // null = creating a new expense; an id = editing that existing expense row
   const [editingExpenseId, setEditingExpenseId] = useState(null)
+  // Editing a fixed expense: 'forward' also updates the later months already
+  // carried forward; 'this' changes only the month being edited.
+  const [fixedEditScope, setFixedEditScope] = useState('forward')
 
   // "Mark Sent" confirm modal (costing tab): locks a truck's costing for the
   // period. The date is backdatable so an already-emailed month can carry its
@@ -120,7 +123,7 @@ export default function SubcontractorProfilePage() {
 
   // Manual income modal (costing tab) — mirrors the general expense, on the
   // income side. Holds the truck the card was opened from.
-  const [incomeModal, setIncomeModal]     = useState(null)   // { truckId, truckReg } | null
+  const [incomeModal, setIncomeModal]     = useState(null)   // { truckId, truckReg, incomeId? } | null
   const [incomeForm, setIncomeForm]       = useState({ description: '', amount: '', vat_applicable: true })
   const [incomeSaving, setIncomeSaving]   = useState(false)
   const [incomeDeleteTarget, setIncomeDeleteTarget] = useState(null)
@@ -441,6 +444,7 @@ export default function SubcontractorProfilePage() {
       rate_per_litre: '',
     })
     setEditingExpenseId(inv.id)
+    setFixedEditScope('forward')
     setShowExpenseModal(true)
   }
 
@@ -482,8 +486,10 @@ export default function SubcontractorProfilePage() {
             supplier_name_text: desc,
             amount:             genAmount,
             vat_applicable:     expenseForm.vat_applicable,
-          })
-          toast.success('Expense updated')
+          }, expenseForm.is_fixed ? { scope: fixedEditScope } : {})
+          toast.success(expenseForm.is_fixed && fixedEditScope === 'forward'
+            ? 'Expense updated for this and later months'
+            : 'Expense updated')
           closeExpenseModal()
           loadCosting()
         } catch (err) {
@@ -634,6 +640,15 @@ export default function SubcontractorProfilePage() {
     setIncomeForm({ description: '', amount: '', vat_applicable: true })
     setIncomeModal({ truckId, truckReg })
   }
+  // Same modal pre-filled to edit an existing manual income line.
+  const openEditIncomeModal = (truckId, truckReg, mi) => {
+    setIncomeForm({
+      description:    mi.description || '',
+      amount:         mi.amount != null ? String(mi.amount) : '',
+      vat_applicable: !!mi.vat_applicable,
+    })
+    setIncomeModal({ truckId, truckReg, incomeId: mi.id })
+  }
   const setIF = (k, v) => setIncomeForm(f => ({ ...f, [k]: v }))
 
   const saveIncome = async (e) => {
@@ -645,12 +660,14 @@ export default function SubcontractorProfilePage() {
 
     setIncomeSaving(true)
     try {
-      await createTruckCostingIncome(
-        id,
-        { truck_id: incomeModal.truckId, month, year },
-        { description: desc, amount: amt, vat_applicable: incomeForm.vat_applicable },
-      )
-      toast.success('Income added')
+      const data = { description: desc, amount: amt, vat_applicable: incomeForm.vat_applicable }
+      if (incomeModal.incomeId) {
+        await updateTruckCostingIncome(id, incomeModal.incomeId, data)
+        toast.success('Income updated')
+      } else {
+        await createTruckCostingIncome(id, { truck_id: incomeModal.truckId, month, year }, data)
+        toast.success('Income added')
+      }
       setIncomeModal(null)
       loadCosting()
     } catch (err) {
@@ -1069,6 +1086,7 @@ export default function SubcontractorProfilePage() {
                   templateSuppliers={costing.diesel_suppliers || []}
                   onAddExpense={() => openExpenseModal(td.truck.registration)}
                   onAddIncome={() => openIncomeModal(td.truck.id, td.truck.registration)}
+                  onEditIncome={mi => openEditIncomeModal(td.truck.id, td.truck.registration, mi)}
                   onDeleteIncome={setIncomeDeleteTarget}
                   onDeleteInvoice={setExpenseDeleteTarget}
                   onEditInvoice={openEditExpenseModal}
@@ -1173,6 +1191,32 @@ export default function SubcontractorProfilePage() {
                           : "Carried over automatically into each following month's costing (still editable per month). To stop it, archive its most recent month."}
                       </span>
                     </div>
+                    {editingExpenseId && expenseForm.is_fixed && (
+                      <div className="form-group">
+                        <label>Apply changes to</label>
+                        <div style={{ display: 'flex', gap: 0, borderRadius: 7, overflow: 'hidden', border: '1px solid var(--border)', width: 'fit-content' }}>
+                          <button
+                            type="button"
+                            onClick={() => setFixedEditScope('forward')}
+                            style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', background: fixedEditScope === 'forward' ? 'var(--accent)' : 'var(--bg-surface)', color: fixedEditScope === 'forward' ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                          >
+                            This &amp; later months
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFixedEditScope('this')}
+                            style={{ padding: '7px 18px', fontSize: 13, fontWeight: 600, border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer', background: fixedEditScope === 'this' ? 'var(--accent)' : 'var(--bg-surface)', color: fixedEditScope === 'this' ? '#fff' : 'var(--text-muted)', transition: 'all 0.15s' }}
+                          >
+                            This month only
+                          </button>
+                        </div>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                          {fixedEditScope === 'forward'
+                            ? 'Updates this month and every later month it was carried into. Earlier months, and months already sent or locked, keep their figures.'
+                            : 'Only this month changes. Later months keep their current figures.'}
+                        </span>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <>
@@ -1378,7 +1422,7 @@ export default function SubcontractorProfilePage() {
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setIncomeModal(null)}>
           <div className="modal">
             <div className="modal-header">
-              <h2>Add Income{incomeModal.truckReg ? ` — ${incomeModal.truckReg}` : ''}</h2>
+              <h2>{incomeModal.incomeId ? 'Edit Income' : 'Add Income'}{incomeModal.truckReg ? ` — ${incomeModal.truckReg}` : ''}</h2>
               <button className="btn-icon btn-ghost" onClick={() => setIncomeModal(null)}><X size={16} /></button>
             </div>
             <form onSubmit={saveIncome}>
@@ -1417,7 +1461,7 @@ export default function SubcontractorProfilePage() {
               <div className="modal-footer">
                 <button type="button" className="btn-ghost" onClick={() => setIncomeModal(null)}>Cancel</button>
                 <button type="submit" className="btn-primary" disabled={incomeSaving}>
-                  {incomeSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : 'Add Income'}
+                  {incomeSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : (incomeModal.incomeId ? 'Save Changes' : 'Add Income')}
                 </button>
               </div>
             </form>
@@ -1636,7 +1680,7 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onAddIncome, onDeleteIncome, onDeleteInvoice, onEditInvoice, onSaveNote, onSaveNetOverride, onMarkSent, onUnsend, isVatRegistered = true,
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onAddIncome, onEditIncome, onDeleteIncome, onDeleteInvoice, onEditInvoice, onSaveNote, onSaveNetOverride, onMarkSent, onUnsend, isVatRegistered = true,
   verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false, highlight = false, autoExpand = false }) {
   const [expanded, setExpanded] = useState(false)
   // Open the card automatically when it's the target of a reg search
@@ -1897,7 +1941,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
               <td style={tdStyle}></td>
             </tr>
 
-            {/* Manual income lines — added in the costing module only, with delete */}
+            {/* Manual income lines — added in the costing module only, with edit + delete */}
             {manual_incomes.map(mi => {
               const mExcl = parseFloat(mi.amount_excl_vat) || 0
               const mIncl = parseFloat(mi.amount_incl_vat) || 0
@@ -1918,10 +1962,19 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                   <td style={tdStyle}>
-                    {onDeleteIncome && !isSent && (
-                      <button className="btn-icon btn-ghost" onClick={() => onDeleteIncome(mi)}>
-                        <Trash2 size={12} color="var(--danger)" />
-                      </button>
+                    {!isSent && (
+                      <div style={{ display: 'flex', gap: 2 }}>
+                        {onEditIncome && (
+                          <button className="btn-icon btn-ghost" title="Edit income" onClick={() => onEditIncome(mi)}>
+                            <Pencil size={12} />
+                          </button>
+                        )}
+                        {onDeleteIncome && (
+                          <button className="btn-icon btn-ghost" title="Remove income" onClick={() => onDeleteIncome(mi)}>
+                            <Trash2 size={12} color="var(--danger)" />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </td>
                 </tr>
