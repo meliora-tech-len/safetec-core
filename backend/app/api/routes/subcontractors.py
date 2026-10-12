@@ -1143,6 +1143,58 @@ def create_truck_costing_income(
     )
 
 
+@router.put("/{subcontractor_id}/costing/income/{income_id}", response_model=TruckCostingIncomeOut)
+def update_truck_costing_income(
+    subcontractor_id: int,
+    income_id: int,
+    payload: TruckCostingIncomeCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Edit a manual costing income line in place (description, amount, VAT) —
+    so a change no longer means deleting the line and typing it in again."""
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+
+    row = (
+        db.query(TruckCostingIncome)
+        .join(Truck, Truck.id == TruckCostingIncome.truck_id)
+        .filter(
+            TruckCostingIncome.id == income_id,
+            Truck.subcontractor_id == subcontractor_id,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Income line not found")
+    _ensure_costing_not_sent(db, row.truck_id, row.month, row.year)
+
+    desc = (payload.description or "").strip()
+    if not desc:
+        raise HTTPException(status_code=400, detail="Description is required")
+    amount = Decimal(str(payload.amount or 0))
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Enter a valid amount")
+
+    row.description = desc
+    row.amount = amount
+    row.vat_applicable = payload.vat_applicable
+    db.commit()
+    db.refresh(row)
+
+    excl, incl = _income_split(row.amount, row.vat_applicable, entity_vat_rate(db, sub.entity_id))
+    return TruckCostingIncomeOut(
+        id=row.id,
+        description=row.description,
+        amount=Decimal(str(row.amount)),
+        vat_applicable=row.vat_applicable,
+        amount_excl_vat=excl,
+        amount_incl_vat=incl,
+    )
+
+
 @router.delete("/{subcontractor_id}/costing/income/{income_id}")
 def delete_truck_costing_income(
     subcontractor_id: int,

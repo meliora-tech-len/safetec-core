@@ -1844,10 +1844,65 @@ def create_supplier_invoice(
 
 # ── Update ────────────────────────────────────────────────────────────────────
 
+# The fields a fixed expense carries from month to month (see
+# `_materialize_fixed_expenses`) — the only ones an edit pushes forward.
+_FIXED_EXPENSE_CARRIED_FIELDS = {"description", "supplier_name_text", "amount", "vat_applicable"}
+
+
+def _apply_fixed_expense_edit_forward(db: Session, inv: SupplierInvoice, updates: dict, current_user: User) -> None:
+    """Push an edit of one fixed-expense month onto every later, already
+    carried-forward month in the same chain. Months that are closed off (final
+    verification, invoice lock, sent costing, Profit Sheet lock) keep their
+    figures — they are skipped, not refused."""
+    changes = {k: v for k, v in updates.items() if k in _FIXED_EXPENSE_CARRIED_FIELDS}
+    if not changes or inv.statement_year is None or inv.statement_month is None:
+        return
+    target = (inv.statement_year, inv.statement_month)
+    gid = inv.fixed_expense_group_id or inv.id
+    later = (
+        db.query(SupplierInvoice)
+        .filter(
+            SupplierInvoice.is_fixed_expense == True,
+            SupplierInvoice.supplier_id.is_(None),
+            SupplierInvoice.is_archived == False,
+            SupplierInvoice.id != inv.id,
+            or_(SupplierInvoice.fixed_expense_group_id == gid, SupplierInvoice.id == gid),
+        )
+        .all()
+    )
+    for r in later:
+        if r.statement_year is None or r.statement_month is None:
+            continue
+        if (r.statement_year, r.statement_month) <= target:
+            continue
+        try:
+            ensure_not_locked(r)
+            ensure_not_on_sent_costing(db, r)
+            ensure_invoice_not_profit_locked(db, r)
+            ensure_supplier_invoice_unlocked(db, r)
+        except HTTPException:
+            continue
+        old_values, new_values = _changed_values(r, changes)
+        if not new_values:
+            continue
+        for field, value in changes.items():
+            setattr(r, field, value)
+        log_action(
+            db, "supplier_invoice.updated", user_id=current_user.id,
+            entity_id=r.entity_id, resource_type="supplier_invoice",
+            resource_id=r.id,
+            description=f"Updated recurring expense from {target[1]}/{target[0]} onward: {r.supplier_name_text or ''}".strip(),
+            old_values=old_values or None, new_values=new_values or None,
+        )
+
+
 @router.put("/{invoice_id}", response_model=SupplierInvoiceOut)
 def update_supplier_invoice(
     invoice_id: int,
     payload: SupplierInvoiceUpdate,
+    # Fixed (recurring) general expense only: "forward" also applies the edit to
+    # every later month already carried forward in the same chain.
+    scope: str = Query("this", regex="^(this|forward)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1913,6 +1968,10 @@ def update_supplier_invoice(
         resource_id=invoice_id, description=f"Updated invoice {inv.invoice_number}",
         old_values=old_values or None, new_values=new_values or None,
     )
+
+    if scope == "forward" and inv.is_fixed_expense and inv.supplier_id is None:
+        _apply_fixed_expense_edit_forward(db, inv, updates, current_user)
+
     db.commit()
     db.refresh(inv)
 
