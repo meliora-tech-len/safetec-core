@@ -62,6 +62,18 @@ def _load_label(l) -> str:
     return "  ·  ".join(parts)
 
 
+def _invoice_label(inv) -> tuple:
+    """(supplier label, note) for a costing supplier-invoice row: the supplier
+    name with its invoice number, and the display note minus any part that just
+    repeats that number (imported lines often carry it as their description)."""
+    sup = inv.supplier_name or f"Supplier #{inv.supplier_id}"
+    num = (inv.invoice_number or "").strip()
+    if num:
+        sup = f"{sup} ({num})"
+    parts = [p for p in (inv.notes or "").split(" · ") if p.strip() and p.strip() != num]
+    return sup, " · ".join(parts) or None
+
+
 # ── PDF ───────────────────────────────────────────────────────────────────────
 
 def generate_costing_pdf(costing, entity) -> bytes:
@@ -226,9 +238,10 @@ def generate_costing_pdf(costing, entity) -> bytes:
         if td.supplier_invoices:
             rows.append([P("Supplier Invoices", s_sec), P("", s_val), P("", s_val), P("", s_val), P("", s_val)])
             for inv in td.supplier_invoices:
-                sup = inv.supplier_name or f"Supplier #{inv.supplier_id}"
-                if inv.notes:
-                    sup = f"{sup} — {xml_escape(inv.notes)}"
+                sup, note = _invoice_label(inv)
+                sup = xml_escape(sup)
+                if note:
+                    sup = f"{sup} — {xml_escape(note)}"
                 if inv.vat_applicable:
                     rows.append([P(sup, s_lbl), dash, dash, P(_fmt(inv.amount), s_val), dash])
                 else:
@@ -618,9 +631,9 @@ def generate_costing_excel(costing, entity) -> bytes:
             c.alignment = align()
             row += 1
             for inv in td.supplier_invoices:
-                sup = inv.supplier_name or f"Supplier #{inv.supplier_id}"
-                if inv.notes:
-                    sup = f"{sup} — {inv.notes}"
+                sup, note = _invoice_label(inv)
+                if note:
+                    sup = f"{sup} — {note}"
                 if inv.vat_applicable:
                     write_row([sup, None, None, fmt_val(inv.amount), None], fnt=LBL_FONT, row_h=15)
                     exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
