@@ -2538,6 +2538,15 @@ class SubcontractorCostingOut(BaseModel):
     summary: SubcontractorCostingSummary
     diesel_suppliers: List[str] = []
     is_vat_registered: bool = True
+    # Month-level Sent status: the whole month's costing goes to the
+    # subcontractor as one statement, so Sent is marked per subcontractor per
+    # month (every truck locks together). sent_at is the date the month went
+    # out; unsent_truck_count > 0 means a truck joined this subcontractor after
+    # the send and its costing for the month is not yet locked.
+    sent_at: Optional[datetime] = None
+    sent_by_name: Optional[str] = None
+    sent_truck_count: int = 0
+    unsent_truck_count: int = 0
 
 
 class SubcontractorCostingNoteUpdate(BaseModel):
@@ -2551,8 +2560,8 @@ class SubcontractorCostingNetOverrideUpdate(BaseModel):
 
 
 class SubcontractorCostingSentUpdate(BaseModel):
-    # True = mark this truck's costing for the period as sent (locks it);
-    # False = un-send (admin only).
+    # True = mark the subcontractor's whole costing for the period as sent
+    # (locks every truck for the month); False = un-send all of them.
     sent: bool
     # The date the costing was actually sent (defaults to now). Backdatable so
     # a month that was emailed before this feature existed can be marked with

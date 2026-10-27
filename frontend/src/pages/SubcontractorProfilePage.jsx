@@ -114,10 +114,11 @@ export default function SubcontractorProfilePage() {
   // carried forward; 'this' changes only the month being edited.
   const [fixedEditScope, setFixedEditScope] = useState('forward')
 
-  // "Mark Sent" confirm modal (costing tab): locks a truck's costing for the
-  // period. The date is backdatable so an already-emailed month can carry its
-  // real send date (expenses captured after it roll into the next month).
-  const [sentModal, setSentModal]         = useState(null)   // { truckId, truckReg } | null
+  // "Mark Sent" confirm modal (costing tab): the whole month goes to the
+  // subcontractor as one statement, so Sent locks every truck's costing for
+  // the period at once. The date is backdatable so an already-emailed month
+  // can carry its real send date (expenses captured after it roll forward).
+  const [sentModal, setSentModal]         = useState(false)
   const [sentDate, setSentDate]           = useState(todayStr)
   const [sentSaving, setSentSaving]       = useState(false)
 
@@ -599,22 +600,20 @@ export default function SubcontractorProfilePage() {
 
   // ── Sent (lock) handlers (costing tab) ───────────────────────────────────────
 
-  const openSentModal = (truckId, truckReg) => {
+  const openSentModal = () => {
     setSentDate(todayStr)
-    setSentModal({ truckId, truckReg })
+    setSentModal(true)
   }
 
+  // Locks every truck on this subcontractor for the month. On a month that is
+  // already sent, only trucks still open (joined after the send) get locked.
   const confirmSent = async () => {
     if (!sentDate) { toast.error('Pick the date the costing was sent'); return }
     setSentSaving(true)
     try {
-      await setSubcontractorCostingSent(
-        id,
-        { truck_id: sentModal.truckId, month, year },
-        { sent: true, sent_date: sentDate },
-      )
+      await setSubcontractorCostingSent(id, { month, year }, { sent: true, sent_date: sentDate })
       toast.success('Costing marked as sent — locked')
-      setSentModal(null)
+      setSentModal(false)
       loadCosting()
     } catch (err) {
       toast.error(errorMessage(err))
@@ -623,10 +622,10 @@ export default function SubcontractorProfilePage() {
     }
   }
 
-  const handleUnsend = async (truckId, truckReg) => {
-    if (!window.confirm(`Un-send the ${MONTHS[month]} ${year} costing for ${truckReg}? It will be unlocked and expenses captured since the send may move back into it.`)) return
+  const handleUnsend = async () => {
+    if (!window.confirm(`Un-send the ${MONTHS[month]} ${year} costing for ${subcontractor?.name || 'this subcontractor'}? Every truck will be unlocked and expenses captured since the send may move back into this month.`)) return
     try {
-      await setSubcontractorCostingSent(id, { truck_id: truckId, month, year }, { sent: false })
+      await setSubcontractorCostingSent(id, { month, year }, { sent: false })
       toast.success('Costing un-sent — unlocked')
       loadCosting()
     } catch (err) {
@@ -1004,6 +1003,47 @@ export default function SubcontractorProfilePage() {
               {MONTHS[month]} {year}
             </span>
             <button className="btn-ghost btn-sm" onClick={nextMonth}><ChevronRight size={15} /></button>
+            {/* Sent (lock) control — one per subcontractor per month: the whole
+                month's costing goes out as one statement, so every truck locks together. */}
+            {costing && costing.trucks.length > 0 && (
+              costing.sent_at ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    title={`Sent to the subcontractor${costing.sent_by_name ? ` by ${costing.sent_by_name}` : ''} — this month's costing is locked`}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 800, letterSpacing: 0.5, background: 'rgba(34,197,94,0.15)', color: '#16a34a' }}
+                  >
+                    <Lock size={11} /> SENT {formatDate(costing.sent_at)}
+                  </span>
+                  {costing.unsent_truck_count > 0 && (
+                    <button
+                      className="btn-ghost btn-sm"
+                      title={`${costing.unsent_truck_count} truck${costing.unsent_truck_count !== 1 ? 's' : ''} joined after this month was sent and ${costing.unsent_truck_count !== 1 ? 'are' : 'is'} not locked yet — lock ${costing.unsent_truck_count !== 1 ? 'them' : 'it'} too`}
+                      onClick={openSentModal}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#d97706' }}
+                    >
+                      <AlertTriangle size={12} /> {costing.unsent_truck_count} truck{costing.unsent_truck_count !== 1 ? 's' : ''} not locked
+                    </button>
+                  )}
+                  <button
+                    className="btn-icon btn-ghost"
+                    title="Un-send (unlock this month's costing for every truck)"
+                    onClick={handleUnsend}
+                    style={{ padding: 2 }}
+                  >
+                    <RotateCcw size={13} color="var(--text-muted)" />
+                  </button>
+                </span>
+              ) : (
+                <button
+                  className="btn-ghost btn-sm"
+                  title="Mark this month's costing as sent to the subcontractor — locks every truck for the month"
+                  onClick={openSentModal}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 }}
+                >
+                  <Send size={12} /> Sent
+                </button>
+              )
+            )}
             {costing && costing.trucks.length > 0 && (
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <label
@@ -1092,8 +1132,6 @@ export default function SubcontractorProfilePage() {
                   onEditInvoice={openEditExpenseModal}
                   onSaveNote={saveTruckNote}
                   onSaveNetOverride={saveTruckNetOverride}
-                  onMarkSent={() => openSentModal(td.truck.id, td.truck.registration)}
-                  onUnsend={() => handleUnsend(td.truck.id, td.truck.registration)}
                   isVatRegistered={costing.is_vat_registered !== false}
                   verifPrefix={costingPrefix}
                   verif={verif}
@@ -1384,19 +1422,31 @@ export default function SubcontractorProfilePage() {
 
       {/* ── Mark Sent Modal (costing tab) ── */}
       {sentModal && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setSentModal(null)}>
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setSentModal(false)}>
           <div className="modal">
             <div className="modal-header">
               <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
                 <Send size={16} style={{ color: 'var(--accent)' }} />
-                Mark Costing as Sent — {sentModal.truckReg}
+                Mark Costing as Sent — {subcontractor?.name}
               </h2>
-              <button className="btn-icon btn-ghost" onClick={() => setSentModal(null)}><X size={16} /></button>
+              <button className="btn-icon btn-ghost" onClick={() => setSentModal(false)}><X size={16} /></button>
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 13, marginTop: 0, lineHeight: 1.5 }}>
-                This locks the <strong>{MONTHS[month]} {year}</strong> costing for <strong>{sentModal.truckReg}</strong> —
-                no values can be added or removed once it has been sent to the subcontractor.
+                {costing?.sent_at ? (
+                  <>
+                    This month is already sent. This locks the <strong>{MONTHS[month]} {year}</strong> costing for the{' '}
+                    <strong>{costing.unsent_truck_count} truck{costing.unsent_truck_count !== 1 ? 's' : ''}</strong> that{' '}
+                    {costing.unsent_truck_count !== 1 ? 'are' : 'is'} still open — trucks already sent keep their original date.
+                  </>
+                ) : (
+                  <>
+                    This locks the <strong>{MONTHS[month]} {year}</strong> costing for{' '}
+                    <strong>all {costing?.trucks?.length ?? 0} truck{(costing?.trucks?.length ?? 0) !== 1 ? 's' : ''}</strong> on{' '}
+                    <strong>{subcontractor?.name}</strong> — the whole month goes out as one statement, and no values
+                    can be added or removed once it has been sent.
+                  </>
+                )}
               </p>
               <div className="form-group">
                 <label>Sent on *</label>
@@ -1408,7 +1458,7 @@ export default function SubcontractorProfilePage() {
               </div>
             </div>
             <div className="modal-footer">
-              <button type="button" className="btn-ghost" onClick={() => setSentModal(null)}>Cancel</button>
+              <button type="button" className="btn-ghost" onClick={() => setSentModal(false)}>Cancel</button>
               <button type="button" className="btn-primary" onClick={confirmSent} disabled={sentSaving}>
                 {sentSaving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : <><Send size={14} /> Mark Sent</>}
               </button>
@@ -1680,7 +1730,7 @@ function DieselGroupSection({ groups, truckReg, activeDieselTab, setActiveDiesel
 
 // ── Truck Costing Card ─────────────────────────────────────────────────────────
 
-function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onAddIncome, onEditIncome, onDeleteIncome, onDeleteInvoice, onEditInvoice, onSaveNote, onSaveNetOverride, onMarkSent, onUnsend, isVatRegistered = true,
+function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onAddIncome, onEditIncome, onDeleteIncome, onDeleteInvoice, onEditInvoice, onSaveNote, onSaveNetOverride, isVatRegistered = true,
   verifPrefix, verif = {}, onVerify, onFinalize, currentUserId, isAdmin = false, highlight = false, autoExpand = false }) {
   const [expanded, setExpanded] = useState(false)
   // Open the card automatically when it's the target of a reg search
@@ -1850,40 +1900,16 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
         <span style={{ fontSize: 13 }}>{loadCount} load{loadCount !== 1 ? 's' : ''}</span>
         <span style={{ color: 'var(--border)', fontSize: 12 }}>|</span>
         <span style={{ fontSize: 13 }}>{totalTonnes.toFixed(3)} t</span>
-        {/* Sent (lock) control — per truck per month */}
-        <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          {isSent ? (
-            <>
-              <span
-                title={`Sent to the subcontractor${sent_by_name ? ` by ${sent_by_name}` : ''} — costing locked`}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 9px', borderRadius: 12, fontSize: 11, fontWeight: 800, letterSpacing: 0.5, background: 'rgba(34,197,94,0.15)', color: '#16a34a' }}
-              >
-                <Lock size={11} /> SENT {formatDate(sent_at)}
-              </span>
-              {onUnsend && (
-                <button
-                  className="btn-icon btn-ghost"
-                  title="Un-send (unlock this costing)"
-                  onClick={onUnsend}
-                  style={{ padding: 2 }}
-                >
-                  <RotateCcw size={13} color="var(--text-muted)" />
-                </button>
-              )}
-            </>
-          ) : (
-            onMarkSent && (
-              <button
-                className="btn-ghost btn-sm"
-                title="Mark this month's costing as sent to the subcontractor — locks it"
-                onClick={onMarkSent}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 }}
-              >
-                <Send size={12} /> Sent
-              </button>
-            )
-          )}
-        </span>
+        {/* Locked indicator — Sent is marked for the whole month on the header
+            above; this only mirrors the state so a collapsed card still shows it. */}
+        {isSent && (
+          <span
+            title={`Sent to the subcontractor${sent_by_name ? ` by ${sent_by_name}` : ''} on ${formatDate(sent_at)} — locked`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, color: '#16a34a' }}
+          >
+            <Lock size={11} /> Locked
+          </span>
+        )}
         {!expanded && parseFloat(net_payable) !== 0 && (
           <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 13, color: parseFloat(net_payable) >= 0 ? 'var(--accent)' : 'var(--danger)' }}>
             Net: {fmtC(net_payable)}

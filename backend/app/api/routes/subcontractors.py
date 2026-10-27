@@ -840,6 +840,13 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         )
     ]
 
+    # Month-level Sent status. The whole month goes out as one statement, so
+    # the trucks lock together; the earliest truck row carries the send date.
+    # A truck with no row (it joined the subcontractor after the send) counts
+    # as unsent so the UI can offer to lock it too.
+    sent_rows = sorted(sent_rows_by_truck.values(), key=lambda r: r.sent_at)
+    first_sent = sent_rows[0] if sent_rows else None
+
     return SubcontractorCostingOut(
         subcontractor=SubcontractorOut.model_validate(sub),
         month=month,
@@ -848,6 +855,11 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         summary=summary,
         diesel_suppliers=diesel_supplier_names,
         is_vat_registered=is_vat_registered,
+        sent_at=first_sent.sent_at if first_sent else None,
+        sent_by_name=first_sent.sent_by.full_name if first_sent and first_sent.sent_by else None,
+        sent_truck_count=len(sent_rows),
+        # Only meaningful once the month is sent: how many trucks are still open.
+        unsent_truck_count=(len(trucks) - len(sent_rows)) if sent_rows else 0,
     )
 
 
@@ -884,56 +896,65 @@ def _ensure_costing_not_sent(db: Session, truck_id: int, month: int, year: int):
 
 
 @router.put("/{subcontractor_id}/costing/sent")
-def set_truck_costing_sent(
+def set_subcontractor_costing_sent(
     subcontractor_id: int,
     payload: SubcontractorCostingSentUpdate,
-    truck_id: int = Query(...),
     month: int = Query(..., ge=1, le=12),
     year: int = Query(..., ge=2020),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Mark a truck's costing for this period as SENT to the subcontractor
-    (locks it), or un-send it. The optional sent_date backdates the send:
-    expenses captured after that date roll forward into the next month's
-    costing instead of changing the statement that already went out."""
+    """Mark the subcontractor's costing for this period as SENT (locks every
+    truck for the month), or un-send it (unlocks them all). The month goes to
+    the subcontractor as one statement, so Sent is a per-subcontractor action —
+    the per-truck rows behind it stay so a truck that changes subcontractor
+    keeps its own history. Marking Sent again on a partly sent month only
+    locks the trucks that are still open (e.g. one that joined after the send);
+    trucks already sent keep their original date. The optional sent_date
+    backdates the send: expenses captured after that date roll forward into
+    the next month's costing instead of changing the statement that went out."""
     sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Subcontractor not found")
     _check_entity_access(sub.entity_id, current_user)
 
-    truck = db.query(Truck).filter(
-        Truck.id == truck_id,
-        Truck.subcontractor_id == subcontractor_id,
-    ).first()
-    if not truck:
-        raise HTTPException(status_code=404, detail="Truck not found for this subcontractor")
+    trucks = db.query(Truck).filter(Truck.subcontractor_id == subcontractor_id).all()
+    if not trucks:
+        raise HTTPException(status_code=404, detail="No trucks linked to this subcontractor")
+    truck_ids = [t.id for t in trucks]
+    reg_by_id = {t.id: t.registration for t in trucks}
 
-    row = (
+    rows = (
         db.query(TruckCostingSent)
         .filter(
-            TruckCostingSent.truck_id == truck_id,
+            TruckCostingSent.truck_id.in_(truck_ids),
             TruckCostingSent.month == month,
             TruckCostingSent.year == year,
         )
-        .first()
+        .all()
     )
+    sent_truck_ids = {r.truck_id for r in rows}
 
     if not payload.sent:
-        if not row:
+        if not rows:
             return {"sent_at": None}
-        db.delete(row)
+        for r in rows:
+            db.delete(r)
         log_action(
             db, "subcontractor_costing.unsent", user_id=current_user.id,
-            entity_id=sub.entity_id, resource_type="truck_costing_sent",
-            resource_id=truck_id,
-            description=f"Un-sent costing {month:02d}/{year} for {truck.registration} ({sub.name}) — unlocked",
+            entity_id=sub.entity_id, resource_type="subcontractor_costing_sent",
+            resource_id=subcontractor_id,
+            description=f"Un-sent costing {month:02d}/{year} for {sub.name} — unlocked "
+                        f"({len(rows)} truck{'s' if len(rows) != 1 else ''})",
+            old_values={"trucks": [reg_by_id.get(r.truck_id) for r in rows]},
         )
         db.commit()
         return {"sent_at": None}
 
-    if row:
-        return {"sent_at": row.sent_at.isoformat()}
+    open_ids = [tid for tid in truck_ids if tid not in sent_truck_ids]
+    if not open_ids:
+        first = min(rows, key=lambda r: r.sent_at)
+        return {"sent_at": first.sent_at.isoformat()}
 
     now_utc = datetime.now(timezone.utc)
     # Backdated send: cutoff at end of that day, so everything captured up to
@@ -946,20 +967,23 @@ def set_truck_costing_sent(
     else:
         sent_at = now_utc
 
-    row = TruckCostingSent(
-        truck_id=truck_id, month=month, year=year,
-        sent_at=sent_at, sent_by_id=current_user.id,
-    )
-    db.add(row)
+    for tid in open_ids:
+        db.add(TruckCostingSent(
+            truck_id=tid, month=month, year=year,
+            sent_at=sent_at, sent_by_id=current_user.id,
+        ))
     log_action(
         db, "subcontractor_costing.sent", user_id=current_user.id,
-        entity_id=sub.entity_id, resource_type="truck_costing_sent",
-        resource_id=truck_id,
-        description=f"Marked costing {month:02d}/{year} for {truck.registration} ({sub.name}) as sent — locked",
-        new_values={"sent_at": sent_at.isoformat()},
+        entity_id=sub.entity_id, resource_type="subcontractor_costing_sent",
+        resource_id=subcontractor_id,
+        description=f"Marked costing {month:02d}/{year} for {sub.name} as sent — locked "
+                    f"({len(open_ids)} truck{'s' if len(open_ids) != 1 else ''})",
+        new_values={"sent_at": sent_at.isoformat(), "trucks": [reg_by_id[t] for t in open_ids]},
     )
     db.commit()
-    return {"sent_at": row.sent_at.isoformat()}
+    # The month's send date is the earliest truck row (a partial re-send keeps it).
+    first_at = min([r.sent_at for r in rows] + [sent_at], key=lambda d: d.timestamp())
+    return {"sent_at": first_at.isoformat()}
 
 
 @router.put("/{subcontractor_id}/costing/note")
