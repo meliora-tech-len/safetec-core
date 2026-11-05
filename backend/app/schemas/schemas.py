@@ -1860,6 +1860,13 @@ class SupplierInvoiceOut(BaseModel):
     # model; has_attachment is derived so the row can show a paperclip without
     # exposing the storage key.
     attachment_filename: Optional[str] = None
+    # Subcontractor costing only: this truck's share of the invoice split into
+    # the Expenses Incl VAT and Excl VAT columns. A multi-line statement is
+    # bucketed per line, so these — not the invoice-level vat_applicable flag —
+    # decide the column (a statement can be all zero-rated lines under a
+    # vat_applicable header, or mix both). Null outside the costing endpoint.
+    costing_amount_vat: Optional[Decimal] = None
+    costing_amount_non_vat: Optional[Decimal] = None
 
     @computed_field
     @property

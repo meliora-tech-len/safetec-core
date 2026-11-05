@@ -2086,6 +2086,18 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
             ) : (
               supplier_invoices.map(inv => {
                 const label = (inv.supplier_name || `Supplier #${inv.supplier_id}`)
+                // Column comes from the backend's per-truck VAT split, not the
+                // invoice-level flag: a multi-line statement is bucketed per line,
+                // so all-zero-rated lines under a VAT header go to Excl VAT and a
+                // mixed statement fills both. Zero rows fall back to the flag.
+                const splitVat    = parseFloat(inv.costing_amount_vat) || 0
+                const splitNonVat = parseFloat(inv.costing_amount_non_vat) || 0
+                const hasSplit    = splitVat !== 0 || splitNonVat !== 0
+                const amtVat      = hasSplit ? (splitVat !== 0 ? splitVat : null) : (inv.vat_applicable ? inv.amount : null)
+                const amtNonVat   = hasSplit ? (splitNonVat !== 0 ? splitNonVat : null) : (inv.vat_applicable ? null : inv.amount)
+                // One verification tick per invoice row — on the VAT cell when it
+                // has an amount, otherwise on the non-VAT cell.
+                const tickOnVat   = amtVat !== null
                 return (
                   <tr key={inv.id}>
                     <td style={{ ...tdStyle, fontSize: 12 }}>
@@ -2110,10 +2122,12 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>{dash}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      {inv.vat_applicable ? <V field={`invoice:${inv.id}:amount`}>{fmtC(inv.amount)}</V> : dash}
+                      {amtVat === null ? dash : <V field={`invoice:${inv.id}:amount`}>{fmtC(amtVat)}</V>}
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      {inv.vat_applicable ? dash : <V field={`invoice:${inv.id}:amount`}>{fmtC(inv.amount)}</V>}
+                      {amtNonVat === null ? dash
+                        : tickOnVat ? fmtC(amtNonVat)
+                        : <V field={`invoice:${inv.id}:amount`}>{fmtC(amtNonVat)}</V>}
                     </td>
                     <td style={tdStyle}>
                       {!isSent && (

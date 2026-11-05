@@ -74,6 +74,19 @@ def _invoice_label(inv) -> tuple:
     return sup, " · ".join(parts) or None
 
 
+def _invoice_columns(inv) -> tuple:
+    """(incl_vat_amount, excl_vat_amount) for a costing supplier-invoice row;
+    None means that column shows a dash. Uses the per-truck VAT split from the
+    costing endpoint (a multi-line statement is bucketed per line, so a
+    zero-rated washbay statement under a vat_applicable header still lands in
+    Excl VAT, and a mixed statement fills both). A zero-amount row, or one
+    built without the split, falls back to the invoice-level flag."""
+    v, n = inv.costing_amount_vat, inv.costing_amount_non_vat
+    if v or n:
+        return (v or None), (n or None)
+    return (inv.amount, None) if inv.vat_applicable else (None, inv.amount)
+
+
 # ── PDF ───────────────────────────────────────────────────────────────────────
 
 def generate_costing_pdf(costing, entity) -> bytes:
@@ -242,10 +255,12 @@ def generate_costing_pdf(costing, entity) -> bytes:
                 sup = xml_escape(sup)
                 if note:
                     sup = f"{sup} — {xml_escape(note)}"
-                if inv.vat_applicable:
-                    rows.append([P(sup, s_lbl), dash, dash, P(_fmt(inv.amount), s_val), dash])
-                else:
-                    rows.append([P(sup, s_lbl), dash, dash, dash, P(_fmt(inv.amount), s_val)])
+                amt_i, amt_e = _invoice_columns(inv)
+                rows.append([
+                    P(sup, s_lbl), dash, dash,
+                    P(_fmt(amt_i), s_val) if amt_i is not None else dash,
+                    P(_fmt(amt_e), s_val) if amt_e is not None else dash,
+                ])
 
         # Totals row (white text — this row gets a dark background below)
         net_s = s_net_pos if net >= 0 else s_net_neg
@@ -634,11 +649,15 @@ def generate_costing_excel(costing, entity) -> bytes:
                 sup, note = _invoice_label(inv)
                 if note:
                     sup = f"{sup} — {note}"
-                if inv.vat_applicable:
-                    write_row([sup, None, None, fmt_val(inv.amount), None], fnt=LBL_FONT, row_h=15)
+                amt_i, amt_e = _invoice_columns(inv)
+                write_row([
+                    sup, None, None,
+                    fmt_val(amt_i) if amt_i is not None else None,
+                    fmt_val(amt_e) if amt_e is not None else None,
+                ], fnt=LBL_FONT, row_h=15)
+                if amt_i is not None:
                     exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
-                else:
-                    write_row([sup, None, None, None, fmt_val(inv.amount)], fnt=LBL_FONT, row_h=15)
+                if amt_e is not None:
                     exp_excl_cells.append(f"{EXP_E_L}{row - 1}")
 
         # Totals — built from Excel SUM formulas so the component cells are
