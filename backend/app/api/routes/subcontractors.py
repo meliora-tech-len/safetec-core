@@ -679,7 +679,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         # reg, multi-line/split by sub-line reg (taking only the matching portion).
         exp_incl = admin_fee
         exp_excl = D0
-        inv_contribs = []  # (invoice, amount_for_this_truck)
+        inv_contribs = []  # (invoice, non_vat_part, vat_part, note) for this truck
         truck_regs = _truck_regs(truck)
         for inv in candidate_invoices:
             if not _invoice_in_period(inv, truck.id):
@@ -691,7 +691,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                 continue
             exp_excl += c_excl
             exp_incl += c_incl
-            inv_contribs.append((inv, c_excl + c_incl, _invoice_display_note(inv, truck_regs)))
+            inv_contribs.append((inv, c_excl, c_incl, _invoice_display_note(inv, truck_regs)))
 
         # Diesel fill-ups for this truck — bucketed by the supplier's payment term,
         # mirroring the non-diesel invoice rule above. The fill-up's STATEMENT
@@ -806,8 +806,13 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
             loads_income_incl_vat=loads_income_incl,
             admin_fee=admin_fee,
             supplier_invoices=[
-                _enrich_invoice(db, i).model_copy(update={"amount": amt, "notes": note})
-                for (i, amt, note) in inv_contribs
+                _enrich_invoice(db, i).model_copy(update={
+                    "amount": c_ex + c_in,
+                    "costing_amount_non_vat": c_ex,
+                    "costing_amount_vat": c_in,
+                    "notes": note,
+                })
+                for (i, c_ex, c_in, note) in inv_contribs
             ],
             manual_incomes=manual_income_out,
             total_expenses_excl_vat=exp_excl,
