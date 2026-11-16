@@ -3,13 +3,21 @@
 A truck's costing for a period can be marked SENT (truck_costing_sent). Two
 rules flow from that flag:
 
-1. Roll-forward: an expense contribution whose natural costing period was
-   already sent when the expense was CAPTURED (created_at after sent_at) moves
-   forward into the next unsent month's costing, so the statement the
-   subcontractor received never changes retroactively.
+1. Roll-forward (periods up to ROLL_FORWARD_LAST_PERIOD only): an expense
+   contribution whose natural costing period was already sent when the
+   expense was CAPTURED (created_at after sent_at) moves forward into the
+   next unsent month's costing, so the statement the subcontractor received
+   never changes retroactively.
+   From the period after ROLL_FORWARD_LAST_PERIOD the roll no longer applies:
+   the office marks a month sent and then captures that month's late cash
+   statements a day or two later, and those must land on the month they
+   belong to. Such a late contribution stays in its natural month and is
+   flagged (captured_after_sent) so the costing can be re-sent.
 2. Lock: an invoice that sits ON a sent costing (captured before the send)
-   may no longer be amended, archived or deleted.
+   may no longer be amended, archived or deleted. A late capture is not part
+   of what went out, so it stays editable.
 """
+import os
 from datetime import timezone
 from decimal import Decimal
 from typing import Optional
@@ -27,6 +35,24 @@ from app.models.models import (
 # practice — it would need every one of these consecutive months sent before
 # the expense was captured).
 _MAX_ROLL_MONTHS = 24
+
+# Last costing period (year, month) the sent roll-forward still applies to.
+# Earlier months' late expenses already sit in the following, sent-and-paid
+# costings; moving them back would rewrite two settled statements for nothing.
+# Overridable without a deploy via COSTING_ROLL_FORWARD_LAST_PERIOD ("YYYY-MM");
+# "9999-12" restores the old roll-forward behaviour for every month (rollback).
+def _roll_forward_last_period() -> tuple:
+    raw = (os.getenv("COSTING_ROLL_FORWARD_LAST_PERIOD") or "").strip()
+    if raw:
+        try:
+            y, m = raw.split("-")
+            return (int(y), int(m))
+        except ValueError:
+            pass
+    return (2026, 7)
+
+
+ROLL_FORWARD_LAST_PERIOD = _roll_forward_last_period()
 
 
 def period_add(year: int, month: int, delta: int):
@@ -62,13 +88,26 @@ def roll_past_sent(period: tuple, truck_id: int, created_at, sent_map: dict) -> 
     from the natural period, step forward past every period that was already
     SENT when the expense was captured. Stops at the first period that is
     unsent, or that was sent only after the capture (the expense was part of
-    what went out)."""
+    what went out). Periods after ROLL_FORWARD_LAST_PERIOD never roll — see
+    the module docstring."""
+    if period > ROLL_FORWARD_LAST_PERIOD:
+        return period
     for _ in range(_MAX_ROLL_MONTHS):
         sent_at = sent_map.get((truck_id, period[0], period[1]))
         if sent_at is None or created_at is None or _dt_lte(created_at, sent_at):
             return period
         period = period_add(period[0], period[1], 1)
     return period
+
+
+def captured_after_sent(period: tuple, truck_id: int, created_at, sent_map: dict) -> bool:
+    """True when this truck's costing for `period` had already been marked sent
+    when the expense was captured — i.e. the subcontractor's copy does not
+    include it and the costing should be re-sent."""
+    sent_at = sent_map.get((truck_id, period[0], period[1]))
+    if sent_at is None or created_at is None:
+        return False
+    return not _dt_lte(created_at, sent_at)
 
 
 def costing_override_period(inv) -> Optional[tuple]:
@@ -369,6 +408,10 @@ def invoice_sent_lock_message(db: Session, inv: SupplierInvoice,
         # have rolled forward past sent months.
         eff = natural if pinned else roll_past_sent(natural, t.id, inv.created_at, sent_map)
         if (t.id, eff[0], eff[1]) in sent_map:
+            # Captured after the send → not part of what the subcontractor
+            # received, so it may still be corrected (the costing gets re-sent).
+            if captured_after_sent(eff, t.id, inv.created_at, sent_map):
+                continue
             return (
                 f"This expense is part of the {eff[1]:02d}/{eff[0]} costing for {t.registration}, "
                 "which has been sent to the subcontractor and is locked. "

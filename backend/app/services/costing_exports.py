@@ -87,6 +87,26 @@ def _invoice_columns(inv) -> tuple:
     return (inv.amount, None) if inv.vat_applicable else (None, inv.amount)
 
 
+LATE_MARK = " *"
+
+
+def _late_note(td):
+    """Footnote for a sent costing that has expenses captured after the send:
+    they are in the totals here, but not in the copy the subcontractor got."""
+    n = getattr(td, "late_capture_count", 0) or 0
+    if not n or not getattr(td, "sent_at", None):
+        return None
+    sent = td.sent_at.strftime("%d-%m-%Y") if hasattr(td.sent_at, "strftime") else str(td.sent_at)[:10]
+    return (f"* {n} expense{'s' if n != 1 else ''} captured after this costing was sent on {sent} "
+            "— included in the totals above but not in the copy the subcontractor received. "
+            "Re-send this costing.")
+
+
+def _diesel_group_label(dg) -> str:
+    lbl = _diesel_label(dg.supplier_name)
+    return lbl + LATE_MARK if getattr(dg, "late_capture_count", 0) else lbl
+
+
 # ── PDF ───────────────────────────────────────────────────────────────────────
 
 def generate_costing_pdf(costing, entity) -> bytes:
@@ -244,7 +264,7 @@ def generate_costing_pdf(costing, entity) -> bytes:
 
         # Diesel groups
         for dg in (td.diesel_groups or []):
-            rows.append([P(_diesel_label(dg.supplier_name), s_lbl), dash, dash, dash, P(_fmt(dg.tot_excl_admin_fee), s_val)])
+            rows.append([P(_diesel_group_label(dg), s_lbl), dash, dash, dash, P(_fmt(dg.tot_excl_admin_fee), s_val)])
             rows.append([P(f"{_diesel_label(dg.supplier_name)} Admin Fee", s_lbl), dash, dash, P(_fmt(dg.tot_admin_fee_incl), s_val), dash])
 
         # Supplier invoices
@@ -255,6 +275,8 @@ def generate_costing_pdf(costing, entity) -> bytes:
                 sup = xml_escape(sup)
                 if note:
                     sup = f"{sup} — {xml_escape(note)}"
+                if getattr(inv, "captured_after_sent", False):
+                    sup += LATE_MARK
                 amt_i, amt_e = _invoice_columns(inv)
                 rows.append([
                     P(sup, s_lbl), dash, dash,
@@ -297,6 +319,10 @@ def generate_costing_pdf(costing, entity) -> bytes:
             colWidths=[sum(col_w)],
         )
         story.append(net_row)
+        late_note = _late_note(td)
+        if late_note:
+            story.append(Spacer(1, 1*mm))
+            story.append(Paragraph(xml_escape(late_note), sty("late", fontSize=8, textColor=neg_col, leading=10)))
 
         # ── Load details (listed underneath the truck table) ──────────────────
         if td.loads:
@@ -357,7 +383,7 @@ def generate_costing_pdf(costing, entity) -> bytes:
                     if r.litres is not None:
                         tot_litres += Decimal(str(r.litres))
                     ds_rows.append([
-                        P(_fmtd(r.fillup_date), s_dl),
+                        P(_fmtd(r.fillup_date) + (LATE_MARK if getattr(r, "captured_after_sent", False) else ""), s_dl),
                         P(r.depot_slip_number or "—", s_dl),
                         P(r.slip_number or "—", s_dl),
                         P(r.invoice_number or "—", s_dl),
@@ -632,7 +658,7 @@ def generate_costing_excel(costing, entity) -> bytes:
 
         # Diesel groups
         for dg in (td.diesel_groups or []):
-            write_row([_diesel_label(dg.supplier_name), None, None, None, fmt_val(dg.tot_excl_admin_fee)], fnt=LBL_FONT, row_h=15)
+            write_row([_diesel_group_label(dg), None, None, None, fmt_val(dg.tot_excl_admin_fee)], fnt=LBL_FONT, row_h=15)
             exp_excl_cells.append(f"{EXP_E_L}{row - 1}")
             write_row([f"{_diesel_label(dg.supplier_name)} Admin Fee", None, None, fmt_val(dg.tot_admin_fee_incl), None], fnt=LBL_FONT, row_h=15)
             exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
@@ -649,6 +675,8 @@ def generate_costing_excel(costing, entity) -> bytes:
                 sup, note = _invoice_label(inv)
                 if note:
                     sup = f"{sup} — {note}"
+                if getattr(inv, "captured_after_sent", False):
+                    sup += LATE_MARK
                 amt_i, amt_e = _invoice_columns(inv)
                 write_row([
                     sup, None, None,
@@ -685,6 +713,14 @@ def generate_costing_excel(costing, entity) -> bytes:
         c.alignment = align(h="right")
         ws.row_dimensions[row].height = 16
         row += 1
+        late_note = _late_note(td)
+        if late_note:
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+            c = ws.cell(row=row, column=1, value=late_note)
+            c.font = font(color="DC2626", size=8)
+            c.alignment = align(h="left", wrap=True)
+            ws.row_dimensions[row].height = 26
+            row += 1
 
         # ── Diesel summary (per supplier, listed underneath the truck block) ───
         if td.diesel_groups:
@@ -716,7 +752,8 @@ def generate_costing_excel(costing, entity) -> bytes:
                     lit = fmt_val(r.litres)
                     if lit is not None:
                         tot_litres += lit
-                    vals = [_fmtd(r.fillup_date), r.depot_slip_number or "—", r.slip_number or "—", r.invoice_number or "—",
+                    vals = [_fmtd(r.fillup_date) + (LATE_MARK if getattr(r, "captured_after_sent", False) else ""),
+                            r.depot_slip_number or "—", r.slip_number or "—", r.invoice_number or "—",
                             lit, fmt_val(r.rate_per_litre), fmt_val(r.amount_excl),
                             fmt_val(r.admin_fee_incl), fmt_val(r.grand_total)]
                     for col, val in enumerate(vals, 1):

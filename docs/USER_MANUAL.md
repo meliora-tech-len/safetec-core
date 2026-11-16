@@ -215,8 +215,14 @@ Rules worth knowing:
 - General expenses can be marked **fixed** (recurring) — they carry forward monthly.
   To stop the series, archive the latest month's copy; a modal offers "stop from this
   month" versus "remove everywhere".
-- Once a costing is marked Sent, expenses captured afterwards **roll forward into the
-  next open month** rather than being lost, and the sent month does not change.
+- Once a costing is marked Sent, expenses captured afterwards still land on their own
+  month but are flagged **AFTER SEND** (on the card, and with a `*` plus a footnote on
+  the PDF/Excel export). They count in the totals, but the copy the subcontractor
+  received does not have them — export and re-send the costing. Late expenses stay
+  editable; everything that was part of the send stays locked. (Costings up to July
+  2026 keep the old behaviour, where late expenses rolled into the next month. The
+  cutoff is the `COSTING_ROLL_FORWARD_LAST_PERIOD` setting in the api's
+  `.env.production`; `9999-12` switches the old behaviour back on everywhere.)
 - Costing uses the **statement period**, which is what makes it reconcile with the
   Subcontractor Loads report.
 

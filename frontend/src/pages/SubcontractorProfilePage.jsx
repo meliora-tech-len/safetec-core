@@ -117,7 +117,7 @@ export default function SubcontractorProfilePage() {
   // "Mark Sent" confirm modal (costing tab): the whole month goes to the
   // subcontractor as one statement, so Sent locks every truck's costing for
   // the period at once. The date is backdatable so an already-emailed month
-  // can carry its real send date (expenses captured after it roll forward).
+  // can carry its real send date (expenses captured after it are flagged AFTER SEND).
   const [sentModal, setSentModal]         = useState(false)
   const [sentDate, setSentDate]           = useState(todayStr)
   const [sentSaving, setSentSaving]       = useState(false)
@@ -623,7 +623,7 @@ export default function SubcontractorProfilePage() {
   }
 
   const handleUnsend = async () => {
-    if (!window.confirm(`Un-send the ${MONTHS[month]} ${year} costing for ${subcontractor?.name || 'this subcontractor'}? Every truck will be unlocked and expenses captured since the send may move back into this month.`)) return
+    if (!window.confirm(`Un-send the ${MONTHS[month]} ${year} costing for ${subcontractor?.name || 'this subcontractor'}? Every truck will be unlocked so values can be changed again.`)) return
     try {
       await setSubcontractorCostingSent(id, { month, year }, { sent: false })
       toast.success('Costing un-sent — unlocked')
@@ -1453,7 +1453,7 @@ export default function SubcontractorProfilePage() {
                 <DateInput className="form-input" value={sentDate} onChange={e => setSentDate(e.target.value)} />
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
                   If the costing was emailed earlier, pick that date. Any expense captured after this date
-                  automatically moves into the next month's costing instead of changing this one.
+                  still lands on this month but is flagged AFTER SEND, so you know to re-send the costing.
                 </span>
               </div>
             </div>
@@ -1778,6 +1778,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
     income_excl_vat, income_incl_vat,
     loads_income_excl_vat, loads_income_incl_vat,
     admin_fee, supplier_invoices,
+    late_capture_count = 0,
     manual_incomes = [],
     total_expenses_excl_vat, total_expenses_incl_vat,
     net_payable, net_payable_calculated, net_payable_override,
@@ -1876,6 +1877,13 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
     <th key={label} style={{ ...thStyle, textAlign: right ? 'right' : 'left' }}>{label}</th>
   )
   const dash = <span style={{ color: 'var(--text-muted)' }}>—</span>
+  // Expense captured after this costing was marked sent: it counts here, but
+  // the subcontractor's copy does not have it — the costing must be re-sent.
+  const lateBadge = (title = 'Captured after this costing was sent — not in the copy the subcontractor received') => (
+    <span title={title} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(220,38,38,0.12)', color: 'var(--danger)', borderRadius: 10, padding: '1px 6px', whiteSpace: 'nowrap' }}>
+      AFTER SEND
+    </span>
+  )
 
   return (
     <div
@@ -1908,6 +1916,14 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, color: '#16a34a' }}
           >
             <Lock size={11} /> Locked
+          </span>
+        )}
+        {isSent && late_capture_count > 0 && (
+          <span
+            title={`${late_capture_count} expense${late_capture_count !== 1 ? 's' : ''} captured after the send — re-send this costing`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 9px', borderRadius: 12, fontSize: 11, fontWeight: 800, letterSpacing: 0.5, background: 'rgba(220,38,38,0.12)', color: 'var(--danger)' }}
+          >
+            <AlertTriangle size={11} /> {late_capture_count} AFTER SEND
           </span>
         )}
         {!expanded && parseFloat(net_payable) !== 0 && (
@@ -2033,6 +2049,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                     <td style={{ ...tdStyle, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                         {dieselLabel(supplierName)}
+                        {dg?.late_capture_count > 0 && lateBadge(`${dg.late_capture_count} fill-up${dg.late_capture_count !== 1 ? 's' : ''} captured after this costing was sent`)}
                         {/* Diesel spot-check "i" icon — hidden from users for now, keep in code.
                         {hasDiesel && (
                           <button
@@ -2104,6 +2121,7 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
                       <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           {label}
+                          {inv.captured_after_sent && lateBadge()}
                           {inv.is_fixed_expense && (
                             <span title="Fixed expense — carried forward each month" style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', background: 'rgba(59,130,246,0.12)', color: 'var(--accent)', borderRadius: 10, padding: '1px 6px' }}>
                               FIXED
@@ -2314,7 +2332,11 @@ function TruckCostingCard({ truckData, templateSuppliers = [], onAddExpense, onA
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
             <Lock size={13} />
             Sent to the subcontractor{sent_by_name ? ` by ${sent_by_name}` : ''} on {formatDate(sent_at)} — locked.
-            New expenses captured for this truck now go into the next month's costing.
+            {late_capture_count > 0
+              ? <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
+                  {late_capture_count} expense{late_capture_count !== 1 ? 's' : ''} captured since the send (marked AFTER SEND) — the subcontractor's copy does not include {late_capture_count !== 1 ? 'them' : 'it'}; export and re-send this costing.
+                </span>
+              : 'Expenses captured for this month after the send still land here and are flagged, so the costing can be re-sent.'}
           </div>
         ) : (
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>

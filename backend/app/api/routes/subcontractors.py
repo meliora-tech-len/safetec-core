@@ -26,6 +26,7 @@ from app.services.audit import log_action
 from app.services.profit_sheet_lock import ensure_invoice_not_profit_locked
 from app.services.costing_sent import (
     build_sent_map, natural_invoice_period, period_add, roll_past_sent, costing_override_period,
+    captured_after_sent,
     truck_regs as _truck_regs, truck_invoice_contribution as _truck_invoice_contribution,
     fuelled_lines_by_invoice as _fuelled_lines_by_invoice,
 )
@@ -553,8 +554,10 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     ds = db.query(DieselSettings).filter(DieselSettings.entity_id == sub.entity_id).first()
     fixed_admin_fee = Decimal(str(ds.subcontractor_monthly_admin_fee)) if ds else D0
 
-    # Sent flags for these trucks — a period marked SENT is locked, and any
-    # contribution captured after the send rolls forward into the next month.
+    # Sent flags for these trucks — a period marked SENT is locked. A
+    # contribution captured after the send stays in its month and is flagged
+    # captured_after_sent (periods up to ROLL_FORWARD_LAST_PERIOD still roll
+    # it forward into the next month — see costing_sent.py).
     sent_map = build_sent_map(db, [t.id for t in trucks])
 
     # Cash/Current invoices belong to the PREVIOUS costing period (a June cash
@@ -691,7 +694,10 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                 continue
             exp_excl += c_excl
             exp_incl += c_incl
-            inv_contribs.append((inv, c_excl, c_incl, _invoice_display_note(inv, truck_regs)))
+            inv_contribs.append((
+                inv, c_excl, c_incl, _invoice_display_note(inv, truck_regs),
+                captured_after_sent((year, month), truck.id, inv.created_at, sent_map),
+            ))
 
         # Diesel fill-ups for this truck — bucketed by the supplier's payment term,
         # mirroring the non-diesel invoice rule above. The fill-up's STATEMENT
@@ -771,6 +777,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                     admin_fee_vat=fee_vt,
                     admin_fee_incl=fee_in,
                     grand_total=(amt + fee_in).quantize(Decimal("0.01")),
+                    captured_after_sent=captured_after_sent((year, month), truck.id, f.created_at, sent_map),
                 ))
             diesel_groups.append(DieselSupplierGroup(
                 supplier_name=sup_name,
@@ -778,6 +785,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                 tot_admin_fee_incl=sum((r.admin_fee_incl for r in rows), D0),
                 tot_excl_admin_fee=sum((r.amount_excl for r in rows), D0),
                 tot_grand_total=sum((r.grand_total for r in rows), D0),
+                late_capture_count=sum(1 for r in rows if r.captured_after_sent),
             ))
 
         # Add diesel fill-up totals into the expense columns:
@@ -811,9 +819,14 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
                     "costing_amount_non_vat": c_ex,
                     "costing_amount_vat": c_in,
                     "notes": note,
+                    "captured_after_sent": late,
                 })
-                for (i, c_ex, c_in, note) in inv_contribs
+                for (i, c_ex, c_in, note, late) in inv_contribs
             ],
+            late_capture_count=(
+                sum(1 for (*_, late) in inv_contribs if late)
+                + sum(g.late_capture_count for g in diesel_groups)
+            ),
             manual_incomes=manual_income_out,
             total_expenses_excl_vat=exp_excl,
             total_expenses_incl_vat=exp_incl,
@@ -916,8 +929,9 @@ def set_subcontractor_costing_sent(
     keeps its own history. Marking Sent again on a partly sent month only
     locks the trucks that are still open (e.g. one that joined after the send);
     trucks already sent keep their original date. The optional sent_date
-    backdates the send: expenses captured after that date roll forward into
-    the next month's costing instead of changing the statement that went out."""
+    backdates the send: expenses captured after that date are flagged as
+    captured-after-sent on the costing so it can be re-sent (see
+    costing_sent.py)."""
     sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Subcontractor not found")
