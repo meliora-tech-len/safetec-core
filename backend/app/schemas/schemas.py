@@ -1867,6 +1867,9 @@ class SupplierInvoiceOut(BaseModel):
     # vat_applicable header, or mix both). Null outside the costing endpoint.
     costing_amount_vat: Optional[Decimal] = None
     costing_amount_non_vat: Optional[Decimal] = None
+    # Costing only: captured after the truck's costing for that month was
+    # marked sent, so the subcontractor's copy lacks it (re-send needed).
+    captured_after_sent: bool = False
 
     @computed_field
     @property
@@ -2416,6 +2419,7 @@ class DieselFillUpCostingRow(BaseModel):
     admin_fee_vat: Decimal
     admin_fee_incl: Decimal
     grand_total: Decimal
+    captured_after_sent: bool = False
 
 
 class DieselSupplierGroup(BaseModel):
@@ -2424,6 +2428,8 @@ class DieselSupplierGroup(BaseModel):
     tot_admin_fee_incl: Decimal
     tot_excl_admin_fee: Decimal
     tot_grand_total: Decimal
+    # Fill-ups captured after this month's costing was sent.
+    late_capture_count: int = 0
 
 
 class TruckCostingIncomeOut(BaseModel):
@@ -2456,6 +2462,9 @@ class SubcontractorTruckCostingOut(BaseModel):
     loads_income_incl_vat: Decimal
     admin_fee: Decimal
     supplier_invoices: List[SupplierInvoiceOut]
+    # Expenses (invoices + diesel fill-ups) captured after this costing was
+    # marked sent — they ARE in the totals, but not in the copy that went out.
+    late_capture_count: int = 0
     # Manual income lines added directly in the costing module (costing-only;
     # never in the Income vs Expenses report or the Supplier Invoice Profile).
     manual_incomes: List[TruckCostingIncomeOut] = []
@@ -2572,8 +2581,8 @@ class SubcontractorCostingSentUpdate(BaseModel):
     sent: bool
     # The date the costing was actually sent (defaults to now). Backdatable so
     # a month that was emailed before this feature existed can be marked with
-    # its real send date — expenses captured after that date roll forward into
-    # the next month's costing.
+    # its real send date — expenses captured after that date are flagged as
+    # captured-after-sent on the costing (see costing_sent.py).
     sent_date: Optional[date] = None
 
 

@@ -1003,9 +1003,9 @@ class TruckCostingNote(Base):
 class TruckCostingSent(Base):
     """Per truck + costing period: the costing was SENT to the subcontractor.
     A sent costing is locked — no values may be added or removed — and any
-    expense captured after `sent_at` rolls forward into the next month's
-    costing instead of retroactively changing the statement the subcontractor
-    already received."""
+    expense captured after `sent_at` is flagged on the costing as captured
+    after the send (older periods rolled it into the next month instead; see
+    costing_sent.py)."""
     __tablename__ = "truck_costing_sent"
 
     id         = Column(Integer, primary_key=True, index=True)
