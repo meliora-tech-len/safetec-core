@@ -443,6 +443,9 @@ export default function SubcontractorProfilePage() {
       description:    isGeneral ? (inv.supplier_name_text || inv.description || '') : (inv.description || ''),
       litres:         inv.litres != null ? String(inv.litres) : '',
       rate_per_litre: '',
+      // A split (multi-line) invoice: the costing row shows only this truck's
+      // share, so its total can't be edited here — it is the sum of its lines.
+      is_split:       !!inv.is_multi_line,
     })
     setEditingExpenseId(inv.id)
     setFixedEditScope('forward')
@@ -540,10 +543,16 @@ export default function SubcontractorProfilePage() {
     // not changed here — same as the supplier-invoice list edit).
     if (editingExpenseId) {
       const editAmount = parseFloat(expenseForm.amount) || 0
-      if (editAmount <= 0) { toast.error('Enter a valid amount'); return }
+      if (!expenseForm.is_split && editAmount <= 0) { toast.error('Enter a valid amount'); return }
       setExpenseSaving(true)
       try {
-        await updateSupplierInvoice(editingExpenseId, {
+        await updateSupplierInvoice(editingExpenseId, expenseForm.is_split ? {
+          // Split invoice: never send the amount (it is this truck's share, not
+          // the invoice total) nor the per-line VAT/regs, which live on its lines.
+          invoice_date:   new Date(expenseForm.invoice_date + 'T12:00:00').toISOString(),
+          invoice_number: expenseForm.invoice_number.trim(),
+          description:    expenseForm.description.trim() || null,
+        } : {
           invoice_date:   new Date(expenseForm.invoice_date + 'T12:00:00').toISOString(),
           invoice_number: expenseForm.invoice_number.trim(),
           amount:         editAmount,
@@ -1302,7 +1311,13 @@ export default function SubcontractorProfilePage() {
                 <div className="form-row">
                   <div className="form-group">
                     <label>Amount {isDieselExpenseSupplier ? '(auto-calc)' : '*'}</label>
-                    <input type="number" step="0.01" min="0" value={expenseForm.amount} onChange={e => setEF('amount', e.target.value)} placeholder="0.00" />
+                    <input type="number" step="0.01" min="0" value={expenseForm.amount} onChange={e => setEF('amount', e.target.value)} placeholder="0.00"
+                      disabled={!!(editingExpenseId && expenseForm.is_split)} />
+                    {editingExpenseId && expenseForm.is_split && (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 5, display: 'block' }}>
+                        Split invoice — this is this truck's share. Change amounts and VAT on the invoice's lines under the supplier.
+                      </span>
+                    )}
                   </div>
                   <div className="form-group">
                     <label>Truck Reg</label>

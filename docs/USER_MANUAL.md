@@ -215,14 +215,17 @@ Rules worth knowing:
 - General expenses can be marked **fixed** (recurring) — they carry forward monthly.
   To stop the series, archive the latest month's copy; a modal offers "stop from this
   month" versus "remove everywhere".
-- Once a costing is marked Sent, expenses captured afterwards still land on their own
-  month but are flagged **AFTER SEND** (on the card, and with a `*` plus a footnote on
-  the PDF/Excel export). They count in the totals, but the copy the subcontractor
-  received does not have them — export and re-send the costing. Late expenses stay
-  editable; everything that was part of the send stays locked. (Costings up to July
-  2026 keep the old behaviour, where late expenses rolled into the next month. The
-  cutoff is the `COSTING_ROLL_FORWARD_LAST_PERIOD` setting in the api's
-  `.env.production`; `9999-12` switches the old behaviour back on everywhere.)
+- Once a costing is marked Sent, it is locked: expenses captured afterwards fall on the
+  **next** month's costing automatically, so the statement the subcontractor received
+  never changes. To put a late expense on the sent month anyway, pin it there with the
+  invoice's costing-period override. Everything that was part of the send stays locked.
+  (The `COSTING_ROLL_FORWARD_LAST_PERIOD` setting in the api's `.env.production` can
+  switch this off from a given month; late expenses then stay on their own month,
+  flagged **AFTER SEND** with a `*` and a footnote on the PDF/Excel export.)
+- A **split invoice** (one statement spread over several trucks) shows only each
+  truck's share on the costing. Its total is the sum of its lines, so change amounts
+  and VAT on the lines under the supplier; editing it from the costing cannot change
+  its total.
 - Costing uses the **statement period**, which is what makes it reconcile with the
   Subcontractor Loads report.
 

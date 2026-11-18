@@ -1913,6 +1913,14 @@ def update_supplier_invoice(
 
     updates = sent_fields(payload, "notes")
 
+    # A split (multi-line) invoice's total is the sum of its lines and changes
+    # only by editing the lines. Ignore a header amount sent with the edit: the
+    # subcontractor costing shows just one truck's share of a split invoice, and
+    # saving that share as the header once overwrote the real total (R5 100 →
+    # R400), which then showed as negative VAT on the Supplier Summary.
+    if inv.is_multi_line and inv.line_items and "amount" in updates:
+        updates.pop("amount")
+
     # Final-verification lock: only payment-status fields and a free-text note
     # may still change (a note-only edit sends just `notes`).
     ensure_not_locked(inv, updates, {"is_paid", "paid_date", "payment_reference", "notes"})
