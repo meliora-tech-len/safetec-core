@@ -107,56 +107,81 @@ def subcontractors_financial_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Per-subcontractor Income / Outgoing / Profit (excl VAT) for the overview
-    table.
+    """Per-subcontractor Income / Outgoing / Profit for the overview table,
+    taken from the subcontractor's own costing so the overview always agrees
+    with the costing screen:
 
-    Mirrors the Subcontractor Loads report: income is what we invoice for the
-    sub's loads, outgoing is the payout to the sub, and a load belongs to its
-    STATEMENT period when one is set, falling back to the load date — so the
-    monthly figures reconcile with that report.
+    - income   = the costing income (loads at the subcontractor rate plus any
+                 manual income lines), incl VAT when the entity is
+                 VAT-registered, the same basis the costing nets off;
+    - outgoing = the costing expenses (admin fee, diesel and supplier
+                 invoices, both expense columns);
+    - profit   = the costing's net payable (a manual override wins, exactly
+                 as on the costing).
+
+    A year or lifetime figure is the sum of its monthly costings, up to the
+    current month (future months have no costing yet).
     """
     if period == "month" and not (year and month):
         raise HTTPException(status_code=400, detail="year and month are required for a monthly period")
     if period == "year" and not year:
         raise HTTPException(status_code=400, detail="year is required for a yearly period")
 
-    query = (
-        db.query(
-            Subcontractor.id.label("subcontractor_id"),
-            func.coalesce(func.sum(TruckLoad.amount_excl_vat), 0).label("income"),
-            func.coalesce(func.sum(TruckLoad.subcontractor_amount_excl_vat), 0).label("outgoing"),
-        )
-        .join(Truck, Truck.subcontractor_id == Subcontractor.id)
-        .join(TruckLoad, TruckLoad.truck_id == Truck.id)
-        .filter(TruckLoad.is_archived == False)
-    )
-
+    subs_q = db.query(Subcontractor)
     if current_user.role != "admin":
         access_ids = [a.entity_id for a in current_user.entity_access]
-        query = query.filter(Subcontractor.entity_id.in_(access_ids))
+        subs_q = subs_q.filter(Subcontractor.entity_id.in_(access_ids))
     if entity_id:
         _check_entity_access(entity_id, current_user)
-        query = query.filter(Subcontractor.entity_id == entity_id)
+        subs_q = subs_q.filter(Subcontractor.entity_id == entity_id)
+    # Only subcontractors with trucks have a costing.
+    subs = subs_q.filter(
+        db.query(Truck.id).filter(Truck.subcontractor_id == Subcontractor.id).exists()
+    ).all()
+    if not subs:
+        return []
 
+    today = datetime.now(timezone.utc).date()
+    current_idx = today.year * 12 + (today.month - 1)
     if period == "month":
-        query = query.filter(
-            func.coalesce(TruckLoad.statement_month, extract("month", TruckLoad.load_date)) == month,
-            func.coalesce(TruckLoad.statement_year, extract("year", TruckLoad.load_date)) == year,
-        )
+        first_idx = last_idx = year * 12 + (month - 1)
     elif period == "year":
-        query = query.filter(
-            func.coalesce(TruckLoad.statement_year, extract("year", TruckLoad.load_date)) == year,
+        first_idx, last_idx = year * 12, min(year * 12 + 11, current_idx)
+    else:
+        # Lifetime: from the earliest load period of these subcontractors.
+        load_y = func.coalesce(TruckLoad.statement_year, extract("year", TruckLoad.load_date))
+        load_m = func.coalesce(TruckLoad.statement_month, extract("month", TruckLoad.load_date))
+        first = (
+            db.query(func.min(load_y * 12 + load_m - 1))
+            .join(Truck, Truck.id == TruckLoad.truck_id)
+            .filter(
+                Truck.subcontractor_id.in_([s.id for s in subs]),
+                TruckLoad.is_archived == False,
+            )
+            .scalar()
         )
+        if first is None:
+            return []
+        first_idx, last_idx = int(first), current_idx
 
     result = []
-    for r in query.group_by(Subcontractor.id).all():
-        income = float(r.income or 0)
-        outgoing = float(r.outgoing or 0)
+    shared: dict = {}  # entity-wide invoices per period, loaded once for all subs
+    for sub in subs:
+        income = outgoing = profit = Decimal("0")
+        for idx in range(first_idx, last_idx + 1):
+            y, m = divmod(idx, 12)
+            c = _build_subcontractor_costing(
+                sub.id, m + 1, y, db, current_user, totals_only=True, shared=shared,
+            )
+            for t in c.trucks:
+                income += t.income_incl_vat if c.is_vat_registered else t.income_excl_vat
+                outgoing += t.total_expenses_excl_vat + t.total_expenses_incl_vat
+                profit += t.net_payable
         result.append({
-            "subcontractor_id": r.subcontractor_id,
-            "income": income,
-            "outgoing": outgoing,
-            "profit": round(income - outgoing, 2),
+            "subcontractor_id": sub.id,
+            "income": float(round(income, 2)),
+            "outgoing": float(round(outgoing, 2)),
+            "profit": float(round(profit, 2)),
         })
     return result
 
@@ -524,7 +549,46 @@ def _materialize_fixed_expenses(sub, month: int, year: int, db: Session, current
         db.commit()
 
 
-def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, db: Session, current_user: User) -> SubcontractorCostingOut:
+def _load_candidate_invoices(db: Session, entity_id: int, period_idx: int, stmt_idx, override_idx, is_safetec: bool):
+    """All candidate supplier invoices of an entity for one costing period,
+    with their natural period and already-fuelled lines (see the comment at
+    the call site in _build_subcontractor_costing)."""
+    candidate_invoices = (
+        db.query(SupplierInvoice)
+        .outerjoin(Supplier, Supplier.id == SupplierInvoice.supplier_id)
+        .options(joinedload(SupplierInvoice.line_items), joinedload(SupplierInvoice.supplier))
+        .filter(
+            SupplierInvoice.entity_id == entity_id,
+            SupplierInvoice.is_archived == False,
+            or_(
+                stmt_idx.between(period_idx - 3, period_idx + 1),
+                override_idx == period_idx,
+            ),
+        )
+        .all()
+    )
+    natural_by_inv = {
+        inv.id: natural_invoice_period(inv, is_safetec) for inv in candidate_invoices
+    }
+    # Fuel already costed via the diesel section, so the invoice side can leave it
+    # alone. Fetched once for every candidate rather than per truck.
+    fuelled_by_inv = _fuelled_lines_by_invoice(db, [inv.id for inv in candidate_invoices])
+    return candidate_invoices, natural_by_inv, fuelled_by_inv
+
+
+def _build_subcontractor_costing(
+    subcontractor_id: int, month: int, year: int, db: Session, current_user: User,
+    totals_only: bool = False, shared: Optional[dict] = None,
+) -> SubcontractorCostingOut:
+    """Build one subcontractor's costing for (year, month).
+
+    totals_only=True computes exactly the same income, expense and net-payable
+    figures but skips the per-row display detail (load rows, supplier-invoice
+    rows with their verification ticks, diesel supplier list) — used by the
+    Subcontractors overview, which only needs the totals for many months.
+    `shared` is an optional dict the caller keeps across calls: the
+    entity-wide candidate invoices for a period are loaded once and reused for
+    every subcontractor of that entity (read-only)."""
     sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Subcontractor not found")
@@ -603,26 +667,15 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
     # via `_truck_invoice_contribution`, so a multi-line/split invoice can pull
     # through to several trucks with each picking up just its own sub-lines.
     # Outer join so custom expenses (null supplier) come through too.
-    candidate_invoices = (
-        db.query(SupplierInvoice)
-        .outerjoin(Supplier, Supplier.id == SupplierInvoice.supplier_id)
-        .options(joinedload(SupplierInvoice.line_items), joinedload(SupplierInvoice.supplier))
-        .filter(
-            SupplierInvoice.entity_id == sub.entity_id,
-            SupplierInvoice.is_archived == False,
-            or_(
-                stmt_idx.between(period_idx - 3, period_idx + 1),
-                override_idx == period_idx,
-            ),
+    cache_key = ("invoices", sub.entity_id, period_idx)
+    if shared is not None and cache_key in shared:
+        candidate_invoices, natural_by_inv, fuelled_by_inv = shared[cache_key]
+    else:
+        candidate_invoices, natural_by_inv, fuelled_by_inv = _load_candidate_invoices(
+            db, sub.entity_id, period_idx, stmt_idx, override_idx, is_safetec,
         )
-        .all()
-    )
-    natural_by_inv = {
-        inv.id: natural_invoice_period(inv, is_safetec) for inv in candidate_invoices
-    }
-    # Fuel already costed via the diesel section, so the invoice side can leave it
-    # alone. Fetched once for every candidate rather than per truck.
-    fuelled_by_inv = _fuelled_lines_by_invoice(db, [inv.id for inv in candidate_invoices])
+        if shared is not None:
+            shared[cache_key] = (candidate_invoices, natural_by_inv, fuelled_by_inv)
 
     def _invoice_in_period(inv, truck_id: int) -> bool:
         """Does this invoice belong to (year, month) for this truck, after the
@@ -823,13 +876,13 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         truck.subcontractor_display_name = sub.name
         truck_results.append(SubcontractorTruckCostingOut(
             truck=TruckOut.model_validate(truck),
-            loads=[_enrich_load(l) for l in loads],
+            loads=[] if totals_only else [_enrich_load(l) for l in loads],
             income_excl_vat=income_excl,
             income_incl_vat=income_incl,
             loads_income_excl_vat=loads_income_excl,
             loads_income_incl_vat=loads_income_incl,
             admin_fee=admin_fee,
-            supplier_invoices=[
+            supplier_invoices=[] if totals_only else [
                 _enrich_invoice(db, i).model_copy(update={
                     "amount": c_ex + c_in,
                     "costing_amount_non_vat": c_ex,
@@ -863,7 +916,7 @@ def _build_subcontractor_costing(subcontractor_id: int, month: int, year: int, d
         net_payable=sum((t.net_payable for t in truck_results), D0),
     )
 
-    diesel_supplier_names = [
+    diesel_supplier_names = [] if totals_only else [
         row[0] for row in (
             db.query(Supplier.name)
             .join(DieselRate, DieselRate.supplier_id == Supplier.id)
