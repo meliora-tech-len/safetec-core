@@ -101,6 +101,7 @@ def list_subcontractors(
 @router.get("/summary")
 def subcontractors_financial_summary(
     entity_id: Optional[int] = Query(None),
+    include_inactive: bool = Query(False),
     period: str = Query("month", pattern="^(month|year|lifetime)$"),
     year: Optional[int] = Query(None, ge=2020),
     month: Optional[int] = Query(None, ge=1, le=12),
@@ -134,6 +135,8 @@ def subcontractors_financial_summary(
     if entity_id:
         _check_entity_access(entity_id, current_user)
         subs_q = subs_q.filter(Subcontractor.entity_id == entity_id)
+    if not include_inactive:
+        subs_q = subs_q.filter(Subcontractor.is_active == True)
     # Only subcontractors with trucks have a costing.
     subs = subs_q.filter(
         db.query(Truck.id).filter(Truck.subcontractor_id == Subcontractor.id).exists()
@@ -1500,14 +1503,39 @@ def delete_subcontractor(
     if not sub:
         raise HTTPException(status_code=404, detail="Subcontractor not found")
     _check_entity_access(sub.entity_id, current_user)
+    # Archive (soft delete): the subcontractor drops out of the list and of
+    # the pickers for new work, but every truck, load, invoice and costing is
+    # kept and stays viewable; POST /{id}/restore brings it back.
     sub.is_active = False
     log_action(
-        db, "subcontractor.deleted", user_id=current_user.id,
+        db, "subcontractor.archived", user_id=current_user.id,
         entity_id=sub.entity_id, resource_type="subcontractor",
-        resource_id=subcontractor_id, description=f"Deactivated subcontractor {sub.name}",
+        resource_id=subcontractor_id, description=f"Archived subcontractor {sub.name}",
     )
     db.commit()
-    return {"detail": "Subcontractor deactivated"}
+    return {"detail": "Subcontractor archived"}
+
+
+@router.post("/{subcontractor_id}/restore", response_model=SubcontractorOut)
+def restore_subcontractor(
+    subcontractor_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Bring an archived subcontractor back into the list and pickers."""
+    sub = db.query(Subcontractor).filter(Subcontractor.id == subcontractor_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+    _check_entity_access(sub.entity_id, current_user)
+    sub.is_active = True
+    log_action(
+        db, "subcontractor.restored", user_id=current_user.id,
+        entity_id=sub.entity_id, resource_type="subcontractor",
+        resource_id=subcontractor_id, description=f"Restored subcontractor {sub.name}",
+    )
+    db.commit()
+    db.refresh(sub)
+    return sub
 
 
 @router.delete("/{subcontractor_id}/permanent")
