@@ -395,14 +395,30 @@ def _norm_reg(reg) -> str:
     return (reg or "").replace(" ", "").strip().upper()
 
 
+def _is_tyre_jobcard(inv: SupplierInvoice) -> bool:
+    """Tyre jobcards are captured against a per-entity supplier named
+    "Tyre Jobcards" (the jobcard number is the invoice number)."""
+    name = (inv.supplier.name if inv.supplier else inv.supplier_name_text) or ""
+    return " ".join(name.lower().split()) == "tyre jobcards"
+
+
 def _invoice_display_note(inv: SupplierInvoice, regs: set):
     """Costing display note for one truck: the invoice's own note plus the
     descriptions of this truck's matched sub-lines (fuel lines excluded — their
     per-slip detail lives in the Diesel module), so a note captured on either
-    level pulls through — e.g. a R0 tyre jobcard's "what was done" line."""
+    level pulls through.
+
+    Tyre jobcards are the exception: the office wants only the jobcard's Notes
+    and its header Description on the subbie costing, not every line item's
+    full description (the jobcard number already shows as the invoice number)."""
     parts = []
     if (inv.notes or "").strip():
         parts.append(inv.notes.strip())
+    if _is_tyre_jobcard(inv):
+        desc = (inv.description or "").strip()
+        if desc and desc not in parts:
+            parts.append(desc)
+        return " · ".join(parts) or None
     if inv.is_multi_line and inv.line_items and any((li.unit or "").strip() for li in inv.line_items):
         is_diesel = bool(inv.supplier and inv.supplier.is_diesel_supplier)
         for li in inv.line_items:
