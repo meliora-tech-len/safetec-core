@@ -14,6 +14,8 @@ import { AlertTriangle, Archive, Trash2 } from 'lucide-react'
  *   title         string              — e.g. "Delete Truck Load"
  *   description   string | node       — optional detail shown to user
  *   saving        boolean             — disables buttons during API call
+ *   archiveNote   string | node       — optional replacement for the default
+ *                                       "excluded from reports" archive warning
  */
 export default function DeleteModal({
   isOpen,
@@ -23,6 +25,7 @@ export default function DeleteModal({
   title     = 'Delete Record',
   description,
   saving    = false,
+  archiveNote = null,
 }) {
   const [mode, setMode]              = useState(null)   // null | 'archive' | 'delete'
   const [confirmText, setConfirmText] = useState('')
@@ -90,14 +93,14 @@ export default function DeleteModal({
           {/* Archive-only: straight to confirmation */}
           {archiveOnly && (
             <div style={warningBox('#d97706')}>
-              This record will be <strong>archived</strong>. It stays in the database but is excluded from all reports, calculations, and payroll.
+              {archiveNote || <>This record will be <strong>archived</strong>. It stays in the database but is excluded from all reports, calculations, and payroll.</>}
             </div>
           )}
 
           {/* Archive mode selected (from picker) */}
           {showBothOptions && mode === 'archive' && (
             <div style={warningBox('#d97706')}>
-              This record will be <strong>archived</strong>. It stays in the database but is excluded from all reports, calculations, and payroll.
+              {archiveNote || <>This record will be <strong>archived</strong>. It stays in the database but is excluded from all reports, calculations, and payroll.</>}
             </div>
           )}
 

@@ -221,6 +221,7 @@ export const createSubcontractorBulk  = (data)        => api.post('/subcontracto
 export const updateSubcontractor      = (id, data)    => api.put(`/subcontractors/${id}`, data)
 export const deleteSubcontractor      = (id)          => api.delete(`/subcontractors/${id}`)
 export const permanentlyDeleteSubcontractor = (id)    => api.delete(`/subcontractors/${id}/permanent`)
+export const restoreSubcontractor       = (id)          => api.post(`/subcontractors/${id}/restore`)
 export const getSubcontractorInvoices   = (id, params = {}) => api.get(`/subcontractors/${id}/invoices`, { params })
 export const createSubcontractorInvoice = (id, data)        => api.post(`/subcontractors/${id}/invoices`, data)
 export const getSubcontractorCosting        = (id, params = {}) => api.get(`/subcontractors/${id}/costing`, { params })

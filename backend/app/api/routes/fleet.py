@@ -105,14 +105,15 @@ def list_trucks(
         q = q.filter(Truck.registration.ilike(registration))
     if subcontractor_id is not None:
         q = q.filter(Truck.subcontractor_id == subcontractor_id)
-    # Ended subcontractors' trucks stay visible in management views (Fleet/Truck
-    # Loads, driver assignments, etc.) so their historical loads and costing stay
-    # reachable — only pickers for capturing NEW work opt in via exclude_ended.
+    # Ended or archived subcontractors' trucks stay visible in management views
+    # (Fleet/Truck Loads, driver assignments, etc.) so their historical loads and
+    # costing stay reachable — only pickers for capturing NEW work opt in via
+    # exclude_ended.
     if exclude_ended:
-        ended_sub_ids = db.query(Subcontractor.id).filter(
-            Subcontractor.end_date.isnot(None),
-            Subcontractor.end_date < date.today(),
-        )
+        ended_sub_ids = db.query(Subcontractor.id).filter(or_(
+            and_(Subcontractor.end_date.isnot(None), Subcontractor.end_date < date.today()),
+            Subcontractor.is_active == False,
+        ))
         q = q.filter(or_(Truck.subcontractor_id.is_(None), Truck.subcontractor_id.notin_(ended_sub_ids)))
     if entity_id and extra_context:
         # Include trucks from this entity OR own-fleet trucks from any entity with the given

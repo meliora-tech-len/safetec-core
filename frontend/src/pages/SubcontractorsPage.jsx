@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { getSubcontractors, getSubcontractorFinancialSummary, getEntities, createSubcontractorBulk, updateSubcontractor, deleteSubcontractor, permanentlyDeleteSubcontractor } from '../services/api'
+import { getSubcontractors, getSubcontractorFinancialSummary, getEntities, createSubcontractorBulk, updateSubcontractor, deleteSubcontractor, permanentlyDeleteSubcontractor, restoreSubcontractor } from '../services/api'
 import { errorMessage, formatDate, formatCurrency } from '../utils/helpers'
 import toast from 'react-hot-toast'
-import { Plus, Search, Edit2, Trash2, Building2, X, Copy } from 'lucide-react'
+import { Plus, Search, Edit2, Trash2, Building2, X, Copy, Archive, RotateCcw } from 'lucide-react'
 import ExportButton from '../components/ExportButton'
 import { useAuth } from '../hooks/useAuth'
 import { useEntityFilter } from '../hooks/useEntityFilter'
@@ -22,6 +22,8 @@ export default function SubcontractorsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filterEntity, setFilterEntity] = useEntityFilter()
   const [modal, setModal] = useState(null)
+  // Archived (soft-deleted) subcontractors are hidden unless this is ticked.
+  const [showArchived, setShowArchived] = useSessionState('subcontractors-show-archived', false)
   const loadSeqRef = useRef(0)
 
   useEffect(() => {
@@ -35,10 +37,11 @@ export default function SubcontractorsPage() {
     const params = {}
     if (filterEntity) params.entity_id = filterEntity
     if (debouncedSearch) params.search = debouncedSearch
+    if (showArchived) params.include_inactive = true
     getSubcontractors(params)
       .then(r => { if (loadSeqRef.current === seq) setSubcontractors(r.data) })
       .finally(() => { if (loadSeqRef.current === seq) setLoading(false) })
-  }, [filterEntity, debouncedSearch])
+  }, [filterEntity, debouncedSearch, showArchived])
 
   useEffect(() => { load(); return () => { loadSeqRef.current++ } }, [load])
   useEffect(() => { getEntities().then(r => setEntities(r.data)) }, [])
@@ -55,6 +58,7 @@ export default function SubcontractorsPage() {
     if (finPeriod.mode !== 'lifetime') params.year = finPeriod.year
     if (finPeriod.mode === 'month') params.month = finPeriod.month
     if (filterEntity) params.entity_id = filterEntity
+    if (showArchived) params.include_inactive = true
     getSubcontractorFinancialSummary(params)
       .then(r => {
         if (cancelled) return
@@ -64,7 +68,7 @@ export default function SubcontractorsPage() {
       })
       .catch(() => { if (!cancelled) setFinSummary({}) })
     return () => { cancelled = true }
-  }, [filterEntity, finPeriod])
+  }, [filterEntity, finPeriod, showArchived])
 
   const { sort, onSort } = useSort('name', 'asc', 'subcontractors')
   const enriched = useMemo(() => subcontractors.map(s => ({
@@ -114,6 +118,17 @@ export default function SubcontractorsPage() {
   }
 
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [archiveTarget, setArchiveTarget] = useState(null)
+
+  const handleRestore = async (sub) => {
+    try {
+      await restoreSubcontractor(sub.id)
+      toast.success(`${sub.name} restored`)
+      load()
+    } catch (err) {
+      toast.error(errorMessage(err))
+    }
+  }
 
   const entityCode = (id) => entities.find(e => e.id === id)?.code || ''
 
@@ -171,6 +186,10 @@ export default function SubcontractorsPage() {
             {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         )}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+          <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
+          Show archived
+        </label>
       </div>
 
       {/* Table */}
@@ -194,11 +213,12 @@ export default function SubcontractorsPage() {
                 <div className="empty-state"><Building2 size={32} /><p>No subcontractors found</p></div>
               </td></tr>
             ) : sortedSubs.map(sub => (
-              <tr key={sub.id}>
+              <tr key={sub.id} style={sub.is_active ? undefined : { opacity: 0.6 }}>
                 <td>
                   <Link to={subLink(sub)} style={{ fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>
                     {sub.name}
                   </Link>
+                  {!sub.is_active && <span style={styles.archivedChip}>Archived</span>}
                   {sub.trading_name && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sub.trading_name}</div>}
                   {sub.end_date && <div style={{ fontSize: 11, color: 'var(--warning, #b45309)' }}>Ends {formatDate(sub.end_date)}</div>}
                 </td>
@@ -219,6 +239,11 @@ export default function SubcontractorsPage() {
                 <td>
                   <div style={{ display: 'flex', gap: 4 }}>
                     <button className="btn-icon btn-ghost" onClick={() => openEdit(sub)} title="Edit"><Edit2 size={13} /></button>
+                    {sub.is_active ? (
+                      <button className="btn-icon btn-ghost" onClick={() => setArchiveTarget(sub)} title="Archive (keeps all loads and costings)"><Archive size={13} color="#d97706" /></button>
+                    ) : (
+                      <button className="btn-icon btn-ghost" onClick={() => handleRestore(sub)} title="Restore"><RotateCcw size={13} color="var(--success)" /></button>
+                    )}
                     <button className="btn-icon btn-ghost" onClick={() => setDeleteTarget(sub)} title="Delete"><Trash2 size={13} color="var(--danger)" /></button>
                   </div>
                 </td>
@@ -242,16 +267,36 @@ export default function SubcontractorsPage() {
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         title="Delete Subcontractor"
+        archiveNote={<>The subcontractor will be <strong>archived</strong>. Nothing is deleted.</>}
         description={deleteTarget ? `"${deleteTarget.name}"` : ''}
-        onArchive={async () => {
-          try { await deleteSubcontractor(deleteTarget.id); toast.success('Subcontractor deactivated'); load() }
+        onArchive={deleteTarget?.is_active ? async () => {
+          try { await deleteSubcontractor(deleteTarget.id); toast.success('Subcontractor archived'); load() }
           catch (err) { toast.error(errorMessage(err)) }
           setDeleteTarget(null)
-        }}
+        } : null}
         onDelete={async () => {
           try { await permanentlyDeleteSubcontractor(deleteTarget.id); toast.success('Subcontractor permanently deleted'); load() }
           catch (err) { toast.error(errorMessage(err)) }
           setDeleteTarget(null)
+        }}
+      />
+
+      <DeleteModal
+        isOpen={!!archiveTarget}
+        onClose={() => setArchiveTarget(null)}
+        title="Archive Subcontractor"
+        archiveNote={<>The subcontractor will be <strong>archived</strong>. Nothing is deleted.</>}
+        description={archiveTarget ? (
+          <>
+            <strong>{archiveTarget.name}</strong> will be hidden from the subcontractor list and from the
+            pickers for new loads, diesel and invoices. All trucks, loads, invoices and costings are kept
+            and stay viewable. Tick <em>Show archived</em> to see the subcontractor again and restore it at any time.
+          </>
+        ) : ''}
+        onArchive={async () => {
+          try { await deleteSubcontractor(archiveTarget.id); toast.success(`${archiveTarget.name} archived`); load() }
+          catch (err) { toast.error(errorMessage(err)) }
+          setArchiveTarget(null)
         }}
       />
     </div>
@@ -521,4 +566,8 @@ const styles = {
     fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, letterSpacing: 0.5,
   },
   amountCell: { textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 },
+  archivedChip: {
+    marginLeft: 8, background: 'rgba(217,119,6,0.12)', color: '#d97706',
+    fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, letterSpacing: 0.5,
+  },
 }
