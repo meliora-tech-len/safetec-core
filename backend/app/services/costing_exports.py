@@ -74,6 +74,16 @@ def _invoice_label(inv) -> tuple:
     return sup, " · ".join(parts) or None
 
 
+def _sorted_invoices(invoices) -> list:
+    """Supplier-invoice rows in export order: by supplier name (case- and
+    space-insensitive), then invoice number, so the same supplier's invoices
+    sit together without the office having to sort the sheet by hand."""
+    def key(inv):
+        sup = " ".join((inv.supplier_name or "").lower().split())
+        return (sup == "", sup, (inv.invoice_number or "").strip().lower(), inv.id or 0)
+    return sorted(invoices or [], key=key)
+
+
 def _invoice_columns(inv) -> tuple:
     """(incl_vat_amount, excl_vat_amount) for a costing supplier-invoice row;
     None means that column shows a dash. Uses the per-truck VAT split from the
@@ -270,7 +280,7 @@ def generate_costing_pdf(costing, entity) -> bytes:
         # Supplier invoices
         if td.supplier_invoices:
             rows.append([P("Supplier Invoices", s_sec), P("", s_val), P("", s_val), P("", s_val), P("", s_val)])
-            for inv in td.supplier_invoices:
+            for inv in _sorted_invoices(td.supplier_invoices):
                 sup, note = _invoice_label(inv)
                 sup = xml_escape(sup)
                 if note:
@@ -608,8 +618,6 @@ def generate_costing_excel(costing, entity) -> bytes:
         INCL_L  = get_column_letter(3)
         EXP_I_L = get_column_letter(4)
         EXP_E_L = get_column_letter(5)
-        exp_incl_cells = []  # cells summed into the Expenses Incl VAT total
-        exp_excl_cells = []  # cells summed into the Expenses Excl VAT total
 
         # ── Loads summary row — income is a SUM of the per-load detail rows
         #    grouped (collapsed) directly beneath it ──────────────────────────
@@ -652,18 +660,21 @@ def generate_costing_excel(costing, entity) -> bytes:
             inc_excl_cells.append(f"{EXCL_L}{row - 1}")
             inc_incl_cells.append(f"{INCL_L}{row - 1}")
 
+        # Expense rows (admin fee, diesel, supplier invoices) form one
+        # contiguous block; the expense totals SUM the whole block per column
+        # rather than listing individual cells, so sorting rows inside the
+        # block in Excel can never drop an amount from the totals.
+        exp_first_row = row
+
         # Admin fee
         write_row(["Admin Fee", None, None, fmt_val(td.admin_fee), None], fnt=LBL_FONT, row_h=15)
-        exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
 
         # Diesel groups
         for dg in (td.diesel_groups or []):
             write_row([_diesel_group_label(dg), None, None, None, fmt_val(dg.tot_excl_admin_fee)], fnt=LBL_FONT, row_h=15)
-            exp_excl_cells.append(f"{EXP_E_L}{row - 1}")
             write_row([f"{_diesel_label(dg.supplier_name)} Admin Fee", None, None, fmt_val(dg.tot_admin_fee_incl), None], fnt=LBL_FONT, row_h=15)
-            exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
 
-        # Supplier invoices
+        # Supplier invoices — pre-sorted by supplier, then invoice number
         if td.supplier_invoices:
             ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
             c = ws.cell(row=row, column=1, value="Supplier Invoices")
@@ -671,7 +682,7 @@ def generate_costing_excel(costing, entity) -> bytes:
             c.fill = GRP_FILL
             c.alignment = align()
             row += 1
-            for inv in td.supplier_invoices:
+            for inv in _sorted_invoices(td.supplier_invoices):
                 sup, note = _invoice_label(inv)
                 if note:
                     sup = f"{sup} — {note}"
@@ -683,14 +694,11 @@ def generate_costing_excel(costing, entity) -> bytes:
                     fmt_val(amt_i) if amt_i is not None else None,
                     fmt_val(amt_e) if amt_e is not None else None,
                 ], fnt=LBL_FONT, row_h=15)
-                if amt_i is not None:
-                    exp_incl_cells.append(f"{EXP_I_L}{row - 1}")
-                if amt_e is not None:
-                    exp_excl_cells.append(f"{EXP_E_L}{row - 1}")
+        exp_last_row = row - 1
 
         # Totals — built from Excel SUM formulas so the component cells are
         # visible: income sums the Loads row plus any manual income lines,
-        # expenses sum their line items.
+        # expenses sum their whole block (see exp_first_row above).
         def _sum(cells):
             return f"=SUM({','.join(cells)})" if cells else 0
         inc_total_excl = _sum(inc_excl_cells)
@@ -699,7 +707,8 @@ def generate_costing_excel(costing, entity) -> bytes:
             ["Totals",
              inc_total_excl,
              inc_total_incl,
-             _sum(exp_incl_cells), _sum(exp_excl_cells)],
+             f"=SUM({EXP_I_L}{exp_first_row}:{EXP_I_L}{exp_last_row})",
+             f"=SUM({EXP_E_L}{exp_first_row}:{EXP_E_L}{exp_last_row})"],
             fnt=TOT_WHITE,
             fills=[TOTAL_FILL] * 5,
             row_h=16,
