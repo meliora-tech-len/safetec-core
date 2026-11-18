@@ -3,16 +3,16 @@
 A truck's costing for a period can be marked SENT (truck_costing_sent). Two
 rules flow from that flag:
 
-1. Roll-forward (periods up to ROLL_FORWARD_LAST_PERIOD only): an expense
-   contribution whose natural costing period was already sent when the
-   expense was CAPTURED (created_at after sent_at) moves forward into the
-   next unsent month's costing, so the statement the subcontractor received
-   never changes retroactively.
-   From the period after ROLL_FORWARD_LAST_PERIOD the roll no longer applies:
-   the office marks a month sent and then captures that month's late cash
-   statements a day or two later, and those must land on the month they
-   belong to. Such a late contribution stays in its natural month and is
-   flagged (captured_after_sent) so the costing can be re-sent.
+1. Roll-forward: an expense contribution whose natural costing period was
+   already sent when the expense was CAPTURED (created_at after sent_at)
+   moves forward into the next unsent month's costing, so the statement the
+   subcontractor received never changes retroactively. This is the office's
+   rule (SAF-36): once a month is locked and sent, anything added afterwards
+   falls on the next month. To keep a late expense on a sent month anyway,
+   pin it there with the invoice's costing-period override.
+   ROLL_FORWARD_LAST_PERIOD can switch the roll off for later periods
+   (late contributions then stay in their natural month, flagged
+   captured_after_sent); by default it applies to every period.
 2. Lock: an invoice that sits ON a sent costing (captured before the send)
    may no longer be amended, archived or deleted. A late capture is not part
    of what went out, so it stays editable.
@@ -36,11 +36,11 @@ from app.models.models import (
 # the expense was captured).
 _MAX_ROLL_MONTHS = 24
 
-# Last costing period (year, month) the sent roll-forward still applies to.
-# Earlier months' late expenses already sit in the following, sent-and-paid
-# costings; moving them back would rewrite two settled statements for nothing.
-# Overridable without a deploy via COSTING_ROLL_FORWARD_LAST_PERIOD ("YYYY-MM");
-# "9999-12" restores the old roll-forward behaviour for every month (rollback).
+# Last costing period (year, month) the sent roll-forward applies to. The
+# default (9999-12) rolls every period forward, which is the office's rule
+# (SAF-36). Overridable without a deploy via COSTING_ROLL_FORWARD_LAST_PERIOD
+# ("YYYY-MM"): e.g. "2026-07" keeps late expenses from Aug 2026 on in their own
+# month, flagged AFTER SEND (the SAF-13 behaviour).
 def _roll_forward_last_period() -> tuple:
     raw = (os.getenv("COSTING_ROLL_FORWARD_LAST_PERIOD") or "").strip()
     if raw:
@@ -49,7 +49,7 @@ def _roll_forward_last_period() -> tuple:
             return (int(y), int(m))
         except ValueError:
             pass
-    return (2026, 7)
+    return (9999, 12)
 
 
 ROLL_FORWARD_LAST_PERIOD = _roll_forward_last_period()
