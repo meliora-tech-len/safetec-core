@@ -1,9 +1,10 @@
 import calendar
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import or_, and_, extract, func
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
@@ -98,6 +99,14 @@ def list_subcontractors(
 
 
 # NOTE: must be registered before /{subcontractor_id} or "summary" is parsed as an id.
+# Short-lived cache for the overview figures: each request builds every
+# subcontractor's costing, which pulls megabytes from the database (Supabase
+# bills that as egress). Repeat visits within the TTL reuse the result; the
+# costing screen itself is always live.
+_SUMMARY_CACHE: dict = {}
+_SUMMARY_TTL_SECONDS = 600
+
+
 @router.get("/summary")
 def subcontractors_financial_summary(
     entity_id: Optional[int] = Query(None),
@@ -144,6 +153,11 @@ def subcontractors_financial_summary(
     if not subs:
         return []
 
+    cache_key = (period, year, month, tuple(sorted(s.id for s in subs)))
+    hit = _SUMMARY_CACHE.get(cache_key)
+    if hit and time.monotonic() - hit[0] < _SUMMARY_TTL_SECONDS:
+        return hit[1]
+
     today = datetime.now(timezone.utc).date()
     current_idx = today.year * 12 + (today.month - 1)
     if period == "month":
@@ -186,6 +200,11 @@ def subcontractors_financial_summary(
             "outgoing": float(round(outgoing, 2)),
             "profit": float(round(profit, 2)),
         })
+    # Drop expired entries so the cache cannot grow without bound.
+    now = time.monotonic()
+    for k in [k for k, (t, _) in _SUMMARY_CACHE.items() if now - t >= _SUMMARY_TTL_SECONDS]:
+        _SUMMARY_CACHE.pop(k, None)
+    _SUMMARY_CACHE[cache_key] = (now, result)
     return result
 
 
@@ -559,7 +578,7 @@ def _load_candidate_invoices(db: Session, entity_id: int, period_idx: int, stmt_
     candidate_invoices = (
         db.query(SupplierInvoice)
         .outerjoin(Supplier, Supplier.id == SupplierInvoice.supplier_id)
-        .options(joinedload(SupplierInvoice.line_items), joinedload(SupplierInvoice.supplier))
+        .options(selectinload(SupplierInvoice.line_items), selectinload(SupplierInvoice.supplier))
         .filter(
             SupplierInvoice.entity_id == entity_id,
             SupplierInvoice.is_archived == False,
@@ -794,7 +813,7 @@ def _build_subcontractor_costing(
             db.query(DieselFillUp)
             .join(Supplier, Supplier.id == DieselFillUp.supplier_id)
             .outerjoin(SupplierInvoice, SupplierInvoice.id == DieselFillUp.supplier_invoice_id)
-            .options(joinedload(DieselFillUp.supplier), joinedload(DieselFillUp.supplier_invoice))
+            .options(selectinload(DieselFillUp.supplier), selectinload(DieselFillUp.supplier_invoice))
             .filter(
                 DieselFillUp.truck_id == truck.id,
                 DieselFillUp.is_archived == False,
